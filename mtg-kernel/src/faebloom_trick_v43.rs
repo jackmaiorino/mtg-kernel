@@ -83,6 +83,7 @@ pub enum JournalV43 {
     TriggerPublished {
         capture: u64,
         item: Box<StackItem>,
+        target_at_placement: crate::rl::CardStableRefV1,
     },
     Dropped {
         capture: u64,
@@ -105,6 +106,12 @@ pub enum JournalV43 {
         publication: u64,
         item: Box<StackItem>,
         movement: Option<u64>,
+    },
+    /// Original target visibility, issued immediately beside real Targeted.
+    TargetInput {
+        targeted_event: u64,
+        item: Box<StackItem>,
+        snapshot: Box<crate::state::GameObject>,
     },
 }
 fn journal(event: &CommittedEvent) -> Option<&JournalV43> {
@@ -304,15 +311,69 @@ pub(crate) fn publish_trigger(state: &mut GameState, item: &StackItem) -> Result
     {
         return Err("Faebloom trigger changed mandatory finalized target".into());
     }
+    let inputs = matching(
+        state,
+        |j| matches!(j,JournalV43::TargetInput {item:original,..} if original.v4.stack_item_id==item.v4.stack_item_id),
+    );
+    let [(_, JournalV43::TargetInput { snapshot, .. })] = inputs.as_slice() else {
+        return Err("Faebloom publication lost unique target visibility input".into());
+    };
+    let Some(Target::Object(target)) = item.targets.first() else {
+        return Err("Faebloom placement target changed".into());
+    };
+    let target_at_placement =
+        crate::sower_restriction_capture_v1::masked_ref(*target, snapshot).map_err(|e| e.0)?;
     emit(
         state,
         JournalV43::TriggerPublished {
             capture,
             item: Box::new(item.clone()),
+            target_at_placement,
         },
     );
     Ok(())
 }
+pub(crate) fn record_target_input(
+    state: &mut GameState,
+    id: StackItemId,
+    targeted_event: usize,
+) -> Result<(), String> {
+    let Some(item) = state
+        .stack
+        .iter()
+        .find(|row| row.v4.stack_item_id == id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    if item.inline_effect.as_ref().and_then(capture_of).is_none() {
+        return Ok(());
+    }
+    validate_trigger_metadata(state, &item)?;
+    let Some(Target::Object(target)) = item.targets.first() else {
+        return Err("Faebloom target visibility has foreign target".into());
+    };
+    let snapshot = state.objects.get(*target).clone();
+    if matching(
+        state,
+        |j| matches!(j,JournalV43::TargetInput {item:original,..} if original.v4.stack_item_id==id),
+    )
+    .len()
+        != 0
+    {
+        return Err("Faebloom target visibility input duplicated".into());
+    }
+    emit(
+        state,
+        JournalV43::TargetInput {
+            targeted_event: targeted_event as u64,
+            item: Box::new(item),
+            snapshot: Box::new(snapshot),
+        },
+    );
+    Ok(())
+}
+
 /// This loan is acquired only while the genuine complete original row is live.
 /// It is deliberately neither serializable nor caller-constructible.
 pub(crate) struct RemovalOwnerV43 {
@@ -608,9 +669,46 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let index = index as u64;
         match j {
             JournalV43::Published { item } | JournalV43::TriggerPublished { item, .. } => {
-                if let JournalV43::TriggerPublished { capture, item } = j {
+                if let JournalV43::TriggerPublished { capture, item, .. } = j {
                     if item.inline_effect.as_ref().and_then(capture_of) != Some(*capture) {
                         return Err("Faebloom publication redirected capture".into());
+                    }
+                }
+                if let JournalV43::TriggerPublished {
+                    item,
+                    target_at_placement,
+                    ..
+                } = j
+                {
+                    let inputs = matching(
+                        state,
+                        |j| matches!(j,JournalV43::TargetInput {item:original,..} if original.v4.stack_item_id==item.v4.stack_item_id),
+                    );
+                    let [(
+                        input_at,
+                        JournalV43::TargetInput {
+                            item: original,
+                            snapshot,
+                            ..
+                        },
+                    )] = inputs.as_slice()
+                    else {
+                        return Err(
+                            "Faebloom published target lost original visibility input".into()
+                        );
+                    };
+                    let Some(Target::Object(target)) = item.targets.first() else {
+                        return Err("Faebloom published target kind changed".into());
+                    };
+                    if original.as_ref() != item.as_ref()
+                        || *input_at >= index
+                        || crate::sower_restriction_capture_v1::masked_ref(*target, snapshot)
+                            .map_err(|e| e.0)?
+                            != *target_at_placement
+                    {
+                        return Err(
+                            "Faebloom published mask changed original target visibility".into()
+                        );
                     }
                 }
                 if let JournalV43::TriggerPublished { item, .. } = j {
@@ -800,6 +898,32 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err(
                         "Faebloom mandatory reflexive was erased, duplicated or replayed".into(),
                     );
+                }
+            }
+            JournalV43::TargetInput {
+                targeted_event,
+                item,
+                snapshot,
+            } => {
+                validate_trigger_metadata(state, item)?;
+                let [crate::state::StackTargetContractV4::Object {
+                    object,
+                    card_def,
+                    owner,
+                    controller,
+                    zone: Zone::Battlefield,
+                    zone_change_count,
+                    spell_copy_origin,
+                }] = item.v4.target_contracts.as_slice()
+                else {
+                    return Err("Faebloom target input lost original creature contract".into());
+                };
+                if *targeted_event+1!=index || item.targets!=vec![Target::Object(*object)]
+                    || snapshot.card_def!=*card_def || snapshot.owner!=*owner || snapshot.controller!=*controller
+                    || snapshot.zone!=Zone::Battlefield || snapshot.zone_change_count!=*zone_change_count || snapshot.spell_copy_origin!=*spell_copy_origin
+                    || state.engine.event_history.get(*targeted_event as usize)!=Some(&CommittedEvent::Targeted {target:*object,target_zone_change_count:*zone_change_count,targeting_stack_item:item.v4.stack_item_id,targeting_controller:item.controller})
+                    || matching(state,|j|matches!(j,JournalV43::TriggerPublished {item:published,..} if published.v4.stack_item_id==item.v4.stack_item_id)).len()!=1 {
+                    return Err("Faebloom target input changed real Targeted or original visibility".into())
                 }
             }
             JournalV43::Collected { capture } | JournalV43::Dropped { capture, .. } => {

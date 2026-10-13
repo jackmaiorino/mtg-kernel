@@ -13078,6 +13078,11 @@ fn log_final_targeting_events(
             stack_item_id,
             item.controller,
         );
+        crate::faebloom_trick_v43::record_target_input(
+            state,
+            stack_item_id,
+            state.engine.event_history.len() - 1,
+        )?;
     }
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.

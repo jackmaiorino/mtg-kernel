@@ -37,6 +37,7 @@ pub struct ReflexiveV43 {
     pub controller: PlayerSeatV1,
     pub stage: StageV43,
     pub stack_ordinal: Option<u32>,
+    pub target_at_placement: Option<CardStableRefV1>,
     pub current_target: Option<CardStableRefV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,6 +224,7 @@ pub fn capture(state: &GameState) -> Result<FactsV43, RlContractError> {
                 let mut stage = StageV43::Uncollected;
                 let mut stack = None;
                 let mut target = None;
+                let mut target_at_placement = None;
                 for e in &state.engine.event_history {
                     match j(e) {
                         Some(JournalV43::Collected { capture }) if *capture == index as u64 => {
@@ -231,12 +233,15 @@ pub fn capture(state: &GameState) -> Result<FactsV43, RlContractError> {
                         Some(JournalV43::Dropped { capture, .. }) if *capture == index as u64 => {
                             stage = StageV43::Dropped
                         }
-                        Some(JournalV43::TriggerPublished { capture, item })
-                            if *capture == index as u64 =>
-                        {
+                        Some(JournalV43::TriggerPublished {
+                            capture,
+                            item,
+                            target_at_placement: original_target,
+                        }) if *capture == index as u64 => {
                             stage = StageV43::OnStack;
                             stack = stack_ordinal(state, item);
                             target = current_target(state, item)?;
+                            target_at_placement = Some(original_target.clone());
                             if let Some((input,_))=state.engine.event_history.iter().enumerate().find(|(_,e)|matches!(j(e),Some(JournalV43::RemovalInput {item:owned,..}) if owned.v4.stack_item_id==item.v4.stack_item_id)) {
                                 for e in &state.engine.event_history {
                                     match j(e) {
@@ -258,6 +263,7 @@ pub fn capture(state: &GameState) -> Result<FactsV43, RlContractError> {
                     controller: source.controller.into(),
                     stage,
                     stack_ordinal: stack,
+                    target_at_placement,
                     current_target: target,
                 });
             }
@@ -315,6 +321,49 @@ pub fn stack_source_reference(
         || RlContractError("Faebloom source contract absent".into()),
     )?)))
 }
+pub fn original_target_reference(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if item
+        .inline_effect
+        .as_ref()
+        .and_then(crate::faebloom_trick_v43::capture_of)
+        .is_none()
+    {
+        return Ok(None);
+    }
+    crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
+    state
+        .engine
+        .event_history
+        .iter()
+        .find_map(|e| match j(e) {
+            Some(JournalV43::TriggerPublished {
+                item: original,
+                target_at_placement,
+                ..
+            }) if original.v4.stack_item_id == item.v4.stack_item_id => {
+                Some((original, target_at_placement))
+            }
+            _ => None,
+        })
+        .map(|(original, target)| {
+            if original.as_ref() == item {
+                Ok(Some(target.clone()))
+            } else {
+                Err(RlContractError(
+                    "Faebloom target reference detached its original row".into(),
+                ))
+            }
+        })
+        .unwrap_or_else(|| {
+            Err(RlContractError(
+                "Faebloom target reference lost original publication".into(),
+            ))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
