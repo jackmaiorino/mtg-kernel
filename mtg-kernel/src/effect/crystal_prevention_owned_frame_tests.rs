@@ -217,10 +217,10 @@ fn original_crystal_journals_do_not_authorize_unmarked_foreign_or_rewritten_lega
                     if mutation == 3 {
                         *discard = 2;
                     } else {
-                        *then = Box::new(EffectOp::DrawCards {
+                        **then = EffectOp::DrawCards {
                             player: PlayerRef::Opponent,
                             count: 1,
-                        });
+                        };
                     }
                 }
                 _ => unreachable!(),
