@@ -125,6 +125,7 @@ pub(crate) mod high_society_hunter_custody_v45;
 pub mod high_society_hunter_public_v45;
 pub(crate) mod high_society_hunter_v1;
 pub mod human_opening_v1;
+pub mod hunter_observation_v45;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;

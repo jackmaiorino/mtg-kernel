@@ -57,6 +57,7 @@ pub(crate) mod frenzied_v15;
 pub(crate) mod game_outcome_v41;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod hunter_v45;
 pub(crate) mod inspiration_v37;
 pub(crate) mod krenko_v34;
 mod limited_common_v1;
@@ -1958,6 +1959,8 @@ fn flat_validate_origin_decision_common_scoped_v42(
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
     if (if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
         crate::faebloom_observation_v43::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::HunterV45 {
+        crate::hunter_observation_v45::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::DivineV44 {
         crate::divine_observation_v44::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
@@ -3372,7 +3375,9 @@ fn flat_validate_current_binding_header_akroma_inner(
         && (!accept_akroma
             || !matches!(
                 session.flat_action_contract_mode,
-                FlatActionContractModeV1::FaebloomV43 | FlatActionContractModeV1::DivineV44
+                FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -4462,6 +4467,7 @@ fn flat_validate_expected_decision_akroma_inner(
                 | FlatActionContractModeV1::AjaniV42
                 | FlatActionContractModeV1::FaebloomV43
                 | FlatActionContractModeV1::DivineV44
+                | FlatActionContractModeV1::HunterV45
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4484,7 +4490,7 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44),
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4620,6 +4626,7 @@ enum FlatActionContractModeV1 {
     AjaniV42,
     FaebloomV43,
     DivineV44,
+    HunterV45,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7305,7 +7312,9 @@ impl FastActorSessionV1 {
                 )
             })?;
             let mut rederived = current.clone();
-            if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                hunter_v45::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
                 divine_v44::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
                 faebloom_v43::prepare_current(self, &mut rederived)
@@ -7467,7 +7476,9 @@ impl FastActorSessionV1 {
         if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
             && !matches!(
                 self.flat_action_contract_mode,
-                FlatActionContractModeV1::FaebloomV43 | FlatActionContractModeV1::DivineV44
+                FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -7489,6 +7500,7 @@ impl FastActorSessionV1 {
                 FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -7513,6 +7525,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7544,7 +7557,9 @@ impl FastActorSessionV1 {
             return;
         }
         if (if self.is_common_v40() {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                crate::hunter_observation_v45::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
                 crate::divine_observation_v44::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
                 crate::faebloom_observation_v43::validate_state(&self.state)
@@ -7666,6 +7681,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             )
         {
             self.current = None;
@@ -7722,6 +7738,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7805,7 +7822,9 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+            hunter_v45::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
             divine_v44::actual_candidates(&surfaced, &self.state, &self.surface)
         } else if self.is_common_v40() {
             akroma_v40::actual_candidates(&surfaced, &self.state)
@@ -8074,6 +8093,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:faebloom_v43:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HunterV45 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = hunter_v45::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:hunter_v45:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

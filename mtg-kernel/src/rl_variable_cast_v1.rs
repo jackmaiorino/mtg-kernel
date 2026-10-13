@@ -54,6 +54,17 @@ pub(crate) fn candidates(
     surface: &PolicySurfaceV5,
     decision: &PolicyDecisionV5,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_hunter_scoped_v45(state, surface, decision, false)
+}
+pub(crate) fn candidates_hunter_scoped_v45(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    accept_hunter: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    if accept_hunter {
+        crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
+    }
     let mut check_state = state.clone();
     let mut check_surface = surface.clone();
     let actual = check_surface
@@ -231,7 +242,11 @@ pub(crate) fn candidates(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = crate::rl::core_policy_action_candidates_v5(decision, state)?;
+                let old = crate::rl::core_policy_action_candidates_hunter_scoped_v45(
+                    decision,
+                    state,
+                    accept_hunter,
+                )?;
                 let feasible = if matches!(
                     decision,
                     PolicyDecisionV5::AttackerInclusion { .. }

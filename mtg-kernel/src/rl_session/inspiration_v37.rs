@@ -5,7 +5,7 @@ use crate::inspiration_observation_v1::InspirationObservationV1;
 #[cfg(test)]
 use crate::state::GameState;
 
-fn is_mill(state: &crate::state::GameState) -> bool {
+pub(super) fn is_mill(state: &crate::state::GameState) -> bool {
     matches!(
         state
             .engine

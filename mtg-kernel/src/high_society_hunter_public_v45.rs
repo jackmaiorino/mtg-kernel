@@ -31,6 +31,7 @@ pub struct OccurrenceV45 {
     /// Ordinal among public Hunter occurrences, never a private journal index.
     pub occurrence: usize,
     pub source: CardStableRefV1,
+    pub current_original_source: Option<CardStableRefV1>,
     pub original_controller: PlayerSeatV1,
     pub root: meaning::RootV1,
     pub phase: PhaseV45,
@@ -60,6 +61,14 @@ pub struct FactsV45 {
     pub meanings: Vec<meaning::MeaningV1>,
     pub occurrences: Vec<OccurrenceV45>,
     pub menu: Option<MenuV45>,
+    pub trigger_order: Vec<TriggerOrderV45>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerOrderV45 {
+    pub controller: PlayerSeatV1,
+    pub group_position: usize,
+    pub occurrence: usize,
 }
 pub fn producer_sha256() -> String {
     let mut hash = Sha256::new();
@@ -96,6 +105,60 @@ pub(crate) fn captured_source(source: AbilitySourceContractV4) -> CardStableRefV
         zone: source.zone,
         zone_change_count: source.zone_change_count,
     }
+}
+pub(crate) fn stack_source_reference(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if !custody::selected(item) {
+        return Ok(None);
+    }
+    custody::validate(state).map_err(RlContractError)?;
+    if state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !state.stack.iter().any(|row| row == item)
+    {
+        return Err(RlContractError(
+            "Hunter public source requires its genuine full live row".into(),
+        ));
+    }
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or_else(|| RlContractError("Hunter source contract absent".into()))?;
+    custody::normalize_root(
+        state,
+        item.inline_effect
+            .as_ref()
+            .ok_or_else(|| RlContractError("Hunter root absent".into()))?,
+        Some(source),
+    )
+    .map_err(RlContractError)?;
+    Ok(Some(captured_source(source)))
+}
+pub(crate) fn pending_source_reference(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some((capture, attack)) = custody::binding(&pending.effect) else {
+        return Ok(None);
+    };
+    custody::validate(state).map_err(RlContractError)?;
+    let (source, actual) = custody::source_at(state, capture).map_err(RlContractError)?;
+    if attack != actual
+        || pending.source_contract != Some(source)
+        || pending.controller != source.controller
+        || pending.source != source.source
+    {
+        return Err(RlContractError(
+            "Hunter waiting source changed original occurrence".into(),
+        ));
+    }
+    Ok(Some(captured_source(source)))
 }
 pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
     let selector = meaning::live_selector()
@@ -148,6 +211,16 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
         let mut row = OccurrenceV45 {
             occurrence,
             source: captured_source(source),
+            current_original_source: state
+                .objects
+                .try_get(source.source)
+                .filter(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.owner == source.owner
+                        && live.zone_change_count == source.zone_change_count
+                })
+                .map(|live| crate::sower_restriction_capture_v1::masked_ref(source.source, live))
+                .transpose()?,
             original_controller: source.controller.into(),
             root: if attack {
                 meaning::RootV1::Attack
@@ -302,6 +375,24 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
         }
         occurrences.push(row);
     }
+    let all = custody::captures(state);
+    let mut positions = [0usize; 2];
+    let mut trigger_order = Vec::new();
+    for pending in &state.engine.pending_triggers {
+        let group_position = positions[pending.controller.index()];
+        positions[pending.controller.index()] += 1;
+        if let Some((capture, _)) = custody::binding(&pending.effect) {
+            let occurrence = all
+                .iter()
+                .position(|original| *original == capture)
+                .ok_or_else(|| RlContractError("Hunter ordering occurrence absent".into()))?;
+            trigger_order.push(TriggerOrderV45 {
+                controller: pending.controller.into(),
+                group_position,
+                occurrence,
+            });
+        }
+    }
     Ok(FactsV45 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
@@ -309,6 +400,7 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
         meanings,
         occurrences,
         menu,
+        trigger_order,
     })
 }
 pub fn validate(state: &GameState, facts: &FactsV45) -> Result<(), RlContractError> {
