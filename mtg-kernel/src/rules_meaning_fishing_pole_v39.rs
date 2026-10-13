@@ -187,6 +187,8 @@ pub fn meaning(selector: &SelectorV39, id: u16, root: RootV39) -> Result<Meaning
         || d.enters_battlefield_tapped_unless.is_some()
         || d.enters_tapped_unless_controller.is_some()
         || d.starting_loyalty.is_some()
+        || d.game_outcome_protection_v1.is_some()
+        || d.controlled_creature_grant.is_some()
         || d.ward_cost.is_some()
         || d.generic_cost_reduction.is_some()
         || d.spell_cannot_be_countered
