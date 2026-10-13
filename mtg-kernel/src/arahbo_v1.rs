@@ -381,7 +381,7 @@ fn validate_item(state: &GameState, item: &StackItem, index: u64) -> Result<(), 
         || item.v4.source_contract.is_some()
         || item.v4.activated_ability_index.is_some()
         || item.v4.target_spec.is_some()
-        || crate::engine::validated_stack_item_target_spec(item, state)? != TargetSpec::None
+        || crate::engine::validated_stack_item_target_spec(item, state)?.is_some()
         || !item.targets.is_empty()
         || !item.v4.target_contracts.is_empty()
         || !item.v4.paid_cost_refs.is_empty()
