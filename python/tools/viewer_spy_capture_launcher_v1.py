@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -86,22 +87,25 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('mode',choices=('qualify','capture'));ap.add_argument('--binary',type=Path,required=True)
     ap.add_argument('--template',type=Path,required=True);ap.add_argument('--root',type=Path,required=True);ap.add_argument('--inventory',type=Path,required=True)
+    ap.add_argument('--attempt',default='',help='Retain a separate qualification namespace under the same bounded artifact root')
     args=ap.parse_args();args.root.mkdir(exist_ok=True,parents=True)
+    if args.attempt and not re.fullmatch('[a-z0-9-]{1,48}',args.attempt):raise ValueError('Invalid attempt namespace')
+    case_root=args.root/args.attempt if args.attempt else args.root;case_root.mkdir(exist_ok=True)
     guard=require_guard(args.root,'spy-full-search-trace-239')
     if len(guard['cores'])<2:raise ValueError('Two admitted cores required for useful-work qualification')
     pinned=pins(args.binary,args.template);inventory=json.loads(args.inventory.read_text())
     if not all(k in inventory for k in ('jacks_pc','haleys_pc','runpod')):raise ValueError('Three-host placement inventory missing')
-    qualification=args.root/'qualification.json'
+    qualification=case_root/'qualification.json'
     if args.mode=='qualify':
         if qualification.exists():raise ValueError('Preserve existing qualification')
-        results=[invoke(args.binary,args.template,args.root,name,record,185,600,failed) for name,record,failed in
+        results=[invoke(args.binary,args.template,case_root,name,record,185,600,failed) for name,record,failed in
             [('parity-off',False,False),('parity-on',True,False),('parity-recorder-failed',True,True)]]
         if any(r['exit_code']!=0 or r['actions']!=185 for r in results) or len({r['primary_sha256'] for r in results})!=1:raise ValueError('Off/on/failed recorder primary parity differs')
         capture_receipt(results[1],185)
-        started=time.perf_counter();serial=[invoke(args.binary,args.template,args.root,f'serial-{i}',True,185,600) for i in range(2)];serial_seconds=time.perf_counter()-started
+        started=time.perf_counter();serial=[invoke(args.binary,args.template,case_root,f'serial-{i}',True,185,600) for i in range(2)];serial_seconds=time.perf_counter()-started
         started=time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            jobs=[pool.submit(invoke,args.binary,args.template,args.root,f'parallel-{i}',True,185,600) for i in range(2)]
+            jobs=[pool.submit(invoke,args.binary,args.template,case_root,f'parallel-{i}',True,185,600) for i in range(2)]
             parallel=[j.result() for j in jobs]
         parallel_seconds=time.perf_counter()-started
         for r in serial+parallel:
@@ -121,7 +125,7 @@ def main():
             if result.get('capture'):
                 path=Path(result['capture'])
                 export_capture(path,Exporter({},'p0',None,path.parent/'unused-assets',False),allow_incomplete_game=True)
-        acquisition=args.root/'acquisition.json'
+        acquisition=case_root/'acquisition.json'
         if acquisition.exists():raise ValueError('Preserve existing acquisition and interrupted attempts')
         started=time.monotonic();results=[];report={'state':'started','pins':pinned,'max_games':3,'max_seconds':5400,'raw_cap':RAW_CAP,'qualification_sha256':sha(qualification),'results':results,
             'allocation':'One sequential fresh execution minimizes latency to one traced combo; independent two-worker work was qualified. Reused development setup, new frozen-policy gameplay, no saved actions.'}
@@ -131,7 +135,7 @@ def main():
             # Each native recording caps itself at 512 MiB. Reserve that entire next output.
             allowance=512*1024**2+8192
             if remaining<=0 or size(args.root,True)+allowance>RAW_CAP or size(args.root)+allowance>WORKING_CAP:break
-            result=invoke(args.binary,args.template,args.root,f'game-{i+1}',True,100000,remaining);results.append(result)
+            result=invoke(args.binary,args.template,case_root,f'game-{i+1}',True,100000,remaining);results.append(result)
             try:result['receipt']=capture_receipt(result)
             except ValueError as e:result['capture_error']=str(e)
             report['raw_bytes']=size(args.root,True);report['elapsed_seconds']=time.monotonic()-started
