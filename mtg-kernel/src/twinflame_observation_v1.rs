@@ -548,6 +548,9 @@ pub(crate) mod tests {
             }
             let d = engine::advance_until_decision(&mut state);
             assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+            if state.objects.get(tyrant).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
             engine::step(&mut state, Action::Pass).unwrap();
         }
         assert_eq!(state.objects.get(tyrant).zone, Zone::Battlefield);

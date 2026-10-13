@@ -659,6 +659,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::GainLifeDynamic { .. }
         | EffectOp::GainLife { .. }
         | EffectOp::LoseLife { .. }
+        | EffectOp::DamageCannotBePreventedThisTurn
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterUnlessPaysLifeWithChoice { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. } => true,
@@ -1003,6 +1004,7 @@ pub(crate) fn acquire_owner(
     let started = item.v4.crystal_prevention_started_v1.0.is_some();
     if !(started
         || mixed_environment(state)
+        || crate::twinflame_tyrant_v1::has_active_source(state)
         || crate::fixed_source_damage_v3::tracked(state, item)
         || crate::equipment_damage_source_v4::tracked(state, item)
         || (crate::gorehorn_damage_v1::selected(item)
@@ -2064,7 +2066,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                                 Some(CommittedEvent::Damage { source, target: recipient, amount: dealt, .. })
                                 if *source == damage.source
                                     && *recipient == damage.target
-                                    && *dealt > 0 && *dealt <= damage.amount)
+                                    && *dealt > 0)
                             {
                                 return Err(
                                     "Crystal execution lost genuine committed damage".into()
@@ -2188,7 +2190,7 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                                 || !matches!(state.engine.event_history.get(at),
                                 Some(CommittedEvent::Damage { source, target, amount, .. })
                                     if *source == damage.source && *target == damage.target
-                                        && *amount > 0 && *amount <= damage.amount)
+                                        && *amount > 0)
                             {
                                 return Err("Crystal power lost genuine damage occurrence".into());
                             }

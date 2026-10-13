@@ -91,6 +91,9 @@ mod future_printed {
                 matches!(decision, Decision::CastSpellOrPass { .. }),
                 "{decision:?}"
             );
+            if state.stack.is_empty() && state.engine.pending_cast.is_none() {
+                return;
+            }
             engine::step(state, Action::Pass).unwrap();
         }
         panic!("actual stack did not finish")
@@ -657,6 +660,250 @@ mod future_printed {
                 let bytes = serde_json::to_vec(&bad).unwrap();
                 assert!(engine::step(&mut bad, Action::ChooseEffectOption(0)).is_err());
                 assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn actual_gorehorn_raid_without_numeric_prevention_uses_owned_doubled_outcome_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let tyrant = cast(&mut state, actor);
+            for player in [actor, actor.opponent()] {
+                put(&mut state, player, "Mountain", Zone::Battlefield);
+                put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            }
+            let attacker = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            state.objects.get_mut(attacker).summoning_sick = false;
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if matches!(decision, Decision::DeclareAttackers { .. }) {
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
+            for _ in 0..40 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.step == crate::state::Step::Main2
+                    && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                {
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::DeclareBlockers { .. } => {
+                        engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+                    }
+                    other => panic!("actual Raid traversal {other:?}"),
+                }
+            }
+            assert_eq!(state.step, crate::state::Step::Main2);
+            let raider = put(&mut state, actor, "Gorehorn Raider", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(raider)).unwrap();
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if let Decision::ChooseTargets {
+                    player,
+                    legal_targets,
+                    ..
+                } = decision
+                {
+                    assert_eq!(player, actor);
+                    assert!(legal_targets.contains(&Target::Player(actor.opponent())));
+                    engine::step(
+                        &mut state,
+                        Action::ChooseTarget(Target::Player(actor.opponent())),
+                    )
+                    .unwrap();
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            let lives = state.players.each_ref().map(|p| p.life);
+            let saved = serde_json::to_vec(&state).unwrap();
+            let mut restored = serde_json::from_slice(&saved).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    lives[actor.opponent().index()] - 4
+                );
+                assert!(branch.engine.event_history.iter().any(|e| matches!(e,
+                    CommittedEvent::TwinflameDamagePreparationV38 { preparation }
+                        if preparation.input.source == raider && preparation.input.amount == 2)));
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                crate::gorehorn_damage_v1::validate_state(branch).unwrap();
+                assert_eq!(branch.objects.get(tyrant).zone, Zone::Battlefield);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn actual_sure_strike_and_double_strike_have_two_owned_combat_waves_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for foundations in [false, true] {
+                for double_first in [false, true] {
+                    let mut state = ready(actor);
+                    let tyrant = cast(&mut state, actor);
+                    let swiftblade = put(&mut state, actor, "Swiftblade Vindicator", Zone::Hand);
+                    state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                    engine::step(&mut state, Action::CastSpell(swiftblade)).unwrap();
+                    finish(&mut state);
+                    let strike = put(&mut state, actor, "Sure Strike", Zone::Hand);
+                    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                    engine::step(&mut state, Action::CastSpell(strike)).unwrap();
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(tyrant))).unwrap();
+                    finish(&mut state);
+                    assert_eq!(engine::effective_power(&state, tyrant), 6);
+                    assert!(engine::has_effective_keyword(
+                        &state,
+                        tyrant,
+                        crate::card_def::Keywords::FIRST_STRIKE
+                    ));
+                    assert!(engine::has_effective_keyword(
+                        &state,
+                        swiftblade,
+                        crate::card_def::Keywords::DOUBLE_STRIKE
+                    ));
+                    for source in [tyrant, swiftblade] {
+                        state.objects.get_mut(source).summoning_sick = false;
+                        state.objects.get_mut(source).v4.lifelink_keyword_counters = 1;
+                    }
+                    if foundations {
+                        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+                    }
+                    state
+                        .engine
+                        .active_replacements
+                        .push(event::ActiveReplacement {
+                            id: 90_055,
+                            source: swiftblade,
+                            kind: event::ReplacementEffectKind::PreventNextDamage {
+                                target: Target::Player(actor.opponent()),
+                                remaining: 3,
+                            },
+                        });
+                    for _ in 0..24 {
+                        let decision = engine::advance_until_decision(&mut state);
+                        if matches!(decision, Decision::DeclareAttackers { .. }) {
+                            break;
+                        }
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "{decision:?}"
+                        );
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                    engine::step(
+                        &mut state,
+                        Action::DeclareAttackers(vec![tyrant, swiftblade]),
+                    )
+                    .unwrap();
+                    for _ in 0..24 {
+                        let decision = engine::advance_until_decision(&mut state);
+                        if combat::has_pending(&state) {
+                            break;
+                        }
+                        match decision {
+                            Decision::DeclareBlockers { .. } => {
+                                engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+                            }
+                            Decision::CastSpellOrPass { .. } => {
+                                engine::step(&mut state, Action::Pass).unwrap()
+                            }
+                            other => panic!("actual first-strike entry {other:?}"),
+                        }
+                    }
+                    assert!(combat::has_pending(&state));
+                    let lives = state.players.each_ref().map(|p| p.life);
+                    let saved = serde_json::to_vec(&state).unwrap();
+                    let mut restored = serde_json::from_slice(&saved).unwrap();
+                    for branch in [&mut state, &mut restored] {
+                        // The affected player allocates the shared shield to the six-power first-strike packet.
+                        engine::step(branch, Action::ChooseEffectOption(0)).unwrap();
+                        let pending = branch.engine.twinflame_combat_v38.0.as_ref().unwrap();
+                        let packet = &pending.packets[pending.selected.unwrap()];
+                        assert_eq!(packet.source, tyrant);
+                        let option = packet.options.iter().position(|p| if double_first {
+                            matches!(p, crate::effect::crystal_prevention_v1::PreventionV1::Multiplier(_))
+                        } else { matches!(p, crate::effect::crystal_prevention_v1::PreventionV1::Replacement(_)) }).unwrap();
+                        engine::step(branch, Action::ChooseEffectOption(option as u16)).unwrap();
+                        assert!(!combat::has_pending(branch));
+                        for _ in 0..16 {
+                            let count = branch
+                                .engine
+                                .event_history
+                                .iter()
+                                .filter(|e| {
+                                    matches!(e, CommittedEvent::TwinflameCombatPublishedV38 { .. })
+                                })
+                                .count();
+                            if count == 2 {
+                                break;
+                            }
+                            let decision = engine::advance_until_decision(branch);
+                            assert!(
+                                matches!(decision, Decision::CastSpellOrPass { .. }),
+                                "{decision:?}"
+                            );
+                            engine::step(branch, Action::Pass).unwrap();
+                        }
+                        assert!(!combat::has_pending(branch));
+                        combat::validate(branch).unwrap();
+                        let total = if double_first { 13 } else { 10 };
+                        assert_eq!(
+                            branch.players[actor.opponent().index()].life,
+                            lives[actor.opponent().index()] - total
+                        );
+                        assert_eq!(
+                            branch.players[actor.index()].life,
+                            lives[actor.index()] + total
+                        );
+                        let waves: Vec<_> = branch
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|e| match e {
+                                CommittedEvent::TwinflameCombatPublishedV38 { publication } => {
+                                    Some(publication)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(waves.len(), 2);
+                        assert_eq!(waves[0].packets.len(), 2);
+                        assert_eq!(waves[1].packets.len(), 1);
+                        assert_eq!(waves[1].packets[0].source, swiftblade);
+                        assert!(!branch
+                            .engine
+                            .active_replacements
+                            .iter()
+                            .any(|r| r.id == 90_055));
+                    }
+                    assert_eq!(
+                        serde_json::to_vec(&state).unwrap(),
+                        serde_json::to_vec(&restored).unwrap()
+                    );
+                }
             }
         }
     }

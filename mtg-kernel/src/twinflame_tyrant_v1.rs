@@ -258,8 +258,8 @@ impl PrintedMeaningV1 {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 pub mod combat;
 pub mod ordering;
+
+#[cfg(test)]
+mod tests;
