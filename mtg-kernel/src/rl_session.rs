@@ -1934,11 +1934,26 @@ fn flat_validate_origin_decision_akroma_inner(
     state: &crate::state::GameState,
     accept_akroma: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_common_scoped_v42(
+        current,
+        state,
+        accept_akroma,
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+    )
+}
+fn flat_validate_origin_decision_common_scoped_v42(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if (if accept_akroma {
+    if (if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
+        crate::ajani_observation_v42::validate_state(state)
+    } else if accept_akroma {
         crate::akroma_public_v1::validate_state(state)
     } else {
         crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state).and_then(
