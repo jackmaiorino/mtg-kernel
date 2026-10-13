@@ -1521,4 +1521,130 @@ mod future_printed {
             );
         }
     }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn actual_bolt_queries_current_tyrant_controller_suppression_departure_and_return_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for case in 0..4 {
+                let mut state = ready(actor);
+                let tyrant = cast(&mut state, actor);
+                match case {
+                    0 => {
+                        crate::standard_cards_v1::gain_control(&mut state, tyrant, actor.opponent())
+                    }
+                    1 => {
+                        let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+                        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+                        engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(tyrant)))
+                            .unwrap();
+                        finish(&mut state);
+                        assert_eq!(state.objects.get(witness).zone, Zone::Battlefield);
+                        assert!(
+                            !crate::continuous_characteristics_v1::printed_abilities_active(
+                                &state, tyrant
+                            )
+                        );
+                    }
+                    _ => {
+                        let old = state.objects.get(tyrant).zone_change_count;
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(tyrant, Zone::Hand),
+                        );
+                        if case == 3 {
+                            event::propose_and_commit(
+                                &mut state,
+                                event::ProposedEvent::zone_change(tyrant, Zone::Battlefield),
+                            );
+                            assert_eq!(state.objects.get(tyrant).zone_change_count, old + 2);
+                        }
+                    }
+                }
+                let lives = state.players.each_ref().map(|p| p.life);
+                let saved = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    bolt(branch, actor, Target::Player(actor.opponent()));
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        lives[actor.opponent().index()] - if case == 3 { 6 } else { 3 }
+                    );
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn genuine_stolen_firebrand_captured_damage_controller_survives_sacrifice_and_reentry_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for return_source in [false, true] {
+                let mut state = ready(actor);
+                cast(&mut state, actor);
+                let firebrand = put(
+                    &mut state,
+                    actor.opponent(),
+                    "Fanatical Firebrand",
+                    Zone::Hand,
+                );
+                event::propose_and_commit(
+                    &mut state,
+                    event::ProposedEvent::zone_change_to_battlefield_under_controller(
+                        firebrand, actor,
+                    ),
+                );
+                assert!(engine::has_effective_keyword(
+                    &state,
+                    firebrand,
+                    crate::card_def::Keywords::HASTE
+                ));
+                let original = state.objects.get(firebrand).zone_change_count;
+                engine::step(&mut state, Action::ActivateAbility(firebrand, 0)).unwrap();
+                engine::step(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(actor.opponent())),
+                )
+                .unwrap();
+                let decision = engine::advance_until_decision(&mut state);
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                assert_eq!(state.objects.get(firebrand).zone, Zone::Graveyard);
+                assert_eq!(state.objects.get(firebrand).controller, actor.opponent());
+                if return_source {
+                    event::propose_and_commit(
+                        &mut state,
+                        event::ProposedEvent::zone_change(firebrand, Zone::Battlefield),
+                    );
+                    assert_eq!(state.objects.get(firebrand).zone_change_count, original + 2);
+                    assert_eq!(state.objects.get(firebrand).controller, actor.opponent());
+                }
+                let lives = state.players.each_ref().map(|p| p.life);
+                let saved = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    finish(branch);
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        lives[actor.opponent().index()] - 2
+                    );
+                    assert!(branch.engine.event_history.iter().any(
+                        |e| matches!(e,CommittedEvent::Damage{source,target,amount:2,..}
+                        if *source==firebrand && *target==Target::Player(actor.opponent()))
+                    ));
+                    crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+        }
+    }
 }
