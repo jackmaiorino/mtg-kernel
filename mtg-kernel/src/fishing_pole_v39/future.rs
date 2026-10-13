@@ -568,3 +568,69 @@ fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_bo
         assert_eq!(state, restored);
     }
 }
+
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+fn manufactured_counter_operation_completion_requires_real_original_removal_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = fixture(actor);
+        let item = add(&mut state, actor, host, pole);
+        let origin = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|e| match e {
+                CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
+                    JournalV39::Published {
+                        origin,
+                        item: original,
+                    } if original.as_ref() == &item => Some(*origin),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap();
+        let original = state.engine.event_history.clone();
+        let mut manufactured = snapshot(&state);
+        manufactured.stack.pop();
+        let removal = manufactured.engine.event_history.len() as u64;
+        manufactured
+            .engine
+            .event_history
+            .push(CommittedEvent::FishingPoleJournalV39 {
+                journal: Box::new(JournalV39::Removed {
+                    input: removal,
+                    origin,
+                    item: Box::new(item.clone()),
+                    countered: true,
+                    bait: Some(0),
+                    departure: None,
+                }),
+            });
+        manufactured
+            .engine
+            .event_history
+            .push(CommittedEvent::FishingPoleJournalV39 {
+                journal: Box::new(JournalV39::Completed {
+                    origin,
+                    removal,
+                    change: None,
+                    token: None,
+                }),
+            });
+        for mut branch in [manufactured.clone(), snapshot(&manufactured)] {
+            refuses(&mut branch);
+            assert_eq!(
+                &branch.engine.event_history[..original.len()],
+                original.as_slice()
+            );
+        }
+        engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id).unwrap();
+        lifecycle::validate_state(&state).unwrap();
+        assert_eq!(state.objects.get(pole).counters.bait, 0);
+        let mut erased = snapshot(&state);
+        let input=erased.engine.event_history.iter_mut().find(|e|matches!(e,CommittedEvent::FishingPoleJournalV39 {journal} if matches!(journal.as_ref(),JournalV39::OriginalRemoval {..}))).unwrap();
+        *input = CommittedEvent::Tap { object: host };
+        refuses(&mut erased);
+    }
+}
