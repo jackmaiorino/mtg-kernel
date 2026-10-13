@@ -103,3 +103,6 @@ printed planeswalker-copy spell or Employment-on-planeswalker claim is made.
 All five new groups remain ignored until genuine Full promotion and the actual
 2/2 Cat blueprint, uncompiled and unrun. This is prepared coverage, not observed
 gameplay or mixed-family/native/model/sampler admission.
+
+
+Named source repair after peer review: ordinary V42 origins now select explicit FullAjani prevalidation before the unchanged candidate/origin body. Existing V40/legacy wrappers retain their original Partial-only guard. Cleanup expiry is derived from an independent engine CleanupInput containing the original turn epoch, actual End occurrence, active player and complete original-operation roster; its adjacent Cleanup must match exactly. Original Cleanup inputs remain trusted committed provenance, not whole-journal tamper resistance. Added genuine both-seat V42 priority/target/finalization/restoration and two-grant natural Cleanup cases, with original-history-preserving early-expiry, erased-input, omitted-roster/resurrection and controller rewrite serialized readonly negatives. Source-only, uncompiled/unrun.

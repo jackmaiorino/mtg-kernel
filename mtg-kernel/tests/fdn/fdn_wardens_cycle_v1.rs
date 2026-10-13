@@ -232,10 +232,16 @@ fn each_selected_branch_rechecks_morbid_on_resolution() {
         ));
         engine::step(&mut state, Action::ChooseTriggerMode(mode)).unwrap();
         assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
-        // Synthetic next-turn ledger boundary isolates the intervening-if recheck.
+        // Retain the paid trigger but corrupt its turn: selected historical
+        // catalogs refuse this snapshot before any effect rather than treating
+        // a synthetic round increment as a real Cleanup/Untap transition.
         state.turn += 1;
         assert!(!state.creature_died_this_turn_v1());
-        settle(&mut state);
+        if state.life_loss_turn_v1.is_some() {
+            super::fixture_turn_v1::stale_turn_refuses_readonly(&mut state);
+        } else {
+            settle(&mut state);
+        }
         assert_eq!(state.players[0].life, 20);
         assert!(state.players[0].hand.is_empty());
     }

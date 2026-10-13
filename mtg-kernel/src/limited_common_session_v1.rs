@@ -308,7 +308,10 @@ impl LimitedCommonJsonlServerV1 {
                     (*max_physical_decisions, *max_policy_steps),
                     identities,
                     boards,
-                    (*starting_player).into(),
+                    match starting_player {
+                        PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+                        PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+                    },
                 )
                 .map_err(|_| "unsupported_reset")?;
                 self.active = Some(Active {

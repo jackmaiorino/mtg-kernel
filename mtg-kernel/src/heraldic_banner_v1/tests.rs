@@ -9,7 +9,7 @@ fn registered_absence_retains_original_linked_state_bytes_and_gate_semantics() {
         serde_json::to_value(&state.engine.linked_aura_operation_v1).unwrap(),
         serde_json::json!({"pending": null})
     );
-    for def in CARD_DEFS {
+    for def in CARD_DEFS.iter() {
         if def.as_enters_choose_color_other_than.is_some() {
             assert_eq!(def.as_enters_color_choice_v1, None);
             assert_eq!(def.chosen_color_creature_boost_v1, None);
@@ -85,7 +85,7 @@ mod future_printed {
                     assert_eq!(authenticated_color(branch, banner).unwrap(), color);
                     validate_state(branch).unwrap();
                     assert_eq!(branch.players[actor.index()].mana_pool, [0; 6]);
-                    branch.players[actor.index()].mana_pool[color.pool_index()] = u32::MAX;
+                    branch.players[actor.index()].mana_pool[color.pool_index()] = u16::MAX;
                     assert!(
                         engine::available_mana_ability_choices(actor, banner, branch).is_empty()
                     );

@@ -13,10 +13,19 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 use mtg_kernel::trigger;
 
 fn ready() -> GameState {
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
     let island = card_id_by_name("Island").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[island; 40], &[island; 40], |_| "Island".into(), 123);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[island; 40],
+        &[island; 40],
+        |_| "Island".into(),
+        123,
+        active,
+    );
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     state
 }
 
@@ -187,8 +196,7 @@ fn cast_requires_three_mana_including_white() {
 
 #[test]
 fn flash_allows_cast_during_opponents_turn() {
-    let mut state = ready();
-    state.active_player = PlayerId::P1;
+    let mut state = ready_for(PlayerId::P1);
     let target = put(&mut state, PlayerId::P0, "Elvish Mystic", Zone::Battlefield);
     let armor = attach(&mut state, target);
     assert_eq!(
@@ -347,9 +355,8 @@ fn equip_requires_four_mana_including_white_and_sorcery_timing() {
         (1, 3, Step::Main1, PlayerId::P1, false),
         (1, 3, Step::Main1, PlayerId::P0, true),
     ] {
-        let mut state = ready();
+        let mut state = ready_for(active);
         state.step = step;
-        state.active_player = active;
         let armor = put(
             &mut state,
             PlayerId::P0,

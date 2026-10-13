@@ -12,10 +12,19 @@ use mtg_kernel::surface_v2::{
 };
 
 fn ready(step: Step) -> GameState {
+    ready_for(step, PlayerId::P0)
+}
+fn ready_for(step: Step, active: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[forest; 40], &[forest; 40], |_| "Forest".into(), 123);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[forest; 40],
+        &[forest; 40],
+        |_| "Forest".into(),
+        123,
+        active,
+    );
     state.step = step;
+    state.priority_player = PlayerId::P0;
     state.engine.combat.attackers_declared = true;
     state.engine.combat.blockers_declared = true;
     state
@@ -155,8 +164,7 @@ fn flash_creatures_cast_at_opponents_priority_windows_but_ordinary_creatures_do_
             ("Cathar Commando", [1, 0, 0, 0, 0, 1]),
             ("Spectral Sailor", [0, 1, 0, 0, 0, 0]),
         ] {
-            let mut state = ready(step);
-            state.active_player = PlayerId::P1;
+            let mut state = ready_for(step, PlayerId::P1);
             state.players[0].mana_pool = mana;
             let flash = put(&mut state, PlayerId::P0, name, Zone::Hand);
             let hawk = put(&mut state, PlayerId::P0, "Healer's Hawk", Zone::Hand);
@@ -429,8 +437,7 @@ fn cathar_pending_target_and_sacrificed_source_stack_restore_exactly() {
 
 #[test]
 fn sailor_draw_is_repeatable_untapped_and_survives_source_removal_and_restore() {
-    let mut state = ready(Step::Upkeep);
-    state.active_player = PlayerId::P1;
+    let mut state = ready_for(Step::Upkeep, PlayerId::P1);
     let sailor = put(
         &mut state,
         PlayerId::P0,

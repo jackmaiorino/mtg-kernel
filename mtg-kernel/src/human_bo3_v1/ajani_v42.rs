@@ -999,7 +999,6 @@ mod future {
         panic!("genuine resolution did not return priority");
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn genuine_human_cast_zero_target_paid_upgrade_full_binding_restore_retry_privacy_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut session, source, _) = ready(actor);

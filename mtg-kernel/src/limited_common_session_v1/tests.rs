@@ -473,7 +473,10 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
             .core
             .akroma_fixture_state()
             .clone();
-        let player: crate::ids::PlayerId = actor.into();
+        let player = match actor {
+            crate::rl::PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
+            crate::rl::PlayerSeatV1::P1 => crate::ids::PlayerId::P1,
+        };
         let attacker = put(&mut state, player, "Spinewoods Paladin", Zone::Battlefield);
         let blocker = put(
             &mut state,
@@ -577,7 +580,7 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
                 };
             reply = server.handle_request(step(&reply, &format!("combat{index}"), &label));
             let state = server.active.as_ref().unwrap().core.akroma_fixture_state();
-            if state.event_history.iter().any(|event| matches!(event, crate::event::CommittedEvent::Damage { source, .. } if *source == attacker)) {
+            if state.engine.event_history.iter().any(|event| matches!(event, crate::event::CommittedEvent::Damage { source, .. } if *source == attacker)) {
                 assert!(saw_blocker && restored_range);
                 assert!(state.objects.get(blocker).damage > 0 || state.objects.get(blocker).zone == Zone::Graveyard);
                 finished = true;

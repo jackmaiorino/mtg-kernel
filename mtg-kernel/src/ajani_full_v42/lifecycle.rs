@@ -52,6 +52,17 @@ pub enum JournalV42 {
     },
     Cleanup {
         index: u64,
+        input: u64,
+        boosts: Vec<UntilEndOfTurnEffect>,
+    },
+    // Appended after the prior journal prefix. Independently captured only by
+    // the actual engine Cleanup entry, before the derived expiry receipt.
+    CleanupInput {
+        index: u64,
+        epoch: u64,
+        beginning: u64,
+        turn: u32,
+        active: PlayerId,
         boosts: Vec<UntilEndOfTurnEffect>,
     },
 }
@@ -84,7 +95,8 @@ fn index(j: &JournalV42) -> u64 {
         | JournalV42::RemovalInput { index, .. }
         | JournalV42::Operation { index, .. }
         | JournalV42::Closed { index, .. }
-        | JournalV42::Cleanup { index, .. } => *index,
+        | JournalV42::Cleanup { index, .. }
+        | JournalV42::CleanupInput { index, .. } => *index,
     }
 }
 fn append(state: &mut GameState, j: JournalV42) {
@@ -523,27 +535,59 @@ pub(crate) fn complete(
     );
     validate_state(state)
 }
-pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
-    validate_state(state)?;
-    let boosts = rows(state)
-        .filter_map(|(_, j)| match j {
-            JournalV42::Operation { boost: Some(b), .. }
-                if state.engine.until_end_of_turn.contains(b) =>
+fn eligible_boosts_before(state: &GameState, boundary: u64) -> Vec<UntilEndOfTurnEffect> {
+    rows(state)
+        .filter_map(|(i, j)| match j {
+            JournalV42::Operation {
+                boost: Some(boost), ..
+            } if i < boundary
+                && !rows(state).any(|(expiry, j)| {
+                    expiry < boundary
+                        && matches!(j, JournalV42::Cleanup { boosts, .. } if boosts.contains(boost))
+                }) =>
             {
-                Some(b.clone())
+                Some(boost.clone())
             }
             _ => None,
         })
-        .collect::<Vec<_>>();
-    if !boosts.is_empty() {
-        append(
-            state,
-            JournalV42::Cleanup {
-                index: state.engine.event_history.len() as u64,
-                boosts,
-            },
-        );
+        .collect()
+}
+pub(crate) fn cleanup(state: &mut GameState) -> Result<(), String> {
+    validate_state(state)?;
+    let input = state.engine.event_history.len() as u64;
+    let boosts = eligible_boosts_before(state, input);
+    if boosts.is_empty() {
+        return Ok(());
     }
+    if state.step != crate::state::Step::Cleanup {
+        return Err("Ajani expiry is not an actual Cleanup entry".into());
+    }
+    let epoch = epoch(state)?;
+    let beginning = state.engine.event_history.iter().enumerate().rev().find_map(|(i, event)|
+        matches!(event, CommittedEvent::BeginningEndStep { active_player, .. } if *active_player == state.active_player)
+            .then_some(i as u64)).ok_or("Ajani Cleanup lost its actual End occurrence")?;
+    if beginning <= epoch {
+        return Err("Ajani Cleanup belongs to another actual turn".into());
+    }
+    append(
+        state,
+        JournalV42::CleanupInput {
+            index: input,
+            epoch,
+            beginning,
+            turn: state.turn_key_v1(),
+            active: state.active_player,
+            boosts: boosts.clone(),
+        },
+    );
+    append(
+        state,
+        JournalV42::Cleanup {
+            index: state.engine.event_history.len() as u64,
+            input,
+            boosts,
+        },
+    );
     Ok(())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
@@ -748,17 +792,39 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("Ajani completion forged".into());
                 }
             }
-            JournalV42::Cleanup { boosts, .. } => {
-                if boosts.is_empty()
-                    || boosts.iter().enumerate().any(|(n, b)| {
-                        boosts[..n].contains(b)
-                            || !rows(state).any(|(at, j)| {
-                                at < i
-                                    && matches!(j,JournalV42::Operation{boost:Some(x),..} if x==b)
-                            })
-                    })
+            JournalV42::Cleanup { input, boosts, .. } => {
+                if input.checked_add(1) != Some(i)
+                    || !matches!(at(state, *input)?, JournalV42::CleanupInput { boosts: original, .. } if original == boosts)
                 {
-                    return Err("Ajani cleanup roster changed".into());
+                    return Err("Ajani expiry lost its actual Cleanup input".into());
+                }
+            }
+            JournalV42::CleanupInput {
+                epoch,
+                beginning,
+                turn,
+                active,
+                boosts,
+                ..
+            } => {
+                let prior_epoch = rows(state)
+                    .rev()
+                    .find(|(at, j)| *at < i && matches!(j, JournalV42::Turn { .. }))
+                    .map(|(at, _)| at);
+                if prior_epoch != Some(*epoch)
+                    || !matches!(at(state, *epoch)?, JournalV42::Turn { turn: t, active: p, .. } if t == turn && p == active)
+                    || *beginning <= *epoch
+                    || *beginning >= i
+                    || !matches!(state.engine.event_history.get(*beginning as usize), Some(CommittedEvent::BeginningEndStep { active_player, .. }) if active_player == active)
+                    || boosts.is_empty()
+                    || *boosts != eligible_boosts_before(state, i)
+                    || boosts
+                        .iter()
+                        .enumerate()
+                        .any(|(n, boost)| boosts[..n].contains(boost))
+                    || !matches!(at(state, i.checked_add(1).ok_or("Ajani Cleanup overflow")?)?, JournalV42::Cleanup { input, boosts: expired, .. } if *input == i && expired == boosts)
+                {
+                    return Err("Ajani actual Cleanup turn or complete roster changed".into());
                 }
             }
         }

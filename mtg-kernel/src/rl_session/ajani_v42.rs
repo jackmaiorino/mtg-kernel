@@ -173,7 +173,12 @@ pub(super) fn normalized_origin(
     if !validate_additional_origin(session, &original)?
         && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
     {
-        flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
+        flat_validate_origin_decision_common_scoped_v42(
+            &original,
+            &session.state,
+            true,
+            crate::rl::CommonProjectionScopeV42::FullAjaniV42,
+        )?;
     }
     let common =
         crate::rl::policy_observation_extensions_fishing_union_v40(&session.state, current.actor)

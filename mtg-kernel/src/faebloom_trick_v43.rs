@@ -17,7 +17,13 @@ pub(crate) fn selected_definition(id: u16) -> bool {
         not(feature = "standard-magezero-fixtures")
     )) && CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         d.name == "Faebloom Trick"
+            && d.capability == crate::card_def::CardCapability::Full
             && d.is_executable()
+            && d.object_name == d.name
+            && d.mana_value == 3
+            && d.keywords == crate::card_def::Keywords::NONE
+            && d.activated_abilities.is_empty()
+            && crate::trigger::triggers_for(id).is_empty()
             && d.types == [CardType::Instant]
             && !d.is_token
             && !d.is_land
@@ -32,26 +38,112 @@ pub(crate) fn selected_definition(id: u16) -> bool {
             && d.ward_cost.is_none()
             && d.alt_cost.is_none()
             && d.mode2.is_none()
+            && d.mode3.is_none()
+            && d.additional_modes.is_empty()
+            && d.flashback.is_none()
+            && d.kicker_cost.is_none()
+            && d.additional_cost.is_none()
+            && d.optional_additional_cost.is_none()
+            && d.equipment.is_none()
+            && d.attachment.is_none()
+            && d.produces_mana.is_empty()
+            && d.mana_ability_choices.is_empty()
+            && (d.mana_ability)().is_none()
+            && d.starting_loyalty.is_none()
+            && d.enters_with_plus_one_counters.is_none()
+            && d.controlled_creature_grant.is_none()
+            && d.controlled_counter_keyword.is_none()
+            && d.game_outcome_protection_v1.is_none()
+            && d.generic_cost_reduction.is_none()
+            && !d.spell_cannot_be_countered
+            && !d.records_mana_spent
             && (d.spell_effect)() == Some(recipe())
             && d.target_spec == TargetSpec::None
     })
 }
-fn token_definition() -> Result<u16, String> {
+pub(crate) fn token_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Faerie Token")
         .ok_or("Faebloom needs its actual Faerie token")?;
     let d = &CARD_DEFS[usize::from(id)];
-    if !d.is_executable()
+    if d.capability != crate::card_def::CardCapability::Full
+        || !d.is_executable()
         || !d.is_token
-        || !d.has_type(CardType::Creature)
+        || d.is_land
+        || d.name != "Faerie Token"
+        || d.object_name != "Faerie Token"
+        || d.types != [CardType::Creature]
+        || d.subtypes != [crate::card_def::Subtype::Faerie]
+        || !d.supertypes.is_empty()
+        || d.colors != [crate::mana::ManaColor::U]
         || d.power != Some(1)
         || d.toughness != Some(1)
-        || crate::card_def::mana_colors_mask(d.colors) != 2
-        || !d.keywords.contains(crate::card_def::Keywords::FLYING)
+        || !d.keywords.has(crate::card_def::Keywords::FLYING)
+        || d.keywords != crate::card_def::Keywords::FLYING
+        || d.cost.generic != 0
+        || d.cost.x_count != 0
+        || !d.cost.pips.is_empty()
+        || d.mana_value != 0
+        || d.target_spec != TargetSpec::None
+        || (d.spell_effect)().is_some()
+        || !d.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || d.mana_ability_def.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || !d.additional_mana_ability_conditions.is_empty()
+        || d.mana_ability_includes_chosen_color
+        || d.conditional_tap_yield.is_some()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.starting_loyalty.is_some()
+        || d.ward_cost.is_some()
+        || d.generic_cost_reduction.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.equipment.is_some()
+        || d.attachment.is_some()
+        || d.transform_face.is_some()
+        || d.animation.is_some()
+        || d.saga.is_some()
+        || d.changeling
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
+        || d.game_outcome_protection_v1.is_some()
+        || d.damage_replacement_v1.is_some()
+        || d.as_enters_color_choice_v1.is_some()
+        || d.chosen_color_creature_boost_v1.is_some()
+        || d.alt_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.kicked_target_spec.is_some()
+        || d.flashback.is_some()
+        || d.escape.is_some()
+        || d.plot_cost.is_some()
+        || d.madness_cost.is_some()
+        || d.bestow.is_some()
+        || d.delve
+        || d.omen.is_some()
+        || d.adventure.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.enters_battlefield_tapped
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || d.as_enters_choose_color_other_than.is_some()
+        || d.minimum_blockers > 1
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
     {
         return Err("Faebloom Faerie blueprint changed".into());
     }
     Ok(id)
 }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RemovalV43 {
     Resolving { target_legal: bool },

@@ -693,7 +693,7 @@
     },
     {
       "name": "Ajani, Caller of the Pride",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}{W}",
       "mana_value": 3,
       "colors": [
@@ -713,12 +713,18 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "FDN_reference_planeswalker.dck"
+        "FDN_reference_planeswalker.dck",
+        "FDN_reference_ajani_full.dck"
       ],
       "sideboard_only": false,
       "complexity": "moderate",
       "mechanics": [
-        "loyalty_reference_only"
+        "loyalty",
+        "up_to_one_creature",
+        "plus_one_counter",
+        "flying",
+        "double_strike",
+        "controller_life_tokens"
       ],
       "java_file": "Mage.Sets/src/mage/cards/a/AjaniCallerOfThePride.java",
       "starting_loyalty": 4
@@ -7279,6 +7285,33 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/t/TwinflameTyrant.java",
       "is_token": false
+    },
+    {
+      "name": "Ajani Cat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/CatToken.java",
+      "is_token": true,
+      "object_name": "Cat Token"
     }
   ]
 }

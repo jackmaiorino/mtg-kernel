@@ -6,7 +6,7 @@ use crate::rl::{
     CardPrivateV1, CardStableRefV1, KnownLibraryCardV4, PlayerSeatV1,
     PublicObservationProjectionV5, RlContractError,
 };
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, Target};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub const SCHEMA: &str = "mtg-kernel/twinflame-observation/v1";
@@ -665,6 +665,7 @@ pub fn validate_observation_v1(
 pub(crate) mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::state::Zone;
     #[test]
     fn real_predecessor_parts_and_complete_public_identity_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -819,7 +820,6 @@ pub(crate) mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-
     fn genuine_scalar_public_player_permanent_bound_options_and_old_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for player_target in [false, true] {

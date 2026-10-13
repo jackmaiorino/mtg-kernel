@@ -21,10 +21,19 @@ use mtg_kernel::surface_v2::{
 const PW: &str = "Ajani, Caller of the Pride";
 
 fn ready() -> GameState {
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[forest; 40], &[forest; 40], |_| "Forest".into(), 123);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[forest; 40],
+        &[forest; 40],
+        |_| "Forest".into(),
+        123,
+        active,
+    );
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     enable_foundations_combat_v1(&mut state).unwrap();
     state.engine.combat.attackers_declared = true;
     state.engine.combat.blockers_declared = true;
@@ -264,24 +273,28 @@ fn felling_blow_uses_sorcery_timing_and_the_four_spells_pay_exact_costs() {
         ("Fleeting Flight", [1, 0, 0, 0, 0, 0], true),
         ("Joust Through", [1, 0, 0, 0, 0, 0], true),
     ] {
-        let mut state = ready();
-        let own = put(
-            &mut state,
-            PlayerId::P0,
-            "Llanowar Elves",
-            Zone::Battlefield,
-        );
-        let other = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
-        state.engine.combat.attackers.push(other);
-        let spell = put(&mut state, PlayerId::P0, name, Zone::Hand);
-        state.players[0].mana_pool = mana;
-        state.active_player = PlayerId::P1;
+        let prepare = |active| {
+            let mut state = ready_for(active);
+            let own = put(
+                &mut state,
+                PlayerId::P0,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let other = put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
+            state.engine.combat.attackers.push(other);
+            let spell = put(&mut state, PlayerId::P0, name, Zone::Hand);
+            state.players[0].mana_pool = mana;
+            (state, own, other, spell)
+        };
+        let (mut timing, _, _, timing_spell) = prepare(PlayerId::P1);
         let mut surface = surface();
         assert!(
-            matches!(priority(&mut surface, &mut state), Decision::CastSpellOrPass { castable_spells, .. }
-            if castable_spells.contains(&spell) == instant)
+            matches!(priority(&mut surface, &mut timing), Decision::CastSpellOrPass { castable_spells, .. }
+            if castable_spells.contains(&timing_spell) == instant)
         );
-        state.active_player = PlayerId::P0;
+        let (mut state, own, other, spell) = prepare(PlayerId::P0);
+        let mut surface = surface();
         apply(&mut surface, &mut state, Action::CastSpell(spell));
         let targets = if name == "Bite Down" || name == "Felling Blow" {
             vec![own, other]

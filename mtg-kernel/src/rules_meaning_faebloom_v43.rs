@@ -1,6 +1,5 @@
 //! Exact definition-owned creation plus reflexive targeting, outside frozen meanings.
-use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
-use crate::mana::ManaColor;
+use crate::card_def::{Keywords, TargetSpec, CARD_DEFS};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub const SCHEMA: &str = "mtg-kernel/rules-meaning/faebloom/v43";
@@ -122,25 +121,8 @@ pub fn meaning(selector: &SelectorV43, card_id: u16, root: RootV43) -> Result<Me
     {
         return Err("Faebloom printing/root/metadata differs".into());
     }
-    let token_id =
-        crate::card_def::card_id_by_name("Faerie Token").ok_or("missing actual Faerie token")?;
+    let token_id = crate::faebloom_trick_v43::token_definition()?;
     let token = &CARD_DEFS[usize::from(token_id)];
-    if !token.is_executable()
-        || !token.is_token
-        || token.types != [CardType::Creature]
-        || token.subtypes != [Subtype::Faerie]
-        || token.colors != [ManaColor::U]
-        || token.power != Some(1)
-        || token.toughness != Some(1)
-        || token.keywords != Keywords::FLYING
-        || !token.activated_abilities.is_empty()
-        || !crate::trigger::triggers_for(token_id).is_empty()
-        || token.ward_cost.is_some()
-        || token.is_land
-        || !token.supertypes.is_empty()
-    {
-        return Err("Faebloom actual token blueprint differs".into());
-    }
     let root_sha256 = hash(
         &serde_json::to_vec(&(
             card_id,

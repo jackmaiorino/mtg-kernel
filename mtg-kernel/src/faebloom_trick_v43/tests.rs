@@ -45,6 +45,26 @@ fn detached_creation_root_cannot_fabricate_tokens_or_reflexive_occurrence() {
     }
 }
 
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn registered_faerie_blueprint_is_exact_full_token_with_only_flying_and_no_printed_root() {
+    let id = token_definition().unwrap();
+    let definition = &CARD_DEFS[usize::from(id)];
+    assert_eq!(definition.capability, crate::card_def::CardCapability::Full);
+    assert_eq!(definition.types, [CardType::Creature]);
+    assert_eq!(definition.subtypes, [crate::card_def::Subtype::Faerie]);
+    assert_eq!(definition.colors, [crate::mana::ManaColor::U]);
+    assert_eq!((definition.power, definition.toughness), (Some(1), Some(1)));
+    assert_eq!(definition.keywords, crate::card_def::Keywords::FLYING);
+    assert!(definition.keywords.has(crate::card_def::Keywords::FLYING));
+    assert!((definition.spell_effect)().is_none());
+    assert!(crate::trigger::triggers_for(id).is_empty());
+    assert!(definition.activated_abilities.is_empty());
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
