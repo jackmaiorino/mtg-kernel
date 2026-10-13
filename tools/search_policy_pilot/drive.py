@@ -103,7 +103,14 @@ def run_and_wait(action: str, path: Path, timeout: float) -> dict:
         done = subprocess.run([sys.executable, "-B", DISPATCH, action, str(Path(path).resolve())],
                               capture_output=True, text=True)
         if done.returncode == 0:
-            return wait_root(Path(req["root"]), timeout)
+            # The launcher writes started.json when the native child starts; a refusal inside the
+            # reserved launch (for example a reused output root) leaves no file at all.
+            root, started = Path(req["root"]), time.monotonic()
+            while not (root / "started.json").exists() and not (root / "report.json").exists():
+                if time.monotonic() - started > 1200:
+                    raise RuntimeError(f"{action} {path}: the reserved launch never started its native child")
+                time.sleep(10)
+            return wait_root(root, timeout)
         if "busy refusal" not in done.stderr:
             break
         time.sleep(30)
