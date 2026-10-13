@@ -164,7 +164,16 @@ fn zero_and_one_card_libraries_keep_real_mandatory_return_finish_and_owning_rest
                 assert_eq!((choice.minimum, choice.maximum), (bound, bound));
                 assert_eq!(choice.can_finish, chosen.is_none());
                 assert_eq!(choice.legal.len(), usize::from(bound));
-                assert!(choice.instant_or_sorcery_only && choice.choice_is_not_a_target);
+                let meaning = public
+                    .meanings
+                    .iter()
+                    .find(|meaning| meaning.cast_root == choice.cast_root)
+                    .unwrap();
+                assert_eq!(
+                    meaning.rule.selection_rule.filter,
+                    crate::effect::ObjectSelectionFilterV1::InstantOrSorcery
+                );
+                assert!(meaning.rule.resolving_choice_is_not_a_target);
                 if let Some(id) = chosen {
                     assert_eq!(choice.legal[0].arena_id, id.0);
                 }

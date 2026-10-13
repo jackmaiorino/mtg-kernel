@@ -160,7 +160,7 @@ fn genuine_complete_token_batch_keeps_garruk_post_anthem_power_and_whole_roster_
         let captures = state.engine.event_history[start..]
             .iter()
             .filter_map(|e| match e {
-                CommittedEvent::GarrukDrawCaptureV1 { capture } => Some(capture.as_ref()),
+                CommittedEvent::GarrukDrawCaptureV1 { capture } => Some(capture),
                 _ => None,
             })
             .collect::<Vec<_>>();

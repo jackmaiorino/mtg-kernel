@@ -389,7 +389,6 @@ pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i32, 
 
 impl std::hash::Hash for ChoiceV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         serde_json::to_vec(self)
             .expect("actual Banner entry capture serializes")
             .hash(state);
