@@ -4154,22 +4154,33 @@ fn real_gorehorn_crystal_captured_raid_recheck_and_completion_forgeries_refuse_r
     }
 }
 #[test]
-fn real_gorehorn_false_intervening_raid_completes_crystal_without_preparing_damage() {
+fn incoherent_gorehorn_turn_jump_preserves_original_journals_and_refuses_readonly() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, gorehorn, recipient, _) = raid_crystal_publication(actor, false);
-        // Typed stale-turn restore primitive; this is not a normal turn traversal.
+        // A raw turn jump leaves the selected life-loss turn anchor and old
+        // temporary control owner behind. Refuse this corrupted environment.
+        // The coherent phase-entry false-Raid primitive lives in engine tests,
+        // where real Cleanup/Untap entry routines can be called privately.
         state.turn += 1;
         state.active_player = actor.opponent();
         state.priority_player = actor.opponent();
         let mut replay = restore(&state);
         for current in [&mut state, &mut replay] {
-            finish(current);
+            let before = serde_json::to_vec(current).unwrap();
+            assert!(engine::step(current, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(current).unwrap(), before);
+            assert!(matches!(
+                engine::advance_until_decision(current),
+                Decision::Halted { .. }
+            ));
+            current.engine.halted = None;
+            assert_eq!(serde_json::to_vec(current).unwrap(), before);
             assert_eq!(current.objects.get(recipient).damage, 0);
             assert!(!current.engine.event_history.iter().any(|e| matches!(
                 e,
                 mtg_kernel::event::CommittedEvent::GorehornPreparedV1 { .. }
             )));
-            assert!(current.engine.event_history.iter().any(|e|matches!(e,
+            assert!(!current.engine.event_history.iter().any(|e|matches!(e,
                 mtg_kernel::event::CommittedEvent::GorehornCrystalCompletionV1 { completion } if completion.item.source==gorehorn)));
         }
         assert_eq!(
