@@ -269,6 +269,8 @@ pub(super) fn line_b_cuda_result_v1(
                 auxiliary_head_l2: term.auxiliary_head_l2,
                 ordinary_head_l2,
                 auxiliary_bias_residual: term.raw_gauge_residual,
+                // The device term reports head norms only; CPU-only components.
+                gradient_components: serde_json::Value::Null,
             },
             envelope: term.envelope,
         },
@@ -279,6 +281,7 @@ pub(super) fn line_b_cuda_result_v1(
                 auxiliary_head_l2: 0.0,
                 ordinary_head_l2,
                 auxiliary_bias_residual: 0.0,
+                gradient_components: serde_json::Value::Null,
             },
             envelope: Vec::new(),
         },
