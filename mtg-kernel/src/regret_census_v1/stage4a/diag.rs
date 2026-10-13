@@ -133,6 +133,8 @@ impl MillObs {
 /// One root's trace; `lines` become the JSONL sidecar.
 #[derive(Default)]
 pub(crate) struct Trace {
+    #[cfg(feature = "viewer-recording-v1")]
+    pub(crate) viewer: Option<super::viewer_uct::SearchCapture>,
     pub(crate) lines: Vec<String>,
     ids: HashMap<Key, u32>,
     meta: HashMap<Key, NodeMeta>,
@@ -204,11 +206,19 @@ impl Trace {
     }
 
     pub(crate) fn sim_rejected(&mut self, index: u64) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.rejected(index);
+        }
         self.lines
             .push(json!({"r":"sel","i":index,"end":"rejected"}).to_string());
     }
 
     pub(crate) fn sim_begin(&mut self, index: u64, t0: u64) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.begin(index);
+        }
         if let Some(m) = self.millobs.as_mut() {
             m.awaiting = None;
         }
@@ -236,6 +246,10 @@ impl Trace {
         let parent = parent.map(|(k, e)| (self.id(k), *e));
         if self.meta.contains_key(key) {
             return;
+        }
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.node(key, id, parent, cn, s);
         }
         let live = menu_bits(s, focal, defs);
         let mut labels = vec![0u8; cn.edges.len()];
@@ -278,6 +292,10 @@ impl Trace {
         focal: PlayerId,
         defs: &SpyDefs,
     ) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.choice(s, d, a, at, src);
+        }
         let menu = menu_bits(s, focal, defs);
         let off = menu.iter().fold(0u8, |x, y| x | y);
         let ch = menu.get(a as usize).copied().unwrap_or(0);
@@ -368,6 +386,10 @@ impl Trace {
     }
 
     pub(crate) fn sim_end(&mut self, end: &str, t1: u64, new: Option<&Key>) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.end(end);
+        }
         let new = new.map(|k| self.id(k));
         let mut m = std::mem::take(&mut self.cur);
         m.insert("end".into(), json!(end));
@@ -378,6 +400,10 @@ impl Trace {
 
     /// The final selection tree: one dictionary line per node.
     pub(crate) fn finish_tree(&mut self, tree: &Tree) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(v) = self.viewer.as_mut() {
+            v.finish(tree);
+        }
         let mut rows: Vec<(u32, String)> = Vec::new();
         for (k, n) in &tree.nodes {
             let Some(m) = self.meta.get(k) else {

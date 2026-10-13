@@ -497,6 +497,13 @@ pub(crate) mod future_printed {
                 crate::event::ProposedEvent::life_loss(actor, 1),
             );
             assert_eq!(state.players[actor.index()].life, life_before_loss - 1);
+            assert!(crate::life_loss_turn_v1::flags(&state).unwrap()[actor.index()]);
+            assert_ne!(state.turn_key_v1(), state.turn);
+            let mut wrong_round = restore(&state);
+            wrong_round.life_loss_turn_v1.as_mut().unwrap().turn = wrong_round.turn;
+            let before = serde_json::to_vec(&wrong_round).unwrap();
+            assert!(engine::step(&mut wrong_round, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&wrong_round).unwrap(), before);
             let gain = CommittedEvent::LifeGain {
                 player: actor.opponent(),
                 amount: 1,
@@ -520,6 +527,7 @@ pub(crate) mod future_printed {
             assert!(state.turn_key_v1() > key);
             assert_eq!(state.own_turn_count_v1(actor), 3);
             assert_eq!(state.players[actor.index()].life, life_before_loss - 1);
+            assert_eq!(crate::life_loss_turn_v1::flags(&state).unwrap(), [false; 2]);
             let history = state.life_gain_turn_v1.as_ref().unwrap();
             assert_eq!(history.turn, state.turn_key_v1());
             assert_eq!(history.active_player, actor);
@@ -550,6 +558,68 @@ pub(crate) mod future_printed {
             assert_eq!(state.active_player, actor.opponent());
             assert_eq!(state.turn, 1);
             assert_eq!(state.own_turn_count_v1(actor.opponent()), 1);
+        }
+    }
+
+    #[test]
+    fn genuine_stromkirk_extra_turn_occurrence_resolves_once_and_next_extra_clears_loss_both_seats()
+    {
+        fn finish_turn(state: &mut GameState, actor: PlayerId, source: ObjectId) -> usize {
+            let turn = state.turn_key_v1();
+            let mut choices = 0;
+            for _ in 0..100 {
+                let decision = next(state);
+                if state.turn_key_v1() != turn {
+                    return choices;
+                }
+                if let Decision::ChooseTargets {
+                    player,
+                    legal_targets,
+                    ..
+                } = decision
+                {
+                    assert_eq!(player, actor);
+                    assert!(legal_targets.contains(&Target::Object(source)));
+                    engine::step(state, Action::ChooseTarget(Target::Object(source))).unwrap();
+                    choices += 1;
+                } else {
+                    pass(state, decision);
+                }
+            }
+            panic!("actual end step did not finish");
+        }
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            // Named physical battlefield setup. Actual printed Temporal casts,
+            // committed loss and end-step traversal produce all trigger rows.
+            let source = put(&mut state, actor, "Stromkirk Bloodthief", Zone::Battlefield);
+            put(&mut state, actor, "Vampire Nighthawk", Zone::Battlefield);
+            cast(&mut state, actor);
+            resolve(&mut state);
+            next_turn(&mut state);
+            main(&mut state);
+            assert_ne!(state.turn_key_v1(), state.turn);
+            cast(&mut state, actor);
+            resolve(&mut state);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::life_loss(actor.opponent(), 1),
+            );
+            assert!(state.player_lost_life_this_turn_v1(actor.opponent()));
+            let mut replay = restore(&state);
+            for branch in [&mut state, &mut replay] {
+                assert_eq!(finish_turn(branch, actor, source), 1);
+                assert_eq!(branch.objects.get(source).counters.plus1_plus1, 1);
+                assert_eq!(branch.active_player, actor);
+                assert_eq!(branch.turn, 1);
+                assert_eq!(crate::life_loss_turn_v1::flags(branch).unwrap(), [false; 2]);
+                assert!(!branch.player_lost_life_this_turn_v1(actor.opponent()));
+                main(branch);
+                assert_eq!(finish_turn(branch, actor, source), 0);
+                assert_eq!(branch.objects.get(source).counters.plus1_plus1, 1);
+                assert_eq!(branch.active_player, actor.opponent());
+            }
+            assert_eq!(state.state_hash(), replay.state_hash());
         }
     }
 
