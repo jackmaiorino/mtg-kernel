@@ -177,6 +177,11 @@ def block_stats(cases: dict, bound: str) -> dict:
             b[3] += bool(lab.get("combo_resolved"))
             b[4] += bool(labels.get("self_chosen"))
             b[5] += bool(labels.get("dr_giant_chosen"))
+        elif o == SPY and bound == "best":
+            # A technical nonterminal leaves every event unknown, including
+            # a completed sequence and win. Keep the scheduled denominator.
+            for i in range(2, 6):
+                b[i] += 1
     return out
 
 
@@ -292,8 +297,8 @@ def disposition(point: dict, ci: dict, ret: dict, exposure_summary: dict | None,
     final_j = sum(panels[(f"{l}-{a}-final", r)]["J"] for l in LINEAGES for a in ("U", "M") for r in REFS
                   if (f"{l}-{a}-final", r) in panels)
     if fresh_full and final_j == 0:
-        notes.append("Fresh practice completed the sequence but ordinary-start U/M endpoints never did (J = 0): "
-                     "local rehearsal without demonstrated transfer.")
+        notes.append("Fresh practice completed the sequence but no completed sequence-plus-win was observed "
+                     "in ordinary-start U/M evaluation: no demonstrated transfer; missing cases remain unknown.")
     agg = point.get("aggregate/final/M-U")
     agg_ci = ci.get("aggregate/final/M-U", {}).get("nine")
     parts = [point.get(f"{l}/{r}/final/M-U", {}).get("nine") for l in LINEAGES for r in REFS]
