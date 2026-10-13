@@ -25,7 +25,7 @@ fn absent_reflexive_history_preserves_state_wire_and_hash_both_seats() {
 fn detached_creation_root_cannot_fabricate_tokens_or_reflexive_occurrence() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
-        let source = state.players[actor.index()].hand[0];
+        let source = state.players[actor.index()].library[0];
         crate::effect::execute(
             &recipe(),
             &crate::effect::ExecCtx::no_targets(source, actor),
@@ -142,7 +142,6 @@ mod future_printed {
         assert_eq!(serde_json::to_vec(&restored).unwrap(), wire);
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_targetless_cast_creates_two_then_separate_targeted_reflexive_with_restore_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -201,7 +200,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_paid_spell_and_reflexive_counter_leave_distinct_creation_results_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -242,7 +240,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_no_opponent_or_shroud_hexproof_recipient_drops_only_reflexive_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for keyword in [None, Some(Keywords::SHROUD), Some(Keywords::HEXPROOF)] {
@@ -288,7 +285,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_waiting_and_published_erasure_or_fabricated_closure_preserves_journals_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -327,7 +323,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_short_payment_and_target_departure_reentry_fizzle_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -374,7 +369,6 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_paid_spell_and_accepted_copy_have_distinct_creation_and_reflexive_controllers() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -482,7 +476,6 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn actual_printed_an_offer_counter_before_creation_preserves_library_and_creates_real_treasures_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -537,7 +530,6 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn reflexive_blue_protection_control_and_historical_hidden_target_recheck_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for mode in 0..3 {

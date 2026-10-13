@@ -7312,6 +7312,35 @@
       "java_file": "Mage/src/main/java/mage/game/permanent/token/CatToken.java",
       "is_token": true,
       "object_name": "Cat Token"
+    },
+    {
+      "name": "Faebloom Trick",
+      "engine_capability": "full",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_faebloom_trick.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "create_two_faerie_tokens",
+        "reflexive_opponents_creature_tap"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FaebloomTrick.java",
+      "is_token": false
     }
   ]
 }

@@ -49,9 +49,9 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_full_ajani_candidate_preserves_prior_prefix_and_distinct_token_dependency(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(self.registry), 438)
-        self.assertEqual(len(records), 246)
-        original = json.loads(json.dumps(records[:-1]))
+        self.assertEqual(len(self.registry), 439)
+        self.assertEqual(len(records), 247)
+        original = json.loads(json.dumps(records[:245]))
         ajani = original[215 - 192]
         self.assertEqual(ajani["name"], "Ajani, Caller of the Pride")
         self.assertEqual(ajani["engine_capability"], "full")
@@ -63,7 +63,7 @@ class LimitedDeckTest(unittest.TestCase):
         encoded = json.dumps(original, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(encoded).hexdigest(),
                          "729b7c85a9faf915f73681db3e1b6917ce7b92397feaf310a52943d454165ad8")
-        token = records[-1]
+        token = records[245]
         self.assertEqual(self.registry[token["name"]].card_id, 437)
         self.assertEqual(token["name"], "Ajani Cat Token")
         self.assertEqual(token["object_name"], "Cat Token")
@@ -95,6 +95,40 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(ids.count(self.registry[name].card_id), 4)
         self.assertEqual(ids.count(self.registry["Plains"].card_id), 20)
         self.assertNotIn(437, ids)
+
+    def test_faebloom_candidate_appends_exact_printing_and_reuses_existing_faerie(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual(len(records), 247)
+        self.assertEqual(len(self.registry), 439)
+        prefix = json.dumps(records[:246], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "8bbb2bb37734dc2d149d852385ce91fd4fcf5ed2234881662610fe242bf73d6c")
+        card = records[246]
+        self.assertEqual(card["name"], "Faebloom Trick")
+        self.assertEqual(self.registry[card["name"]].card_id, 438)
+        self.assertEqual(card["engine_capability"], "full")
+        self.assertEqual((card["mana_cost"], card["mana_value"], card["colors"], card["types"]),
+                         ("{2}{U}", 3, ["U"], ["Instant"]))
+        token = next(row for row in records if row["name"] == "Faerie Token")
+        self.assertEqual((token["power"], token["toughness"], token["colors"], token["subtypes"]),
+                         (1, 1, ["U"], ["Faerie"]))
+        self.assertIn("flying", token["mechanics"])
+        self.assertTrue(token["is_token"])
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        self.assertEqual((len(frozen["card_names"]), len(frozen["token_dependencies"])), (286, 24))
+        self.assertIn(card["name"], frozen["card_names"])
+        self.assertEqual([edge["name"] for edge in frozen["token_dependencies"]
+                          if card["name"] in edge["required_by"]], ["Faerie"])
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_faebloom_trick.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [438] * 4)
+        self.assertEqual(ids.count(self.registry["Island"].card_id), 20)
+        for name in ["Spectral Sailor", "Mocking Sprite", "Fleeting Distraction", "Inspiration from Beyond"]:
+            self.assertEqual(ids.count(self.registry[name].card_id), 4)
+        self.assertNotIn(self.registry["Faerie Token"].card_id, ids)
+        self.assertEqual(self.registry["Ajani Cat Token"].card_id, 437)
 
     def test_reference_keyword_creatures_resolve_all_forty_copies(self) -> None:
         deck = limited.parse_dck((FIXTURES / "FDN_reference_keyword_creatures.dck").read_text())
@@ -545,7 +579,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 232)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 233)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 
