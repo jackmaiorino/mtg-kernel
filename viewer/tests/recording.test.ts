@@ -8,6 +8,7 @@ import uctFixture from './fixtures/uct-search.json';
 import pooledUct from './fixtures/uct-pooled.json';
 import lifecycle from './fixtures/uct-lifecycle.json';
 import { actualTreePath, uctEvents, uctGraphAt } from '../src/uct-playback';
+import { attemptSummaries, comboProgress, shortLabel } from '../src/uct-console';
 import rootChoicesFixture from './fixtures/root-choices.json';
 import { graphAt, graphLayout, rootChoicesAt, rootChoiceStatus } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
@@ -53,6 +54,17 @@ describe('full UCT discovery traces',()=>{
     const natural=uctGraphAt(u,{simulation:0,phase:'backup',choice:1});expect(natural.nodes.get(1)?.visits).toBe(1);
     const final=uctGraphAt(u,{simulation:2,phase:'backup',choice:1});expect(final.completed).toBe(2);expect(final.nodes.get(0)?.sum).toBe(1000000n);expect(final.nodes.get(2)?.visits).toBe(0);
     expect(uctGraphAt(u,{simulation:0,phase:'select',choice:0}).nodes.size).toBe(1);
+  });
+  it('summarizes attempts on the event timeline and reveals combo stages in order',()=>{
+    const u=parseRecording(uctFixture).frames[0].search!.uctReplay!,events=uctEvents(u),attempts=attemptSummaries(u,events);
+    expect(attempts.map(a=>[a.start,a.events,a.win,a.combo,a.wins])).toEqual([[0,12,true,true,1],[12,3,false,false,1],[15,4,false,false,1]]);
+    expect(attempts.reduce((n,a)=>n+a.events,0)).toBe(events.length);
+    expect(events.filter(e=>e.simulation===0).map(e=>comboProgress(u,e,0))).toEqual([0,0,1,1,1,2,2,3,3,4,4,4]);
+    expect(comboProgress(u,{simulation:0,phase:'select',choice:1},0)).toBe(1);
+    expect(comboProgress(u,{simulation:0,phase:'backup',choice:1},1)).toBe(0);
+    expect(shortLabel('Tap Saruli Caretaker [c4] and Balustrade Spy [c6]: add 1 {B}')).toBe('Tap for {B}: Saruli Caretaker and Balustrade Spy');
+    expect(shortLabel('Sacrifice Tinder Wall [c6]: add 2 {R}')).toBe('Sacrifice for {R}{R}: Tinder Wall');
+    expect(shortLabel('Begin casting Balustrade Spy [c45]')).toBe('Cast Balustrade Spy');
   });
   it('rejects invented source, combo, move attribution, labels and early backups',()=>{
     const mutate=[(r:typeof uctFixture)=>{r.frames[0].decisionSource.artifactSha256='b'.repeat(64);},
