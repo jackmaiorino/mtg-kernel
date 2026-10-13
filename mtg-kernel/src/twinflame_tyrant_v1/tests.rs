@@ -1295,4 +1295,230 @@ mod future_printed {
             }
         }
     }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn genuine_fiery_opaque_program_finishes_equipment_and_shield_after_actual_replacement_answer_both_seats(
+    ) {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for equipment_chosen in [false, true] {
+                for double_first in [false, true] {
+                    let mut state = ready(actor);
+                    let creature = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+                    let equipment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+                    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+                    engine::step(&mut state, Action::ActivateAbility(equipment, 0)).unwrap();
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(creature)))
+                        .unwrap();
+                    finish(&mut state);
+                    assert_eq!(
+                        state.objects.get(equipment).v4.attached_to.unwrap().object,
+                        creature
+                    );
+                    // Accepted physical control primitive after genuine equip, preserving exact ownership/incarnation.
+                    crate::standard_cards_v1::gain_control(&mut state, creature, actor.opponent());
+                    cast(&mut state, actor);
+                    state
+                        .engine
+                        .active_replacements
+                        .push(event::ActiveReplacement {
+                            id: 90_061,
+                            source: equipment,
+                            kind: event::ReplacementEffectKind::PreventNextDamage {
+                                target: Target::Object(creature),
+                                remaining: 5,
+                            },
+                        });
+                    let spell = put(&mut state, actor, "Fiery Annihilation", Zone::Hand);
+                    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                    engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(creature)))
+                        .unwrap();
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut state),
+                        Decision::ChooseTargets {
+                            can_finish: true,
+                            ..
+                        }
+                    ));
+                    engine::step(
+                        &mut state,
+                        if equipment_chosen {
+                            Action::ChooseTarget(Target::Object(equipment))
+                        } else {
+                            Action::FinishEffectSelection
+                        },
+                    )
+                    .unwrap();
+                    for _ in 0..24 {
+                        let decision = engine::advance_until_decision(&mut state);
+                        if crate::effect::crystal_prevention_v1::is_choice(&state) {
+                            break;
+                        }
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "{decision:?}"
+                        );
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                    assert_eq!(state.objects.get(creature).damage, 0);
+                    assert_eq!(state.objects.get(equipment).zone, Zone::Battlefield);
+                    assert!(!state
+                        .engine
+                        .event_history
+                        .iter()
+                        .any(|e| matches!(e, CommittedEvent::TwinflameFieryFinishedV38 { .. })));
+                    let Some(PendingEffectChoice::ChooseOption {
+                        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                        ..
+                    }) = state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .choice
+                        .as_ref()
+                    else {
+                        panic!("actual opaque Fiery menu missing")
+                    };
+                    assert_eq!(choice.original_amount, 5);
+                    let option = choice
+                        .options
+                        .iter()
+                        .position(|o| {
+                            if double_first {
+                                matches!(o, PreventionV1::Multiplier(_))
+                            } else {
+                                matches!(o, PreventionV1::Replacement(_))
+                            }
+                        })
+                        .unwrap();
+                    let saved = serde_json::to_vec(&state).unwrap();
+                    let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                    for branch in [&mut state, &mut restored] {
+                        engine::step(branch, Action::ChooseEffectOption(option as u16)).unwrap();
+                        finish(branch);
+                        assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                        assert_eq!(
+                            branch.objects.get(creature).zone,
+                            if double_first {
+                                Zone::Exile
+                            } else {
+                                Zone::Battlefield
+                            }
+                        );
+                        assert_eq!(
+                            branch.objects.get(equipment).zone,
+                            if equipment_chosen {
+                                Zone::Exile
+                            } else {
+                                Zone::Battlefield
+                            }
+                        );
+                        fiery::validate(branch).unwrap();
+                        crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                        let operations: Vec<_> = branch
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|e| match e {
+                                CommittedEvent::TwinflameFieryFinishedV38 { operation } => {
+                                    Some(operation)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(operations.len(), 1);
+                        assert_eq!(operations[0].equipment_move.is_some(), equipment_chosen);
+                        assert!(operations[0].installation.is_some());
+                    }
+                    assert_eq!(
+                        serde_json::to_vec(&state).unwrap(),
+                        serde_json::to_vec(&restored).unwrap()
+                    );
+                    for kind in 0..2 {
+                        let mut malformed: GameState =
+                            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                        let at = malformed
+                            .engine
+                            .event_history
+                            .iter()
+                            .position(|e| {
+                                if kind == 0 {
+                                    matches!(e, CommittedEvent::TwinflameFieryCaptureV38 { .. })
+                                } else {
+                                    matches!(e, CommittedEvent::TwinflameFieryFinishedV38 { .. })
+                                }
+                            })
+                            .unwrap();
+                        malformed.engine.event_history[at] = CommittedEvent::LifeGain {
+                            player: actor,
+                            amount: 0,
+                        };
+                        let bytes = serde_json::to_vec(&malformed).unwrap();
+                        assert!(engine::step(&mut malformed, Action::Pass).is_err());
+                        assert_eq!(serde_json::to_vec(&malformed).unwrap(), bytes);
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn large_genuine_bushwhack_full_prevention_retains_other_packet_lifelink_and_replay_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            cast(&mut state, actor);
+            let own = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+            let opposing = put(
+                &mut state,
+                actor.opponent(),
+                "Shivan Dragon",
+                Zone::Battlefield,
+            );
+            put(
+                &mut state,
+                actor.opponent(),
+                "Crystal Barricade",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(own).counters.plus1_plus1 = i32::MAX / 2 - 4;
+            state.objects.get_mut(own).v4.lifelink_keyword_counters = 1;
+            state.objects.get_mut(opposing).v4.lifelink_keyword_counters = 1;
+            assert_eq!(engine::effective_power(&state, own), i32::MAX / 2 + 1);
+            assert!(state.engine.active_replacements.is_empty());
+            let spell = put(&mut state, actor, "Bushwhack", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseSpellMode { .. }
+            ));
+            engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(own))).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(opposing))).unwrap();
+            let lives = state.players.each_ref().map(|p| p.life);
+            let saved = serde_json::to_vec(&state).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(own).damage, 5);
+                assert_eq!(branch.objects.get(opposing).damage, 0);
+                assert_eq!(branch.players[actor.index()].life, lives[actor.index()]);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    lives[actor.opponent().index()] + 5
+                );
+                assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
 }

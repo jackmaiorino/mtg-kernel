@@ -1019,6 +1019,8 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
                 | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
                 | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+                | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+                | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
@@ -1359,7 +1361,7 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
-            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..}
+            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } => true,
         }

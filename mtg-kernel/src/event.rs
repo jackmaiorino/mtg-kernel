@@ -1301,6 +1301,12 @@ pub enum CommittedEvent {
     TwinflameDynamicDamageSampleV38 {
         sample: Box<crate::twinflame_tyrant_v1::sampling::SampleV38>,
     },
+    TwinflameFieryCaptureV38 {
+        capture: Box<crate::twinflame_tyrant_v1::fiery::CaptureV38>,
+    },
+    TwinflameFieryFinishedV38 {
+        operation: Box<crate::twinflame_tyrant_v1::fiery::FinishV38>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2036,6 +2042,42 @@ pub(crate) fn propose_and_commit_crystal_owned(
         return Err("Crystal damage lost private removed-item authority".into());
     }
     prepare_commit_crystal_damage(state, damage, ctx, op, path, owner)
+}
+/// Genuine opaque Fiery final instruction under the same removed-item loan.
+/// Any selected linked-Aura operation must retain its surrounding owning replay.
+pub(crate) fn propose_and_commit_twinflame_fiery_equipment_owned(
+    state: &mut GameState,
+    capture: &crate::twinflame_tyrant_v1::fiery::CaptureV38,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<(), String> {
+    let Some(crate::state::Target::Object(equipment)) = capture.ctx.targets.get(1) else {
+        return Err("Fiery equipment instruction lost actual selected object".into());
+    };
+    if !capture.legal[1]
+        || owner
+            .packet_before(
+                state,
+                &capture.ctx,
+                &crate::effect::EffectOp::FieryAnnihilation,
+                &capture.path,
+            )
+            .is_none_or(|(_, item)| item != *capture.item)
+        || !matches!(state.engine.event_history.get(capture.index as usize),Some(CommittedEvent::TwinflameFieryCaptureV38{capture:original}) if original.as_ref()==capture)
+        || crate::linked_aura_operation_v1::needs_event_owner(state)
+            && !crate::linked_aura_operation_v1::locally_owned(state)
+    {
+        return Err(
+            "Fiery equipment instruction lost private original or linked-operation owner".into(),
+        );
+    }
+    propose_and_commit_inner(
+        state,
+        ProposedEvent::zone_change(*equipment, crate::state::Zone::Exile),
+    );
+    if state.engine.halted.is_some() {
+        return Err("Fiery actual equipment exile halted".into());
+    }
+    Ok(())
 }
 pub(crate) fn propose_and_commit_crystal_power_owned(
     state: &mut GameState,

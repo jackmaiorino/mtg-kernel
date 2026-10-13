@@ -90,6 +90,8 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
                     | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
                     | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
             )
         })
 }
@@ -233,6 +235,9 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("twinflame_tyrant_v1/ordering.rs"),
         include_str!("twinflame_tyrant_v1/sampling.rs"),
         include_str!("twinflame_tyrant_v1/combat.rs"),
+        include_str!("twinflame_tyrant_v1/fiery.rs"),
+        include_str!("fiery_annihilation_v1.rs"),
+        include_str!("rules_meaning_fiery_v1.rs"),
         include_str!("card_def.rs"),
         include_str!("event.rs"),
         include_str!("source_power_activation_v1.rs"),
@@ -271,6 +276,7 @@ impl PrintedMeaningV1 {
 }
 
 pub mod combat;
+pub mod fiery;
 pub mod ordering;
 pub mod sampling;
 

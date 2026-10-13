@@ -674,6 +674,9 @@ fn original_damage(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<DamageProposed, String> {
+    if matches!(op, EffectOp::FieryAnnihilation) {
+        return crate::twinflame_tyrant_v1::fiery::damage(state, ctx, path);
+    }
     if crate::twinflame_tyrant_v1::sampling::selected(op) {
         return crate::twinflame_tyrant_v1::sampling::damage(state, ctx, op, path);
     }
@@ -897,7 +900,8 @@ fn has_damage(op: &EffectOp) -> bool {
         return true;
     }
     match op {
-        EffectOp::DealDamage { .. }
+        EffectOp::FieryAnnihilation
+        | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
@@ -934,7 +938,7 @@ pub(crate) fn authenticates_legacy_frame(
         .v4
         .crystal_prevention_started_v1
         .is_empty()
-        || !optional_discard_draw(op)
+        || !(optional_discard_draw(op) || matches!(op, EffectOp::FieryAnnihilation))
     {
         return Ok(false);
     }
@@ -962,7 +966,8 @@ fn supported(op: &EffectOp) -> bool {
             player: PlayerRef::Controller | PlayerRef::Opponent,
             ..
         } => true,
-        EffectOp::DealDamage { .. }
+        EffectOp::FieryAnnihilation
+        | EffectOp::DealDamage { .. }
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
@@ -1159,6 +1164,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
     }
     crate::twinflame_tyrant_v1::ordering::validate(state)?;
     crate::twinflame_tyrant_v1::sampling::validate(state)?;
+    crate::twinflame_tyrant_v1::fiery::validate(state)?;
     validate_shields(state)?;
     validate_damage_operations(state)?;
     validate_batch_preparations(state)?;
@@ -1340,6 +1346,12 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                     let damage = choice_original_damage(state, &p.ctx, op, choice)?;
                     let mut frames = Vec::new();
                     remaining(&b.root, &choice.path, &[], &mut frames)?;
+                    if matches!(op, EffectOp::FieryAnnihilation) {
+                        frames.push(EffectFrame::Program {
+                            op: op.clone(),
+                            path: choice.path.clone(),
+                        });
+                    }
                     if p.choice.as_ref() != Some(&menu((**choice).clone()))
                         || choice.source != damage.source
                         || choice.historical_source != damage.historical_source
@@ -1530,12 +1542,31 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                     path: child,
                 });
             }
-            EffectOp::DealDamage { .. }
+            EffectOp::FieryAnnihilation
+            | EffectOp::DealDamage { .. }
             | EffectOp::DealDamageDynamic { .. }
             | EffectOp::DealDamageByControlledCreatureCount { .. }
             | EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
             ) => {
+                if matches!(op, EffectOp::FieryAnnihilation) {
+                    if crate::twinflame_tyrant_v1::fiery::finishing(
+                        state,
+                        &pending.ctx,
+                        path,
+                        previous,
+                    )? {
+                        crate::twinflame_tyrant_v1::fiery::finish(
+                            state,
+                            owner,
+                            &pending.ctx,
+                            path,
+                        )?;
+                        steps.push(step);
+                        continue;
+                    }
+                    crate::twinflame_tyrant_v1::fiery::capture(state, owner, &pending.ctx, path)?;
+                }
                 if let Some(gorehorn) = owner.gorehorn.as_ref() {
                     crate::gorehorn_damage_v1::crystal::prepare_owned(
                         state,
@@ -1563,8 +1594,22 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 }
                 let damage = original_damage(state, &pending.ctx, op, path)?;
                 if damage.amount <= 0 {
+                    if matches!(op, EffectOp::FieryAnnihilation) {
+                        crate::twinflame_tyrant_v1::fiery::finish(
+                            state,
+                            owner,
+                            &pending.ctx,
+                            path,
+                        )?;
+                    }
                     steps.push(step);
                     continue;
+                }
+                if matches!(op, EffectOp::FieryAnnihilation) && needs_choice(state, &damage) {
+                    pending.frames.push(EffectFrame::Program {
+                        op: op.clone(),
+                        path: path.clone(),
+                    });
                 }
                 if offer(state, &mut pending, op, path)? {
                     step.offered_menu = pending.choice.clone();
@@ -1591,6 +1636,9 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                                 .map_err(|_| "Crystal damage occurrence exceeds u32")?,
                         );
                     }
+                }
+                if matches!(op, EffectOp::FieryAnnihilation) {
+                    crate::twinflame_tyrant_v1::fiery::finish(state, owner, &pending.ctx, path)?;
                 }
             }
             EffectOp::MayPayCostThen { .. } if optional_discard_draw(op) => {
@@ -1962,7 +2010,8 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
             if step.damage_operation.is_some()
                 && (!matches!(
                     op,
-                    EffectOp::DealDamage { .. }
+                    EffectOp::FieryAnnihilation
+                        | EffectOp::DealDamage { .. }
                         | EffectOp::DealDamageDynamic { .. }
                         | EffectOp::DealDamageByControlledCreatureCount { .. }
                         | EffectOp::CreatureTargetPowerDamage { .. }
@@ -2039,12 +2088,41 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         path: child,
                     });
                 }
-                EffectOp::DealDamage { .. }
+                EffectOp::FieryAnnihilation
+                | EffectOp::DealDamage { .. }
                 | EffectOp::DealDamageDynamic { .. }
                 | EffectOp::DealDamageByControlledCreatureCount { .. }
                 | EffectOp::StandardV1(
                     crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
                 ) => {
+                    if matches!(op, EffectOp::FieryAnnihilation)
+                        && crate::twinflame_tyrant_v1::fiery::finishing(
+                            state,
+                            &pending.ctx,
+                            path,
+                            execution.previous,
+                        )?
+                    {
+                        if step.conditional_result.is_some()
+                            || step.offered_menu.is_some()
+                            || !step.damage_history.is_empty()
+                            || step.damage_operation.is_some()
+                        {
+                            return Err(
+                                "Fiery resumed final stage repeated damage or choice".into()
+                            );
+                        }
+                        let capture =
+                            crate::twinflame_tyrant_v1::fiery::lookup(state, &pending.ctx, path)?
+                                .ok_or("Fiery final stage lost original capture")?;
+                        crate::twinflame_tyrant_v1::fiery::validate_finish(
+                            state,
+                            capture,
+                            execution.previous,
+                            execution.history_index,
+                        )?;
+                        continue;
+                    }
                     let damage = original_damage(state, &pending.ctx, op, path)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal damage carries a foreign branch".into());
@@ -2064,6 +2142,12 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                         else {
                             return Err("Crystal execution offered a foreign menu".into());
                         };
+                        if matches!(op, EffectOp::FieryAnnihilation) {
+                            pending.frames.push(EffectFrame::Program {
+                                op: op.clone(),
+                                path: path.clone(),
+                            });
+                        }
                         if choice.path != *path
                             || choice.source != damage.source
                             || choice.historical_source != damage.historical_source
@@ -2119,6 +2203,20 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                                 "Crystal zero damage carries an unexpected positive operation"
                                     .into(),
                             );
+                        }
+                        if matches!(op, EffectOp::FieryAnnihilation) {
+                            let capture = crate::twinflame_tyrant_v1::fiery::lookup(
+                                state,
+                                &pending.ctx,
+                                path,
+                            )?
+                            .ok_or("Fiery initial stage lost original capture")?;
+                            crate::twinflame_tyrant_v1::fiery::validate_finish(
+                                state,
+                                capture,
+                                execution.previous,
+                                execution.history_index,
+                            )?;
                         }
                     }
                 }
@@ -4388,6 +4486,12 @@ fn validate_choice(state: &GameState, pending: &EffectContinuation) -> Result<()
     }
     let mut expected_frames = Vec::new();
     remaining(&root, &choice.path, &[], &mut expected_frames)?;
+    if matches!(op, EffectOp::FieryAnnihilation) {
+        expected_frames.push(EffectFrame::Program {
+            op: op.clone(),
+            path: choice.path.clone(),
+        });
+    }
     let recipient_valid = match choice.target {
         Target::Object(recipient) => state.objects.try_get(recipient).is_some_and(|o| {
             o.zone == crate::state::Zone::Battlefield && o.controller == choice.chooser
