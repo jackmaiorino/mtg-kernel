@@ -50,6 +50,11 @@ tensorize-cost-profile-v1 = []
 native-training-store-v2-production = []
 
 [[bin]]
+name = "kernel_limited_common_env"
+path = "src/bin/kernel_limited_common_env.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "mtg-kernel-native"
 path = "src/bin/mtg-kernel-native.rs"
 required-features = ["native-training-store-v2-production"]

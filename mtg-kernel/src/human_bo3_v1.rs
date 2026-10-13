@@ -308,6 +308,7 @@ pub use akroma_early_v40::{HumanEarlyV40, HumanZombieContextV40};
 mod akroma_v40;
 mod game_outcome_family_v40;
 mod game_outcome_v41;
+mod limited_common_v1;
 pub use akroma_families_v40::HumanFamilyV40;
 pub use akroma_v40::{
     HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
@@ -318,6 +319,8 @@ pub use game_outcome_v41::{
     HumanDecisionGameOutcomeV41, HumanGameOutcomeExtensionsV41, HumanGameOutcomeProjectorV41,
     HumanGameOutcomeSessionV41, HumanGameOutcomeSnapshotV41, HumanGameOutcomeSourceV41,
 };
+pub(crate) use limited_common_v1::project_limited_common_v1;
+pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
 
 #[cfg(test)]
 mod tests;
