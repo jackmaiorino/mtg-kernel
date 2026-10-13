@@ -263,7 +263,8 @@ mod tests {
     #[test]
     fn repeated_owning_restore_never_revives_previous_private_twinflame_binding_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            put(&mut state, actor, "Forest", Zone::Hand);
             let mut session = FastActorSessionV1::from_twinflame_v38_fixture_state(state);
             let snapshot = session.snapshot_v1();
             for _ in 0..3 {
