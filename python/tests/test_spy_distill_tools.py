@@ -354,34 +354,40 @@ class FitCheck(Temp):
         per = [{}, {"g1": (0.6, 0.7)}, {"g1": (0.7, 0.8)}, {"g1": (0.8, 0.9)}, {"g1": (0.9, 0.9), "gap": 1.0}, {}]
         result = self.fit({"r1": {"U": (per, {})}})["fits"]["r1"]["U"]
         self.assertEqual(result["selected"]["step"], 1432)
-        self.assertEqual(result["absorption_dose"], 358)
+        self.assertEqual(result["fit_dose"], 358)
         self.assertEqual(result["stopped_at"], 2864)
         self.assertEqual(result["unread_checkpoints"], [5728])
         self.assertEqual(result["reading"], "passes the fit check")
+        self.assertEqual(result["explanations"], [])
 
     def test_fit_readings_follow_the_first_matching_row(self):
         held = [{}] * 6
         cases = {
-            "teacher split at the line decision": ("U", [dict(g1=(0.3, 0.9), self_offered=0.25)] * 6, {}),
-            "absorbed only with collapse": ("U", [{}, {}, dict(g1=(0.6, 0.6), kl=0.05)] + [{}] * 3, {}),
-            "one-hot distillation flattens the policy before it absorbs the line":
-                ("L", [{}, dict(agree=0.9)] + [{}] * 4, {}),
-            "uniform distillation leaves the line too diluted to absorb at this dose": ("U", held, {}),
-            "the policy cannot absorb its own search's line choices even in isolation": ("L", held, {}),
-            "engineering: G3 failed, so the run is not evidence": ("U", [dict(g1=(0.9, 0.9))] * 6,
-                                                                    {"rerun_hash": "other"}),
+            "mixed": ("U", [dict(g1=(0.3, 0.9), self_offered=0.25)] * 6, {}),
+            "fit_with_collapse": ("U", [{}, {}, dict(g1=(0.6, 0.6), kl=0.05)] + [{}] * 3, {}),
+            "collapse_first": ("L", [{}, dict(agree=0.9)] + [{}] * 4, {}),
+            "U": ("U", held, {}),
+            "L": ("L", held, {}),
+            "engineering": ("U", [dict(g1=(0.9, 0.9))] * 6, {"rerun_hash": "other"}),
         }
-        for expected, (arm, per, kw) in cases.items():
-            with self.subTest(expected=expected):
+        for row, (arm, per, kw) in cases.items():
+            with self.subTest(row=row):
                 result = self.fit({"r1": {arm: (per, kw)}})["fits"]["r1"][arm]
                 self.assertIsNone(result["selected"])
-                self.assertEqual(result["reading"], expected)
+                expected = (fit.ENGINEERING, []) if row == "engineering" else fit.READINGS[row]
+                self.assertEqual((result["reading"], result["explanations"]), (expected[0], expected[1]))
+        # No reading names a single failing component: each failure keeps its
+        # competing explanations (amendment, DESIGN.md section 7).
+        for row, (text, explanations) in fit.READINGS.items():
+            self.assertGreaterEqual(len(explanations), 2, row)
+            for word in ("teacher split", "cannot absorb", "representation", "diluted", "flattens"):
+                self.assertNotIn(word, text)
         # A non-finite loss before the checkpoint fails G3 there.
         result = self.fit({"r1": {"L": ([dict(g1=(0.9, 0.9))] * 6, {"nan_step": 100})}})["fits"]["r1"]["L"]
         self.assertEqual(result["selected"]["step"], 64)
         self.assertEqual(result["stopped_at"], 128)
 
-    def test_a_split_teacher_needs_declines_low_discrimination_and_movement(self):
+    def test_the_mixed_choices_row_needs_declines_low_discrimination_and_movement(self):
         split = dict(g1=(0.3, 0.9), self_offered=0.25)
         for name, change in (("tree rarely declines", dict(share=(0.8, 1.0), self_offered=0.45)),
                              ("policy discriminates", dict(discrimination=0.3)),
@@ -389,8 +395,7 @@ class FitCheck(Temp):
             with self.subTest(name):
                 per = [dict(split, **change)] * 6
                 result = self.fit({"r1": {"U": (per, {})}})["fits"]["r1"]["U"]
-                self.assertEqual(result["reading"],
-                                 "uniform distillation leaves the line too diluted to absorb at this dose")
+                self.assertEqual(result["reading"], fit.READINGS["U"][0])
 
     def test_lineage_dependence_and_offer_pooling(self):
         good = [dict(g1=(0.9, 0.9), offers=80, offer_p=0.1)] * 6

@@ -16,18 +16,23 @@ Metrics per panel, on the 0-to-1 scale (win 1, draw 0.5, loss 0):
 and, descriptively, combo_resolved, nine_deck, seven_deck, cawgates, and the self-target
 and Dread-Return-to-Giant choice rates per game that offered them.
 
-Contrasts per lineage: D1U-parent, D1L-parent, D2U-O and D2L-O (the screen), and D2U and
-D2L against P and S (descriptive), per opponent and pooled (the mean of the two opponents'
-values on the same draw). Cluster bootstrap: the seat pairs of a repeat are resampled
+Contrasts per lineage: D1U-parent, D1L-parent, D2U-O and D2L-O (the screen), D2U-D1U and
+D2L-D1L (the direct comparison between the two checkpoints), and D2U and D2L against P and S
+(descriptive), per opponent and pooled (the mean of the two opponents' values on the same
+draw). Cluster bootstrap: the seat pairs of a repeat are resampled
 together within each ordered deck pair, one draw shared by every opponent, checkpoint and
 lineage, 10,000 draws, seed 2026101320; bounds are the 2.5% and 97.5% quantiles. Missing
 cases (technical terminations) take their bound's value within each draw: least favorable
 to D (D's missing cases 0, the control's 1) and most favorable (the reverse).
 
-Screening rule and readings: DESIGN.md section 7, evaluated under each bound. A positive
-reading must hold under the bound least favorable to D, harm is declared only under the
-bound most favorable to D, and when the two bounds give different readings the reading is
-"inconclusive: missing cases decide".
+Screening rule and readings: DESIGN.md section 7 as amended before execution (Jack,
+2026-10-13), evaluated under each bound. A positive J result is behavioral transfer,
+reported as established at D1, at D2 or at both; a behavioral loss or acquisition between
+D1 and D2 is claimed only from their direct contrast. Win-rate effects (Spy, eight-deck and
+nine-deck scores) are reported separately from J, per lineage and across lineages, since more
+winning Spy sequences can mean that existing wins took a different route. A positive reading must hold under the bound
+least favorable to D, harm is declared only under the bound most favorable to D, and when
+the two bounds give different readings the reading is "inconclusive: missing cases decide".
 
 CLI:
   analyze  --index INDEX.json [--fit FIT.json] --out RESULT.json
@@ -56,10 +61,13 @@ BOOT_SEED, VALIDATION_SEED, DRAWS = 2026101320, 2026101017, 10_000
 RETENTION, OFFER_FLOOR = 0.02, 0.05
 SCREEN = (("D1U-parent", "D1U", "parent"), ("D1L-parent", "D1L", "parent"),
           ("D2U-O", "D2U", "O"), ("D2L-O", "D2L", "O"))
+DIRECT = (("D2U-D1U", "D2U", "D1U"), ("D2L-D1L", "D2L", "D1L"))
 DESCRIPTIVE = (("D2U-P", "D2U", "P"), ("D2U-S", "D2U", "S"), ("D2L-P", "D2L", "P"), ("D2L-S", "D2L", "S"))
 METRICS = ("J", "spy_score", "eight_deck")
 EXTRA_METRICS = ("combo_resolved", "nine_deck", "seven_deck", "cawgates")
 SPY_METRICS = ("J", "combo_resolved")
+# Playing strength, reported apart from J (amendment, DESIGN.md section 7).
+WIN_RATE_METRICS = ("spy_score", "eight_deck", "nine_deck")
 # Bound -> (fill for D's missing cases, fill for the control's).
 BOUNDS = {"worst": (0.0, 1.0), "best": (1.0, 0.0)}
 # This analyzer's names for the archive reset pilot's RESULT.json metrics.
@@ -295,23 +303,70 @@ def j_above(ci, lineage: str, name: str, bound: str) -> bool:
 
 
 def line_reading(ci, arm: str, bound: str, offer_probability) -> str:
-    """Section 7's panel line readings on J alone (first matching row)."""
+    """Section 7's panel line readings on J alone (first matching row). A
+    result established at one checkpoint only says nothing about loss or
+    acquisition between them; that needs the direct contrast."""
     d1, d2 = f"D1{arm}-parent", f"D2{arm}-O"
-    transfer = [j_above(ci, lin, d1, bound) for lin in LINEAGES]
-    persistence = [j_above(ci, lin, d2, bound) for lin in LINEAGES]
-    if all(transfer) and all(persistence):
-        return "search-found line acquired and kept under ordinary training"
-    if all(transfer):
-        return "acquisition, then forgetting under ordinary learning"
-    if all(persistence):
-        return "the line emerges under ordinary training from the distilled start"
-    if any(transfer) or any(persistence):
+    at_d1 = [j_above(ci, lin, d1, bound) for lin in LINEAGES]
+    at_d2 = [j_above(ci, lin, d2, bound) for lin in LINEAGES]
+    if all(at_d1) and all(at_d2):
+        return "behavioral transfer established at D1 and D2"
+    if all(at_d1):
+        return "behavioral transfer established only at D1"
+    if all(at_d2):
+        return "behavioral transfer established only at D2"
+    if any(at_d1) or any(at_d2):
         return "lineage-dependent; the screen cannot read positive"
     if offer_probability is None:
-        return "no J transfer or persistence; held-out offer probability not given"
+        return "no behavioral transfer established; held-out offer probability not given"
     if offer_probability < OFFER_FLOOR:
-        return "local fit without transfer"
-    return "partial transfer: fresh offers move, but the line does not complete in play"
+        return "no behavioral transfer established; D1's held-out offer probability is below 0.05"
+    return "no behavioral transfer established; D1's held-out offer probability is 0.05 or more"
+
+
+def direct_reading(ci, arm: str, bound: str) -> str:
+    """A behavioral loss or acquisition between D1 and D2, claimed only from
+    D2's J against D1 itself, in both lineages."""
+    j = [ci[(lin, f"D2{arm}-D1{arm}", "J", "pooled", bound)] for lin in LINEAGES]
+    if all(high < 0 for _, high in j):
+        return "behavioral loss between D1 and D2"
+    if all(low > 0 for low, _ in j):
+        return "behavioral acquisition between D1 and D2"
+    return "no change between D1 and D2 established"
+
+
+def effect_reading(interval) -> str:
+    low, high = interval
+    if low > 0:
+        return "higher established"
+    if high < 0:
+        return "lower established"
+    return "no change established"
+
+
+def across(per: dict) -> str:
+    """One reading across lineages: an effect holds only when every lineage
+    reads it, as for J."""
+    values = set(per.values())
+    if len(per) < len(LINEAGES):
+        return "descriptive only: one lineage"
+    if INCONCLUSIVE in values:
+        return INCONCLUSIVE
+    return values.pop() if len(values) == 1 else "lineage-dependent"
+
+
+def win_rates(ci, names) -> dict:
+    """Playing-strength effects, apart from J: the pooled Spy, eight-deck and
+    nine-deck score contrasts of every endpoint, read under both bounds, per
+    lineage and across lineages."""
+    out = {}
+    for name in names:
+        for metric in WIN_RATE_METRICS:
+            per = {lin: agree({b: effect_reading(ci[(lin, name, metric, "pooled", b)]) for b in BOUNDS})
+                   for lin in LINEAGES if (lin, name, metric, "pooled", "worst") in ci}
+            if per:
+                out[f"{name}/{metric}"] = {"reading": across(per), "per_lineage": per}
+    return out
 
 
 def offer_probability(fit: dict | None, arm: str):
@@ -346,13 +401,14 @@ def screen(ci: dict, fit: dict | None) -> dict:
                                 else "not run: the arm passed the fit check in neither lineage")
             out[arm] = entry
             continue
-        for kind, name in (("transfer", d1), ("persistence", d2)):
+        for kind, name in (("transfer_at_D1", d1), ("transfer_at_D2", d2)):
             holds = {b: all(j_above(ci, lin, name, b) and guards_hold(ci, lin, name, b) for lin in LINEAGES)
                      for b in BOUNDS}
             entry[kind] = (True if holds["worst"] else INCONCLUSIVE if holds["best"] else False)
         p = offer_probability(fit, arm)
         entry["offer_probability"] = p
         entry["reading"] = agree({b: line_reading(ci, arm, b, p) for b in BOUNDS})
+        entry["direct"] = agree({b: direct_reading(ci, arm, b) for b in BOUNDS})
         out[arm] = entry
     return out
 
@@ -365,11 +421,12 @@ def analyze(index: dict, fit: dict | None) -> dict:
         result["panels"][f"{ck}/{opp}"] = summary(cases)
         result["missing"][f"{ck}/{opp}"] = missing(cases)
         result["secondary"][f"{ck}/{opp}"] = secondary(cases)
-    todo = plan(data, SCREEN + DESCRIPTIVE)
+    todo = plan(data, SCREEN + DIRECT + DESCRIPTIVE)
     metrics = METRICS + EXTRA_METRICS
     point, ci = points(data, todo, metrics), bootstrap(data, todo, metrics)
     result["contrasts"] = {"/".join(k): {"point": point[k], "ci95": ci[k]} for k in point}
     result["screen"] = screen(ci, fit)
+    result["win_rates"] = win_rates(ci, [name for name, _, _ in SCREEN + DIRECT])
     return result
 
 
@@ -414,7 +471,7 @@ def main(argv=None) -> int:
         return 1 if bad else 0
     result = analyze(read_json(args.index), read_json(args.fit) if args.fit else None)
     args.out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
-    print(json.dumps(result["screen"]))
+    print(json.dumps({"screen": result["screen"], "win_rates": result["win_rates"]}))
     return 0
 
 

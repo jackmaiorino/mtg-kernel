@@ -13,20 +13,23 @@ Per lineage and arm, in dose order, each phase-1 checkpoint gets:
       the 32-step rerun reproduces the run's step-32 phase-1 state.
 The run stops at the first checkpoint failing G2 or G3; later checkpoints are
 not read. The arm selects the highest-dose checkpoint passing all three, and
-reports the earliest G1 pass as the absorption dose. An arm with no selection
-gets the first matching fit reading:
-  engineering   G3 failed (not a table row: the run is not evidence);
-  teacher split self-target G1 fails at every read checkpoint with G2 holding,
-                the tree declined self-target at >= 1/3 of its in-sample
-                supported offers, discrimination stays < 0.25 at every read
-                checkpoint, and at the last one the mean self-target
-                probability over all in-sample supported offers is >= half
-                the tree's chosen share there;
-  collapse      G1 first passes at the checkpoint where G2 first fails;
-  flattening    G2 fails before any checkpoint passes G1;
-  diluted       U fails G1 with G2 holding through 32 epochs;
-  capacity      L fails G1 with G2 holding through 1,024 steps.
-An arm passing in one lineage only reads lineage-dependent absorption.
+reports the earliest G1 pass as the dose at which the fit was reached. An arm
+with no selection gets the first matching fit reading, as amended before
+execution (Jack, 2026-10-13): each reading describes the fit result at this
+dose, optimizer, targets and anchor, and lists its competing explanations,
+because the fit gates alone cannot say which component failed:
+  engineering        G3 failed (not a table row: the run is not evidence);
+  mixed choices      self-target G1 fails at every read checkpoint with G2
+                     holding, the tree declined self-target at >= 1/3 of its
+                     in-sample supported offers, discrimination stays < 0.25 at
+                     every read checkpoint, and at the last one the mean
+                     self-target probability over all in-sample supported
+                     offers is >= half the tree's chosen share there;
+  fit with collapse  G1 first passes at the checkpoint where G2 first fails;
+  collapse first     G2 fails before any checkpoint passes G1;
+  U not fit          U fails G1 with G2 holding through 32 epochs;
+  L not fit          L fails G1 with G2 holding through 1,024 steps.
+An arm passing in one lineage only reads lineage-dependent fit.
 
 CLI: fit --spec SPEC.json --out FIT.json
 SPEC: {"r1": {"probe": PROBE.json, "runs": {"U": {"full": PHASE1.json, "rerun": PHASE1.json},
@@ -150,14 +153,48 @@ def arm_fit(lineage: str, arm: str, probe: dict, full: dict, rerun: dict) -> dic
            "selected": None if selected is None else {k: selected[k] for k in
                                                         ("step", "epochs", "candidate", "source", "state_sha256",
                                                          "learner_offers")},
-           "absorption_dose": g1_steps[0] if g1_steps else None}
-    out["reading"] = "passes the fit check" if selected else reading(arm, rows, checkpoints)
+           "fit_dose": g1_steps[0] if g1_steps else None}
+    out["reading"], out["explanations"] = (("passes the fit check", []) if selected
+                                           else reading(arm, rows, checkpoints))
     return out
 
 
-def reading(arm: str, rows: list, checkpoints: list) -> str:
+# Fit readings (DESIGN.md section 7, amended): what was observed, and the
+# explanations it leaves open. None identifies the failing component.
+ENGINEERING = "engineering: G3 failed, so the run is not evidence"
+READINGS = {
+    "mixed": ("required fit not reached: the tree's choices at supported self-target offers are mixed, "
+              "and the student's discrimination between chosen and declined offers stays low",
+              ["the tree's choices may conflict across offers the student encodes alike",
+               "the student's input may not separate offers that the tree's search separates",
+               "the dose, optimizer, one-hot targets or anchor may not suffice"]),
+    "fit_with_collapse": ("required fit reached only together with collapse at this dose, optimizer, targets "
+                          "and anchor",
+                          ["the anchor may be too weak for these targets",
+                           "the one-hot targets may conflict with the parent's other choices",
+                           "the step size may be too large"]),
+    "collapse_first": ("collapse before the required fit at this dose, optimizer, targets and anchor",
+                       ["one-hot targets may flatten the policy before the line rows fit",
+                        "the step size may be too large", "the anchor may be too weak"]),
+    "U": ("arm U did not reach the required fit at this dose, optimizer, targets and anchor",
+          ["the line rows, about 0.1 to 0.2% of U's rows, may be too few at this dose",
+           "the anchor may outweigh the line rows",
+           "chosen and declined offers may give conflicting targets",
+           "the step size or dose may be too small",
+           "the student's input may not separate the line decisions"]),
+    "L": ("arm L did not reach the required fit at this dose, optimizer, targets and anchor",
+          ["the anchor's 256 rows per step may outweigh the few line rows",
+           "chosen and declined offers may give conflicting targets",
+           "the step size or dose may be too small",
+           "the student's input may not separate the line decisions"]),
+}
+NO_MATCH = "no fit-reading row matches"
+
+
+def reading(arm: str, rows: list, checkpoints: list) -> tuple[str, list]:
+    """The first matching fit reading and its competing explanations."""
     if any(not r["G3"]["pass"] for r in rows):
-        return "engineering: G3 failed, so the run is not evidence"
+        return ENGINEERING, []
     last = rows[-1]
     share = last["tree_chosen_share"]["self"]
     held = all(r["G2"]["pass"] for r in rows)
@@ -167,17 +204,16 @@ def reading(arm: str, rows: list, checkpoints: list) -> str:
                     for r in rows)
             and number(last["self_offered_mean_deployed_self_probability"])
             and last["self_offered_mean_deployed_self_probability"] >= SPLIT_MOVEMENT * share):
-        return "teacher split at the line decision"
+        return READINGS["mixed"]
     g2_fail = next((i for i, r in enumerate(rows) if not r["G2"]["pass"]), None)
     g1_first = next((i for i, r in enumerate(rows) if r["G1"]["pass"]), None)
     if g2_fail is not None and g1_first == g2_fail:
-        return "absorbed only with collapse"
+        return READINGS["fit_with_collapse"]
     if g2_fail is not None and (g1_first is None or g1_first > g2_fail):
-        return "one-hot distillation flattens the policy before it absorbs the line"
+        return READINGS["collapse_first"]
     if held and g1_first is None and len(rows) == len(checkpoints):
-        return ("uniform distillation leaves the line too diluted to absorb at this dose" if arm == "U"
-                else "the policy cannot absorb its own search's line choices even in isolation")
-    return "no fit-reading row matches"
+        return READINGS[arm]
+    return NO_MATCH, []
 
 
 def offer_summary(fits: dict) -> dict:
