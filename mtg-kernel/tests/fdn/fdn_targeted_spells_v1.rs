@@ -288,9 +288,9 @@ fn felling_blow_uses_sorcery_timing_and_the_four_spells_pay_exact_costs() {
             (state, own, other, spell)
         };
         let (mut timing, _, _, timing_spell) = prepare(PlayerId::P1);
-        let mut surface = surface();
+        let mut timing_surface = surface();
         assert!(
-            matches!(priority(&mut surface, &mut timing), Decision::CastSpellOrPass { castable_spells, .. }
+            matches!(priority(&mut timing_surface, &mut timing), Decision::CastSpellOrPass { castable_spells, .. }
             if castable_spells.contains(&timing_spell) == instant)
         );
         let (mut state, own, other, spell) = prepare(PlayerId::P0);
