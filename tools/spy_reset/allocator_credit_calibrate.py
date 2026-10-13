@@ -12,6 +12,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import numpy as np
@@ -133,6 +134,9 @@ def main():
     parser.add_argument("--tasks", nargs="+", choices=("contextual", "zero", "harmful"),
                         default=("contextual", "zero", "harmful"))
     args = parser.parse_args()
+    sources = {name: A.sha(Path(__file__).with_name(name).read_bytes()) for name in
+               ("allocator_credit_calibrate.py", "allocator2.py", "allocator2_calibrate.py")}
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
     runs = []
     for arm in ("S", "H"):
         for task in args.tasks:
@@ -151,11 +155,9 @@ def main():
                                 "tv_mean": float(np.mean([r["final"]["tv_pi_q_mean"] for r in rr])),
                                 "discordant": sum(r["discordant"] for r in rr)})
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    sources = {name: A.sha(Path(__file__).with_name(name).read_bytes()) for name in
-               ("allocator_credit_calibrate.py", "allocator2.py", "allocator2_calibrate.py")}
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
     args.out.write_text(json.dumps({"schema": "allocator-paired-v1/calibration", "seeds": args.seeds,
                                    "commit": revision, "sources": sources, "tasks": args.tasks,
+                                   "python": sys.version, "numpy": np.__version__,
                                    "updates": args.updates, "summary": summary, "variance": variance(),
                                    "runs": runs}, indent=1) + "\n")
     print(json.dumps(summary, indent=1))
