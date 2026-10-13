@@ -771,7 +771,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn genuine_v42_priority_target_finalization_and_cleanup_complete_roster_authority_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
