@@ -26,6 +26,33 @@ fn action(prompt: &HumanDecisionCrystalV22, prefix: &str) -> HumanActionRequestV
         action_index: row.action_index,
     }
 }
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn barricade_action(prompt: &HumanDecisionCrystalV22) -> HumanActionRequestV1 {
+    let menu = prompt.state.extensions.prevention_menu.as_ref().unwrap();
+    assert_eq!(
+        menu.options
+            .iter()
+            .filter(|o| o.kind == "barricade")
+            .count(),
+        1
+    );
+    let rows = prompt
+        .actions
+        .iter()
+        .filter(|row| {
+            row.label
+                .contains(": prevent all remaining noncombat damage")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1);
+    HumanActionRequestV1 {
+        prompt_seq: prompt.prompt_seq,
+        action_index: rows[0].action_index,
+    }
+}
 fn safe(value: &serde_json::Value) {
     match value {
         serde_json::Value::Object(fields) => {
@@ -284,7 +311,7 @@ fn future_printed_bolt_mixed_menu_public_human_submit_and_owning_restore_both_se
         let mut projector = HumanCrystalProjectorV22::new(actor.into());
         let prompt = projector.project_current(&session, current).unwrap();
         safe(&serde_json::to_value(&prompt).unwrap());
-        let request = action(&prompt, "Apply Crystal Barricade");
+        let request = barricade_action(&prompt);
         let snapshot = session.snapshot_v22();
         let receipt = projector.submit(&mut session, request.clone()).unwrap();
         let after = session.inner.privileged_core_environment_hash();
@@ -354,6 +381,7 @@ fn future_incinerating_private_human_discard_decline_and_owning_restore_both_sea
                 Zone::Battlefield,
             );
             let card = put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor, "Forest", Zone::Library);
             put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
             let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
             state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
@@ -550,7 +578,7 @@ fn future_bite_human_binds_resolving_spell_separately_from_actual_damage_source(
         let mut projector = HumanCrystalProjectorV22::new(actor.into());
         let prompt = projector.project_current(&session, current).unwrap();
         safe(&serde_json::to_value(&prompt).unwrap());
-        let request = action(&prompt, "Apply Crystal Barricade");
+        let request = barricade_action(&prompt);
         projector.submit(&mut session, request.clone()).unwrap();
         assert_eq!(
             session
@@ -747,7 +775,7 @@ fn future_firebrand_fixed_history_human_menu_retry_rollback_and_safe_capture_bot
                 .unwrap(),
             fixed
         );
-        let request = action(&prompt, "Apply Crystal Barricade");
+        let request = barricade_action(&prompt);
         let snapshot = session.snapshot_v22();
         let receipt = projector.submit(&mut session, request.clone()).unwrap();
         let after = session.inner.privileged_core_environment_hash();
@@ -884,7 +912,7 @@ fn future_printed_gorehorn_menu_public_human_safe_facts_and_owning_rollback_both
                 .as_ref(),
             Some(facts)
         );
-        let request = action(&prompt, "Apply Crystal Barricade");
+        let request = barricade_action(&prompt);
         let snapshot = session.snapshot_v22();
         let receipt = projector.submit(&mut session, request.clone()).unwrap();
         assert_eq!(
@@ -924,7 +952,7 @@ fn future_printed_gorehorn_menu_public_human_safe_facts_and_owning_rollback_both
         let mut fresh = HumanCrystalProjectorV22::new(chooser.into());
         let current = expected(&session);
         let restored = fresh.project_current(&session, current).unwrap();
-        let request = action(&restored, "Apply Crystal Barricade");
+        let request = barricade_action(&restored);
         fresh.submit(&mut session, request).unwrap();
         assert_eq!(
             session

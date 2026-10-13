@@ -119,7 +119,7 @@ mod registered {
                 assert_eq!(item.is_flashback, flashback);
                 assert_eq!(
                     engine::validated_stack_item_target_spec(item, &state).unwrap(),
-                    TargetSpec::None
+                    Some(TargetSpec::None)
                 );
                 assert!(item.targets.is_empty());
                 assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);

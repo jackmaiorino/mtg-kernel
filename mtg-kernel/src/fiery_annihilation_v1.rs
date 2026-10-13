@@ -776,6 +776,7 @@ mod tests {
         };
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
+            put(&mut state, actor, "Forest", Zone::Hand);
             let source = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
             let creature = put(
                 &mut state,
