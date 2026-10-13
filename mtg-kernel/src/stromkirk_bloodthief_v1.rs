@@ -66,7 +66,7 @@ pub(crate) fn record_begin(state: &mut GameState, beginning: usize) {
             .event_history
             .push(CommittedEvent::StromkirkEndStepObserversV1 {
                 beginning_index: beginning as u64,
-                turn: state.turn,
+                turn: state.turn_key_v1(),
                 observers,
             });
         crate::stromkirk_dispatch_v1::emit_captures(state, observers_index);
