@@ -1516,6 +1516,26 @@ pub struct StackStateV4 {
     /// Intrinsic started custody; absence preserves predecessor bytes and Hash input.
     #[serde(default, skip_serializing_if = "InspirationStartedV1::is_empty")]
     pub inspiration_started_v1: InspirationStartedV1,
+    #[serde(default, skip_serializing_if = "HighSocietyHunterStartedV45::is_empty")]
+    pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
+}
+/// Empty writes no historical bytes or Hash domain. The pointer owns one
+/// original Hunter publication after its real engine removal has started.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HighSocietyHunterStartedV45(pub Option<u64>);
+impl HighSocietyHunterStartedV45 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for HighSocietyHunterStartedV45 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "high-society-hunter-started/v45".hash(state);
+            index.hash(state);
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]

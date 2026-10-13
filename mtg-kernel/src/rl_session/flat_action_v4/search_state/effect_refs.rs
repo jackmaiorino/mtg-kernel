@@ -172,6 +172,7 @@ impl Scan<'_> {
             | BindGarrukEtbDrawV1
             | BindGarrukPowerEntryDrawV1
             | GarrukDrawFromCaptureV1 {..}
+            | HighSocietyHunterFromCaptureV45 { .. }
             | FaebloomCreateFaeriesV43 | FaebloomTapFromCaptureV43 { .. }
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
@@ -1278,6 +1279,7 @@ pub(super) fn conflicts(
             | FishingPoleJournalV39 { .. }
             | HighSocietyHunterAttackCaptureV1 { .. }
             | HighSocietyHunterAttackCollectedV1 { .. }
+            | HighSocietyHunterJournalV45 { .. }
             | KrenkoRemovalInputV1 { .. }
             | KrenkoRemovedV1 { .. }
             | KrenkoSampleV1 { .. }

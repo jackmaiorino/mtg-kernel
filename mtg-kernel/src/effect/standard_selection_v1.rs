@@ -257,7 +257,7 @@ pub(super) fn apply_selection(
             return Err("Gourmand cost requires the private removed-item owner".into());
         }
         ObjectSelectionActionV1::SacrificeThenCounterCapturedSourceV1 => {
-            crate::high_society_hunter_v1::pay_selection(state, pending, selected)?;
+            return Err("Hunter cost requires its genuine private resumed owner".into());
         }
         ObjectSelectionActionV1::TapFiveThenTransformSource => {
             if !selected.is_empty() {

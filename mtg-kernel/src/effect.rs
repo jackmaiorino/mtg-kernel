@@ -1689,6 +1689,11 @@ pub enum EffectOp {
         capture: u64,
         source: crate::state::StackSourceContractV4,
     },
+    /// Only the private genuine Hunter removal owner executes this bound root.
+    HighSocietyHunterFromCaptureV45 {
+        capture_history_index: u64,
+        attack: bool,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3043,6 +3048,9 @@ impl std::hash::Hash for ExecCtx {
 /// private library/hand ordering, and multi-card mill ordering enter the v4
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
+    if crate::high_society_hunter_custody_v45::binding(op).is_some() {
+        return true;
+    }
     if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
         return true;
     }
@@ -3123,6 +3131,19 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
     }
 }
 
+/// The private Hunter owner uses the existing canonical public-zone selection
+/// shape without invoking the generic consequence or allowing an absent-live root.
+pub(crate) fn begin_hunter_selection_v45(
+    state: &GameState,
+    pending: &mut EffectContinuation,
+    rule: ObjectSelectionRuleV1,
+) -> Result<(), String> {
+    if !crate::high_society_hunter_custody_v45::selected(&pending.resolving_item) {
+        return Err("Hunter selection requires its bound printed root".into());
+    }
+    standard_selection_v1::begin(state, pending, rule, Vec::new())
+}
+
 /// Starts a choice-bearing stack resolution and runs synchronously until it
 /// either completes or yields a real player choice. Legacy-suspending leaves
 /// are rejected up front in this first v4 slice: mixing them with remaining
@@ -3143,6 +3164,9 @@ fn begin_resumable_resolution_with_inspiration_owner(
     state: &mut GameState,
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if crate::high_society_hunter_custody_v45::selected(&resolving_item) {
+        return Err("Hunter root requires its genuine private pre-pop owner".into());
+    }
     if (crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op))
         || resolving_item.v4.crystal_prevention_started_v1.0.is_some()
@@ -3197,6 +3221,14 @@ fn begin_resumable_resolution_with_inspiration_owner(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| crate::high_society_hunter_custody_v45::selected(&p.resolving_item))
+    {
+        return Err("Hunter continuation requires its genuine private resumed owner".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         p.resolving_item
             .v4
@@ -3457,6 +3489,7 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
 /// wrong-shape actions byte-for-byte nonmutating.
 pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let hunter_answer = crate::high_society_hunter_custody_v45::prepare_answer(state)?;
     let inspiration_answer =
         inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Target(target))?;
     if crystal_prevention_v1::is_discard_choice(state) {
@@ -3566,6 +3599,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
     inspiration_resolution_v1::record_answer(state, inspiration_answer)?;
+    crate::high_society_hunter_custody_v45::record_answer(state, hunter_answer)?;
     Ok(())
 }
 
@@ -3574,6 +3608,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 /// final card auto-completes and this action is never legal there.
 pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let hunter_answer = crate::high_society_hunter_custody_v45::prepare_answer(state)?;
     let inspiration_answer =
         inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Finish)?;
     if crystal_prevention_v1::is_discard_choice(state) {
@@ -3640,7 +3675,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
-    inspiration_resolution_v1::record_answer(state, inspiration_answer)
+    inspiration_resolution_v1::record_answer(state, inspiration_answer)?;
+    crate::high_society_hunter_custody_v45::record_answer(state, hunter_answer)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -5932,7 +5968,14 @@ fn validated_definition_owned_root_effect(
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
     let root = if let Some(inline) = pending.resolving_item.inline_effect.as_ref() {
-        Box::new(inline.clone())
+        Box::new(
+            crate::high_society_hunter_custody_v45::normalize_root(
+                state,
+                inline,
+                pending.ctx.ability_source_contract,
+            )?
+            .unwrap_or_else(|| inline.clone()),
+        )
     } else if pending.resolving_item.kind == crate::state::StackItemKind::Spell {
         let source = state
             .objects
@@ -8029,6 +8072,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
+    crate::high_society_hunter_custody_v45::validate(state)?;
     crate::faebloom_trick_v43::validate_state(state)?;
     crate::raid_entry_v1::validate_state(state)?;
     crate::extra_turn_v1::validate(state)?;
@@ -19019,7 +19063,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ctx.source,
             ));
         }
-        EffectOp::FaebloomCreateFaeriesV43
+        EffectOp::HighSocietyHunterFromCaptureV45 { .. }
+        | EffectOp::FaebloomCreateFaeriesV43
         | EffectOp::FaebloomTapFromCaptureV43 { .. }
         | EffectOp::BindArahboCatEntryV1
         | EffectOp::ArahboTokenFromCaptureV1 { .. } => {

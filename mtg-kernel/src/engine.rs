@@ -9233,6 +9233,13 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::high_society_hunter_custody_v45::validate(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::faebloom_trick_v43::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9297,6 +9304,13 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if crate::high_society_hunter_custody_v45::validate(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::faebloom_trick_v43::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -10445,6 +10459,15 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let hunter_owner =
+        match crate::high_society_hunter_custody_v45::acquire(state, &item, false, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        };
     let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, &item, false)
     {
         Ok(owner) => owner,
@@ -10515,7 +10538,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = inspiration_owner.as_ref() {
+    let progress = if let Some(owner) = hunter_owner.as_ref() {
+        crate::high_society_hunter_custody_v45::resume_owned(state, owner)
+    } else if let Some(owner) = inspiration_owner.as_ref() {
         effect::resume_owned_inspiration_resolution(state, owner)
     } else if let Some(owner) = crystal_owner.as_ref() {
         effect::crystal_prevention_v1::resume_owned(state, owner)
@@ -13404,6 +13429,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     let gourmand_item = state.stack.last().expect("trigger just published").clone();
     crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
+    crate::high_society_hunter_custody_v45::publish(state, &finalized)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -13635,6 +13661,11 @@ fn triggered_stack_item_expected_target_spec(
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
 
     crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    crate::high_society_hunter_custody_v45::normalize_root(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     if crate::high_society_hunter_v1::owns_definition(source_card_def)
         && item.v4.granted_by.is_none()
         && *inline_effect == crate::high_society_hunter_v1::attack_program()
@@ -14479,6 +14510,8 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let hunter_counter_owner =
+        crate::high_society_hunter_custody_v45::acquire(state, &item, false, true)?;
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     let gourmand_counter_owner =
         crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
@@ -14553,6 +14586,11 @@ pub(crate) fn counter_stack_item_by_id(
     crate::vampire_gourmand_dispatch_v2::counter_removed(
         state,
         gourmand_counter_owner.as_ref(),
+        &item,
+    )?;
+    crate::high_society_hunter_custody_v45::counter_removed(
+        state,
+        hunter_counter_owner.as_ref(),
         &item,
     )?;
 
@@ -14734,15 +14772,18 @@ fn execute_resolving_program(
         Option<&effect::VampireGourmandResolutionOwnerV1>,
         Option<&effect::crystal_prevention_v1::OwnerV1>,
         Option<&effect::InspirationResolutionOwnerV1>,
+        Option<&crate::high_society_hunter_custody_v45::OwnerV45>,
     ),
 ) -> ResolutionProgress {
-    let (gourmand_owner, crystal_owner, inspiration_owner) = extra_owners;
+    let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    let progress = if let Some(owner) = inspiration_owner {
+    let progress = if let Some(owner) = hunter_owner {
+        crate::high_society_hunter_custody_v45::begin_owned(state, ctx, owner)
+    } else if let Some(owner) = inspiration_owner {
         effect::begin_owned_inspiration_resolution(state, program, ctx, owner)
     } else if let Some(owner) = crystal_owner {
         effect::crystal_prevention_v1::begin_owned(state, program, ctx, owner)
@@ -14757,7 +14798,9 @@ fn execute_resolving_program(
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if if let Some(owner) = inspiration_owner {
+            if if let Some(owner) = hunter_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = inspiration_owner {
                 owner.completion_matches(&completed)
             } else if let Some(owner) = crystal_owner {
                 owner.completion_matches(&completed)
@@ -14782,6 +14825,7 @@ fn execute_resolving_program(
                 || gourmand_owner.is_some()
                 || crystal_owner.is_some()
                 || inspiration_owner.is_some()
+                || hunter_owner.is_some()
             {
                 state
                     .engine
@@ -14847,6 +14891,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    let hunter_owner =
+        match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15390,6 +15445,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                         gourmand_owner.as_ref(),
                         crystal_owner.as_ref(),
                         inspiration_owner.as_ref(),
+                        hunter_owner.as_ref(),
                     ),
                 )
             };
@@ -15480,6 +15536,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 gourmand_owner.as_ref(),
                 crystal_owner.as_ref(),
                 inspiration_owner.as_ref(),
+                hunter_owner.as_ref(),
             ),
         ) == ResolutionProgress::Suspended
         {
@@ -18122,6 +18179,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::high_society_hunter_custody_v45::validate(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::krenko_v1::validate_state(state)?;
@@ -18149,6 +18207,7 @@ pub(crate) fn step_without_linked_aura_v1(
     state: &mut GameState,
     action: Action,
 ) -> Result<(), String> {
+    crate::high_society_hunter_custody_v45::validate(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;

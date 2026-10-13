@@ -1330,6 +1330,9 @@ pub enum CommittedEvent {
     HighSocietyHunterAttackCollectedV1 {
         capture_history_index: u64,
     },
+    HighSocietyHunterJournalV45 {
+        journal: Box<crate::high_society_hunter_custody_v45::JournalV45>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
