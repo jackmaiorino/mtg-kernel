@@ -5,20 +5,21 @@ use super::canon2::{KeyMemo, KeyMode, KeyStats, Keyer};
 use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
-    Counters, End, Meter, PlayErr, act, acting, apply, decision, observe, plain_to_end, terminal,
+    act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
 };
 use super::root_allocation::{RootAllocation, RootAllocator, SearchOptions};
 use super::seeds::{Purpose, RootSeeds};
+use super::sharing::{Cursor as SharingCursor, Sharing};
 use super::tree::{
-    Found, Key, MAX_DEPTH, Mapping, Node, Tree, canon, canon_values, child_key, live_index,
-    raw_decision,
+    canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
+    MAX_DEPTH,
 };
-use super::world::{DeckPrior, sample};
+use super::world::{sample, DeckPrior};
 use crate::ids::PlayerId;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
 use crate::state::SplitMix64;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
@@ -705,6 +706,8 @@ impl Roles {
         diag: &mut SearchDiag,
         mut memo: Option<&mut KeyMemo>,
         mut allocator: Option<&mut RootAllocator>,
+        mut sharing: Option<&mut Sharing>,
+        sharing_cursor: &mut SharingCursor,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -778,6 +781,20 @@ impl Roles {
                         let st = keyer.step_memo(&s, d, memo.as_deref_mut())?;
                         let (key, pk, pe, cn) = keyer.storage(&st);
                         drop(span);
+                        let sharing_probe = sharing
+                            .as_deref_mut()
+                            .map(|sharing| {
+                                sharing.probe(
+                                    sharing_cursor,
+                                    &s,
+                                    d,
+                                    cn,
+                                    key,
+                                    depth,
+                                    meter.spent - spent0,
+                                )
+                            })
+                            .transpose()?;
                         let span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::TreeFind,
                         );
@@ -798,6 +815,11 @@ impl Roles {
                                 } else {
                                     None
                                 }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| sharing.select(probe, node, ctx.urgency),
+                                    )
+                                })
                                 .unwrap_or_else(|| select_observed(node, ctx.urgency, &mut trace));
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
@@ -821,6 +843,13 @@ impl Roles {
                                 } else {
                                     None
                                 }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| {
+                                            sharing.select(probe, &node, ctx.urgency)
+                                        },
+                                    )
+                                })
                                 .unwrap_or_else(|| select_observed(&node, ctx.urgency, &mut trace));
                                 drop(span);
                                 new.push((key, node));
@@ -834,6 +863,9 @@ impl Roles {
                         path.push((key, edge_index));
                         legacy_path.push(st.legacy_key);
                         let live = live_index(cn, &edge)?;
+                        if let Some(probe) = sharing_probe {
+                            sharing_cursor.advance(probe, live, edge_index, meter.spent - spent0);
+                        }
                         parent = (key, edge);
                         let _span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::KeyAdvance,
@@ -999,11 +1031,18 @@ impl Roles {
     ) -> (Selection, Tree) {
         let mut own = SearchDiag::default();
         let diag = diag.unwrap_or(&mut own);
-        if options.sharing {
+        if options.sharing
+            && (options.allocation != RootAllocation::Uct
+                || retain > 1
+                || trace.is_some()
+                || capture.is_some())
+        {
             return (
                 Selection {
                     incomplete: true,
-                    faults: vec!["sharing implementation unavailable".into()],
+                    faults: vec![
+                        "sharing requires UCT, one-node expansion, and no trace/capture".into(),
+                    ],
                     ..Selection::default()
                 },
                 Tree::default(),
@@ -1025,6 +1064,7 @@ impl Roles {
         };
         let mut allocator =
             (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
+        let mut sharing = options.sharing.then(Sharing::default);
         let mut stop_reason = None;
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
@@ -1092,6 +1132,7 @@ impl Roles {
                 t.sim_begin(index, meter.spent);
             }
             let mut rec = SimRecord::default();
+            let mut sharing_cursor = SharingCursor::default();
             let (spent0, calls0) = (meter.spent, c.inference);
             if let Some(cap) = capture.as_deref_mut() {
                 cap.begin(index);
@@ -1111,6 +1152,8 @@ impl Roles {
                 diag,
                 memo.as_mut(),
                 allocator.as_mut(),
+                sharing.as_mut(),
+                &mut sharing_cursor,
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -1154,6 +1197,9 @@ impl Roles {
                         crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
                     tree.backup(&path, new, win);
+                    if let Some(sharing) = sharing.as_mut() {
+                        sharing.backup(&sharing_cursor, index, win);
+                    }
                     sel.completed += 1;
                 }
                 Ok((_, _, End::NonNatural)) => {
@@ -1180,6 +1226,9 @@ impl Roles {
         sel.transitions = meter.spent;
         sel.inference = c.inference;
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(sharing) = sharing.as_ref() {
+            sel.extra["sharing"] = sharing.json();
+        }
         if let Some(allocator) = &allocator {
             if let Some((key, node)) = tree
                 .nodes
