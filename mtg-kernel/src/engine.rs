@@ -1784,6 +1784,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::PermanentCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
@@ -3860,6 +3861,41 @@ fn legal_targets_for_controller_from_source(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(maximum) => {
+            // A historical source is required even after it has left. This
+            // matches the pinned reference's AnotherPredicate physical-card
+            // exclusion; it must not be dropped when the source is absent.
+            let Some(source) = source else {
+                return Vec::new();
+            };
+            state.players[controller.index()]
+                .graveyard
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    state.objects.try_get(id).is_some_and(|object| {
+                        id != source.object
+                            && object.owner == controller
+                            && object.zone == Zone::Graveyard
+                            && !object.v4.is_token
+                            && object.spell_copy_origin.is_none()
+                            && card_def::CARD_DEFS
+                                .get(usize::from(object.card_def))
+                                .is_some_and(|definition| {
+                                    definition.has_type(CardType::Creature)
+                                        && i32::from(definition.mana_value) <= maximum
+                                        // Bear is not yet materialized into
+                                        // historical closed-pool changeling
+                                        // vectors. Its CDA still excludes the
+                                        // card without changing those bytes.
+                                        && !definition.changeling
+                                })
+                            && !has_effective_subtype(state, id, card_def::Subtype::Bear)
+                    })
+                })
+                .map(Target::Object)
+                .collect()
+        }
         TargetSpec::PermanentCardInOwnGraveyard => state.players[controller.index()]
             .graveyard
             .iter()
@@ -28778,6 +28814,9 @@ mod ashroot_declaration_boundary_tests;
 
 #[cfg(test)]
 mod shroud_target_tests;
+
+#[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
+mod fiendish_panda_targeting_tests;
 
 #[cfg(all(
     test,

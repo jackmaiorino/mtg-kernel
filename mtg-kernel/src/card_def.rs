@@ -341,6 +341,9 @@ pub enum Subtype {
     Ooze,
     /// Prepared Sower source; choice-array admission remains separate.
     Devil,
+    /// Appended for the unregistered Fiendish Panda target grammar. Existing
+    /// creature-choice projections stay frozen until printed registration.
+    Bear,
 }
 
 impl Subtype {
@@ -827,6 +830,7 @@ impl Subtype {
                 | Subtype::Minotaur
                 | Subtype::Ooze
                 | Subtype::Devil
+                | Subtype::Bear
         )
     }
 }
@@ -1066,6 +1070,10 @@ pub enum TargetSpec {
     UpToTwoCardsInSingleGraveyard,
     /// Fiery Annihilation: mandatory creature, optional attached Equipment.
     CreatureThenUpToOneAttachedEquipment,
+    /// Exactly one other nontoken, non-Bear creature card in the controller's
+    /// graveyard. The signed bound is captured source power, not a fixed
+    /// printed mana value. A negative bound offers no targets.
+    AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
 }
 
 impl TargetSpec {
@@ -1159,6 +1167,7 @@ impl TargetSpec {
             TargetSpec::CardInGraveyards => 65,
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
+            TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
         }
     }
 }
