@@ -1317,6 +1317,9 @@ pub enum CommittedEvent {
     AjaniJournalV42 {
         journal: Box<crate::ajani_full_v42::lifecycle::JournalV42>,
     },
+    FaebloomJournalV43 {
+        journal: Box<crate::faebloom_trick_v43::JournalV43>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -631,9 +631,12 @@ pub mod krenko_observation_v1;
 pub mod krenko_public_v1;
 pub mod rules_meaning_krenko_v1;
 
+pub mod faebloom_public_v43;
+pub mod faebloom_trick_v43;
 pub mod fishing_pole_observation_v39;
 pub mod fishing_pole_public_v39;
 pub(crate) mod fishing_pole_v39;
+pub mod rules_meaning_faebloom_v43;
 pub mod rules_meaning_fishing_pole_v39;
 
 pub mod ajani_full_v42;
@@ -650,3 +653,5 @@ pub mod rules_meaning_ajani_v42;
 pub mod ajani_public_v42;
 
 pub mod ajani_observation_v42;
+
+pub mod faebloom_observation_v43;

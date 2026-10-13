@@ -4112,6 +4112,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+        return crate::faebloom_trick_v43::selected_definition(card_def)
+            .then_some(TargetSpec::OpponentControlledCreature);
+    }
+
     if matches!(effect, EffectOp::FishingPoleUntapV39 { .. }) {
         return crate::fishing_pole_v39::selected_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4720,7 +4725,8 @@ pub(crate) fn collect_and_process_with_waiting(
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
             crate::banishing_light_v1::discard_without_targets(state, pending);
-            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
+            if crate::faebloom_trick_v43::drop_unavailable(state, pending).is_err()
+                || crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
             {
@@ -4809,6 +4815,16 @@ fn triggers_from_events(
         }
     }
     match crate::vampire_gourmand_dispatch_v2::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::faebloom_trick_v43::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((

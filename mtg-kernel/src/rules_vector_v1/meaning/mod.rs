@@ -84,6 +84,9 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::FaebloomCreateFaeriesV43 | EffectOp::FaebloomTapFromCaptureV43 { .. } => {
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
             // Pre-move creature type and exact source identity have no v1 facets.
             out.atoms.push(Atom::Opaque);
