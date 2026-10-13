@@ -49,6 +49,54 @@ pub(crate) fn validate_definition(id: u16) -> Result<(), String> {
         || d.is_land
         || d.is_token
         || d.keywords != Keywords::NONE
+        || !d.is_executable()
+        || d.object_name != d.name
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || d.mana_ability_def.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || d.alt_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.kicked_target_spec.is_some()
+        || d.flashback.is_some()
+        || d.escape.is_some()
+        || d.madness_cost.is_some()
+        || d.plot_cost.is_some()
+        || d.bestow.is_some()
+        || d.omen.is_some()
+        || d.adventure.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.transform_face.is_some()
+        || d.attachment.is_some()
+        || d.equipment.is_some()
+        || d.animation.is_some()
+        || d.saga.is_some()
+        || d.changeling
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
+        || d.enters_battlefield_tapped
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || d.ward_cost.is_some()
+        || d.generic_cost_reduction.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.delve
+        || d.mana_ability_includes_chosen_color
+        || d.as_enters_choose_color_other_than.is_some()
+        || d.conditional_tap_yield.is_some()
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.minimum_blockers > 1
+        || !d.additional_mana_ability_conditions.is_empty()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
         || d.target_spec != TargetSpec::None
         || (d.spell_effect)()
             != Some(EffectOp::MoveObject {
