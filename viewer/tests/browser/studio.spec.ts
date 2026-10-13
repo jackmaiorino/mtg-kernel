@@ -65,6 +65,16 @@ test('full UCT tree exposes discovery, rollout moves and discarded attempts',asy
   await page.screenshot({path:'test-results/uct-search-320.png',fullPage:true});
 });
 
+test('the UCT console keeps the tree, timeline and attempt panel on one screen',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});await openFixture(page);
+  await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(pooledUct))});
+  await page.getByRole('button',{name:'Watch this search unfold'}).click();
+  const box=await page.locator('#search-replay').boundingBox();expect(box!.height).toBeLessThanOrEqual(900);
+  for(const part of [page.getByRole('slider',{name:'Search event timeline'}),page.locator('.search-graph-canvas'),page.getByRole('complementary',{name:'This attempt'}),page.getByRole('complementary',{name:'First move options'})])await expect(part).toBeInViewport();
+  await page.getByRole('button',{name:'Next attempt'}).click();await expect(page.locator('.search-phase')).toContainText('Attempt 2 /');
+  await expect(page.getByRole('complementary',{name:'First move options'})).toContainText('1/1');
+});
+
 test('retained search choices link to roots and show legal moves without fabricated scores',async({page})=>{
   await openFixture(page);
   await page.locator('input[type=file]').setInputFiles({name:'retained.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(retained))});
