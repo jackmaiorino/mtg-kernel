@@ -370,6 +370,13 @@ fn discard_menu(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<Option<DiscardMenuV2>, RlContractError> {
+    discard_menu_inner(state, actor, false)
+}
+fn discard_menu_inner(
+    state: &GameState,
+    actor: PlayerId,
+    accept_akroma: bool,
+) -> Result<Option<DiscardMenuV2>, RlContractError> {
     if !crate::effect::crystal_prevention_v1::is_discard_choice(state) {
         return Ok(None);
     }
@@ -381,12 +388,19 @@ fn discard_menu(
     }
     Ok(Some(DiscardMenuV2 {
         chooser: actor.into(),
-        source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+        source: if accept_akroma {
+            crate::rl::akroma_crystal_resolving_source_ref_v40(state, &pending.resolving_item)?
+        } else {
+            crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?
+        },
         maximum_cards: 1,
         draws_if_discarded: 1,
     }))
 }
 fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
+    menu_inner(state, false)
+}
+fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
     let Some(PendingEffectChoice::ChooseOption {
@@ -425,10 +439,17 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     Ok(Some(MenuV1 {
         chooser: choice.chooser.into(),
         source,
-        resolving_source: crate::rl::crystal_resolving_source_ref(
-            state,
-            &state.engine.pending_effect.as_ref().unwrap().resolving_item,
-        )?,
+        resolving_source: if accept_akroma {
+            crate::rl::akroma_crystal_resolving_source_ref_v40(
+                state,
+                &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+            )?
+        } else {
+            crate::rl::crystal_resolving_source_ref(
+                state,
+                &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+            )?
+        },
         source_history,
         fixed_source_history,
         raid_source_history,
@@ -465,7 +486,7 @@ pub(crate) fn parts_for_akroma_v40(
     let (substep_index, substep_count) = substep;
 
     validate_state(state).map_err(RlContractError)?;
-    let optional_discard_menu = discard_menu(state, actor)?;
+    let optional_discard_menu = discard_menu_inner(state, actor, true)?;
     let optional_fight_menu = if crate::effect::crystal_prevention_v1::is_program_choice(state) {
         let pending = state
             .engine
@@ -474,7 +495,10 @@ pub(crate) fn parts_for_akroma_v40(
             .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
         Some(ProgramMenuV3 {
             chooser: pending.ctx.controller.into(),
-            source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+            source: crate::rl::akroma_crystal_resolving_source_ref_v40(
+                state,
+                &pending.resolving_item,
+            )?,
             decline_index: 0,
             fight_index: 1,
             requires_original_source_creature: true,
@@ -524,7 +548,7 @@ pub(crate) fn parts_for_akroma_v40(
             state.player_attacked_this_turn_v1(PlayerId::P1),
         ],
         static_sources,
-        prevention_menu: menu(state)?,
+        prevention_menu: menu_inner(state, true)?,
         optional_discard_menu,
         optional_fight_menu,
         equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)

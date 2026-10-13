@@ -502,6 +502,32 @@ impl PolicySurfaceV5 {
         self.scan_context_for(observer)
     }
 
+    /// Owning successor restore rebinds only authenticated derived scan state.
+    /// Predecessor next/apply entry points keep their original binding modes.
+    pub(crate) fn rebind_owned_revision_after_restore_v1(
+        &mut self,
+        state: &GameState,
+        previous: u64,
+        next: u64,
+    ) -> Result<(), String> {
+        if next <= previous {
+            return Err("restored owner revision must advance".into());
+        }
+        if let Some(scan) = self.scan.as_ref() {
+            scan.validate_binding(
+                state,
+                &self.inner,
+                EnvironmentBindingModeV5::OwnedRevision(previous),
+            )?;
+            scan.validate_shape()?;
+        }
+        if let Some(scan) = self.scan.as_mut() {
+            let (CombatScanV5::Attackers { binding, .. } | CombatScanV5::Blockers { binding, .. }) =
+                scan;
+            *binding = CombatScanBindingV5::OwnedEnvironmentRevision(next);
+        }
+        Ok(())
+    }
     pub fn next_decision(&mut self, state: &mut GameState) -> Result<PolicyDecisionV5, String> {
         self.next_decision_with_binding(state, EnvironmentBindingModeV5::Exact)
     }

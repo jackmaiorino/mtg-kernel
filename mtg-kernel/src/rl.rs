@@ -2148,7 +2148,11 @@ fn build_observation_akroma_inner(
             public_cards_v2(state, &state.players[1].graveyard, text_mode)?,
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
-        stack: stack_public_v2(state, acting_player)?,
+        stack: if accept_akroma {
+            heartfire_history_v1::stack_public_history(state, acting_player)?
+        } else {
+            stack_public_v2(state, acting_player)?
+        },
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
             state,
@@ -2159,10 +2163,11 @@ fn build_observation_akroma_inner(
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
-        engine_context: engine_context_v2(
+        engine_context: engine_context_v2_akroma_inner(
             state,
             acting_player,
             (accept_banishing, accept_inspiration),
+            accept_akroma,
         )?,
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };
@@ -3567,8 +3572,16 @@ fn build_policy_observation_storage_akroma_inner(
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    let extensions =
-        policy_observation_extensions_common_v6(state, acting_player, text_mode, accept_life_ward)?;
+    let extensions = if accept_akroma {
+        heartfire_history_v1::normalization_common(
+            state,
+            acting_player,
+            text_mode,
+            accept_life_ward,
+        )?
+    } else {
+        policy_observation_extensions_common_v6(state, acting_player, text_mode, accept_life_ward)?
+    };
     let (mut base, policy_surface_context) = build_policy_observation_parts_akroma_inner(
         state,
         surface,
@@ -8305,6 +8318,14 @@ fn engine_context_v2(
     acting_player: PlayerId,
     capabilities: (bool, bool),
 ) -> Result<EngineContextV2> {
+    engine_context_v2_akroma_inner(state, acting_player, capabilities, false)
+}
+fn engine_context_v2_akroma_inner(
+    state: &GameState,
+    acting_player: PlayerId,
+    capabilities: (bool, bool),
+    accept_akroma: bool,
+) -> Result<EngineContextV2> {
     let (accept_banishing, accept_inspiration) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
@@ -8514,12 +8535,17 @@ fn engine_context_v2(
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
         pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
-            Some(pending_effect_semantic_v4(
-                state,
-                acting_player,
-                pending,
-                accept_inspiration,
-            )?)
+            Some(if accept_akroma {
+                pending_effect_semantic_v4_akroma_inner(
+                    state,
+                    acting_player,
+                    pending,
+                    accept_inspiration,
+                    true,
+                )?
+            } else {
+                pending_effect_semantic_v4(state, acting_player, pending, accept_inspiration)?
+            })
         } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
             engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
             Some(PendingEffectSemanticV4 {
@@ -8582,6 +8608,21 @@ fn pending_effect_semantic_v4(
     pending: &crate::effect::EffectContinuation,
     accept_inspiration: bool,
 ) -> Result<PendingEffectSemanticV4> {
+    pending_effect_semantic_v4_akroma_inner(
+        state,
+        acting_player,
+        pending,
+        accept_inspiration,
+        false,
+    )
+}
+fn pending_effect_semantic_v4_akroma_inner(
+    state: &GameState,
+    acting_player: PlayerId,
+    pending: &crate::effect::EffectContinuation,
+    accept_inspiration: bool,
+    accept_akroma: bool,
+) -> Result<PendingEffectSemanticV4> {
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     // Every private batch stage, including an accepted answer waiting for
     // engine advance, shares one nonchooser envelope. Stage/purpose and kept
@@ -8605,7 +8646,11 @@ fn pending_effect_semantic_v4(
     };
     if let Some(player) = surveil_player.filter(|player| *player != acting_player) {
         return Ok(PendingEffectSemanticV4 {
-            source: Some(stack_source_ref(state, &pending.resolving_item)?),
+            source: Some(if accept_akroma {
+                akroma_historical_source_ref_v40(state, &pending.resolving_item)?
+            } else {
+                stack_source_ref(state, &pending.resolving_item)?
+            }),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
                 player: player.into(),
@@ -8929,7 +8974,11 @@ fn pending_effect_semantic_v4(
         // A resolving stack item's source was already public as part of that
         // stack item. Reuse the same unconditional public source reference even
         // if the underlying card has since moved to a normally hidden zone.
-        source: Some(stack_source_ref(state, &pending.resolving_item)?),
+        source: Some(if accept_akroma {
+            akroma_historical_source_ref_v40(state, &pending.resolving_item)?
+        } else {
+            stack_source_ref(state, &pending.resolving_item)?
+        }),
         controller: pending.resolving_item.controller.into(),
         choice,
     })
@@ -9520,6 +9569,46 @@ pub(crate) fn crystal_resolving_source_ref(
         zone,
         zone_change_count,
     })
+}
+pub(crate) fn akroma_crystal_resolving_source_ref_v40(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    if !matches!(
+        item.inline_effect.as_ref(),
+        Some(crate::effect::EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+        ))
+    ) {
+        return crystal_resolving_source_ref(state, item);
+    }
+    let pending = state.engine.pending_effect.as_ref().ok_or_else(|| {
+        RlContractError("V40 historical Crystal source lacks genuine pending owner".into())
+    })?;
+    if pending.resolving_item != *item {
+        return Err(RlContractError(
+            "V40 historical Crystal source changed its pending owner".into(),
+        ));
+    }
+    crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
+    crate::source_power_activation_v1::validate_state(state).map_err(RlContractError)?;
+    akroma_historical_source_ref_v40(state, item)
+}
+pub(crate) fn akroma_historical_source_ref_v40(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    let live = state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>();
+    if !matches!(live.as_slice(), [row] if *row == item) {
+        return Err(RlContractError(
+            "V40 historical source requires its genuine complete live row".into(),
+        ));
+    }
+    heartfire_history_v1::captured_source_ref(state, item)
 }
 fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     crate::engine::validated_stack_item_target_spec(item, state)
