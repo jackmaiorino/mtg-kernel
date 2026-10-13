@@ -67,7 +67,7 @@ def capture_receipt(result, steps=None):
                     if stage==3 and m['resolution']&4:stage=4
                 combo|=stage==4 and s['reason']=='win'
             if kind=='footer':footer=row
-    if not header or not footer or footer.get('error') or footer['written']!=decisions or decisions!=result['actions'] or not searches or any(v is False for v in searches.values()):
+    if not header or not footer or footer.get('stop_reason') or footer['written']!=decisions or decisions!=result['actions'] or not searches or any(v is False for v in searches.values()):
         raise ValueError('Recorder lost gameplay decisions or requested full search')
     if steps is not None and decisions!=steps:raise ValueError('Short correctness case did not reach its bound')
     return {'written':decisions,'complete':footer['complete'],'traced_searches':sum(v is True for v in searches.values()),'winning_combo_rollout':combo}

@@ -3,19 +3,24 @@ import { edgeKey, type SearchGraphState } from './search-graph';
 
 export type UctEvent={simulation:number;phase:'select'|'rollout'|'evaluate'|'backup';choice:number;move?:number;after?:boolean};
 export function uctEvents(r:UctReplay):UctEvent[]{
-  return r.simulations.flatMap((s,simulation)=>[
-    ...s.choices.map((_,choice)=>({simulation,phase:'select' as const,choice})),
-    ...s.combo?s.rollout.flatMap((m,move)=>m[5]||m[6]?[{simulation,phase:'rollout' as const,choice:s.choices.length-1,move,after:false},{simulation,phase:'rollout' as const,choice:s.choices.length-1,move,after:true}]:[]):[],
-    {simulation,phase:'evaluate' as const,choice:Math.max(0,s.choices.length-1)},
-    {simulation,phase:'backup' as const,choice:Math.max(0,s.choices.length-1)},
-  ]);
+  return r.simulations.flatMap((s,simulation)=>{
+    const events:UctEvent[]=[];let cursor=0;
+    const select=()=>events.push({simulation,phase:'select',choice:cursor++});
+    if(s.combo)for(const [move,m] of s.rollout.entries()){
+      while(cursor<s.choices.length&&s.choices[cursor].step<=m[1])select();
+      if(m[5]||m[6])events.push({simulation,phase:'rollout',choice:Math.max(0,cursor-1),move,after:false},{simulation,phase:'rollout',choice:Math.max(0,cursor-1),move,after:true});
+    }
+    while(cursor<s.choices.length)select();
+    events.push({simulation,phase:'evaluate',choice:Math.max(0,cursor-1)},{simulation,phase:'backup',choice:Math.max(0,cursor-1)});
+    return events;
+  });
 }
 export function uctGraphAt(r:UctReplay,event:UctEvent):SearchGraphState{
   const nodes:SearchGraphState['nodes']=new Map(),edges:SearchGraphState['edges']=new Map(),explored=new Set<number>();
   const add=(id:number,board:number,born:number)=>{if(!nodes.has(id))nodes.set(id,{id,born,board:r.boards[board],estimate:null,visits:0,sum:0n});};
   add(0,r.nodes[0].board,-1);let completed=0;
   for(let i=0;i<=event.simulation;i++){
-    const s=r.simulations[i],current=i===event.simulation,limit=current&&event.phase==='select'?event.choice+1:s.choices.length;
+    const s=r.simulations[i],current=i===event.simulation,limit=current&&(event.phase==='select'||event.phase==='rollout')?event.choice+1:s.choices.length;
     for(let j=0;j<limit;j++){
       const c=s.choices[j];add(c.node,c.board,i);
       if(j){const p=s.choices[j-1],key=edgeKey(p.node,p.action,c.node);edges.set(key,{key,from:p.node,action:p.action,to:c.node});}
@@ -24,7 +29,7 @@ export function uctGraphAt(r:UctReplay,event:UctEvent):SearchGraphState{
       completed++;for(const c of s.choices){const n=nodes.get(c.node)!;n.visits++;n.sum+=s.reason==='win'?1000000n:0n;explored.add(c.node);}
     }
   }
-  const s=r.simulations[event.simulation],limit=event.phase==='select'?event.choice+1:s.choices.length;
+  const s=r.simulations[event.simulation],limit=event.phase==='select'||event.phase==='rollout'?event.choice+1:s.choices.length;
   const activeNodes=s.choices.slice(0,limit).map(c=>c.node),activeEdges=new Set<string>();
   for(let i=1;i<limit;i++){const p=s.choices[i-1];activeEdges.add(edgeKey(p.node,p.action,s.choices[i].node));}
   if(!activeNodes.length)activeNodes.push(0);
@@ -35,16 +40,20 @@ export function validateUct(f:Frame,r:Recording){
   const u=f.search!.uctReplay!,sameKey=(a:Frame['key'],b:Frame['key'])=>JSON.stringify(a)===JSON.stringify(b);
   if(!sameKey(u.key,f.key)||u.treeDigest!==f.decisionSource?.treeDigest||f.decisionSource.artifactSha256!==r.identity.sourceSha256)throw new Error('UCT trace source binding differs');
   const validBoard=(id:number)=>id<u.boards.length;
+  const publicRefs=(b:UctReplay['boards'][number])=>new Set([...b.players.flatMap(p=>[...p.battlefield,...p.graveyard]),...b.exile].map(o=>o.id).concat(b.stack.flatMap(s=>s.source?[s.source]:[])));
   for(const b of u.boards){
     if(b.players.some(p=>p.hand.length))throw new Error('UCT sampled hands must stay hidden');
     const objects=[...b.players.flatMap(p=>[...p.battlefield,...p.graveyard]),...b.exile];
     if(new Set(objects.map(o=>o.id)).size!==objects.length||objects.some(o=>!r.cards[o.card]))throw new Error('UCT board object references differ');
+    const visible=publicRefs(b);
+    if(b.combat.some(c=>!visible.has(c.attacker)||c.blockers.some(id=>!visible.has(id)))||b.stack.some(s=>s.targets.some(id=>!visible.has(id))))throw new Error('UCT combat or stack reference differs');
   }
   const n=u.nodes,counts=n.map(v=>v.actions.map(()=>0)),wins=n.map(v=>v.actions.map(()=>0));
   for(const [id,node] of n.entries()){
     const k=node.actions.length;
     if(node.id!==id||node.actor!==r.perspective||!validBoard(node.board)||node.actions.some((a,i)=>a.index!==i)||node.edgeVisits.length!==k||node.edgeWins.length!==k||node.liveOrder.length!==k||new Set(node.liveOrder).size!==k||node.liveOrder.some(i=>i>=k))throw new Error('UCT node/action mapping differs');
     if(id===0?node.parent!==null:!node.parent||node.parent[0]>=id||node.parent[1]>=n[node.parent[0]].actions.length)throw new Error('UCT parent identity differs');
+    if(id&&node.actions.some(a=>a.refs.some(ref=>!publicRefs(u.boards[node.board]).has(ref))))throw new Error('UCT interior action reference differs');
   }
   let transitions=0,completed=0,firstCombo:number|null=null;
   for(const [i,s] of u.simulations.entries()){
@@ -61,6 +70,8 @@ export function validateUct(f:Frame,r:Recording){
     for(const [move,m] of s.rollout.entries()){
       if(m[0]>1||m[4]>=u.actions.length||[m[7],m[8]].some(id=>id!==null&&!validBoard(id)))throw new Error('UCT rollout reference differs');
       if(move&&m[1]!==s.rollout[move-1][1]+1)throw new Error('UCT rollout step ordering differs');
+      const visible=new Set([m[7],m[8]].flatMap(id=>id===null?[]:[...publicRefs(u.boards[id])]));
+      if(u.actions[m[4]].refs.some(ref=>!visible.has(ref)))throw new Error('UCT rollout action reference differs');
       if(m[0]===(r.perspective==='p0'?0:1)&&(m[5]&2))stage=Math.max(stage,1);
       if(stage===1&&(m[6]&2))stage=2;
       if(stage===2&&m[0]===(r.perspective==='p0'?0:1)&&(m[5]&4))stage=3;

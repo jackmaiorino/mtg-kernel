@@ -20,8 +20,8 @@ test('full UCT tree exposes discovery, rollout moves and discarded attempts',asy
   await expect(page.locator('.decision-evidence')).toContainText('Tree choices, rollout actions');
   await page.getByRole('button',{name:'Watch its discovery'}).click();
   await expect(page.locator('.search-discovery')).toContainText('attempt 1');
-  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(2);
-  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('.search-caption')).toContainText('Selected at a UCT tree node');
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(1);await expect(page.locator('.search-caption')).toContainText('Selected at a UCT tree node');
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(2);
   await page.getByRole('button',{name:'See complete graph'}).click();await expect(page.locator('[data-node]')).toHaveCount(3);await expect(page.locator('.search-caption')).toContainText('without a backup');
   await page.getByText('Inspect every simulated move', {exact:false}).click();await page.getByLabel('Inspect rollout move').selectOption('1');
   await expect(page.locator('.search-caption')).toContainText('step 16');

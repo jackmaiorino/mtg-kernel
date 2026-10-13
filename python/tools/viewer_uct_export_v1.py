@@ -34,6 +34,8 @@ def replay(raw, exporter, frame):
             actions = [dict(frame['actions'][live], index=j) for j, live in enumerate(n['live_order'])]
         if any(a['index'] != j for j,a in enumerate(actions)):
             raise ValueError('UCT canonical action identifiers differ')
+        if i and any(ref not in public_ids(boards[board_map[n['board']]]) for a in actions for ref in a['refs']):
+            raise ValueError('UCT interior public action reference differs')
         nodes.append({'id':i,'actor':'p0','board':board_map[n['board']], 'parent':n['parent'],
             'actions':actions,'liveOrder':n['live_order'],'committed':n['committed'],
             'visits':n['visits'],'edgeVisits':n['n'],'edgeWins':n['wins']})

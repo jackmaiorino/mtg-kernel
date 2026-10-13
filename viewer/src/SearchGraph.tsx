@@ -14,9 +14,9 @@ export function SearchGraph({replay,event,recording,playing,speed,epoch,selected
   const graph=useMemo(()=>graphAt(replay,event),[replay,event]);
   return <SearchGraphCanvas topology={replay} graph={graph} event={event} recording={recording} playing={playing} speed={speed} epoch={epoch} selected={selected} onSelect={onSelect} onComplete={onComplete} onInteract={onInteract}/>;
 }
-export function SearchGraphCanvas({topology:replay,graph,event,recording,playing,speed,epoch,selected,onSelect,onComplete,onInteract,uct=false}:{
+export function SearchGraphCanvas({topology:replay,graph,event,recording,playing,speed,epoch,selected,onSelect,onComplete,onInteract,uct=false,rolloutLabels=[]}:{
   topology:GraphTopology;graph:SearchGraphState;event:SearchEvent;recording:Recording;playing:boolean;speed:number;epoch:number;
-  selected:number|null;onSelect:(id:number|null)=>void;onComplete:()=>void;onInteract:()=>void;uct?:boolean;
+  selected:number|null;onSelect:(id:number|null)=>void;onComplete:()=>void;onInteract:()=>void;uct?:boolean;rolloutLabels?:string[];
 }) {
   const layout=useMemo(()=>graphLayout(replay),[replay]);
   const container=useRef<HTMLDivElement>(null),drag=useRef<{x:number;y:number;camera:Camera;moved:boolean}|null>(null);
@@ -29,10 +29,11 @@ export function SearchGraphCanvas({topology:replay,graph,event,recording,playing
   const levelCounts=new Map<number,number>();for(const p of points.values())levelCounts.set(p.depth,(levelCounts.get(p.depth)??0)+1);
   const radius=Math.max(2.5,Math.min(8,(width-110)/Math.max(...levelCounts.values())/2.8));
   const active=new Set(graph.activeNodes),last=points.get(graph.activeNodes.at(-1)!)!;
-  const evaluation=event.phase!=='select'&&graph.frontier===null?{x:last.x+32,y:last.y+100,depth:last.depth+1}:null;
+  const evaluation=event.phase!=='select'&&graph.frontier===null?{x:last.x+32,y:last.y+100+65*rolloutLabels.length,depth:last.depth+1}:null;
+  const rolloutPoints=rolloutLabels.map((label,i)=>({x:last.x,y:last.y+65*(i+1),depth:last.depth+i+1,label}));
   const visible=[...graph.nodes.keys()].map(id=>points.get(id)!).filter(Boolean);
   const fit=(positions:GraphPoint[]):Camera=>{const b=graphBounds(positions),scale=Math.min(1.3,(width-60)/(b.maxX-b.minX),(height-50)/(b.maxY-b.minY));return {scale,x:width/2-(b.minX+b.maxX)/2*scale,y:height/2-(b.minY+b.maxY)/2*scale};};
-  const auto=fit([...visible,...evaluation?[evaluation]:[]]),view=camera??auto;
+  const auto=fit([...visible,...evaluation?[evaluation]:[],...rolloutPoints]),view=camera??auto;
   const fullDepth=Math.max(...[...points.values()].map(p=>p.depth));
   const path=graph.activeNodes.map(id=>points.get(id)!).concat(evaluation?[evaluation]:[]);
   const moving=event.phase==='backup'?path.slice().reverse():path.slice(-2);
@@ -58,6 +59,7 @@ export function SearchGraphCanvas({topology:replay,graph,event,recording,playing
         <g transform={`translate(${view.x} ${view.y}) scale(${view.scale})`}>
           {[...graph.edges.values()].map(edge=>{const from=points.get(edge.from)!,to=points.get(edge.to)!,middle=(from.y+to.y)/2,current=graph.activeEdges.has(edge.key);return <path key={edge.key} data-edge={edge.key} className={`search-graph-edge ${current?event.phase==='backup'?'backup':'active':''}`} vectorEffect="non-scaling-stroke" d={`M ${from.x} ${from.y} C ${from.x} ${middle} ${to.x} ${middle} ${to.x} ${to.y}`}><title>{replay.nodes[edge.from].actions[edge.action].label} → node {edge.to}</title></path>;})}
           {evaluation&&<><path className="search-graph-edge evaluation" vectorEffect="non-scaling-stroke" strokeDasharray="4 4" d={`M ${last.x} ${last.y} L ${evaluation.x} ${evaluation.y}`}/><g transform={`translate(${evaluation.x} ${evaluation.y})`}><path className="search-evaluation-diamond" d="M 0 -12 L 12 0 L 0 12 L -12 0 Z"/><text className="search-node-label" y="28" textAnchor="middle">{simulation.reason==='natural'?'Result':'Evaluation only'}</text><title>This recorded evaluation did not add a persistent search node.</title></g></>}
+          {rolloutPoints.map((p,i)=>{const from=i?rolloutPoints[i-1]:last;return <g key={i} className="search-rollout-position"><path className="search-graph-edge evaluation" vectorEffect="non-scaling-stroke" strokeDasharray="3 5" d={`M ${from.x} ${from.y} L ${p.x} ${p.y}`}/><g transform={`translate(${p.x} ${p.y})`}><circle r="6" fill="#111f19" stroke="#83baa3"/><text className="search-node-label" textAnchor="middle" y="22">{p.label}</text><title>Recorded policy rollout continuation; this is not a persistent tree node.</title></g></g>;})}
           {[...graph.nodes.values()].map(node=>{const p=points.get(node.id)!,actor=replay.nodes[node.id].actor,frontier=node.id!==0&&!graph.explored.has(node.id),isActive=active.has(node.id),label=`Inspect node ${node.id}: ${recording.seats[actor==='p0'?0:1].name}, depth ${p.depth}, ${node.visits} visits${frontier?', evaluated frontier':''}`;return <g key={node.id} data-node={node.id} role="button" aria-label={label} aria-pressed={selected===node.id} tabIndex={focus===node.id?0:-1} transform={`translate(${p.x} ${p.y})`} className={`search-graph-node ${actor===recording.perspective?'agent':'opponent'} ${frontier?'frontier':''} ${isActive?'active':''} ${selected===node.id?'selected':''}`}
             onClick={()=>inspect(node.id)} onFocus={()=>setFocus(node.id)} onKeyDown={e=>{if(e.key.startsWith('Arrow')){e.preventDefault();e.stopPropagation();moveFocus(node.id,e.key);}if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();inspect(node.id);}}}>
             <title>{label}{node.estimate!==null?`; first estimate ${node.estimate}`:''}</title><circle className="search-node-hit" r={Math.max(radius+2,3/view.scale)}/><circle className="search-node-dot" r={node.id===0?17:radius} vectorEffect="non-scaling-stroke"/>
@@ -70,6 +72,7 @@ export function SearchGraphCanvas({topology:replay,graph,event,recording,playing
       <span className="search-graph-pan-hint">Drag to pan · Zoom to inspect</span>
     </div>
     <div className="search-graph-legend"><span className="agent">Agent position</span>{!uct&&<span className="opponent">Opponent position</span>}<span className="frontier">{uct?'Proposed position':'Evaluated frontier'}</span><span className="route">Current route</span></div>
+    {rolloutLabels.length>0&&<p className="search-graph-note">Dashed continuation: observed combo events in this simulation’s policy rollout. These markers add no tree nodes or visits.</p>}
     <div className="search-node-picker"><label>Inspect a discovered position <select aria-label="Inspect discovered position" value={selected??''} onChange={e=>{if(e.target.value!=='')inspect(Number(e.target.value));else onSelect(null);}}><option value="">Follow current simulation</option>{[...graph.nodes.keys()].map(id=><option key={id} value={id}>Node {id} · {replay.nodes[id].actor===recording.perspective?'Agent':'Opponent'} · depth {points.get(id)?.depth}</option>)}</select></label></div>
     {selectedNode&&chosen&&<div className="search-node-detail"><strong>Node {selectedNode.id} · {recording.seats[chosen.actor==='p0'?0:1].name}</strong><span>{selectedNode.born<0?'Root position':`Discovered in simulation ${selectedNode.born+1}`} · {selectedNode.visits} backed-up visits · mean {selectedNode.visits?String(selectedNode.sum/BigInt(selectedNode.visits)):'Pending'}</span><span>{selectedNode.estimate!==null?`First leaf estimate: ${selectedNode.estimate}. `:''}{chosen.actions.length} legal continuations; {[...graph.edges.values()].filter(e=>e.from===selectedNode.id).length} recorded outgoing connections.</span></div>}
     <p className="search-graph-note">{uct?'The UCT tree stores the focal agent’s non-forced choices. Opponent and later policy moves run between nodes. Proposed branches commit only after a natural result; truncated attempts add no visits.':'Each connection is a recorded move leading to a sampled position. One move can reach several hidden-world outcomes. Amber frontier positions were evaluated; their continuations have not yet been explored.'}</p>
