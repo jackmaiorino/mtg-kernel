@@ -117,7 +117,7 @@ pub(crate) fn begin_turn(state: &mut GameState) {
         state,
         JournalV42::Turn {
             index: state.engine.event_history.len() as u64,
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active: state.active_player,
         },
     );
@@ -127,7 +127,7 @@ fn epoch(state: &GameState) -> Result<u64, String> {
         .rev()
         .find(|(_, j)| matches!(j, JournalV42::Turn { .. }))
         .ok_or("Ajani genuine turn anchor absent")?;
-    if !matches!(j,JournalV42::Turn{turn,active,..} if *turn==state.turn && *active==state.active_player)
+    if !matches!(j,JournalV42::Turn{turn,active,..} if *turn==state.turn_key_v1() && *active==state.active_player)
     {
         return Err("Ajani turn anchor stale".into());
     }

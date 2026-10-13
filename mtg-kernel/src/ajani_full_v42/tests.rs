@@ -396,4 +396,347 @@ mod future {
             refuses(replay);
         }
     }
+    fn cast_named(
+        state: &mut GameState,
+        actor: PlayerId,
+        name: &str,
+        color: ManaColor,
+        amount: u16,
+    ) -> ObjectId {
+        let source = put(state, actor, name, Zone::Hand);
+        assert!(CARD_DEFS[usize::from(state.objects.get(source).card_def)].has_full_support());
+        state.players[actor.index()].mana_pool[color.pool_index()] = amount;
+        assert!(
+            matches!(next(state),Decision::CastSpellOrPass{player,castable_spells,..} if player==actor && castable_spells.contains(&source))
+        );
+        engine::step(state, Action::CastSpell(source)).unwrap();
+        next(state);
+        if CARD_DEFS[usize::from(state.objects.get(source).card_def)].target_spec
+            == TargetSpec::None
+        {
+            assert!(state.engine.pending_cast.is_none());
+        }
+        source
+    }
+    fn genuine_public_and_owning_restore(
+        state: &GameState,
+        actor: PlayerId,
+    ) -> crate::ajani_observation_v42::AjaniObservationV42 {
+        use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+        let mut session = FastActorSessionV1::from_ajani_v42_fixture_state(state.clone());
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("genuine V42 mixed decision");
+        };
+        assert_eq!(expected.acting_player, actor.into());
+        let (public, _, binding) = session
+            .ajani_current_decision_input_v42(expected, actor.into())
+            .unwrap();
+        public.validate_artifact().unwrap();
+        let snapshot = session.snapshot_v1();
+        session.ajani_restore_v42(&snapshot).unwrap();
+        assert!(session
+            .ajani_validate_bound_decision_v42(expected, actor.into(), &binding)
+            .is_err());
+        let FastActorResponseV1::Decision(current) = session.current_response() else {
+            panic!("genuine V42 restored decision");
+        };
+        let (restored, _, new_binding) = session
+            .ajani_current_decision_input_v42(current, actor.into())
+            .unwrap();
+        session
+            .ajani_validate_bound_decision_v42(current, actor.into(), &new_binding)
+            .unwrap();
+        assert_eq!(restored.ajani, public.ajani);
+        assert_eq!(restored.families, public.families);
+        assert_eq!(restored.projection, public.projection);
+        public
+    }
+    #[test]
+    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
+    fn protected_herald_nonpositive_ultimate_is_real_zero_operation_with_mixed_restore_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for life in [0, -3] {
+                let mut state = ready(actor);
+                let source = cast(&mut state, actor);
+                let herald =
+                    cast_named(&mut state, actor, "Herald of Eternal Dawn", ManaColor::W, 7);
+                finish(&mut state);
+                assert_eq!(state.objects.get(herald).zone, Zone::Battlefield);
+                assert!(crate::game_outcome_protection_v1::cannot_lose(
+                    &state, actor
+                ));
+                crate::event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::life_loss(actor, 20 - life),
+                );
+                assert_eq!(state.players[actor.index()].life, life);
+                // Accepted physical loyalty-counter placement before the actual -8.
+                crate::planeswalker_v1::change_loyalty(&mut state, source, 4);
+                let item = activate(&mut state, source, 2, None);
+                assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+                let public = genuine_public_and_owning_restore(&state, state.priority_player);
+                assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::GameOutcome(facts) if facts.protection.cannot_lose[actor.index()])));
+                let mut replay = restored(&state);
+                let start = state.engine.event_history.len();
+                finish(&mut state);
+                finish(&mut replay);
+                assert_eq!(state, replay);
+                assert!(!state.engine.event_history[start..]
+                    .iter()
+                    .any(|e| matches!(e, CommittedEvent::CreateToken { .. })));
+                lifecycle::validate_state(&state).unwrap();
+                let public = genuine_public_and_owning_restore(&state, state.priority_player);
+                let operation = &public.ajani.activations[0];
+                assert_eq!(operation.stage, crate::ajani_public_v42::StageV42::Resolved);
+                assert_eq!(operation.controller_life_at_resolution, Some(life));
+                assert!(operation.created_tokens.is_empty());
+                let mut forged = state.clone();
+                forged.stack.push(item);
+                refuses(forged);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
+    fn genuine_copy_allocator_initializes_loyalty_before_real_legend_choice_then_token_can_activate_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let source = cast(&mut state, actor);
+            // Actual accepted permanent-copy allocator, not an assertion that
+            // Self-Reflection can target a noncreature planeswalker.
+            let token =
+                crate::standard_cards_v1::create_token_copy(&mut state, source, actor).unwrap();
+            assert!(state.objects.get(token).v4.is_token);
+            assert_eq!(crate::planeswalker_v1::loyalty(&state, token), Some(4));
+            assert!(
+                matches!(next(&mut state),Decision::ChooseLegendPermanent{player,candidates} if player==actor && candidates.contains(&source)&&candidates.contains(&token))
+            );
+            let public = genuine_public_and_owning_restore(&state, actor);
+            assert_eq!(public.ajani.permanents.len(), 2);
+            let mut replay = restored(&state);
+            for branch in [&mut state, &mut replay] {
+                engine::step(branch, Action::ChooseLegendPermanent(token)).unwrap();
+                next(branch);
+                assert_eq!(branch.objects.get(source).zone, Zone::Graveyard);
+                assert_eq!(crate::planeswalker_v1::loyalty(branch, token), Some(4));
+                activate(branch, token, 0, None);
+                finish(branch);
+                assert_eq!(crate::planeswalker_v1::loyalty(branch, token), Some(5));
+            }
+            assert_eq!(state, replay);
+            let public = genuine_public_and_owning_restore(&state, state.priority_player);
+            assert_eq!(
+                public.ajani.activations[0].source_at_payment.arena_id,
+                token.0
+            );
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
+    fn real_bolt_planeswalker_damage_and_twin_multiplier_preserve_loyalty_and_owner_on_restore_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for doubled in [false, true] {
+                let mut state = ready(actor);
+                let source = cast(&mut state, actor);
+                if doubled {
+                    let tyrant = put(&mut state, actor.opponent(), "Twinflame Tyrant", Zone::Hand);
+                    crate::event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(tyrant, Zone::Battlefield),
+                    );
+                }
+                assert!(
+                    matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+                );
+                engine::step(&mut state, Action::Pass).unwrap();
+                let bolt = cast_named(
+                    &mut state,
+                    actor.opponent(),
+                    "Lightning Bolt",
+                    ManaColor::R,
+                    1,
+                );
+                assert!(
+                    matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..} if legal_targets.contains(&Target::Object(source)))
+                );
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+                next(&mut state);
+                let public = genuine_public_and_owning_restore(&state, state.priority_player);
+                if doubled {
+                    assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Twinflame(facts) if !facts.multiplier_sources.is_empty())));
+                }
+                let mut replay = restored(&state);
+                finish(&mut state);
+                finish(&mut replay);
+                assert_eq!(state, replay);
+                assert!(state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::Damage{source:s,target:Target::Object(t),amount} if *s==bolt && *t==source && *amount==if doubled{6}else{3})));
+                assert_eq!(state.objects.get(source).owner, actor);
+                assert_eq!(
+                    state.objects.get(source).zone,
+                    if doubled {
+                        Zone::Graveyard
+                    } else {
+                        Zone::Battlefield
+                    }
+                );
+                assert_eq!(
+                    crate::planeswalker_v1::loyalty(&state, source),
+                    if doubled { None } else { Some(1) }
+                );
+                genuine_public_and_owning_restore(&state, state.priority_player);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
+    fn paid_temporal_same_seat_extra_turn_reopens_one_loyalty_use_with_new_occurrence_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let source = cast(&mut state, actor);
+            activate(&mut state, source, 0, None);
+            finish(&mut state);
+            assert_eq!(crate::planeswalker_v1::loyalty(&state, source), Some(5));
+            cast_named(&mut state, actor, "Temporal Manipulation", ManaColor::U, 5);
+            finish(&mut state);
+            crate::extra_turn_v1::validate(&state).unwrap();
+            let round = state.turn;
+            let old_occurrence = state.turn_key_v1();
+            let mut replay = restored(&state);
+            for branch in [&mut state, &mut replay] {
+                for _ in 0..90 {
+                    let d = next(branch);
+                    if branch.active_player == actor
+                        && branch.turn_key_v1() > old_occurrence
+                        && branch.step == Step::Main1
+                        && branch.priority_player == actor
+                    {
+                        assert!(
+                            matches!(d,Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.contains(&(source,0)))
+                        );
+                        break;
+                    }
+                    match d {
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(branch, Action::Pass).unwrap()
+                        }
+                        Decision::DeclareAttackers { .. } => {
+                            engine::step(branch, Action::DeclareAttackers(vec![])).unwrap()
+                        }
+                        other => panic!("unexpected actual extra-turn traversal {other:?}"),
+                    }
+                }
+                assert_eq!(branch.active_player, actor);
+                assert_eq!(branch.turn, round);
+                assert!(branch.turn_key_v1() > old_occurrence);
+                assert!(!lifecycle::used(branch, source));
+                activate(branch, source, 0, None);
+                finish(branch);
+                assert_eq!(crate::planeswalker_v1::loyalty(branch, source), Some(6));
+                assert!(lifecycle::used(branch, source));
+                let before = serde_json::to_vec(branch).unwrap();
+                assert!(engine::step(branch, Action::ActivateAbility(source, 0)).is_err());
+                assert_eq!(serde_json::to_vec(branch).unwrap(), before);
+            }
+            assert_eq!(state, replay);
+            genuine_public_and_owning_restore(&state, state.priority_player);
+        }
+    }
+    #[test]
+    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
+    fn stolen_source_sorcery_timing_and_original_controller_life_survive_owner_reentry_both_seats()
+    {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let controller = owner.opponent();
+            let mut state = ready(owner);
+            let source = cast(&mut state, owner);
+            // Genuine accepted control primitive. No printed Employment-on-
+            // planeswalker support or fabricated source/cast receipts is asserted.
+            crate::standard_cards_v1::gain_control(&mut state, source, controller);
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(engine::step(&mut state, Action::ActivateAbility(source, 0)).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            for _ in 0..90 {
+                let d = next(&mut state);
+                if state.active_player == controller
+                    && state.step == Step::Main1
+                    && state.priority_player == controller
+                {
+                    assert!(
+                        matches!(d,Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.contains(&(source,0)))
+                    );
+                    break;
+                }
+                match d {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::DeclareAttackers { .. } => {
+                        engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap()
+                    }
+                    other => panic!("unexpected actual control/turn traversal {other:?}"),
+                }
+            }
+            assert_eq!(state.active_player, controller);
+            assert_eq!(state.objects.get(source).owner, owner);
+            assert_eq!(state.objects.get(source).controller, controller);
+            crate::planeswalker_v1::change_loyalty(&mut state, source, 4);
+            let item = activate(&mut state, source, 2, None);
+            assert_eq!(item.controller, controller);
+            assert_eq!(item.v4.ability_source_contract.unwrap().owner, owner);
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert_eq!(state.objects.get(source).controller, owner);
+            assert_eq!(crate::planeswalker_v1::loyalty(&state, source), Some(4));
+            crate::event::propose_and_commit(&mut state, ProposedEvent::life_loss(owner, 17));
+            crate::event::propose_and_commit(&mut state, ProposedEvent::life_loss(controller, 14));
+            let public = genuine_public_and_owning_restore(&state, state.priority_player);
+            assert_eq!(
+                public.ajani.activations[0].source_at_payment.controller,
+                controller.into()
+            );
+            assert!(public.ajani.activations[0]
+                .current_original_source
+                .is_none());
+            let mut replay = restored(&state);
+            let start = state.engine.event_history.len();
+            finish(&mut state);
+            finish(&mut replay);
+            assert_eq!(state, replay);
+            let token = token_definition().unwrap();
+            let created = state.engine.event_history[start..]
+                .iter()
+                .filter_map(|e| match e {
+                    CommittedEvent::CreateToken {
+                        object,
+                        token_def,
+                        controller: c,
+                    } if *token_def == token => {
+                        assert_eq!(*c, controller);
+                        Some(*object)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(created.len(), 6);
+            for token in created {
+                assert_eq!(state.objects.get(token).owner, controller);
+            }
+            let public = genuine_public_and_owning_restore(&state, state.priority_player);
+            assert_eq!(
+                public.ajani.activations[0].controller_life_at_resolution,
+                Some(6)
+            );
+            assert_eq!(public.ajani.activations[0].created_tokens.len(), 6);
+        }
+    }
 }
