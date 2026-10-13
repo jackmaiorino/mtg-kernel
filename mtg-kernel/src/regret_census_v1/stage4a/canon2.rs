@@ -41,6 +41,7 @@ use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Most canonicalizations tried to resolve one frame's qualifying ties
@@ -292,8 +293,8 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
 /// taken there.
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
-    pub(crate) obs: Value,
-    pub(crate) menu: Vec<Value>,
+    pub(crate) obs: Arc<Value>,
+    pub(crate) menu: Arc<Vec<Value>>,
     pub(crate) taken: Value,
 }
 
@@ -373,7 +374,7 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
         let base_obs = as_multisets(&f.obs);
         let base_menu = menu_multiset(&f.menu);
         for &y in &c.members[1..] {
-            let mut o = f.obs.clone();
+            let mut o = (*f.obs).clone();
             swap_handles(&mut o, c.members[0], y);
             let menu: Vec<Value> = f
                 .menu
@@ -542,15 +543,16 @@ impl KeyStats {
     }
 }
 
-/// One keyed focal frame.
+/// One keyed focal frame. Views are shared, so a memoized step is cheap to
+/// hand out again.
 #[derive(Clone)]
 pub(crate) struct Step {
     pub(crate) legacy_key: Key,
-    pub(crate) legacy: Canon,
+    pub(crate) legacy: Arc<Canon>,
     pub(crate) repaired_key: Key,
-    pub(crate) repaired: Canon,
-    obs: Value,
-    menu: Vec<Value>,
+    pub(crate) repaired: Arc<Canon>,
+    obs: Arc<Value>,
+    menu: Arc<Vec<Value>>,
     /// Members of classes this frame resolved by exchange.
     resolved: Vec<u64>,
     /// The `KeyMemo` entry this step came from or was stored as, if any.
@@ -607,29 +609,56 @@ impl KeyMemo {
     }
 }
 
-/// SHA-256 over a prepared observation and its menu (length-framed JSON).
-fn prepared_digest(obs: &Value, menu: &[Value]) -> Result<[u8; 32], PlayErr> {
-    struct Hasher<'a>(&'a mut Sha256);
-    impl std::io::Write for Hasher<'_> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.update(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+/// SHA-256 over a prepared observation and its menu: a tagged,
+/// length-framed walk of the values, so equal digests mean equal values.
+fn prepared_digest(obs: &Value, menu: &[Value]) -> [u8; 32] {
+    fn feed(h: &mut Sha256, v: &Value) {
+        match v {
+            Value::Null => h.update(b"n"),
+            Value::Bool(b) => h.update(if *b { b"t" } else { b"f" }),
+            Value::Number(n) => {
+                if let Some(u) = n.as_u64() {
+                    h.update(b"u");
+                    h.update(u.to_le_bytes());
+                } else if let Some(i) = n.as_i64() {
+                    h.update(b"i");
+                    h.update(i.to_le_bytes());
+                } else {
+                    h.update(b"d");
+                    h.update(n.as_f64().unwrap_or(f64::NAN).to_bits().to_le_bytes());
+                }
+            }
+            Value::String(x) => {
+                h.update(b"s");
+                h.update((x.len() as u64).to_le_bytes());
+                h.update(x.as_bytes());
+            }
+            Value::Array(a) => {
+                h.update(b"a");
+                h.update((a.len() as u64).to_le_bytes());
+                for x in a {
+                    feed(h, x);
+                }
+            }
+            Value::Object(m) => {
+                h.update(b"o");
+                h.update((m.len() as u64).to_le_bytes());
+                for (k, x) in m {
+                    h.update((k.len() as u64).to_le_bytes());
+                    h.update(k.as_bytes());
+                    feed(h, x);
+                }
+            }
         }
     }
-    let fault = |e: serde_json::Error| PlayErr::Fault(format!("key memo digest: {e}"));
     let mut h = Sha256::new();
-    h.update(b"key-memo-v1/obs");
-    serde_json::to_writer(Hasher(&mut h), obs).map_err(fault)?;
+    h.update(b"key-memo-v1");
+    feed(&mut h, obs);
     h.update((menu.len() as u64).to_le_bytes());
     for m in menu {
-        let bytes = serde_json::to_vec(m).map_err(fault)?;
-        h.update((bytes.len() as u64).to_le_bytes());
-        h.update(&bytes);
+        feed(&mut h, m);
     }
-    Ok(h.finalize().into())
+    h.finalize().into()
 }
 
 impl KeyStats {
@@ -731,7 +760,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         };
         let t0 = Instant::now();
         let (obs, menu) = prepare(raw_obs, raw_menu);
-        let digest = prepared_digest(&obs, &menu)?;
+        let digest = prepared_digest(&obs, &menu);
         if let Some(&e) = memo.index.get(&(node, digest)) {
             memo.hits += 1;
             let entry = &memo.entries[e as usize];
@@ -790,14 +819,15 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
     fn key_prepared(&mut self, obs: Value, menu: Vec<Value>, t0: Instant) -> Result<Step, PlayErr> {
         let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
+        let legacy = Arc::new(legacy);
         let step = if self.mode == KeyMode::Legacy {
             Step {
                 legacy_key,
                 repaired_key: legacy_key,
-                repaired: legacy.clone(),
+                repaired: Arc::clone(&legacy),
                 legacy,
-                obs,
-                menu,
+                obs: Arc::new(obs),
+                menu: Arc::new(menu),
                 resolved: Vec::new(),
                 memo_entry: None,
             }
@@ -818,10 +848,10 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                     Step {
                         legacy_key,
                         repaired_key: child_key_v2(&self.repaired.0, &self.repaired.1, &c),
-                        repaired: c,
+                        repaired: Arc::new(c),
                         legacy,
-                        obs,
-                        menu,
+                        obs: Arc::new(obs),
+                        menu: Arc::new(menu),
                         resolved: members,
                         memo_entry: None,
                     }
@@ -836,10 +866,10 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                     Step {
                         legacy_key,
                         repaired_key: fallback_key(&legacy_key, &self.repaired.0),
-                        repaired: legacy.clone(),
+                        repaired: Arc::clone(&legacy),
                         legacy,
-                        obs,
-                        menu,
+                        obs: Arc::new(obs),
+                        menu: Arc::new(menu),
                         resolved: Vec::new(),
                         memo_entry: None,
                     }
@@ -858,13 +888,13 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 st.legacy_key,
                 self.legacy.0,
                 self.legacy.1.clone(),
-                &st.legacy,
+                &*st.legacy,
             ),
             KeyMode::Repaired => (
                 st.repaired_key,
                 self.repaired.0,
                 self.repaired.1.clone(),
-                &st.repaired,
+                &*st.repaired,
             ),
         }
     }
@@ -988,7 +1018,7 @@ mod tests {
         let mut s = KeyStats::default();
         let st = keyer(KeyMode::Repaired, &mut s).key_raw(o, m).unwrap();
         let fb = s.fallbacks.values().sum();
-        (st.repaired_key, st.repaired, fb)
+        (st.repaired_key, (*st.repaired).clone(), fb)
     }
 
     fn x() -> Value {
