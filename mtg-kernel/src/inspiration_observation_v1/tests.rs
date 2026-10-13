@@ -1,6 +1,20 @@
 use super::*;
 use crate::policy_observation_v6::tests::ready_state;
 
+/// Same empty-library seed and Main1 setup as the registered predecessor helper,
+/// with the actual starting seat constructing every selected turn ledger.
+pub(crate) fn ready_state_for(actor: PlayerId) -> GameState {
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[],
+        &[],
+        crate::rl::card_name,
+        60_001,
+        actor,
+    );
+    state.step = crate::state::Step::Main1;
+    state
+}
+
 #[test]
 fn registered_absence_retains_predecessor_public_private_and_ward_fields_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {

@@ -72,7 +72,7 @@ mod registered {
     use super::*;
     use crate::engine::{self, Action, Decision};
     use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn genuine_paid_normal_and_flashback_rows_bind_distinct_exact_roots_both_seats() {
@@ -88,9 +88,13 @@ mod registered {
                     root,
                 )
                 .unwrap();
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = crate::state::GameState::new_from_libraries_with_starting_player_v1(
+                    &[],
+                    &[],
+                    crate::rl::card_name,
+                    60_001,
+                    actor,
+                );
                 state.step = crate::state::Step::Main1;
                 let flashback = root == CastRootV1::Flashback;
                 let zone = if flashback {

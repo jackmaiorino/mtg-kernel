@@ -326,14 +326,13 @@ impl FastActorSessionV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::inspiration_observation_v1::tests::ready_state_for;
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = ready_state_for(actor);
             put(&mut state, actor, "Forest", Zone::Hand);
             put(&mut state, actor, "Mountain", Zone::Hand);
             let mut session = FastActorSessionV1::from_inspiration_v37_fixture_state(state);
@@ -364,6 +363,51 @@ mod tests {
                 .inspiration_validate_bound_decision_v37(expected, actor.into(), &binding)
                 .is_err());
             assert_eq!(session.privileged_core_environment_hash(), before);
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn actual_predecessor_and_selected_advance_guard_precedes_automatic_work_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state =
+                crate::inspiration_observation_v1::tests::registered::at_mill(actor, "Island");
+            let before = serde_json::to_vec(&state).unwrap();
+            let mut episode = RlEpisodeSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+            episode.state = state.clone();
+            episode.terminal = None;
+            episode.advance_to_decision_or_terminal_profiled(None);
+            assert!(episode.terminal.is_some() && episode.current.is_none());
+            assert_eq!(serde_json::to_vec(&episode.state).unwrap(), before);
+            for mode in [
+                FlatActionContractModeV1::V1,
+                FlatActionContractModeV1::HumanV8,
+            ] {
+                let mut old = FastActorSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+                old.state = state.clone();
+                old.terminal = None;
+                old.flat_action_contract_mode = mode;
+                old.advance_to_decision_or_terminal();
+                assert!(old.terminal.is_some() && old.current.is_none());
+                assert_eq!(serde_json::to_vec(&old.state).unwrap(), before);
+            }
+            let mut selected = FastActorSessionV1::from_inspiration_v37_fixture_state(state);
+            selected
+                .state
+                .engine
+                .pending_effect
+                .as_mut()
+                .unwrap()
+                .choice = None;
+            selected.current = None;
+            selected.terminal = None;
+            let before = serde_json::to_vec(&selected.state).unwrap();
+            selected.advance_to_decision_or_terminal();
+            assert!(selected.terminal.is_some() && selected.current.is_none());
+            assert_eq!(serde_json::to_vec(&selected.state).unwrap(), before);
         }
     }
 }

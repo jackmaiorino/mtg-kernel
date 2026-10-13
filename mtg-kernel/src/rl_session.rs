@@ -5432,24 +5432,6 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
-        if (crate::inspiration_observation_v1::requires_successor(&self.state)
-            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
-            || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
-                && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
-                    .is_err())
-        {
-            self.current = None;
-            self.terminal = Some(halted_terminal(
-                &self.deck_ids,
-                self.deck_hashes,
-                self.episode_id,
-                "fail_closed:inspiration_v37_authority_or_transport".into(),
-                self.policy_step_count,
-                self.physical_decision_count,
-            ));
-            return;
-        }
-
         self.advance_to_decision_or_terminal_profiled(None);
     }
 
@@ -7242,6 +7224,24 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if (crate::inspiration_observation_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
+                && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:inspiration_v37_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
             || (self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36
                 && crate::banner_observation_v1::validate_projection_authority(&self.state)
