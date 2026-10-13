@@ -346,7 +346,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires registered Herald; physical battlefield ordering projection fixture"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn herald_source_uses_the_exact_shared_canonical_battlefield_handle() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for herald_first in [false, true] {

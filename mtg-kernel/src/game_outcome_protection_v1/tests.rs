@@ -102,7 +102,7 @@ fn cast_herald_on_turn(actor: PlayerId, active_player: PlayerId) -> (GameState, 
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_paid_herald_prevents_life_poison_and_empty_draw_losses_with_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for cause in 0..3 {
@@ -147,7 +147,7 @@ fn actual_paid_herald_prevents_life_poison_and_empty_draw_losses_with_restore_bo
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_herald_control_and_simultaneous_lethal_departure_preserve_loss_scope_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = cast_herald(actor);
@@ -179,7 +179,7 @@ fn actual_herald_control_and_simultaneous_lethal_departure_preserve_loss_scope_b
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_prevented_loss() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = cast_herald(actor);
@@ -210,7 +210,7 @@ fn actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_seats() {
     for caster in [PlayerId::P0, PlayerId::P1] {
         for counter in [false, true] {
@@ -312,7 +312,7 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_loss_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, herald) = cast_herald(actor);
@@ -389,7 +389,7 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_with_restore() {
     use crate::game_outcome_protection_public_v1::{capture, validate, ErrorV1};
     let selector = crate::rules_meaning_game_outcome_protection_v1::live_selector().unwrap();
@@ -455,7 +455,7 @@ fn actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_wi
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for lethal in [false, true] {
@@ -515,7 +515,7 @@ fn actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_paid_herald_copy_allocator_primitive_retains_prohibition_after_original_leaves() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, herald) = cast_herald(actor);
@@ -573,7 +573,7 @@ fn actual_paid_herald_copy_allocator_primitive_retains_prohibition_after_origina
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires genuine Herald registration and native qualification"]
+
 fn actual_involuntary_employment_moves_loss_protection_to_new_controller_with_restore_both_seats() {
     for owner in [PlayerId::P0, PlayerId::P1] {
         let thief = owner.opponent();

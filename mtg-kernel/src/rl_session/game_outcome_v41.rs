@@ -89,7 +89,10 @@ mod tests {
     use crate::ids::PlayerId;
 
     #[test]
-    #[ignore = "requires actual registered Herald and genuine paid spell fixture"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn paid_herald_common_facts_binding_and_legacy_refusal_before_work_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, _) = crate::game_outcome_protection_v1::tests::cast_herald(actor);

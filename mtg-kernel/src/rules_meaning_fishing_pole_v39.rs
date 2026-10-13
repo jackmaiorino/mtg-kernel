@@ -353,11 +353,11 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "requires actual future Fishing Pole and Fish Token registration"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
+
     fn actual_four_roots_reconstruct_complete_ordered_facts_and_refuse_every_forgery() {
         let id = crate::card_def::card_id_by_name("Fishing Pole").unwrap();
         let selector = live_selector().unwrap();

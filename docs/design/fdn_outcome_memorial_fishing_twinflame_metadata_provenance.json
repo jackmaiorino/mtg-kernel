@@ -1,0 +1,199 @@
+{
+  "status": "prospective_source_registration_unaccepted_native_and_model_unqualified",
+  "source_base": "4796f0c10460ed8fd847ed61647149f2d7d0f5b6",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "prior_fdn_rows": 240,
+  "definition_count": 437,
+  "sources": [
+    {
+      "card_id": 432,
+      "mage_path": "Mage.Sets/src/mage/cards/h/HeraldOfEternalDawn.java",
+      "bytes": 1294,
+      "sha256": "23f479036dd7022b00ba890ba4f0cfc759d020606feaa8606d9d0019a100caf8",
+      "git_blob": "a217920868224513e3dc01cc58f788040d285209"
+    },
+    {
+      "card_id": 433,
+      "mage_path": "Mage.Sets/src/mage/cards/a/AkromasMemorial.java",
+      "bytes": 1585,
+      "sha256": "3b8b9a33c522b83ee7e93755b68b097929565b2ad15322aa0e7df8dc46e15259",
+      "git_blob": "7070b36a8569f04afb15d710339a01f9b6260324"
+    },
+    {
+      "card_id": 434,
+      "mage_path": "Mage.Sets/src/mage/cards/f/FishingPole.java",
+      "bytes": 6081,
+      "sha256": "ff20a5319a77ddad1d467617dfd35d5bd28bcb35eaddec3c4a341221e849eef3",
+      "git_blob": "fb5fdfa7e492581d3871f84ccda6b4a31179d6be"
+    },
+    {
+      "card_id": 435,
+      "mage_path": "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java",
+      "bytes": 670,
+      "sha256": "0598de8f369665c2cb4293dd8b597db529a4c985cc766156b86e563038ffb541",
+      "git_blob": "18c1015f4f492f35c933ce624044bb494eb9a01f"
+    },
+    {
+      "card_id": 436,
+      "mage_path": "Mage.Sets/src/mage/cards/t/TwinflameTyrant.java",
+      "bytes": 3011,
+      "sha256": "611404abcf3909d0f598136799a67fb03ba33c687ee1164386338eb64ef60c19",
+      "git_blob": "8307ab863e905273a35ccbb26e497c4f641d8860"
+    }
+  ],
+  "cards": [
+    {
+      "name": "Herald of Eternal Dawn",
+      "engine_capability": "full",
+      "mana_cost": "{4}{W}{W}{W}",
+      "mana_value": 7,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_herald_of_eternal_dawn.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flash",
+        "flying",
+        "controller_cannot_lose_opponents_cannot_win"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeraldOfEternalDawn.java",
+      "is_token": false
+    },
+    {
+      "name": "Akroma's Memorial",
+      "engine_capability": "full",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_akromas_memorial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controlled_creatures_flying_first_strike_vigilance_trample_haste",
+        "protection_from_black_and_red"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AkromasMemorial.java",
+      "is_token": false
+    },
+    {
+      "name": "Fishing Pole",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_fishing_pole.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "granted_activation",
+        "bait_counter",
+        "untap_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FishingPole.java",
+      "is_token": false
+    },
+    {
+      "name": "Fish Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Fish"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java",
+      "is_token": true,
+      "object_name": "Fish"
+    },
+    {
+      "name": "Twinflame Tyrant",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_twinflame_tyrant.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "double_controlled_source_damage_to_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TwinflameTyrant.java",
+      "is_token": false
+    }
+  ],
+  "profile": "Pending actual Cargo-selected generated source; no hash assigned",
+  "frozen_pool": "286 printing names and 24 external token dependency records unchanged",
+  "source_sha256_format": "canonical Git blob bytes, LF line endings"
+}
