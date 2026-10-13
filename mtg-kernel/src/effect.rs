@@ -74,12 +74,18 @@ mod inspiration_resolution_v1;
 pub(crate) use inspiration_resolution_v1::{
     acquire_owner as acquire_inspiration_resolution_owner,
     begin_owned as begin_owned_inspiration_resolution,
-    resume_owned as resume_owned_inspiration_resolution, InspirationResolutionOwnerV1,
+    finish_owned as finish_owned_inspiration_resolution,
+    resume_owned as resume_owned_inspiration_resolution,
+    validate as validate_inspiration_resolution, InspirationResolutionOwnerV1,
+    InspirationRuntimeV1,
 };
 pub(crate) mod library_choice_search_v2;
 mod standard_payment_v1;
 pub mod standard_selection_v1;
-pub use inspiration_resolution_v1::InspirationResolutionReceiptV1;
+pub use inspiration_resolution_v1::{
+    InspirationDepartureV1, InspirationInputKindV1, InspirationInputV1, InspirationOperationV1,
+    InspirationResolutionReceiptV1,
+};
 pub use standard_selection_v1::{
     ObjectSelectionActionV1, ObjectSelectionFilterV1, ObjectSelectionRuleV1,
 };
@@ -3435,6 +3441,8 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
 /// wrong-shape actions byte-for-byte nonmutating.
 pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let inspiration_answer =
+        inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Target(target))?;
     if crystal_prevention_v1::is_discard_choice(state) {
         return crystal_prevention_v1::answer_discard(state, Some(target));
     }
@@ -3541,7 +3549,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
-    inspiration_resolution_v1::record_boundary(state)?;
+    inspiration_resolution_v1::record_answer(state, inspiration_answer)?;
     Ok(())
 }
 
@@ -3550,6 +3558,8 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 /// final card auto-completes and this action is never legal there.
 pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let inspiration_answer =
+        inspiration_resolution_v1::prepare_answer(state, InspirationInputKindV1::Finish)?;
     if crystal_prevention_v1::is_discard_choice(state) {
         return crystal_prevention_v1::answer_discard(state, None);
     }
@@ -3614,7 +3624,7 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
     squad_rallier_resolution_v1::record_boundary(state)?;
     vampire_gourmand_resolution_v1::record_boundary(state)?;
-    inspiration_resolution_v1::record_boundary(state)
+    inspiration_resolution_v1::record_answer(state, inspiration_answer)
 }
 
 /// Records one generic Boolean answer without executing its consequence.

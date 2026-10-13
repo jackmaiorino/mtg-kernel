@@ -296,6 +296,9 @@ pub struct EngineState {
         skip_serializing_if = "crate::linked_aura_operation_v1::StateV1::is_empty"
     )]
     pub linked_aura_operation_v1: crate::linked_aura_operation_v1::StateV1,
+    /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
+    #[serde(skip)]
+    pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -9150,6 +9153,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || crate::zul_ashur_v1::validate_state(state).is_err()
+        || effect::validate_inspiration_resolution(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
@@ -9168,6 +9172,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || crate::zul_ashur_v1::validate_state(state).is_err()
+        || effect::validate_inspiration_resolution(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -10391,7 +10396,21 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             crate::source_power_activation_v1::finish(state, &item);
-            if finish_resolved_stack_item(state, completed.as_ref()).is_err() {
+            let finished = if let Some(owner) = inspiration_owner.as_ref() {
+                effect::finish_owned_inspiration_resolution(
+                    state,
+                    owner,
+                    completed.as_ref(),
+                    |state| {
+                        let departure =
+                            plan_spell_departure(state, completed.as_ref(), Zone::Graveyard)?;
+                        apply_spell_departure(state, departure)
+                    },
+                )
+            } else {
+                finish_resolved_stack_item(state, completed.as_ref())
+            };
+            if finished.is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
@@ -15144,6 +15163,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
+        }
+        if let Some(owner) = inspiration_owner.as_ref() {
+            if effect::finish_owned_inspiration_resolution(state, owner, &item, |state| {
+                let departure = plan_spell_departure(state, &item, Zone::Graveyard)?;
+                apply_spell_departure(state, departure)
+            })
+            .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+            return ResolutionProgress::Complete;
         }
     }
     // Convoke's creature count carries over onto the permanent.

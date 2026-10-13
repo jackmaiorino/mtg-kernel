@@ -529,3 +529,224 @@ fn real_owned_prompt_cannot_resume_or_restart_through_public_effect_entry_both_s
         }
     }
 }
+
+fn reject_closed_or_restarted_readonly(mut bad: GameState) {
+    let mut restored = restore(&bad);
+    for state in [&mut bad, &mut restored] {
+        let before = serde_json::to_vec(state).unwrap();
+        assert!(effect::validate_pending_effect_choice(state).is_err());
+        assert!(engine::step(state, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(state).unwrap(), before);
+        let mut expected = restore(state);
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::Halted { .. }
+        ));
+        expected.engine.halted = state.engine.halted;
+        assert_eq!(
+            serde_json::to_vec(state).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
+    }
+    assert_eq!(
+        serde_json::to_vec(&bad).unwrap(),
+        serde_json::to_vec(&restored).unwrap()
+    );
+}
+#[test]
+fn original_journal_cannot_close_or_restart_the_real_mandatory_return_both_seats() {
+    use event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, true);
+        let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
+        cast(&mut state, actor, source, false);
+        until_selection(&mut state);
+        let original = state.engine.event_history.clone();
+        let item = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
+        assert!(item.v4.inspiration_started_v1.0.is_some());
+        let receipt = state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                CommittedEvent::InspirationResolutionBoundaryV1 { receipt } => {
+                    Some(receipt.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let mut forged = state.clone();
+        forged.engine.pending_effect = None;
+        forged
+            .stack
+            .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id);
+        let mut closed = receipt.clone();
+        closed.previous_history_index = Some(receipt.history_index);
+        closed.history_index = forged.engine.event_history.len() as u32;
+        closed.ordinal += 1;
+        closed.pending = None;
+        forged
+            .engine
+            .event_history
+            .push(CommittedEvent::InspirationResolutionBoundaryV1 { receipt: closed });
+        assert_eq!(forged.engine.event_history[..original.len()], original);
+        reject_closed_or_restarted_readonly(forged);
+        let mut erased = state.clone();
+        erased.engine.pending_effect = None;
+        for event in &mut erased.engine.event_history {
+            if matches!(
+                event,
+                CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                    | CommittedEvent::InspirationResolutionInputV1 { .. }
+                    | CommittedEvent::InspirationResolutionOperationV1 { .. }
+            ) {
+                *event = CommittedEvent::Tap { object: source };
+            }
+        }
+        assert!(erased.stack.iter().any(|row| row == &item));
+        reject_closed_or_restarted_readonly(erased);
+        let mut unmarked = state.clone();
+        unmarked
+            .stack
+            .iter_mut()
+            .find(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+            .unwrap()
+            .v4
+            .inspiration_started_v1 = Default::default();
+        reject_closed_or_restarted_readonly(unmarked);
+    }
+}
+#[test]
+fn actual_return_and_final_spell_departure_are_independent_required_occurrences_both_seats() {
+    use event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for flashback in [false, true] {
+            let mut state = ready(actor, true);
+            let source = put(
+                &mut state,
+                actor,
+                "Inspiration from Beyond",
+                if flashback {
+                    Zone::Graveyard
+                } else {
+                    Zone::Hand
+                },
+            );
+            let chosen = state.players[actor.index()].library[0];
+            cast(&mut state, actor, source, flashback);
+            until_selection(&mut state);
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(chosen)),
+            )
+            .unwrap();
+            let mut restored = restore(&state);
+            for branch in [&mut state, &mut restored] {
+                settle(branch);
+                effect::validate_pending_effect_choice(branch).unwrap();
+                assert_eq!(branch.objects.get(chosen).zone, Zone::Hand);
+                assert_eq!(
+                    branch.objects.get(source).zone,
+                    if flashback {
+                        Zone::Exile
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+                assert!(branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|e| matches!(e, CommittedEvent::InspirationEngineDepartureV1 { .. })));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+            let departure_at = state
+                .engine
+                .event_history
+                .iter()
+                .position(|e| matches!(e, CommittedEvent::InspirationEngineDepartureV1 { .. }))
+                .unwrap();
+            let CommittedEvent::InspirationEngineDepartureV1 { departure } =
+                &state.engine.event_history[departure_at]
+            else {
+                unreachable!()
+            };
+            let movement = departure.movement.unwrap() as usize;
+            let return_at = state.engine.event_history.iter().position(|e|matches!(e,
+                CommittedEvent::ZoneChange {object,from:Zone::Graveyard,to:Zone::Hand,..} if *object == chosen)).unwrap();
+            for at in [departure_at, movement, return_at] {
+                let mut bad = state.clone();
+                bad.engine.event_history[at] = CommittedEvent::Tap { object: source };
+                reject_closed_or_restarted_readonly(bad);
+            }
+            let mut replayed = state.clone();
+            let first = replayed
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::InspirationResolutionBoundaryV1 { receipt }
+                        if receipt.ordinal == 0 =>
+                    {
+                        receipt.pending.as_ref().map(|p| p.resolving_item.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            replayed.stack.push(first);
+            reject_closed_or_restarted_readonly(replayed);
+        }
+    }
+}
+
+#[test]
+fn accepted_return_target_and_finish_input_must_match_the_actual_selection_transition_both_seats() {
+    use event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, true);
+        let source = put(&mut state, actor, "Inspiration from Beyond", Zone::Hand);
+        let chosen = state.players[actor.index()].library[0];
+        let other = state.players[actor.index()].library[2];
+        cast(&mut state, actor, source, false);
+        until_selection(&mut state);
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(chosen)),
+        )
+        .unwrap();
+        effect::validate_pending_effect_choice(&state).unwrap();
+        let input_at = state.engine.event_history.iter().rposition(|event|matches!(event,
+            CommittedEvent::InspirationResolutionInputV1 { input } if matches!(input.kind, effect::InspirationInputKindV1::Target(_)))).unwrap();
+        for kind in [
+            effect::InspirationInputKindV1::Target(Target::Object(other)),
+            effect::InspirationInputKindV1::Finish,
+        ] {
+            let mut altered = state.clone();
+            let CommittedEvent::InspirationResolutionInputV1 { input } =
+                &mut altered.engine.event_history[input_at]
+            else {
+                unreachable!()
+            };
+            input.kind = kind;
+            reject_closed_or_restarted_readonly(altered);
+        }
+        let mut restored = restore(&state);
+        for branch in [&mut state, &mut restored] {
+            settle(branch);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}

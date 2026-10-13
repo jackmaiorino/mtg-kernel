@@ -1271,6 +1271,15 @@ pub enum CommittedEvent {
     InspirationResolutionBoundaryV1 {
         receipt: crate::effect::InspirationResolutionReceiptV1,
     },
+    InspirationResolutionInputV1 {
+        input: Box<crate::effect::InspirationInputV1>,
+    },
+    InspirationResolutionOperationV1 {
+        operation: Box<crate::effect::InspirationOperationV1>,
+    },
+    InspirationEngineDepartureV1 {
+        departure: Box<crate::effect::InspirationDepartureV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
