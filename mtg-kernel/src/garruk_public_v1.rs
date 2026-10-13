@@ -435,7 +435,17 @@ fn confirmed_linked_attachments(
             current_chosen_host,
         });
     }
-    confirmed.extend(pending);
+    for row in pending {
+        if let Some(original) = confirmed.iter().find(|original| original.aura == row.aura) {
+            if original != &row {
+                return Err(RlContractError(
+                    "pending Aura answer disagrees with committed confirmation".into(),
+                ));
+            }
+        } else {
+            confirmed.push(row);
+        }
+    }
     Ok(confirmed)
 }
 
@@ -529,6 +539,118 @@ mod attachment_history_tests {
     use crate::engine::{self, Action};
     use crate::event::{self, CommittedEvent, ProposedEvent};
     use crate::state::Target;
+
+    #[test]
+    fn genuine_sequential_returns_merge_committed_and_retained_answer_once_on_restore() {
+        use crate::effect::{EffectOp, ExecCtx, ObjectRef};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (pending, _, _, own_aura, other_aura, host) =
+                crate::garruks_uprising_v1::attachment_tests::pending_returns(actor, false, false);
+            // Reuse the genuine pre-operation state, then execute a distinct
+            // accepted physical Sequence, not an invented printed spell.
+            let mut state = *pending
+                .engine
+                .linked_aura_operation_v1
+                .pending
+                .as_ref()
+                .unwrap()
+                .original
+                .clone();
+            let sources = [own_aura, other_aura].map(|aura| {
+                state
+                    .engine
+                    .linked_exile_records
+                    .iter()
+                    .find(|link| link.exiled == aura)
+                    .unwrap()
+                    .source
+                    .source
+            });
+            let controller = state.objects.get(sources[0]).controller;
+            let mut ctx = ExecCtx::no_targets(sources[0], controller);
+            ctx.targets = vec![Target::Object(sources[1])];
+            ctx.target_contracts = ctx
+                .targets
+                .iter()
+                .map(|target| crate::state::StackTargetContractV4::capture(&state, *target))
+                .collect();
+            let sequence = EffectOp::Sequence(vec![
+                EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Hand,
+                },
+                EffectOp::MoveObject {
+                    object: ObjectRef::Target(0),
+                    to_zone: Zone::Hand,
+                },
+            ]);
+            crate::effect::execute(&sequence, &ctx, &mut state);
+            assert!(crate::linked_aura_operation_v1::has_pending(&state));
+            engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+            assert_eq!(state.objects.get(own_aura).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(other_aura).zone, Zone::Exile);
+            assert_eq!(
+                state
+                    .engine
+                    .linked_aura_operation_v1
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .owner,
+                actor.opponent()
+            );
+            assert_eq!(
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        CommittedEvent::BanishingAuraHostChosenV1 { .. }
+                    ))
+                    .count(),
+                1
+            );
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                let (triggers, links, choice, previous) =
+                    crate::banishing_public_v1::facts(branch).unwrap();
+                assert_eq!(previous.len(), 1);
+                let unique = confirmed_linked_attachments(branch, previous).unwrap();
+                assert_eq!(
+                    unique.len(),
+                    1,
+                    "one real completed answer remains one confirmation"
+                );
+                assert_eq!(unique[0].aura.arena_id, own_aura.0);
+                let public = observe_v1(
+                    branch,
+                    &PolicySurfaceV5::new_for_session(),
+                    actor.opponent(),
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                assert_eq!(public.linked_exile.confirmed_attachments, unique);
+                assert_eq!(public.linked_exile.triggers, triggers);
+                assert_eq!(public.linked_exile.links, links);
+                assert_eq!(public.linked_exile.attachment_choice, choice);
+                engine::step(branch, Action::ChooseEffectTarget(Target::Object(host))).unwrap();
+                assert_eq!(branch.objects.get(other_aura).zone, Zone::Battlefield);
+                assert_eq!(
+                    confirmed_linked_attachments(branch, Vec::new())
+                        .unwrap()
+                        .len(),
+                    2
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
 
     #[test]
     fn completed_apnap_attachments_preserve_original_aura_and_mask_departed_host_both_seats() {
