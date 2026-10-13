@@ -29,7 +29,11 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     .try_get(item.source)
                     .and_then(|source| crate::card_def::CARD_DEFS.get(source.card_def as usize))
                     .is_some_and(|def| {
-                        (def.spell_effect)() == Some(crate::effect::EffectOp::FieryAnnihilation)
+                        // Other spell factories may allocate a Sequence. Only
+                        // reconstruct the selected immutable printed root.
+                        def.name == "Fiery Annihilation"
+                            && (def.spell_effect)()
+                                == Some(crate::effect::EffectOp::FieryAnnihilation)
                     })
         })
         || state.engine.active_replacements.iter().any(|replacement| {
