@@ -1002,16 +1002,17 @@ fn hash_prepared_slots_memoized_v2(
     budget: usize,
 ) -> Vec<usize> {
     const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
-    // Per message (in output order): its memo hash and either stored
-    // digests or the index of its first job.
+    // Per message (in output order): its memo hash and either the index of
+    // its copied stored digests or the index of its first job.
     enum Source {
-        Stored([[u8; 64]; N]),
+        Stored(usize),
         Jobs(usize),
     }
     let mut offsets = Vec::with_capacity(slots.len() + 1);
     let mut messages: Vec<(&'static [u8], &[u8], u64, Source)> = Vec::new();
     let mut state_resumes = Vec::new();
     let mut jobs = Vec::new();
+    let mut stored: Vec<[[u8; 64]; N]> = Vec::new();
     let (mut hits, mut misses) = (0u64, 0u64);
     for slot in slots {
         offsets.push(messages.len() * N);
@@ -1019,11 +1020,12 @@ fn hash_prepared_slots_memoized_v2(
         let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
         if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
             hits += 1;
+            stored.push(*blocks);
             messages.push((
                 STATE_HASH_NAMESPACE_V2,
                 state,
                 hash,
-                Source::Stored(*blocks),
+                Source::Stored(stored.len() - 1),
             ));
         } else {
             misses += 1;
@@ -1044,11 +1046,12 @@ fn hash_prepared_slots_memoized_v2(
             let hash = digest_memo_hash_v1(ACTION_HASH_NAMESPACE_V1, action);
             if let Some(blocks) = memo.get(hash, ACTION_HASH_NAMESPACE_V1, action) {
                 hits += 1;
+                stored.push(*blocks);
                 messages.push((
                     ACTION_HASH_NAMESPACE_V1,
                     action,
                     hash,
-                    Source::Stored(*blocks),
+                    Source::Stored(stored.len() - 1),
                 ));
             } else {
                 misses += 1;
@@ -1087,7 +1090,7 @@ fn hash_prepared_slots_memoized_v2(
     batch.blocks.reserve(messages.len() * N);
     for (namespace, message, hash, source) in messages {
         match source {
-            Source::Stored(blocks) => batch.blocks.extend_from_slice(&blocks),
+            Source::Stored(index) => batch.blocks.extend_from_slice(&stored[index]),
             Source::Jobs(first) => {
                 let blocks: [[u8; 64]; N] = hashed[first..first + N]
                     .try_into()

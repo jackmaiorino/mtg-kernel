@@ -12,7 +12,7 @@ fn next(state: &mut u64) -> u64 {
 /// boundaries and states share long prefixes.
 fn slot(rng: &mut u64, base: &[u8]) -> DigestSlotV1 {
     let mut state_json = base[..(next(rng) as usize % base.len()).max(1)].to_vec();
-    if next(rng) % 3 == 0 {
+    if next(rng).is_multiple_of(3) {
         let at = next(rng) as usize % state_json.len();
         state_json[at] ^= 1 + (next(rng) % 3) as u8;
     }
