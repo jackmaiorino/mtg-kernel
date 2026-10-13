@@ -7952,6 +7952,10 @@ fn validate_standard_choose_permanent_origin(
     Ok(*filter)
 }
 
+pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), String> {
+    vampire_gourmand_resolution_v1::validate(state)
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
@@ -7973,7 +7977,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
-    vampire_gourmand_resolution_v1::validate(state)?;
+    validate_vampire_gourmand_state(state)?;
     crystal_prevention_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
