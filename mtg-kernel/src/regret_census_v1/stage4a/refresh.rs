@@ -1304,7 +1304,7 @@ mod tests {
 
     impl Consult for ReplayScheduler {
         fn cap(&self) -> u64 {
-            256
+            320
         }
         fn credit(&self) -> Option<CreditSpec> {
             Some(self.credit)
@@ -1370,12 +1370,12 @@ mod tests {
             prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
             limits: Limits::FORMAL,
         };
-        let execute = |max_roots| {
+        let execute = |max_roots, replay_factual| {
             let mut scheduler = ReplayScheduler {
                 credit: CreditSpec {
                     max_roots,
                     sample_seed: 19,
-                    replay_factual: true,
+                    replay_factual,
                 },
                 index: 0,
             };
@@ -1390,7 +1390,7 @@ mod tests {
                 Allocation {
                     anchor: 0,
                     refresh: 0,
-                    total: 256,
+                    total: 320,
                 },
                 None,
                 GuideRun {
@@ -1403,9 +1403,9 @@ mod tests {
             .unwrap()
             .0
         };
-        let reference = without_wall(execute(0));
+        let reference = without_wall(execute(0, true));
         assert_eq!(reference["valid"], true, "{reference}");
-        let mut replay = without_wall(execute(3));
+        let mut replay = without_wall(execute(3, true));
         let pairs = replay
             .as_object_mut()
             .unwrap()
@@ -1425,6 +1425,11 @@ mod tests {
         let samples = pairs["samples"].as_array().unwrap();
         assert_eq!(samples.len(), 3);
         assert!(samples.iter().any(|s| s["index"].as_u64().unwrap() > 0));
+        assert!(reference["searches"][3]["tree"]["nodes"].as_u64().unwrap() > 0);
+        assert!(
+            samples.iter().any(|s| s["index"] == 4),
+            "must resume with a retained nonempty tree"
+        );
         for sample in samples {
             let changed: Vec<_> = reference
                 .as_object()
@@ -1444,6 +1449,25 @@ mod tests {
             "unchanged-request primary SHA-256: {:x}",
             Sha256::digest(serde_json::to_vec(&reference).unwrap())
         );
+        let intervened = without_wall(execute(1, false));
+        let sample = &intervened["paired_credit"]["samples"][0];
+        let baseline = &sample["baseline"];
+        assert_eq!(baseline["valid"], true);
+        let rows = baseline["decisions"].as_array().unwrap();
+        let root = rows
+            .iter()
+            .find(|r| r["scheduler"]["index"] == sample["index"])
+            .unwrap();
+        assert_eq!(root["scheduler"]["amount"], 0);
+        assert_eq!(root["remaining_after"], root["remaining_before"]);
+        assert_eq!(
+            baseline["transitions_used"], 320,
+            "saved budget must remain spendable later"
+        );
+        assert!(rows.iter().any(|r| r["scheduler"]["index"]
+            .as_u64()
+            .is_some_and(|i| i > sample["index"].as_u64().unwrap())
+            && r["scheduler"]["amount"] == 64));
     }
 
     #[test]
