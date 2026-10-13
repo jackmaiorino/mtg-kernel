@@ -2071,6 +2071,46 @@ fn build_observation_common_v2_fishing_v39(
     ),
     accept_akroma: bool,
 ) -> Result<ObservationV2> {
+    build_observation_common_v2_fishing_v39_ajani_v42(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        capabilities,
+        (accept_akroma, false),
+    )
+}
+
+fn build_observation_common_v2_fishing_v39_ajani_v42(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+    accepted_planes: (bool, bool),
+) -> Result<ObservationV2> {
+    let (accept_akroma, accept_ajani) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
     crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
@@ -2113,6 +2153,11 @@ fn build_observation_common_v2_fishing_v39(
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
+        ));
+    }
+    if !accept_ajani && crate::ajani_full_v42::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
         ));
     }
     if !accept_krenko && crate::krenko_v1::requires_successor(state) {
@@ -2525,6 +2570,46 @@ fn build_policy_observation_parts_common_fishing_v39(
     ),
     accept_akroma: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    build_policy_observation_parts_common_fishing_v39_ajani_v42(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        capabilities,
+        (accept_akroma, false),
+    )
+}
+
+fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+    accepted_planes: (bool, bool),
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    let (accept_akroma, accept_ajani) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
     crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
@@ -2569,6 +2654,11 @@ fn build_policy_observation_parts_common_fishing_v39(
             "Banner requires selected V36 entry/color transport".into(),
         ));
     }
+    if !accept_ajani && crate::ajani_full_v42::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
+        ));
+    }
     if !accept_krenko && crate::krenko_v1::requires_successor(state) {
         return Err(RlContractError(
             "Krenko requires selected V34 transport".into(),
@@ -2589,7 +2679,7 @@ fn build_policy_observation_parts_common_fishing_v39(
             .map_err(RlContractError)?;
     }
 
-    let base = build_observation_common_v2_fishing_v39(
+    let base = build_observation_common_v2_fishing_v39_ajani_v42(
         state,
         surface.harness_surface(),
         acting_player,
@@ -2615,7 +2705,7 @@ fn build_policy_observation_parts_common_fishing_v39(
             ),
             accept_fishing,
         ),
-        accept_akroma,
+        (accept_akroma, accept_ajani),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -3250,6 +3340,57 @@ pub(crate) fn twinflame_observation_storage_v38(
         ),
     )
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommonProjectionScopeV42 {
+    ExistingV40,
+    FullAjaniV42,
+}
+pub(crate) fn common_family_observation_storage_scoped(
+    request: (CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    let (scope, state) = request;
+    if scope == CommonProjectionScopeV42::ExistingV40 {
+        return akroma_family_observation_storage_v40(
+            state, surface, actor, step, physical, substep,
+        );
+    }
+    crate::akroma_family_public_v40::validate_state_for_ajani_v42(state)
+        .map_err(RlContractError)?;
+    build_policy_observation_storage_common_fishing_v39_ajani_v42(
+        (
+            PolicyObservationBuildV5 {
+                state,
+                surface,
+                acting_player: actor,
+                step_index: step,
+                physical_decision_id: physical,
+                substep_index: substep.0,
+                substep_count: substep.1,
+                text_mode: ObservationTextModeV2::FullArtifact,
+            },
+            (true, true),
+        ),
+        true,
+        true,
+        true,
+        true,
+        true,
+        (
+            (
+                true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+                true,
+            ),
+            true,
+        ),
+    )
+}
+
 pub(crate) fn akroma_family_observation_storage_v40(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -3619,7 +3760,46 @@ fn build_policy_observation_storage_common_fishing_v39(
         bool,
     ),
 ) -> Result<PolicyObservationStorageV6> {
-    let (request, accept_akroma) = request;
+    build_policy_observation_storage_common_fishing_v39_ajani_v42(
+        (request.0, (request.1, false)),
+        accept_life_ward,
+        accept_cant_block,
+        accept_wildwood,
+        accept_temporary_control,
+        accept_cerberus,
+        accepted_statics,
+    )
+}
+
+fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
+    request: (PolicyObservationBuildV5<'_>, (bool, bool)),
+    accept_life_ward: bool,
+    accept_cant_block: bool,
+    accept_wildwood: bool,
+    accept_temporary_control: bool,
+    accept_cerberus: bool,
+    accepted_statics: (
+        (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+        bool,
+    ),
+) -> Result<PolicyObservationStorageV6> {
+    let (request, (accept_akroma, accept_ajani)) = request;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             request.state,
@@ -3661,6 +3841,11 @@ fn build_policy_observation_storage_common_fishing_v39(
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
+        ));
+    }
+    if !accept_ajani && crate::ajani_full_v42::lifecycle::requires_successor(request.state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
         ));
     }
     if !accept_krenko && crate::krenko_v1::requires_successor(request.state) {
@@ -3748,34 +3933,35 @@ fn build_policy_observation_storage_common_fishing_v39(
         accept_fishing,
         accept_akroma,
     )?;
-    let (mut base, policy_surface_context) = build_policy_observation_parts_common_fishing_v39(
-        state,
-        surface,
-        acting_player,
-        step_index,
-        text_mode,
-        (
+    let (mut base, policy_surface_context) =
+        build_policy_observation_parts_common_fishing_v39_ajani_v42(
+            state,
+            surface,
+            acting_player,
+            step_index,
+            text_mode,
             (
-                accept_cant_block,
-                accept_temporary_control,
-                accept_extra_turn,
-                accept_banishing,
-                accept_gourmand,
-                accept_garruk,
-                accept_crystal,
-                accept_arahbo,
-                accept_strongbox,
-                accept_fiery,
-                accept_krenko,
-                accept_zul,
-                accept_banner,
-                accept_inspiration,
-                accept_twinflame,
+                (
+                    accept_cant_block,
+                    accept_temporary_control,
+                    accept_extra_turn,
+                    accept_banishing,
+                    accept_gourmand,
+                    accept_garruk,
+                    accept_crystal,
+                    accept_arahbo,
+                    accept_strongbox,
+                    accept_fiery,
+                    accept_krenko,
+                    accept_zul,
+                    accept_banner,
+                    accept_inspiration,
+                    accept_twinflame,
+                ),
+                accept_fishing,
             ),
-            accept_fishing,
-        ),
-        accept_akroma,
-    )?;
+            (accept_akroma, accept_ajani),
+        )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
             .projection
@@ -9850,6 +10036,12 @@ pub(crate) fn akroma_historical_source_ref_v40(
     state: &GameState,
     item: &StackItem,
 ) -> Result<CardStableRefV1> {
+    if let Some(source) =
+        crate::ajani_full_v42::lifecycle::historical_source(state, item).map_err(RlContractError)?
+    {
+        return Ok(source);
+    }
+
     let live = state
         .stack
         .iter()

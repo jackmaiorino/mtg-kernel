@@ -1674,6 +1674,8 @@ pub enum DynamicValueDef {
     /// Count distinct mana values among currently controlled nonland
     /// battlefield permanents. Tokens participate, and X is zero off-stack.
     DistinctManaValuesAmongControlledNonlandPermanents,
+    /// Current life total of the captured evaluating controller.
+    ControllerLifeTotal,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's

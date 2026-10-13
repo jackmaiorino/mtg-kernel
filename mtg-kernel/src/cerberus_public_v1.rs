@@ -278,6 +278,43 @@ pub(crate) fn parts_for_akroma_v40(
     physical_decision_id: u64,
     substep: (u32, u32),
 ) -> Result<CerberusObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+    )
+}
+pub(crate) fn parts_for_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CerberusObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullAjaniV42,
+    )
+}
+fn parts_for_common_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<CerberusObservationV1, RlContractError> {
     let (substep_index, substep_count) = substep;
 
     validate_state(state).map_err(RlContractError)?;
@@ -291,8 +328,8 @@ pub(crate) fn parts_for_akroma_v40(
             });
         }
     }
-    let base = crate::rl::akroma_family_observation_storage_v40(
-        state,
+    let base = crate::rl::common_family_observation_storage_scoped(
+        (scope, state),
         surface,
         actor,
         step_index,

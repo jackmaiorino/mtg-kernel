@@ -1,0 +1,72 @@
+{
+  "status": "prepared_unregistered_full_successor",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "source_sha256": {
+    "Mage.Sets/src/mage/cards/a/AjaniCallerOfThePride.java": "4e70f2e19396507a10c9da31885e93ef6ac3044d4f40c7f2641202fff90b38e4",
+    "Mage/src/main/java/mage/game/permanent/token/CatToken.java": "fda9e5156060583c976dd7557449b84a41f250141829e58692afaa26551709a0"
+  },
+  "cards": [
+    {
+      "name": "Ajani, Caller of the Pride",
+      "engine_capability": "full",
+      "mana_cost": "{1}{W}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Planeswalker"
+      ],
+      "subtypes": [
+        "Ajani"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "loyalty",
+        "up_to_one_creature",
+        "plus_one_counter",
+        "flying",
+        "double_strike",
+        "controller_life_tokens"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AjaniCallerOfThePride.java",
+      "starting_loyalty": 4
+    },
+    {
+      "name": "Ajani Cat Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/CatToken.java",
+      "is_token": true
+    }
+  ],
+  "note": "The live Partial record and 1/1 Cat Token are untouched. No numeric IDs or profile identity are assigned."
+}

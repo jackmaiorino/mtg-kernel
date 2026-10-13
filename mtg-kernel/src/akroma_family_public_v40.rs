@@ -588,6 +588,138 @@ pub(crate) fn build(
     )));
     Ok(parts)
 }
+pub(crate) fn build_for_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<Vec<FamilyProjectionV40>, RlContractError> {
+    let base = crate::rl::common_family_observation_storage_scoped(
+        (crate::rl::CommonProjectionScopeV42::FullAjaniV42, state),
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+    )?;
+    let game_outcome_projection = base.projection.clone();
+    let mut parts = vec![
+        FamilyProjectionV40::Early(Box::new(crate::akroma_early_public_v40::build(
+            state,
+            base.projection,
+            actor,
+        )?)),
+        FamilyProjectionV40::Sower(Box::new(crate::sower_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Frenzied(Box::new(crate::frenzied_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Wildwood(Box::new(crate::wildwood_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Authority(Box::new(crate::authority_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Employment(Box::new(
+            crate::employment_public_v1::parts_for_ajani_v42(
+                state, surface, actor, step, physical, substep,
+            )?,
+        )),
+        FamilyProjectionV40::Cerberus(Box::new(crate::cerberus_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Librarian(Box::new(crate::librarian_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::ExtraTurn(Box::new(crate::extra_turn_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Juggernaut(Box::new(
+            crate::juggernaut_public_v1::parts_for_ajani_v42(
+                state, surface, actor, step, physical, substep,
+            )?,
+        )),
+        FamilyProjectionV40::Ashroot(Box::new(crate::ashroot_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Banishing(Box::new(crate::banishing_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Stromkirk(Box::new(crate::stromkirk_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Gourmand(Box::new(crate::gourmand_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Garruk(Box::new(crate::garruk_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Crystal(Box::new(crate::crystal_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Arahbo(Box::new(crate::arahbo_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Strongbox(Box::new(crate::strongbox_public_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Fiery(Box::new(crate::fiery_observation_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Krenko(Box::new(crate::krenko_observation_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::ZulAshur(Box::new(
+            crate::zul_ashur_observation_v1::parts_for_ajani_v42(
+                state, surface, actor, step, physical, substep,
+            )?,
+        )),
+        FamilyProjectionV40::Banner(Box::new(crate::banner_observation_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?)),
+        FamilyProjectionV40::Inspiration(Box::new(
+            crate::inspiration_observation_v1::parts_for_ajani_v42(
+                state, surface, actor, step, physical, substep,
+            )?,
+        )),
+        FamilyProjectionV40::Fishing(Box::new(FishingProjectionV40 {
+            parts: crate::fishing_pole_observation_v39::parts_for_ajani_v42(
+                state, surface, actor, step, physical, substep,
+            )?,
+            actions: Vec::new(),
+        })),
+    ];
+    if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
+        let protection = crate::game_outcome_protection_public_v1::capture(state, &selector)
+            .map_err(|_| RlContractError("invalid current game-outcome facts".into()))?;
+        let roots = crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| def.is_executable() && def.game_outcome_protection_v1.is_some())
+            .map(|(index, _)| {
+                let card_id = u16::try_from(index)
+                    .map_err(|_| RlContractError("game-outcome definition index".into()))?;
+                crate::rules_meaning_game_outcome_protection_v1::meaning(&selector, card_id)
+                    .map_err(|_| RlContractError("unsupported game-outcome printed root".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        parts.push(FamilyProjectionV40::GameOutcome(Box::new(
+            GameOutcomeProjectionV40 {
+                facts: GameOutcomeFactsV40 { protection, roots },
+                projection: game_outcome_projection,
+            },
+        )));
+    }
+    parts.push(FamilyProjectionV40::Twinflame(Box::new(
+        crate::twinflame_observation_v1::parts_for_ajani_v42(
+            state, surface, actor, step, physical, substep,
+        )?,
+    )));
+    Ok(parts)
+}
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
         crate::game_outcome_protection_public_v1::capture(state, &selector)
@@ -595,6 +727,39 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::planeswalker_v1::validate_heartfire_recipients_v12(state)?;
+    crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
+    crate::effect::validate_pending_effect_choice(state)?;
+    crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;
+    crate::effect::frenzied_goblin_resolution_v1::validate(state)?;
+    crate::wildwood_capture_v1::validate_state(state)?;
+    crate::authority_public_capture_v1::validate_state(state)?;
+    crate::effect::temporary_control_v1::authority::validate(state)?;
+    crate::cerberus_capture_v1::validate_state(state)?;
+    crate::librarian_activation_v1::validate_state(state)?;
+    crate::raid_entry_v1::validate_state(state)?;
+    crate::gorehorn_damage_v1::validate_state(state)?;
+    crate::soul_shackled_zombie_v1::validate_state(state)?;
+    crate::extra_turn_v1::validate(state)?;
+    crate::ashroot_animist_v1::validate_state(state)?;
+    crate::banishing_light_v1::validate_state(state)?;
+    crate::garruks_uprising_v1::validate_state(state)?;
+    crate::arahbo_v1::validate_state(state)?;
+    crate::effect::crystal_prevention_v1::validate(state)?;
+    crate::equipment_damage_source_v4::validate_state(state)?;
+    crate::krenko_v1::validate_state(state)?;
+    crate::zul_ashur_v1::validate_state(state)?;
+    crate::heraldic_banner_v1::validate_state(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state)?;
+    Ok(())
+}
+pub(crate) fn validate_state_for_ajani_v42(state: &GameState) -> Result<(), String> {
+    if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
+        crate::game_outcome_protection_public_v1::capture(state, &selector)
+            .map_err(|_| "invalid game-outcome current public authority".to_string())?;
+    }
+    crate::ajani_full_v42::lifecycle::validate_state(state)?;
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
+    crate::planeswalker_v1::validate_full_ajani_recipients_v42(state)?;
     crate::twinflame_observation_v1::validate_projection_authority(state).map_err(|e| e.0)?;
     crate::effect::validate_pending_effect_choice(state)?;
     crate::sower_restriction_capture_v1::active(state).map_err(|e| e.0)?;

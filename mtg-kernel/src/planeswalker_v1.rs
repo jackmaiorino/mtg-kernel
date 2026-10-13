@@ -142,6 +142,12 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
 /// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
 /// be silently omitted from the public observation.
 pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(), String> {
+    validate_recipients_inner(state, false)
+}
+pub(crate) fn validate_full_ajani_recipients_v42(state: &GameState) -> Result<(), String> {
+    validate_recipients_inner(state, true)
+}
+fn validate_recipients_inner(state: &GameState, accept_full: bool) -> Result<(), String> {
     let recipient_ids = || {
         state
             .objects
@@ -180,7 +186,8 @@ pub(crate) fn validate_heartfire_recipients_v12(state: &GameState) -> Result<(),
             || entry.permanent.object != *id
             || entry.permanent.zone_change_count != live.zone_change_count
             || definition.name != "Ajani, Caller of the Pride"
-            || definition.capability != crate::card_def::CardCapability::Partial
+            || !(definition.capability == crate::card_def::CardCapability::Partial
+                || accept_full && crate::ajani_full_v42::validate_definition(live.card_def).is_ok())
             || definition.starting_loyalty != Some(4)
             || !engine::object_has_type(state, *id, CardType::Planeswalker)
         {

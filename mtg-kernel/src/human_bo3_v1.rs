@@ -322,5 +322,10 @@ pub use game_outcome_v41::{
 pub(crate) use limited_common_v1::project_limited_common_v1;
 pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
 
+pub mod ajani_v42;
+pub use ajani_v42::{
+    HumanAjaniProjectorV42, HumanAjaniSessionV42, HumanAjaniSnapshotV42, HumanDecisionAjaniV42,
+};
+
 #[cfg(test)]
 mod tests;

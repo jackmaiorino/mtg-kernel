@@ -313,6 +313,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)
         | EffectOp::KrenkoCreateGoblinsV1
+        | EffectOp::AjaniLoyaltyV42 { .. }
         | EffectOp::FishingPoleAddBaitV39
         | EffectOp::BindFishingPoleUntapV39
         | EffectOp::FishingPoleUntapV39 { .. }
