@@ -1388,7 +1388,10 @@ pub(super) fn conflicts(
             TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
-                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. } => true,
+                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. }
+                | FiendishPandaLifeGainCaptureV1 { .. }
+                | FiendishPandaDeathCaptureV1 { .. }
+                | FiendishPandaCaptureCollectedV1 { .. } => true,
         }
     })
 }

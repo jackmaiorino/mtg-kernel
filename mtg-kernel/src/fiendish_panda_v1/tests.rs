@@ -104,6 +104,103 @@ fn precise_panda_meaning_never_relabels_a_registered_predecessor_as_the_missing_
 ))]
 mod printed {
     use super::*;
+    fn settle_stack(state: &mut GameState) {
+        for _ in 0..32 {
+            match engine::advance_until_decision(state) {
+                Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                other => panic!("unexpected genuine root resolution decision {other:?}"),
+            }
+        }
+        panic!("genuine stack failed to finish");
+    }
+
+    #[test]
+    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
+    fn actual_gain_preserves_seraph_cat_first_gain_and_each_panda_gain_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = panda(&mut state, actor);
+            // Actual supported presence primitives exercise independent event producers.
+            let seraph = put(&mut state, actor, "Vanguard Seraph", Zone::Battlefield);
+            let cat = put(&mut state, actor, "Cat Collector", Zone::Battlefield);
+            for amount in [4, 1] {
+                event::propose_and_commit(&mut state, ProposedEvent::life_gain(actor, amount));
+            }
+            let pending = crate::trigger::capture_triggers_without_sba(&mut state);
+            assert_eq!(pending.iter().filter(|p| p.source == source).count(), 2);
+            assert_eq!(pending.iter().filter(|p| p.source == seraph).count(), 1);
+            assert_eq!(pending.iter().filter(|p| p.source == cat).count(), 1);
+            assert!(state.engine.halted.is_none());
+            assert!(crate::trigger::capture_triggers_without_sba(&mut state).is_empty());
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
+    fn actual_counter_and_return_resolve_in_tyrant_and_crystal_prevention_environments_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for tyrant in [false, true] {
+                let mut state = ready_state_for(actor);
+                let source = panda(&mut state, actor);
+                let environment = put(
+                    &mut state,
+                    actor,
+                    if tyrant {
+                        "Twinflame Tyrant"
+                    } else {
+                        "Crystal Barricade"
+                    },
+                    Zone::Battlefield,
+                );
+                // Real supported presence plus the existing synthetic numeric
+                // shield primitive. No claim that a printing grants this shield.
+                if !tyrant {
+                    let id = state.engine.next_replacement_id.checked_add(1).unwrap();
+                    state.engine.next_replacement_id = id;
+                    state
+                        .engine
+                        .active_replacements
+                        .push(event::ActiveReplacement {
+                            id,
+                            source: environment,
+                            kind: event::ReplacementEffectKind::PreventNextDamage {
+                                target: Target::Player(actor),
+                                remaining: 1,
+                            },
+                        });
+                }
+                event::propose_and_commit(&mut state, ProposedEvent::life_gain(actor, 3));
+                settle_stack(&mut state);
+                assert_eq!(state.objects.get(source).counters.plus1_plus1, 1);
+                assert!(state.engine.halted.is_none());
+                let recipient = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                match engine::advance_until_decision(&mut state) {
+                    Decision::ChooseTargets { .. } => {
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient)))
+                            .unwrap()
+                    }
+                    Decision::CastSpellOrPass { .. } => {}
+                    other => panic!("unexpected actual Panda death placement {other:?}"),
+                }
+                settle_stack(&mut state);
+                assert_eq!(state.objects.get(recipient).zone, Zone::Battlefield);
+                assert!(state.objects.get(recipient).summoning_sick);
+                assert!(state.engine.halted.is_none());
+                if !tyrant {
+                    assert!(state.engine.active_replacements.iter().any(|r| matches!(
+                        r.kind,
+                        event::ReplacementEffectKind::PreventNextDamage { remaining: 1, .. }
+                    )));
+                }
+            }
+        }
+    }
     fn panda(state: &mut GameState, actor: PlayerId) -> ObjectId {
         let source = put(state, actor, "Fiendish Panda", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
