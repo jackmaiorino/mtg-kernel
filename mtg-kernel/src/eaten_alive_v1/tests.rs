@@ -64,14 +64,8 @@ fn target(
     source: ObjectId,
     recipient: ObjectId,
 ) -> Decision {
-    engine::step(
-        state,
-        Action::CastSpell {
-            player: actor,
-            spell: source,
-        },
-    )
-    .unwrap();
+    assert_eq!(state.priority_player, actor);
+    engine::step(state, Action::CastSpell(source)).unwrap();
     assert!(matches!(next(state), Decision::ChooseTargets { .. }));
     engine::step(state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
     next(state)
@@ -84,14 +78,7 @@ fn absent_definition_and_foreign_mandatory_stage_refuse() {
         let mut state = ready(actor);
         let spell = put(&mut state, actor, "Counterspell", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 4;
-        engine::step(
-            &mut state,
-            Action::CastSpell {
-                player: actor,
-                spell,
-            },
-        )
-        .unwrap_err();
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap_err();
         assert!(exact_recipe(state.objects.get(spell).card_def).is_err());
         let value =
             crate::rules_meaning_eaten_alive_v1::printed_meaning(state.objects.get(spell).card_def);
@@ -193,6 +180,7 @@ fn actual_both_branches_payment_restore_exile_and_receipt_refusal_both_seats() {
             );
             assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
             let index = state
+                .engine
                 .event_history
                 .iter()
                 .position(|event| {
@@ -200,16 +188,17 @@ fn actual_both_branches_payment_restore_exile_and_receipt_refusal_both_seats() {
                 })
                 .unwrap();
             let mut missing = restore(&state);
-            missing.event_history[index] = CommittedEvent::Tap { object: own };
+            missing.engine.event_history[index] = CommittedEvent::Tap { object: own };
             refuses(&mut missing, Action::Pass);
             let mut replay = restore(&state);
             let original = replay
+                .engine
                 .event_history
                 .iter()
                 .find(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { .. }))
                 .unwrap()
                 .clone();
-            replay.event_log.push(original);
+            replay.engine.event_log.push(original);
             refuses(&mut replay, Action::Pass);
             state = restore(&state);
             resolve(&mut state, spell);
@@ -231,22 +220,10 @@ fn actual_mana_branch_needs_two_black_and_cost_reducer_changes_only_generic_both
         let recipient = creature(&mut state, actor.opponent());
         let spell = put(&mut state, actor, "Eaten Alive", Zone::Hand);
         fund(&mut state, actor, 1, 4);
-        refuses(
-            &mut state,
-            Action::CastSpell {
-                player: actor,
-                spell,
-            },
-        );
+        refuses(&mut state, Action::CastSpell(spell));
         state.players[actor.index()].mana_pool = Default::default();
         fund(&mut state, actor, 2, 2);
-        refuses(
-            &mut state,
-            Action::CastSpell {
-                player: actor,
-                spell,
-            },
-        );
+        refuses(&mut state, Action::CastSpell(spell));
         // Actual registered reducer installed by a real battlefield entry.
         let sprite = put(&mut state, actor, "Mocking Sprite", Zone::Hand);
         event::propose_and_commit(
@@ -370,14 +347,7 @@ fn actual_planeswalker_target_and_an_offer_response_keep_paid_costs_both_seats()
                 assert!(
                     matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor.opponent())
                 );
-                engine::step(
-                    &mut state,
-                    Action::CastSpell {
-                        player: actor.opponent(),
-                        spell: offer,
-                    },
-                )
-                .unwrap();
+                engine::step(&mut state, Action::CastSpell(offer)).unwrap();
                 assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
                 engine::step(&mut state, Action::ChooseTarget(Target::Object(spell))).unwrap();
                 next(&mut state);
@@ -443,6 +413,7 @@ fn actual_sacrifice_current_control_keeps_physical_owner_and_accepted_copy_pays_
         assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
         assert_eq!(
             state
+                .engine
                 .event_history
                 .iter()
                 .filter(|event| matches!(event, CommittedEvent::MandatoryCastPaymentInputV1 { .. }))
@@ -472,14 +443,7 @@ fn actual_snakeskin_response_protects_target_without_refunding_mana_both_seats()
         state.players[actor.opponent().index()].mana_pool[4] = 1;
         engine::step(&mut state, Action::Pass).unwrap();
         next(&mut state);
-        engine::step(
-            &mut state,
-            Action::CastSpell {
-                player: actor.opponent(),
-                spell: veil,
-            },
-        )
-        .unwrap();
+        engine::step(&mut state, Action::CastSpell(veil)).unwrap();
         assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
         next(&mut state);

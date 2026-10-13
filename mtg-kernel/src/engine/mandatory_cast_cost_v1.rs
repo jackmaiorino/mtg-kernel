@@ -204,7 +204,7 @@ pub(super) fn validate_paid_creature(
     {
         return Err("mandatory sacrifice did not actually leave battlefield".into());
     }
-    if !state.event_history.iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object: id, from: Zone::Battlefield, controller_before, .. } if *id == original.object && *controller_before == pending.controller)) {
+    if !state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object: id, from: Zone::Battlefield, controller_before, .. } if *id == original.object && *controller_before == pending.controller)) {
         return Err("mandatory sacrifice lost actual departure".into());
     }
     Ok(())
@@ -243,6 +243,7 @@ pub(super) fn record_paid(state: &mut GameState, source: StackSourceContractV4) 
         .and_then(|binding| binding.mandatory_additional_cost)
     {
         state
+            .engine
             .event_history
             .push(CommittedEvent::MandatoryCastPaymentV1 { source, choice });
     }
@@ -278,7 +279,7 @@ pub(super) fn validate_finalized(
         .source_contract
         .ok_or("mandatory paid source absent")?;
     let Some(CommittedEvent::MandatoryCastPaymentInputV1 { pending: original }) =
-        state.event_history.get(choice.input_index)
+        state.engine.event_history.get(choice.input_index)
     else {
         return Err("mandatory original payment input erased".into());
     };
@@ -302,17 +303,17 @@ pub(super) fn validate_finalized(
         return Err("mandatory paid choice differs from original input".into());
     }
 
-    if state.event_history.iter().filter(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid } if *original == source && *paid == choice)).count() != 1 {
+    if state.engine.event_history.iter().filter(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid } if *original == source && *paid == choice)).count() != 1 {
         return Err("mandatory payment original receipt erased or duplicated".into());
     }
-    let publication_index = state.event_history.iter().position(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid } if *original == source && *paid == choice)).ok_or("mandatory receipt missing")?;
+    let publication_index = state.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid } if *original == source && *paid == choice)).ok_or("mandatory receipt missing")?;
     if choice.input_index >= publication_index {
         return Err("mandatory payment input order changed".into());
     }
     match (choice.pay_mana, choice.original_creature, choice.paid_creature) {
         (true, None, None) if item.v4.paid_cost_refs.is_empty() => Ok(()),
         (false, Some(original), Some(paid)) if original.expected_zone == Zone::Battlefield && paid.object == original.object && item.v4.paid_cost_refs == [paid] && paid.zone_change_count == original.expected_zone_change_count.checked_add(1).ok_or("mandatory sacrifice generation overflow")? => {
-            if state.event_history[choice.input_index+1..publication_index].iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, controller_before, .. } if *object == original.object && *controller_before == item.controller)) { Ok(()) } else { Err("mandatory sacrifice original departure erased".into()) }
+            if state.engine.event_history[choice.input_index+1..publication_index].iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, controller_before, .. } if *object == original.object && *controller_before == item.controller)) { Ok(()) } else { Err("mandatory sacrifice original departure erased".into()) }
         }
         _ => Err("mandatory paid branch and cost references disagree".into()),
     }
@@ -353,8 +354,9 @@ pub(crate) fn require_legacy_supported(
 
 pub(super) fn record_input(state: &mut GameState, pending: &PendingCast) -> Option<usize> {
     pending.mandatory_additional_cost?;
-    let index = state.event_history.len();
+    let index = state.engine.event_history.len();
     state
+        .engine
         .event_history
         .push(CommittedEvent::MandatoryCastPaymentInputV1 {
             pending: Box::new(pending.clone()),
@@ -363,7 +365,7 @@ pub(super) fn record_input(state: &mut GameState, pending: &PendingCast) -> Opti
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
-    if state.event_log.iter().any(|event| {
+    if state.engine.event_log.iter().any(|event| {
         matches!(
             event,
             CommittedEvent::MandatoryCastPaymentV1 { .. }
@@ -442,14 +444,7 @@ mod tests {
             let mut state = ready_state_for(actor);
             let source = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
             state.players[actor.index()].mana_pool[3] = 1;
-            step(
-                &mut state,
-                Action::CastSpell {
-                    player: actor,
-                    spell: source,
-                },
-            )
-            .unwrap();
+            step(&mut state, Action::CastSpell(source)).unwrap();
             assert!(matches!(
                 advance_until_decision(&mut state),
                 Decision::ChooseTargets { .. }
