@@ -210,7 +210,6 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn real_printing_two_roots_and_complete_fact_or_unknown_field_forgery_refuse() {
         let selector = live_selector().unwrap();
         let card = crate::card_def::card_id_by_name("Faebloom Trick").unwrap();

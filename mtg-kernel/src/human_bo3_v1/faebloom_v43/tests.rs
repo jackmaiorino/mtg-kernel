@@ -269,7 +269,6 @@ mod limited {
     }
 
     #[test]
-    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
     fn paid_targetless_creation_separate_reflexive_source_targets_owning_restore_privacy_and_real_tap_both_seats(
     ) {
         use crate::mana::ManaColor;
