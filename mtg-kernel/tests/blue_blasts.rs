@@ -184,6 +184,7 @@ fn put_spell_on_stack(
         x_value: 0,
         chosen_creature_cost: None,
         variable_targeting_kicked: None,
+        mandatory_additional_cost: None,
     });
     let id = state.objects.push(GameObject {
         card_def,

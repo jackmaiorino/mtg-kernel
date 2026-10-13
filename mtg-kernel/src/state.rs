@@ -1051,12 +1051,18 @@ pub struct FinalizedCastBindingV1 {
     pub chosen_creature_cost: Option<PaidCostRefV4>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variable_targeting_kicked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory_additional_cost: Option<crate::engine::mandatory_cast_cost_v1::PaidV1>,
 }
 
 impl std::hash::Hash for FinalizedCastBindingV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.x_value.hash(state);
         self.chosen_creature_cost.hash(state);
+        if let Some(choice) = self.mandatory_additional_cost {
+            "mandatory_additional_cost/v1".hash(state);
+            choice.hash(state);
+        }
         if let Some(kicked) = self.variable_targeting_kicked {
             "variable_targeting_kicked/v1".hash(state);
             kicked.hash(state);
@@ -4736,6 +4742,7 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

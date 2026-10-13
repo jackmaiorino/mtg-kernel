@@ -39,6 +39,7 @@
 //! (`begin_cast`), before targets/modes/costs, so `finalize_cast` only
 //! fills in the placeholder `begin_cast` already pushed.
 
+pub mod mandatory_cast_cost_v1;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
@@ -825,6 +826,8 @@ pub enum ChosenCreatureCostZoneV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory_additional_cost: Option<mandatory_cast_cost_v1::ChoiceV1>,
     pub spell: ObjectId,
     /// Exact physical source incarnation and stack provenance captured after
     /// 601.2a moved the announced card. This must exactly equal the untouched
@@ -947,6 +950,10 @@ impl std::hash::Hash for PendingCast {
         std::hash::Hash::hash(&self.x_value, state);
         std::hash::Hash::hash(&self.chosen_creature_cost_zone, state);
         std::hash::Hash::hash(&self.chosen_creature_cost, state);
+        if let Some(choice) = self.mandatory_additional_cost {
+            std::hash::Hash::hash(&"mandatory_additional_cost/v1", state);
+            std::hash::Hash::hash(&choice, state);
+        }
         if !self.convoke_chosen.is_empty() || self.convoke_finished {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
             std::hash::Hash::hash(&self.convoke_chosen, state);
@@ -2071,6 +2078,7 @@ fn validate_physical_spell_cast_origin(
     {
         return Err("variable spell lost its finalized physical-source kicker authority".into());
     }
+    mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -5138,6 +5146,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
 
     for component in components {
         match component {
+            CostComponent::SacrificeCreatureOrPayMana(_) => return false,
             CostComponent::Mana(cost) => {
                 if mana.is_some() || saw_source_changing_component {
                     return false;
@@ -5532,6 +5541,7 @@ fn can_pay_components(
                         .has_type(*card_type)
                 })
             }
+            CostComponent::SacrificeCreatureOrPayMana(_) => false,
             CostComponent::Crew(required) => {
                 crew_candidates(state, player, source, &[])
                     .iter()
@@ -6087,6 +6097,7 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::Loyalty(delta) => {
                 crate::planeswalker_v1::change_loyalty(state, source, *delta);
             }
+            CostComponent::SacrificeCreatureOrPayMana(_) => return None,
             CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
             CostComponent::Crew(_) => {
                 crate::standard_cards_v1::record_crew(state, source, object_cost_chosen);
@@ -6753,6 +6764,12 @@ fn controlled_permanent_sacrifice_needed(
         {
             return Some(sacrifice);
         }
+    }
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana == Some(false))
+    {
+        return Some((1, PermanentFilter::Creature));
     }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
@@ -9233,6 +9250,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if mandatory_cast_cost_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::faebloom_trick_v43::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -10664,6 +10687,7 @@ pub(crate) fn validate_pending_cast(
     pending: &PendingCast,
 ) -> Result<(), String> {
     resolution_cast_v1::validate_pending_child(state, pending)?;
+    mandatory_cast_cost_v1::validate_pending(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11724,6 +11748,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana.is_none())
+    {
+        let choices = mandatory_cast_cost_v1::branches(state, &pending);
+        if choices.len() == 1 {
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .mandatory_additional_cost
+                .as_mut()
+                .unwrap()
+                .pay_mana = Some(choices[0]);
+            return drain_pending_cast_or_decide(state);
+        }
+        if choices.is_empty() {
+            let method = finalized_cast_method(&pending, staged_method, def);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, method);
+            return None;
+        }
+        return Some(Decision::ChooseEffectOption {
+            player: pending.controller,
+            source: pending.spell,
+            option_count: 2,
+        });
+    }
     if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(&pending, def) {
         if (pending.sacrifice_chosen.len() as u8) < needed {
             let candidates = sacrificeable_controlled_permanents(
@@ -11740,6 +11793,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             if candidates.len() <= 1 {
+                if let Some(&object) = candidates.first() {
+                    mandatory_cast_cost_v1::bind_creature(state, &pending, object)
+                        .expect("validated mandatory sacrifice candidate");
+                }
                 state
                     .engine
                     .pending_cast
@@ -17883,6 +17940,7 @@ enum PendingCastActionStage {
     Discard,
     AwaitEngineAdvance,
     ChooseConvoke,
+    ChooseMandatoryAdditionalCost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17938,6 +17996,12 @@ fn pending_cast_action_stage(
     }
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);
+    }
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana.is_none())
+    {
+        return Ok(PendingCastActionStage::ChooseMandatoryAdditionalCost);
     }
     if pending.sacrifice_chosen.len() < usize::from(sacrifice_lands_needed(pending, def)) {
         return Ok(PendingCastActionStage::ChooseCostTarget);
@@ -18025,7 +18089,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             PendingCastActionStage::ChooseBargainPermanent,
             Action::ChooseCostTarget(_)
         ) | (
-            PendingCastActionStage::ChooseAdditionalCostZone,
+            PendingCastActionStage::ChooseAdditionalCostZone
+                | PendingCastActionStage::ChooseMandatoryAdditionalCost,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseXValue,
@@ -18122,6 +18187,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    mandatory_cast_cost_v1::validate_state(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::krenko_v1::validate_state(state)?;
@@ -19044,6 +19110,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                         "{id} is not a legal permanent-sacrifice cost candidate"
                     ));
                 }
+                mandatory_cast_cost_v1::bind_creature(state, &pending, id)?;
                 state
                     .engine
                     .pending_cast
@@ -20550,6 +20617,9 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseMandatoryAdditionalCost => {
+            mandatory_cast_cost_v1::answer(state, &pending, option_index)
+        }
         PendingCastActionStage::ChooseAdditionalCostZone => {
             let zone = match option_index {
                 0 => ChosenCreatureCostZoneV1::Battlefield,
@@ -20930,6 +21000,7 @@ fn begin_cast_ex(
         chosen_creature_cost: None,
         convoke_chosen: Vec::new(),
         convoke_finished: false,
+        mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
 
@@ -21029,6 +21100,7 @@ fn finalize_owned_cast(
         None
     };
     crate::standard_cards_v1::clear_payment_sources(state);
+    let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
 
     let mut paid_cost_objects = object_cost_chosen;
@@ -21119,9 +21191,15 @@ fn finalize_owned_cast(
         chosen_creature_cost,
         variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)
             .then_some(was_kicked),
+        mandatory_additional_cost: mandatory_cast_cost_v1::paid_choice(
+            mandatory_payment_input,
+            &pending,
+            &paid_cost_refs,
+        )?,
     });
     let finalized_source_contract =
         StackSourceContractV4::capture(state, pending.spell, cast_method);
+    mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     let item = state.stack.last_mut().expect("begin_cast pushed this spell's StackItem and nothing can push another item while a cast is pending");
     debug_assert_eq!(
         item.source, pending.spell,

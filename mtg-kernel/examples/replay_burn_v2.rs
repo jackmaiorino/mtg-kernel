@@ -4191,6 +4191,7 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            mandatory_additional_cost: None,
         });
 
         let rec = decision_record_ex(

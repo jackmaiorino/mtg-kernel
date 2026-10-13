@@ -5574,6 +5574,24 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:mandatory_additional_cost_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::faebloom_trick_v43::requires_successor(&self.state, None) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7464,6 +7482,23 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:mandatory_additional_cost_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
             && !matches!(
                 self.flat_action_contract_mode,

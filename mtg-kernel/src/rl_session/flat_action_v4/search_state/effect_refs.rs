@@ -1038,6 +1038,8 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
+                | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+                | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
         )
     }) {
         return true;
@@ -1381,7 +1383,8 @@ pub(super) fn conflicts(
             | InspirationResolutionBoundaryV1 { .. } => false,
             TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
-                | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. } => true,
+                | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
+                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. } => true,
         }
     })
 }
