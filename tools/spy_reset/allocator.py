@@ -522,7 +522,7 @@ def train(plan: dict) -> int:
                 jobs.append({"label": label, "lineage": lin, "cases": f"train-{lin}.jsonl", "index": index,
                              "weights": str(wpath), "out": str(out / f"{label}.jsonl")})
         state_path.write_text(json.dumps(state, indent=1) + "\n")
-        run_jobs(plan, binary, jobs, int(plan.get("slots", 1)), ledger, "training")
+        run_jobs(plan, binary, jobs, int(plan.get("slots", BATCH_GAMES)), ledger, "training")
         files = [out / f"t{k:02d}-{i}.jsonl" for i in range(len(batches[k]["games"]))]
         rows = [read_row(p) for p in files]
         try:

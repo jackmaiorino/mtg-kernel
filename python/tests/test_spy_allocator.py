@@ -22,15 +22,17 @@ spec.loader.exec_module(report)
 
 class QualifiedConcurrency(unittest.TestCase):
     def test_training_uses_the_admitted_slot_count(self):
-        for slots in (1, 2, 6):
+        for slots in (None, 1, 2, 6):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "train-batches.json").write_text(json.dumps([{"games": [["r1", i] for i in range(6)]}]))
-                plan = {"schedule": str(root), "out_dir": str(root / "run"), "slots": slots}
+                plan = {"schedule": str(root), "out_dir": str(root / "run")}
+                if slots is not None:
+                    plan["slots"] = slots
                 class Dispatched(Exception):
                     pass
                 def dispatch(_plan, _binary, jobs, concurrency, *_):
-                    self.assertEqual(concurrency, slots)
+                    self.assertEqual(concurrency, 6 if slots is None else slots)
                     self.assertEqual(len(jobs), 6)
                     raise Dispatched
                 with patch.object(alloc, "admit", return_value=root / "fixture.exe"), patch.object(alloc, "run_jobs", side_effect=dispatch):
