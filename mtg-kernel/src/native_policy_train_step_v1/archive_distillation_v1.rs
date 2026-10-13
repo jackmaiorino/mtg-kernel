@@ -23,8 +23,8 @@ pub(crate) struct ExternalAuxiliaryRowV1<'a> {
 }
 
 /// `coefficient / denominator` times the sum over `rows` of the divergence in
-/// `direction`. A denominator above the row count fixes each row's weight
-/// for a partial batch.
+/// `direction`. The denominator may not be below the row count. Phase 1
+/// passes each batch's own row count, so both of its terms are batch means.
 pub(crate) struct ExternalAuxiliaryInputV1<'a> {
     pub(crate) direction: LineBDivergenceV1,
     pub(crate) coefficient: f64,

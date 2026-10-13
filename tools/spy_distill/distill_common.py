@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,8 +64,9 @@ def pin(path) -> dict:
 def absolute(path) -> str:
     """An output directory as an absolute path: the engine writes the paths
     of what it produces under it, and a later run accepts only absolute
-    model-source pins."""
-    return str(Path(path).resolve()).replace("\\", "/")
+    model-source pins. The path keeps the runbook's spelling: no junction or
+    link is followed."""
+    return os.path.abspath(path).replace("\\", "/")
 
 
 def read_json(path):

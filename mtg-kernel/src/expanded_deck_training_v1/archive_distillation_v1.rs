@@ -1289,6 +1289,9 @@ pub(super) fn phase1_v1(
     let anchor_sha256 = sha(&serde_json::to_vec(&anchor).map_err(err)?);
     let recipe = json!({"method":METHOD,"namespace":ARCHIVE_DISTILLATION_NAMESPACE_V1,
         "learning_rate":LEARNING_RATE,"archive_batch":ARCHIVE_BATCH,"anchor_batch":ANCHOR_BATCH,
+        "archive_batching":"each epoch's row order cut into ceil(n/32) consecutive batches \
+            whose sizes differ by at most one (L with at most 32 rows: every row each step); \
+            the archive term is the mean over its batch",
         "archive_coefficient":ARCHIVE_COEFFICIENT,"anchor_coefficient":ANCHOR_COEFFICIENT,
         "direction":"forward","adam":"fresh moments, betas 0.9 and 0.999, epsilon 1e-8",
         "checkpoints":plan.checkpoints,"epoch_steps":plan.epoch_steps});
