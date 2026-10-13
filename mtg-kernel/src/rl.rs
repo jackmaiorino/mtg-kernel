@@ -1354,6 +1354,24 @@ pub enum ActionSemanticV1 {
         entry_ordinal: u32,
         color: ManaColor,
     },
+    /// Produced only by the explicit Divine V44 cast successor.
+    ChooseDivineKickerV44 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        pay: bool,
+    },
+    ChooseDivineTargetV44 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        kicked: bool,
+        selected_count: u64,
+        target: CardStableRefV1,
+    },
+    FinishDivineTargetsV44 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        selected_count: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4526,6 +4544,7 @@ pub fn make_legal_action_v1(
     semantic: ActionSemanticV1,
     display_text: Option<String>,
 ) -> Result<LegalActionV1> {
+    refuse_divine_semantic_in_frozen_transport(&semantic)?;
     if let ActionSemanticV1::Ambiguous { reason } = &semantic {
         return Err(RlContractError(format!(
             "ambiguous legal action representation refused: {reason}"
@@ -4734,6 +4753,7 @@ pub(crate) fn core_policy_action_candidates_v5(
 }
 
 fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()> {
+    refuse_divine_semantic_in_frozen_transport(semantic)?;
     if let ActionSemanticV1::Ambiguous { reason } = semantic {
         return Err(RlContractError(format!(
             "ambiguous legal action representation refused: {reason}"
@@ -4746,6 +4766,19 @@ fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()>
     ) {
         return Err(RlContractError(
             "legacy aggregate combat semantic is forbidden on policy surface v5".to_string(),
+        ));
+    }
+    Ok(())
+}
+fn refuse_divine_semantic_in_frozen_transport(semantic: &ActionSemanticV1) -> Result<()> {
+    if matches!(
+        semantic,
+        ActionSemanticV1::ChooseDivineKickerV44 { .. }
+            | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+            | ActionSemanticV1::FinishDivineTargetsV44 { .. }
+    ) {
+        return Err(RlContractError(
+            "Divine V44 actions require their named successor".into(),
         ));
     }
     Ok(())
