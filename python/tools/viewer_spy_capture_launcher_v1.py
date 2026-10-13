@@ -8,6 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from viewer_capture_launcher_v1 import require_guard, sha
+from viewer_export_v1 import terminal
 
 RAW_CAP = 2 * 1024**3
 WORKING_CAP = 8 * 1024**3
@@ -49,13 +50,22 @@ def invoke(binary, template, root, name, record, steps, seconds, failed_recorder
 
 def capture_receipt(result, steps=None):
     if result['exit_code']!=0 or not result['capture']:raise ValueError('Native capture did not finish')
-    header=footer=None;decisions=0;searches={};combo=False
+    header=footer=None;decisions=0;searches={};combo=False;actual_stage=0;actual_win=False;giant=None
     with Path(result['capture']).open('rb') as stream:
         for line in stream:
             if not line.endswith(b'\n') or footer is not None:raise ValueError('Capture truncated or follows footer')
             row=json.loads(line);kind=row['kind']
-            if kind=='header':header=row
-            if kind=='decision':decisions+=1
+            if kind=='header':
+                header=row;giant=next((int(i) for i,c in row['cards'].items() if c['name']=='Lotleth Giant'),None)
+            if kind=='decision':
+                decisions+=1;e=row.get('evidence') or {};before=row['before']['projection'];after=row['after']['projection']
+                controlled=e.get('chooser') in ('new_root','reused')
+                if controlled and e.get('spy_self_chosen'):actual_stage=max(actual_stage,1)
+                if actual_stage==1 and before['library_counts'][0]>after['library_counts'][0]==0:actual_stage=2
+                if actual_stage==2 and controlled and e.get('dr_giant_chosen'):actual_stage=3
+                has_giant=lambda p:any(o['stable']['card_db_id']==giant for o in p['battlefield'][0])
+                if actual_stage==3 and not has_giant(before) and has_giant(after):actual_stage=4
+                if row.get('terminal'):actual_win=terminal(row['terminal'])['winner']=='p0'
             if kind=='search':searches[row['index']]=None
             if kind=='search_end':searches[row['search']]=row['complete']
             if kind=='search_simulation':
@@ -70,7 +80,7 @@ def capture_receipt(result, steps=None):
     if not header or not footer or footer.get('stop_reason') or footer['written']!=decisions or decisions!=result['actions'] or not searches or any(v is False for v in searches.values()):
         raise ValueError('Recorder lost gameplay decisions or requested full search')
     if steps is not None and decisions!=steps:raise ValueError('Short correctness case did not reach its bound')
-    return {'written':decisions,'complete':footer['complete'],'traced_searches':sum(v is True for v in searches.values()),'winning_combo_rollout':combo}
+    return {'written':decisions,'complete':footer['complete'],'traced_searches':sum(v is True for v in searches.values()),'winning_combo_rollout':combo,'actual_search_combo_win':actual_stage==4 and actual_win}
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
@@ -120,8 +130,8 @@ def main():
             except ValueError as e:result['capture_error']=str(e)
             report['raw_bytes']=size(args.root,True);report['elapsed_seconds']=time.monotonic()-started
             acquisition.write_text(json.dumps(report,indent=2))
-            if result.get('receipt',{}).get('complete') and result['receipt']['winning_combo_rollout']:break
-        success=any(r.get('receipt',{}).get('complete') and r['receipt']['winning_combo_rollout'] for r in results)
+            if result.get('receipt',{}).get('complete') and result['receipt']['winning_combo_rollout'] and result['receipt']['actual_search_combo_win']:break
+        success=any(r.get('receipt',{}).get('complete') and r['receipt']['winning_combo_rollout'] and r['receipt']['actual_search_combo_win'] for r in results)
         report['state']='complete' if success else 'insufficient-demo-coverage';acquisition.write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)
         if not success:raise SystemExit(1)
 
