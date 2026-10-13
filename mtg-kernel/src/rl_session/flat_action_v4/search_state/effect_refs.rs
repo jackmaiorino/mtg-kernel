@@ -182,6 +182,9 @@ impl Scan<'_> {
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
             | KrenkoCreateGoblinsV1
+            | FishingPoleAddBaitV39
+            | BindFishingPoleUntapV39
+            | FishingPoleUntapV39 { .. }
             | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -1250,6 +1253,7 @@ pub(super) fn conflicts(
             MonarchTrigger { binding } => s.raw(binding.source.source),
             KrenkoPaidV1 { .. }
             | KrenkoPaymentInputV1 { .. }
+            | FishingPoleJournalV39 { .. }
             | KrenkoRemovalInputV1 { .. }
             | KrenkoRemovedV1 { .. }
             | KrenkoSampleV1 { .. }

@@ -1284,6 +1284,9 @@ pub enum CommittedEvent {
         snapshot: crate::controlled_creature_grants_v1::DepartureColorV1,
         departure_history_index: u64,
     },
+    FishingPoleJournalV39 {
+        journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

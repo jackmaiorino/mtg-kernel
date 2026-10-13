@@ -1394,6 +1394,10 @@ pub enum CostComponent {
     /// `standard_cards_v1`'s per-incarnation state.
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
+    /// Identifies one actual Pole grant and taps that payer-controlled Pole
+    /// attached to this exact host. This is a named source cost, not a spell
+    /// target or an unrestricted artifact-tap cost.
+    TapFishingPoleAttachedToSource,
 }
 
 impl CostComponent {
@@ -1950,6 +1954,10 @@ fn longbow_ping() -> EffectOp {
         target: TargetRef::Target(0),
         amount: 1,
     }
+}
+
+pub(crate) fn fishing_pole_bait() -> EffectOp {
+    EffectOp::FishingPoleAddBaitV39
 }
 
 /// Reusable static and triggered grants produced by an attached Equipment.

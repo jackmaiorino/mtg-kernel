@@ -630,10 +630,13 @@ pub mod krenko_observation_v1;
 pub mod krenko_public_v1;
 pub mod rules_meaning_krenko_v1;
 
-pub mod controlled_creature_grants_v1;
-
-pub mod akroma_public_v1;
-pub mod rules_meaning_akroma_v1;
+pub mod fishing_pole_observation_v39;
+pub mod fishing_pole_public_v39;
+pub(crate) mod fishing_pole_v39;
+pub mod rules_meaning_fishing_pole_v39;
 
 pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
+pub mod akroma_public_v1;
+pub mod controlled_creature_grants_v1;
+pub mod rules_meaning_akroma_v1;

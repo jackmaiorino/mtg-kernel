@@ -107,7 +107,7 @@ pub(super) fn normalized_origin(
     flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
     flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
     let common =
-        crate::rl::policy_observation_extensions_common_for_human_v8(&session.state, current.actor)
+        crate::rl::policy_observation_extensions_fishing_union_v40(&session.state, current.actor)
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     super::flat_action_v3::normalize_candidates(
         &mut original.candidates,
@@ -151,10 +151,32 @@ impl FastActorSessionV1 {
             return Err(RlContractError("wrong Akroma snapshot owner".into()));
         }
         crate::akroma_public_v1::validate_state(&restored.state).map_err(RlContractError)?;
+        let next_revision = self
+            .environment_revision
+            .max(restored.environment_revision)
+            .checked_add(1)
+            .ok_or_else(|| RlContractError("Akroma mixed restore revision exhausted".into()))?;
         if let Some(mut current) = restored.current.take() {
+            // Authenticate the original snapshot relation before rebinding its owner.
             prepare_current(&restored, &mut current)
-                .map_err(|_| RlContractError("invalid Akroma restored menu".into()))?;
+                .map_err(|_| RlContractError("invalid original Akroma restored menu".into()))?;
+            restored
+                .surface
+                .rebind_owned_revision_after_restore_v1(
+                    &restored.state,
+                    restored.environment_revision,
+                    next_revision,
+                )
+                .map_err(|_| {
+                    RlContractError("invalid original restored combat scan owner".into())
+                })?;
+            restored.environment_revision = next_revision;
+            current.environment_revision = next_revision;
+            prepare_current(&restored, &mut current)
+                .map_err(|_| RlContractError("invalid rebound Akroma restored menu".into()))?;
             restored.current = Some(current);
+        } else {
+            restored.environment_revision = next_revision;
         }
         *self = restored;
         Ok(())
@@ -241,7 +263,7 @@ impl FastActorSessionV1 {
         if candidates != current.candidates {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        let (observation, families) = crate::akroma_public_v1::observe_parts_v40(
+        let (observation, mut families) = crate::akroma_public_v1::observe_parts_v40(
             &self.state,
             &self.surface,
             current.actor,
@@ -260,6 +282,16 @@ impl FastActorSessionV1 {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let classified = actions
+            .iter()
+            .cloned()
+            .map(|semantic| super::fishing_pole_v39::classify(&self.state, semantic))
+            .collect::<Result<Vec<_>, _>>()?;
+        for family in &mut families {
+            if let crate::akroma_family_public_v40::FamilyProjectionV40::Fishing(fishing) = family {
+                fishing.actions = classified.clone();
+            }
+        }
         let binding = AkromaDecisionBindingV40 {
             expected,
             candidates,
@@ -296,6 +328,99 @@ mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::put;
 
+    #[test]
+    fn genuine_attacker_scan_restore_rebinds_derived_owner_and_accepts_next_action_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let elf = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(elf).summoning_sick = false;
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                put(&mut state, seat, "Forest", Zone::Battlefield);
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+            state.step = crate::state::Step::DeclareAttackers;
+            let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let FastActorResponseV1::Decision(old) = session.current_response() else {
+                panic!("actual attacker scan");
+            };
+            assert_eq!(
+                old.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let snapshot = session.snapshot_v1();
+            let before = session.privileged_core_environment_hash();
+            let mut corrupt = snapshot.clone();
+            corrupt.0.current.as_mut().unwrap().environment_revision += 1;
+            assert!(session.akroma_restore_v40(&corrupt).is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            assert_eq!(
+                session.current_response(),
+                FastActorResponseV1::Decision(old)
+            );
+            session.akroma_restore_v40(&snapshot).unwrap();
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("restored attacker scan");
+            };
+            assert_ne!(old.environment_revision, current.environment_revision);
+            assert_eq!(
+                current.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let candidate = session
+                .current
+                .as_ref()
+                .unwrap()
+                .candidates
+                .iter()
+                .position(|c| {
+                    matches!(
+                        c.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    )
+                })
+                .unwrap();
+            session
+                .step(current.episode_id, current.step, candidate as u32)
+                .unwrap();
+            assert!(session.state.engine.combat.attackers.contains(&elf));
+        }
+    }
+    #[test]
+    fn repeated_owning_restore_never_revives_previous_private_union_binding_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let snapshot = session.snapshot_v1();
+            for _ in 0..3 {
+                let FastActorResponseV1::Decision(old) = session.current_response() else {
+                    panic!("ordinary union menu");
+                };
+                let (_, _, binding) = session
+                    .akroma_current_decision_input_v40(old, actor.into())
+                    .unwrap();
+                session.akroma_restore_v40(&snapshot).unwrap();
+                let before = session.privileged_core_environment_hash();
+                assert!(session
+                    .akroma_validate_bound_decision_v40(old, actor.into(), &binding)
+                    .is_err());
+                assert_eq!(session.privileged_core_environment_hash(), before);
+                let FastActorResponseV1::Decision(current) = session.current_response() else {
+                    panic!("restored union menu");
+                };
+                let (_, _, valid) = session
+                    .akroma_current_decision_input_v40(current, actor.into())
+                    .unwrap();
+                session
+                    .akroma_validate_bound_decision_v40(current, actor.into(), &valid)
+                    .unwrap();
+            }
+        }
+    }
     #[test]
     fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
