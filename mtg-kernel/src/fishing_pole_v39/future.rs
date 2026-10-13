@@ -467,3 +467,65 @@ fn actual_registered_quirion_return_forest_cost_untaps_equipped_host_and_origina
         assert_eq!(state, restored);
     }
 }
+
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+fn original_untap_controller_survives_host_departure_and_pole_control_change_with_coherent_capture_forgery_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = fixture(actor);
+        add(&mut state, actor, host, pole);
+        finish(&mut state);
+        assert!(engine::attempt_untap(&mut state, host));
+        next(&mut state);
+        crate::standard_cards_v1::gain_control(&mut state, pole, actor.opponent());
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        let mut forged = snapshot(&state);
+        let origin = forged
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(i, e)| match e {
+                CommittedEvent::FishingPoleJournalV39 { journal }
+                    if matches!(journal.as_ref(), JournalV39::Captured { .. }) =>
+                {
+                    Some(i as u64)
+                }
+                _ => None,
+            })
+            .unwrap();
+        // Rewrite capture, full publication and live source/controller while
+        // retaining every independent original untap/observer journal.
+        for e in &mut forged.engine.event_history {
+            if let CommittedEvent::FishingPoleJournalV39 { journal } = e {
+                match journal.as_mut() {
+                    JournalV39::Captured { pole: captured, .. } => {
+                        captured.controller = actor.opponent()
+                    }
+                    JournalV39::Published {
+                        origin: captured,
+                        item,
+                    } if *captured == origin => {
+                        item.controller = actor.opponent();
+                        item.v4.ability_source_contract.as_mut().unwrap().controller =
+                            actor.opponent();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let item = forged.stack.last_mut().unwrap();
+        item.controller = actor.opponent();
+        item.v4.ability_source_contract.as_mut().unwrap().controller = actor.opponent();
+        refuses(&mut forged);
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(fish(branch, actor), 1);
+            assert_eq!(fish(branch, actor.opponent()), 0);
+            assert_eq!(branch.objects.get(pole).counters.bait, 0);
+        }
+        assert_eq!(state, restored);
+    }
+}

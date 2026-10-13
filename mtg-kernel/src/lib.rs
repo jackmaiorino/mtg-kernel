@@ -627,3 +627,4 @@ pub mod krenko_public_v1;
 pub mod rules_meaning_krenko_v1;
 
 pub(crate) mod fishing_pole_v39;
+pub mod rules_meaning_fishing_pole_v39;
