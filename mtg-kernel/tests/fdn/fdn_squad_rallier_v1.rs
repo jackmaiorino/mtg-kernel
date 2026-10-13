@@ -14,6 +14,9 @@ use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
 fn ready(actor: PlayerId, names: &[&str]) -> GameState {
+    ready_with_starting_player(actor, names, actor)
+}
+fn ready_with_starting_player(actor: PlayerId, names: &[&str], starting: PlayerId) -> GameState {
     let cards: Vec<_> = names
         .iter()
         .map(|name| card_id_by_name(name).unwrap())
@@ -33,7 +36,7 @@ fn ready(actor: PlayerId, names: &[&str]) -> GameState {
         },
         |id| CARD_DEFS[id as usize].object_name.into(),
         110_331,
-        actor,
+        starting,
     );
     state.step = Step::Main1;
     state
@@ -304,17 +307,33 @@ fn real_ability_uses_captured_controller_library_after_source_response_and_resto
 #[test]
 fn stolen_physical_source_uses_activator_library_and_short_payment_wrong_controller_refuse() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready(
+        let owner = actor.opponent();
+        let mut state = ready_with_starting_player(
             actor,
-            &["Llanowar Elves", "Forest", "Forest", "Forest", "Forest"],
+            &[
+                "Forest",
+                "Llanowar Elves",
+                "Forest",
+                "Forest",
+                "Forest",
+                "Forest",
+            ],
+            owner,
+        );
+        let source = cast(&mut state, owner);
+        super::fixture_turn_v1::reach(&mut state, actor, Step::Main1);
+        assert_eq!(
+            state
+                .objects
+                .get(*state.players[actor.index()].hand.last().unwrap())
+                .card_def,
+            card_id_by_name("Forest").unwrap()
         );
         let original = state.players[actor.index()].library.clone();
-        let owner = actor.opponent();
-        state.active_player = owner;
-        state.priority_player = owner;
-        let source = cast(&mut state, owner);
-        state.active_player = actor;
-        state.priority_player = actor;
+        assert_eq!(
+            state.objects.get(original[0]).card_def,
+            card_id_by_name("Llanowar Elves").unwrap()
+        );
         transfer(&mut state, source, actor);
         assert_eq!(state.objects.get(source).owner, owner);
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 2;
