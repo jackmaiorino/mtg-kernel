@@ -186,6 +186,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 return Err("Divine V44 refuses foreign/copied variable producers".into());
             }
             crate::engine::validated_stack_item_target_spec(item, state)?;
+            for contract in &item.v4.target_contracts {
+                target_ref_v44(state, *contract).map_err(|e| e.0)?;
+            }
         }
     }
     Ok(())
