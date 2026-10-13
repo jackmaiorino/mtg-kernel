@@ -543,6 +543,7 @@ impl KeyStats {
 }
 
 /// One keyed focal frame.
+#[derive(Clone)]
 pub(crate) struct Step {
     pub(crate) legacy_key: Key,
     pub(crate) legacy: Canon,
@@ -552,6 +553,106 @@ pub(crate) struct Step {
     menu: Vec<Value>,
     /// Members of classes this frame resolved by exchange.
     resolved: Vec<u64>,
+    /// The `KeyMemo` entry this step came from or was stored as, if any.
+    memo_entry: Option<u32>,
+}
+
+/// Most frames one `KeyMemo` stores; lookups continue once it is full.
+pub(crate) const KEY_MEMO_ENTRIES: usize = 8192;
+
+/// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
+///
+/// A keyer's step is a deterministic function of its mode, its starting
+/// history and the sequence of prepared frames and live actions applied to
+/// it, so a trie over that sequence identifies its state: node 0 is a keyer
+/// just constructed for the search's context, and each stored frame records
+/// the node every live action leads to. A frame is identified within its node
+/// by the SHA-256 of its prepared observation and menu (the same digest
+/// standard as the tree's node keys). A hit returns the stored step and
+/// replays the stored statistics increments, so keys, trees, selection and
+/// statistics are unchanged; only `seconds` differs. One memo serves one
+/// search context and must not be shared across contexts or key modes.
+#[derive(Default)]
+pub(crate) struct KeyMemo {
+    index: HashMap<(u32, [u8; 32]), u32>,
+    entries: Vec<MemoEntry>,
+    nodes: u32,
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
+struct MemoEntry {
+    step: Step,
+    delta: KeyStats,
+    children: HashMap<u32, u32>,
+}
+
+impl KeyMemo {
+    pub(crate) fn json(&self) -> Value {
+        serde_json::json!({"hits":self.hits,"misses":self.misses,"entries":self.entries.len(),
+            "nodes":self.nodes + 1,"max_entries":KEY_MEMO_ENTRIES})
+    }
+
+    /// The node an advance from `entry` along `live` reaches.
+    fn child(&mut self, entry: u32, live: u32) -> u32 {
+        let next = self.nodes + 1;
+        let id = *self.entries[entry as usize]
+            .children
+            .entry(live)
+            .or_insert(next);
+        if id == next {
+            self.nodes = next;
+        }
+        id
+    }
+}
+
+/// SHA-256 over a prepared observation and its menu (length-framed JSON).
+fn prepared_digest(obs: &Value, menu: &[Value]) -> Result<[u8; 32], PlayErr> {
+    struct Hasher<'a>(&'a mut Sha256);
+    impl std::io::Write for Hasher<'_> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.update(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fault = |e: serde_json::Error| PlayErr::Fault(format!("key memo digest: {e}"));
+    let mut h = Sha256::new();
+    h.update(b"key-memo-v1/obs");
+    serde_json::to_writer(Hasher(&mut h), obs).map_err(fault)?;
+    h.update((menu.len() as u64).to_le_bytes());
+    for m in menu {
+        let bytes = serde_json::to_vec(m).map_err(fault)?;
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(&bytes);
+    }
+    Ok(h.finalize().into())
+}
+
+impl KeyStats {
+    /// `self - before`, for statistics that only grow.
+    fn delta_since(&self, before: &Self) -> Self {
+        let mut fallbacks = BTreeMap::new();
+        for (k, v) in &self.fallbacks {
+            let d = v - before.fallbacks.get(k).copied().unwrap_or(0);
+            if d > 0 {
+                fallbacks.insert(*k, d);
+            }
+        }
+        Self {
+            frames: self.frames - before.frames,
+            frames_with_mattering_ties: self.frames_with_mattering_ties
+                - before.frames_with_mattering_ties,
+            exact_resolved: self.exact_resolved - before.exact_resolved,
+            canonicalizations_for_ties: self.canonicalizations_for_ties
+                - before.canonicalizations_for_ties,
+            fallbacks,
+            seconds: 0.0,
+        }
+    }
 }
 
 /// Keys along one path from the root; selection and frozen execution use it
@@ -564,6 +665,8 @@ pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
     /// Members of every class resolved by exchange earlier on this path.
     resolved: HashSet<u64>,
     pub(crate) stats: S,
+    /// This keyer's node in its search's `KeyMemo` (None: not tracked).
+    memo_node: Option<u32>,
 }
 
 impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
@@ -590,7 +693,77 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             frames: Vec::new(),
             resolved: HashSet::new(),
             stats,
+            memo_node: None,
         }
+    }
+
+    /// Marks this keyer as the starting state (node 0) of a search's
+    /// `KeyMemo`: call once, right after constructing it for that search's
+    /// context and before any step.
+    pub(crate) fn start_memo(&mut self) {
+        self.memo_node = Some(0);
+    }
+
+    /// `step`, served from `memo` when this keyer's state and the prepared
+    /// frame were seen before in this search (identical result and stats).
+    pub(crate) fn step_memo(
+        &mut self,
+        s: &FastActorSessionV1,
+        d: FastActorDecisionV1,
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        if memo.is_none() || self.memo_node.is_none() {
+            return self.step(s, d);
+        }
+        let (raw_obs, raw_menu) = raw_decision(s, d)?;
+        self.key_raw_memo(raw_obs, raw_menu, memo)
+    }
+
+    /// `key_raw` through `memo` (see `step_memo`).
+    pub(crate) fn key_raw_memo(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        let (Some(memo), Some(node)) = (memo, self.memo_node) else {
+            return self.key_raw(raw_obs, raw_menu);
+        };
+        let t0 = Instant::now();
+        let (obs, menu) = prepare(raw_obs, raw_menu);
+        let digest = prepared_digest(&obs, &menu)?;
+        if let Some(&e) = memo.index.get(&(node, digest)) {
+            memo.hits += 1;
+            let entry = &memo.entries[e as usize];
+            self.stats.borrow_mut().merge(&entry.delta);
+            let mut st = entry.step.clone();
+            st.memo_entry = Some(e);
+            self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
+            return Ok(st);
+        }
+        memo.misses += 1;
+        let before = self.stats.borrow().clone();
+        let mut st = self.key_prepared(obs, menu, t0)?;
+        if memo.entries.len() < KEY_MEMO_ENTRIES {
+            let e = memo.entries.len() as u32;
+            memo.entries.push(MemoEntry {
+                step: st.clone(),
+                delta: self.stats.borrow().delta_since(&before),
+                children: HashMap::new(),
+            });
+            memo.index.insert((node, digest), e);
+            st.memo_entry = Some(e);
+        }
+        Ok(st)
+    }
+
+    /// `advance`, keeping this keyer's `KeyMemo` node in step.
+    pub(crate) fn advance_memo(&mut self, st: Step, live: u32, memo: Option<&mut KeyMemo>) {
+        self.memo_node = match (memo, self.memo_node, st.memo_entry) {
+            (Some(memo), Some(_), Some(e)) => Some(memo.child(e, live)),
+            _ => None,
+        };
+        self.advance(st, live);
     }
 
     pub(crate) fn step(
@@ -610,6 +783,11 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
     ) -> Result<Step, PlayErr> {
         let t0 = Instant::now();
         let (obs, menu) = prepare(raw_obs, raw_menu);
+        self.key_prepared(obs, menu, t0)
+    }
+
+    /// `key_raw` after `prepare`; `t0` is when keying started.
+    fn key_prepared(&mut self, obs: Value, menu: Vec<Value>, t0: Instant) -> Result<Step, PlayErr> {
         let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
         let step = if self.mode == KeyMode::Legacy {
@@ -621,6 +799,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 obs,
                 menu,
                 resolved: Vec::new(),
+                memo_entry: None,
             }
         } else {
             let (view, tried, mattering) = repaired_view(
@@ -644,6 +823,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         obs,
                         menu,
                         resolved: members,
+                        memo_entry: None,
                     }
                 }
                 Err(f) => {
@@ -661,6 +841,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                         obs,
                         menu,
                         resolved: Vec::new(),
+                        memo_entry: None,
                     }
                 }
             }
@@ -1143,5 +1324,68 @@ mod tests {
         assert_eq!(a1, b1, "frame 1 merges");
         assert_eq!(fa.get("prefix_asymmetric"), Some(&1));
         assert_ne!(a2, b2, "the later tie is not relabeled by engine order");
+    }
+
+    /// The key memo is exact: paths keyed through one shared memo give the
+    /// same keys, canonical frames, seeded orders and statistics as keying
+    /// without it, in every mode, including merged and fallback histories
+    /// and the same frame reached along different paths.
+    #[test]
+    fn key_memo_matches_unmemoized_keying() {
+        let seeds = RootSeeds {
+            model: "t".into(),
+            root: "r".into(),
+        };
+        let f1 = |t: u64| view(vec![x(), y()], vec![obj(t, 19, 3)], vec![]);
+        let f2 = || view(vec![x(), y()], vec![], vec![]);
+        // (frame, menu, live action) sequences; repeats and shared prefixes
+        // exercise hits, distinct prefixes exercise separate memo nodes.
+        let paths: Vec<Vec<(Value, Vec<Value>, u32)>> = vec![
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(12), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 2)],
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
+            vec![(f2(), menu(&[11, 12]), 2), (f1(11), menu(&[]), 0)],
+            vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
+        ];
+        for mode in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow] {
+            let run = |memo: Option<&mut KeyMemo>| {
+                let mut memo = memo;
+                let mut stats = KeyStats::default();
+                let mut out = Vec::new();
+                for path in &paths {
+                    let mut k = keyer(mode, &mut stats);
+                    if memo.is_some() {
+                        k.start_memo();
+                    }
+                    for (o, m, live) in path {
+                        let st = k
+                            .key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                            .unwrap();
+                        let (key, pk, pe, cn) = k.storage(&st);
+                        out.push((
+                            st.legacy_key,
+                            st.repaired_key,
+                            key,
+                            pk,
+                            pe.to_vec(),
+                            cn.obs.clone(),
+                            cn.edges.clone(),
+                            k.perm(&st, &seeds).unwrap(),
+                        ));
+                        k.advance_memo(st, *live, memo.as_deref_mut());
+                    }
+                }
+                stats.seconds = 0.0;
+                (out, stats.json())
+            };
+            let plain = run(None);
+            let mut memo = KeyMemo::default();
+            let memoized = run(Some(&mut memo));
+            assert_eq!(plain, memoized, "{mode:?}");
+            assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
+            assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
+        }
     }
 }

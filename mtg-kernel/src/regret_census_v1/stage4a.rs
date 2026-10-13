@@ -1203,7 +1203,10 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 let (l, f) = x
                     .split_once('=')
                     .ok_or_else(|| format!("position {x} needs label=fraction"))?;
-                let f: f64 = f.trim().parse().map_err(|_| format!("bad fraction in {x}"))?;
+                let f: f64 = f
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad fraction in {x}"))?;
                 if !(0.0..1.0).contains(&f) {
                     return Err(format!("fraction in {x} must be in [0, 1)"));
                 }

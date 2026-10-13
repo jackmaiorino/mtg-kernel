@@ -57,11 +57,9 @@ pub(crate) enum Bucket {
     TensorHash,
     /// V3/V4 tensorizer: digest features and output validation.
     TensorFinish,
-    /// Measurement-only probe cost (repeated-input counting); not search work.
-    Probe,
 }
 
-pub(crate) const BUCKETS: usize = 24;
+pub(crate) const BUCKETS: usize = 23;
 
 pub(crate) const NAMES: [&str; BUCKETS] = [
     "sample",
@@ -87,7 +85,6 @@ pub(crate) const NAMES: [&str; BUCKETS] = [
     "tensor_actions",
     "tensor_hash",
     "tensor_finish",
-    "probe",
 ];
 
 #[cfg(feature = "s4a-profile-v1")]
@@ -98,29 +95,6 @@ mod imp {
 
     thread_local! {
         static ACC: RefCell<[(u64, u64); BUCKETS]> = const { RefCell::new([(0, 0); BUCKETS]) };
-        static SEEN: RefCell<(std::collections::HashSet<(usize, u64)>, u64, u64)> =
-            RefCell::new((std::collections::HashSet::new(), 0, 0));
-    }
-
-    /// Counts a policy input (policy instance, 64-bit input hash): calls and
-    /// calls whose input that instance already scored since the last `take`.
-    pub(crate) fn note_input(instance: usize, hash: u64) {
-        SEEN.with(|s| {
-            let mut s = s.borrow_mut();
-            let fresh = s.0.insert((instance, hash));
-            s.1 += 1;
-            s.2 += u64::from(!fresh);
-        });
-    }
-
-    /// Takes and clears the repeated-input counters: (calls, repeats).
-    pub(crate) fn take_inputs() -> (u64, u64) {
-        SEEN.with(|s| {
-            let mut s = s.borrow_mut();
-            let out = (s.1, s.2);
-            *s = (std::collections::HashSet::new(), 0, 0);
-            out
-        })
     }
 
     pub(crate) struct Span {
@@ -171,8 +145,6 @@ mod imp {
 }
 
 pub(crate) use imp::{span, take};
-#[cfg(feature = "s4a-profile-v1")]
-pub(crate) use imp::note_input;
 
 /// The accumulators as JSON (`null` without the feature).
 pub(crate) fn take_json() -> serde_json::Value {
@@ -180,11 +152,6 @@ pub(crate) fn take_json() -> serde_json::Value {
         None => serde_json::Value::Null,
         Some(acc) => {
             let mut m = serde_json::Map::new();
-            let (calls, repeats) = imp::take_inputs();
-            m.insert(
-                "policy_inputs".to_owned(),
-                serde_json::json!({"calls": calls, "repeats": repeats}),
-            );
             for (i, (ns, n)) in acc.iter().enumerate() {
                 m.insert(
                     NAMES[i].to_owned(),

@@ -268,6 +268,11 @@ impl Searches<'_> {
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+        if !diag.key_memo.is_null() {
+            if let Some(r) = self.records.last_mut() {
+                r["key_memo"] = diag.key_memo;
+            }
+        }
         Ok((!failed).then_some(tree))
     }
 }

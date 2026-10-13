@@ -1367,7 +1367,8 @@ impl FrozenPlayPolicyV1 {
             return Err("cannot score a terminal session".into());
         };
         if let Some(successor) = &mut self.successor {
-            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyEncode);
+            let span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyEncode);
             let encoded = session
                 .encode_current_flat_scoring_decision_owned_v3(
                     decision,
@@ -1378,33 +1379,13 @@ impl FrozenPlayPolicyV1 {
             self.owned.globals = encoded.globals;
             successor.extensions = encoded.extensions;
             drop(span);
-            #[cfg(feature = "s4a-profile-v1")]
-            {
-                use std::hash::{Hash, Hasher};
-                let _probe =
-                    crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Probe);
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                let o = &self.owned;
-                o.globals.hash(&mut h);
-                o.objects.hash(&mut h);
-                o.relations.hash(&mut h);
-                o.object_subtypes.hash(&mut h);
-                o.ability_uses.hash(&mut h);
-                o.goads.hash(&mut h);
-                o.completed_dungeons.hash(&mut h);
-                o.effect_subtype_changes.hash(&mut h);
-                o.context_path_elements.hash(&mut h);
-                o.actions.hash(&mut h);
-                o.action_refs.hash(&mut h);
-                format!("{:?}", successor.extensions).hash(&mut h);
-                crate::search_profile_v1::note_input(self as *const Self as usize, h.finish());
-            }
             return self
                 .score_owned()
                 .map_err(|error| format!("{error}; decision={decision:?}"));
         }
         if let Some(fresh) = &mut self.fresh_successor {
-            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyEncode);
+            let span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyEncode);
             let encoded = session
                 .encode_current_flat_scoring_decision_owned_v4(
                     decision,
@@ -1589,7 +1570,8 @@ impl FrozenPlayPolicyV1 {
                     &mut successor.tensor,
                 )
                 .map_err(|e| format!("V3 visible tensorization: {e:?}"))?;
-            let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
+            let _span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
             self.model
                 .forward_feature_transfer_v3_with_scratch_v1(
                     encoded_decision_view_v3(&successor.tensor),
@@ -1605,7 +1587,8 @@ impl FrozenPlayPolicyV1 {
                     &mut fresh.tensor,
                 )
                 .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
-            let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
+            let _span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
             self.model
                 .forward_feature_transfer_v4_with_scratch_v1(
                     encoded_decision_view_v4(&fresh.tensor),
@@ -1614,12 +1597,14 @@ impl FrozenPlayPolicyV1 {
                 )
                 .map_err(|e| format!("explicit V4 frozen feature transfer: {e:?}"))?
         } else {
-            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyTensorize);
+            let span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyTensorize);
             self.tensorizer
                 .fill(self.owned.view(), &mut self.tensor)
                 .map_err(|e| format!("visible tensorization: {e:?}"))?;
             drop(span);
-            let _span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
+            let _span =
+                crate::search_profile_v1::span(crate::search_profile_v1::Bucket::PolicyForward);
             self.model
                 .forward_with_scratch_v1(
                     encoded_decision_view_v1(&self.tensor),

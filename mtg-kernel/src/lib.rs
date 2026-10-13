@@ -482,8 +482,8 @@ mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod paired_bo1_harness_v1;
 pub mod phase1_w8a_live_swap_self_play_v1;
-pub mod sideboard_play_policy_v1;
 pub(crate) mod search_profile_v1;
+pub mod sideboard_play_policy_v1;
 pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
 // the real read-only `validate_native_training_store_v2` genesis-to-latest

@@ -13,7 +13,9 @@
 //! wall time and, with the `s4a-profile-v1` feature, the exclusive cost split.
 
 use super::arms::Limits;
-use super::bank::{bank_roles, guide_ctx, plain_logged, source_session, walk, BankShared, SourceSpec};
+use super::bank::{
+    bank_roles, guide_ctx, plain_logged, source_session, walk, BankShared, SourceSpec,
+};
 use super::canon2::KeyMode;
 use super::play::acting;
 use super::seeds::RootSeeds;
@@ -90,14 +92,16 @@ pub(super) fn profile_case(
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        rows.push(json!({"kind":"search_profile","schema":"search-efficiency-v1/root",
+        rows.push(
+            json!({"kind":"search_profile","schema":"search-efficiency-v1/root",
             "id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,
             "opp":src.opp,"position":label,"fraction":frac,"eligible_index":index,
             "eligible_count":eligible.len(),"root_step":step,"root_width":width,
             "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),
             "bank_binding_sha256":binding,"selection":sel.json(),
             "keying_seconds":diag.keys.seconds,"primary_sha256":primary_sha256,
-            "wall":wall,"profile":profile}));
+            "wall":wall,"key_memo":diag.key_memo,"profile":profile}),
+        );
     }
     Ok(rows)
 }
