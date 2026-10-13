@@ -3814,6 +3814,10 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Faebloom Trick" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
             "None", "FaebloomCreateFaeriesV43", "EffectOp::FaebloomCreateFaeriesV43",
         ),
+        "Eaten Alive" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
+            "CreatureOrPlaneswalker", "MoveObject(Target0,Exile)",
+            "crate::eaten_alive_v1::program()",
+        ),
         "Inspiration from Beyond" => program(
             "None",
             "Sequence(MillCards(Controller,3),SelectObjectsV1(Controller,Graveyard,InstantOrSorcery,1,1,Hand))",
@@ -4690,6 +4694,7 @@ fn alt_cost_for(name: &str) -> &'static str {
 /// cast this spell, discard a card.").
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
+        "Eaten Alive" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => "Some(crate::eaten_alive_v1::ADDITIONAL)",
         "Grab the Prize" | "Thrill of Possibility" | "Big Score" => "Some(&[CostComponent::DiscardCards(1)])",
         "Arbiter of Woe" => "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Creature }])",
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {

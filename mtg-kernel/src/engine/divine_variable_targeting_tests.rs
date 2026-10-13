@@ -64,6 +64,7 @@ fn absent_variable_source_binding_preserves_legacy_finalized_record_json_and_has
         x_value: 7,
         chosen_creature_cost: None,
         variable_targeting_kicked: None,
+        mandatory_additional_cost: None,
     };
     assert_eq!(
         serde_json::to_vec(&old).unwrap(),

@@ -619,6 +619,7 @@ fn move_self_cost(out: &mut Collector, from: ZoneF, to: ZoneF) {
 /// One component of an activation, flashback or additional cost.
 pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
     match component {
+        CostComponent::SacrificeCreatureOrPayMana(_) => out.atoms.push(Atom::Opaque),
         CostComponent::TapFishingPoleAttachedToSource => {
             // The named granting Equipment and the source-host relation are
             // outside the frozen cost vocabulary. Do not equate this with

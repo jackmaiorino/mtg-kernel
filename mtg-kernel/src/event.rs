@@ -1330,6 +1330,16 @@ pub enum CommittedEvent {
     HighSocietyHunterAttackCollectedV1 {
         capture_history_index: u64,
     },
+    /// Private original finalized payment. Not a replayable trigger event.
+    MandatoryCastPaymentV1 {
+        source: crate::state::StackSourceContractV4,
+        choice: crate::engine::mandatory_cast_cost_v1::PaidV1,
+        item: Box<crate::state::StackItem>,
+    },
+    MandatoryCastPaymentInputV1 {
+        pending: Box<crate::engine::PendingCast>,
+        item: Box<crate::state::StackItem>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -1889,6 +1889,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2130,6 +2132,8 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
     ),
     accepted_planes: (bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
+    crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     let (accept_akroma, accept_ajani, accept_faebloom, accept_divine) = accepted_planes;
@@ -2643,6 +2647,8 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
     ),
     accepted_planes: (bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let (accept_akroma, accept_ajani, accept_faebloom, accept_divine) = accepted_planes;
     let (capabilities, accept_fishing) = capabilities;
     if accept_faebloom {

@@ -1398,6 +1398,10 @@ pub enum CostComponent {
     /// attached to this exact host. This is a named source cost, not a spell
     /// target or an unrestricted artifact-tap cost.
     TapFishingPoleAttachedToSource,
+    /// Mandatory additional cost, announced independently of the printed cost.
+    /// The mana branch contains exactly one Mana component; the other branch
+    /// sacrifices one currently controlled creature, without targeting it.
+    SacrificeCreatureOrPayMana(&'static [CostComponent]),
 }
 
 impl CostComponent {
