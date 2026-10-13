@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
@@ -1920,11 +1921,24 @@ fn flat_validate_origin_decision_v1(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_akroma_inner(current, state, false)
+}
+fn flat_validate_origin_decision_akroma_inner(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state).is_err() {
+    if (if accept_akroma {
+        crate::akroma_public_v1::validate_state(state)
+    } else {
+        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
+    })
+    .is_err()
+    {
         return Err(invalid());
     }
     match &current.origin_decision {
@@ -4493,6 +4507,7 @@ enum FlatActionContractModeV1 {
     ZulAshurV35,
     BannerV36,
     InspirationV37,
+    AkromaV40,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7110,6 +7125,27 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            let current = self.current.as_ref().ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "missing Akroma current decision",
+                )
+            })?;
+            let mut rederived = current.clone();
+            akroma_v40::prepare_current(self, &mut rederived).map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "invalid Akroma complete binding",
+                )
+            })?;
+            if rederived.candidates != current.candidates {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "changed Akroma complete menu",
+                ));
+            }
+        }
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
         {
@@ -7246,8 +7282,12 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
-        if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
-            .is_err()
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            crate::akroma_public_v1::validate_state(&self.state)
+        } else {
+            crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+        })
+        .is_err()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7681,6 +7721,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AkromaV40 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = akroma_v40::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:akroma_v40:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

@@ -627,3 +627,6 @@ pub mod krenko_public_v1;
 pub mod rules_meaning_krenko_v1;
 
 pub mod controlled_creature_grants_v1;
+
+pub mod akroma_public_v1;
+pub mod rules_meaning_akroma_v1;

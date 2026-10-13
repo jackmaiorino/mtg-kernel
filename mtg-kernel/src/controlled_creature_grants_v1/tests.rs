@@ -141,6 +141,38 @@ mod future_printed {
                 assert_eq!(branch.objects.get(source).zone, Zone::Battlefield);
                 assert_grants(branch, elf, true);
                 assert_grants(branch, other, false);
+                let core = crate::rl_session::FastActorSessionV1::from_akroma_v40_fixture_state(
+                    branch.clone(),
+                );
+                let crate::rl_session::FastActorResponseV1::Decision(expected) =
+                    core.current_response()
+                else {
+                    panic!("real Akroma priority");
+                };
+                let seat = expected.acting_player;
+                let session =
+                    crate::human_bo3_v1::HumanAkromaSessionV40::from_session(core, seat).unwrap();
+                let public = session.public_observation(expected).unwrap();
+                assert_eq!(public.roots.len(), 2);
+                assert_eq!(public.grants.len(), 1);
+                assert_eq!(public.grants[0].source.arena_id, source.0);
+                assert!(public.grants[0]
+                    .recipients
+                    .iter()
+                    .any(|row| row.arena_id == elf.0));
+                assert!(!public.grants[0]
+                    .recipients
+                    .iter()
+                    .any(|row| row.arena_id == other.0));
+                assert_eq!(public.grants[0].keyword_mask, 61);
+                assert_eq!(public.grants[0].protection_color_mask, 12);
+                let mut projector = crate::human_bo3_v1::HumanAkromaProjectorV40::new(seat);
+                let visible = projector.project_current(&session, expected).unwrap();
+                assert_eq!(visible.state.extensions.grants[0].protection_color_mask, 12);
+                let serialized = serde_json::to_string(&visible).unwrap();
+                assert!(!serialized.contains("private_snapshot_json"));
+                assert!(!serialized.contains("arena_id"));
+
                 let late = put(branch, actor, "Llanowar Elves", Zone::Hand);
                 event::propose_and_commit(
                     branch,
