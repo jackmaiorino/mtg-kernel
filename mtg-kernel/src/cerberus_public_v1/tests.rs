@@ -1,5 +1,5 @@
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 
 #[test]
 #[cfg(not(all(
@@ -10,7 +10,7 @@ fn foreign_restored_capture_refuses_readonly_before_begin_index_both_seats() {
     use crate::event::CommittedEvent;
     for actor in [PlayerId::P0, PlayerId::P1] {
         for begin in [0, u64::MAX] {
-            let mut state = ready_state();
+            let mut state = crate::policy_observation_v6::tests::ready_state();
             let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             let capture = crate::cerberus_capture_v1::CerberusCaptureV1 {
                 history_index: 0,

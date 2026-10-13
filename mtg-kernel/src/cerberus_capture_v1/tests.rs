@@ -5,7 +5,7 @@ use super::*;
 ))]
 use crate::engine::{self, Action, Decision};
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -52,7 +52,7 @@ fn genuine_closed_journals_cannot_transfer_to_a_foreign_catalog_both_seats() {
         assert_eq!(rows.len(), 6);
         for event in rows {
             for history in [false, true] {
-                let mut foreign = ready_state();
+                let mut foreign = crate::policy_observation_v6::tests::ready_state();
                 if history {
                     foreign.engine.event_history.push(event.clone());
                 } else {

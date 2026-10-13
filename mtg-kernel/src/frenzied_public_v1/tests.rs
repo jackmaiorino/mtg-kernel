@@ -1,5 +1,5 @@
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 
 #[test]
 fn ordinary_public_parts_and_hidden_identity_parity_keep_real_predecessor_fields() {
@@ -246,7 +246,7 @@ fn actual_registered_generic_restriction_is_explicitly_unrepresentable_without_i
     use crate::effect::{self, EffectOp, ExecCtx};
     use crate::state::{AbilitySourceContractV4, StackTargetContractV4, Target};
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let recipient = put(
             &mut state,
