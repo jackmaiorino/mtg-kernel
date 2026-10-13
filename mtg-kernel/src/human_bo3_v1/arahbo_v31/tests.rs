@@ -236,7 +236,8 @@ fn actual_human_cast_created_token_anthem_controller_restore_and_coherent_bindin
         )
         .is_err());
         let before = session.inner.privileged_core_environment_hash();
-        let future = projector.project_current(&session, current).unwrap();
+        let mut future_projector = HumanArahboProjectorV31::new(current.acting_player);
+        let future = future_projector.project_current(&session, current).unwrap();
         let old_future = action(&future, "Pass priority");
         session.restore_v31(&snapshot).unwrap();
         let restored = session.inner.privileged_core_environment_hash();
@@ -245,7 +246,7 @@ fn actual_human_cast_created_token_anthem_controller_restore_and_coherent_bindin
             Err(Error::StaleDecision)
         );
         assert_eq!(
-            projector.submit(&mut session, old_future),
+            future_projector.submit(&mut session, old_future),
             Err(Error::StaleDecision)
         );
         assert_eq!(session.inner.privileged_core_environment_hash(), restored);
