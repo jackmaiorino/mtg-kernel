@@ -559,8 +559,10 @@ pub(crate) struct Step {
     memo_entry: Option<u32>,
 }
 
-/// Most frames one `KeyMemo` stores; lookups continue once it is full.
-pub(crate) const KEY_MEMO_ENTRIES: usize = 8192;
+/// Estimated heap bytes one `KeyMemo` may hold. Late-game views take up to
+/// about a megabyte per stored frame, so the memo stops storing new frames
+/// (and keeps serving the ones it has, the hot top of the tree) at this size.
+pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
 
 /// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
 ///
@@ -569,8 +571,7 @@ pub(crate) const KEY_MEMO_ENTRIES: usize = 8192;
 /// it, so a trie over that sequence identifies its state: node 0 is a keyer
 /// just constructed for the search's context, and each stored frame records
 /// the node every live action leads to. A frame is identified within its node
-/// by the SHA-256 of its prepared observation and menu (the same digest
-/// standard as the tree's node keys). A hit returns the stored step and
+/// by the SHA-256 of its prepared observation and menu. A hit returns the stored step and
 /// replays the stored statistics increments, so keys, trees, selection and
 /// statistics are unchanged; only `seconds` differs. One memo serves one
 /// search context and must not be shared across contexts or key modes.
@@ -579,6 +580,9 @@ pub(crate) struct KeyMemo {
     index: HashMap<(u32, [u8; 32]), u32>,
     entries: Vec<MemoEntry>,
     nodes: u32,
+    /// Estimated heap bytes of the stored steps, and their limit.
+    bytes: usize,
+    max_bytes: usize,
     pub(crate) hits: u64,
     pub(crate) misses: u64,
 }
@@ -590,9 +594,20 @@ struct MemoEntry {
 }
 
 impl KeyMemo {
+    pub(crate) fn new() -> Self {
+        Self::with_max_bytes(KEY_MEMO_BYTES)
+    }
+
+    fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn json(&self) -> Value {
         serde_json::json!({"hits":self.hits,"misses":self.misses,"entries":self.entries.len(),
-            "nodes":self.nodes + 1,"max_entries":KEY_MEMO_ENTRIES})
+            "nodes":self.nodes + 1,"estimated_bytes":self.bytes,"max_bytes":self.max_bytes})
     }
 
     /// The node an advance from `entry` along `live` reaches.
@@ -659,6 +674,35 @@ fn prepared_digest(obs: &Value, menu: &[Value]) -> [u8; 32] {
         feed(&mut h, m);
     }
     h.finalize().into()
+}
+
+/// Estimated heap bytes a stored step keeps alive.
+fn step_bytes(st: &Step) -> usize {
+    fn value(v: &Value) -> usize {
+        std::mem::size_of::<Value>()
+            + match v {
+                Value::String(x) => x.capacity(),
+                Value::Array(a) => a.iter().map(value).sum(),
+                // Key string plus map node overhead per entry.
+                Value::Object(m) => m.iter().map(|(k, x)| 48 + k.capacity() + value(x)).sum(),
+                _ => 0,
+            }
+    }
+    fn canon(c: &Canon) -> usize {
+        let list = |l: &Vec<Vec<u8>>| l.iter().map(|x| 24 + x.capacity()).sum::<usize>();
+        c.obs.capacity() + list(&c.menu) + list(&c.edges)
+    }
+    let repaired = if Arc::ptr_eq(&st.legacy, &st.repaired) {
+        0
+    } else {
+        canon(&st.repaired)
+    };
+    value(&st.obs)
+        + st.menu.iter().map(value).sum::<usize>()
+        + canon(&st.legacy)
+        + repaired
+        + 8 * st.resolved.len()
+        + 256
 }
 
 impl KeyStats {
@@ -773,7 +817,9 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         memo.misses += 1;
         let before = self.stats.borrow().clone();
         let mut st = self.key_prepared(obs, menu, t0)?;
-        if memo.entries.len() < KEY_MEMO_ENTRIES {
+        let bytes = step_bytes(&st);
+        if memo.bytes + bytes <= memo.max_bytes {
+            memo.bytes += bytes;
             let e = memo.entries.len() as u32;
             memo.entries.push(MemoEntry {
                 step: st.clone(),
@@ -1411,11 +1457,16 @@ mod tests {
                 (out, stats.json())
             };
             let plain = run(None);
-            let mut memo = KeyMemo::default();
+            let mut memo = KeyMemo::new();
             let memoized = run(Some(&mut memo));
             assert_eq!(plain, memoized, "{mode:?}");
             assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
             assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
+            // A full memo stops storing frames and stays exact.
+            let mut small = KeyMemo::with_max_bytes(memo.bytes / 3);
+            assert_eq!(plain, run(Some(&mut small)), "{mode:?}");
+            assert!(small.entries.len() < memo.entries.len(), "{mode:?}");
+            assert!(small.hits > 0 && small.bytes <= small.max_bytes, "{mode:?}");
         }
     }
 }

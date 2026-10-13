@@ -932,7 +932,7 @@ impl Roles {
         let diag = diag.unwrap_or(&mut own);
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
-        let mut memo = key_memo_enabled().then(KeyMemo::default);
+        let mut memo = key_memo_enabled().then(KeyMemo::new);
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
         let mut sel = Selection::default();
