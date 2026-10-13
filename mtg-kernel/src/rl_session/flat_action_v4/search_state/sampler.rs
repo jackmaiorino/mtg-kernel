@@ -7,6 +7,9 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+        return true;
+    }
     if crate::krenko_v1::requires_successor(state) {
         return true;
     }

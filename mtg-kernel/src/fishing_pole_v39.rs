@@ -52,7 +52,10 @@ pub(crate) fn cost_candidates(state: &GameState, actor: PlayerId, host: ObjectId
         .into_iter()
         .filter(|id| {
             let pole = state.objects.get(*id);
-            pole.controller == actor && !pole.tapped && *id != host
+            pole.controller == actor
+                && !pole.tapped
+                && *id != host
+                && pole.counters.bait.checked_add(1).is_some()
         })
         .collect()
 }
@@ -111,6 +114,8 @@ pub(crate) fn profile() -> card_def::EquipmentDef {
         }),
     }
 }
+
+pub(crate) mod lifecycle;
 
 #[cfg(test)]
 mod tests;

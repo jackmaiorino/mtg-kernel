@@ -1280,6 +1280,9 @@ pub enum CommittedEvent {
     InspirationEngineDepartureV1 {
         departure: Box<crate::effect::InspirationDepartureV1>,
     },
+    FishingPoleJournalV39 {
+        journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

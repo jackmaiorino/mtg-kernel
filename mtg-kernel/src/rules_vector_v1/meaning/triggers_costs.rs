@@ -42,6 +42,7 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
         TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
+        | TriggerCondition::FishingPoleEquippedCreatureUntappedV39
         | TriggerCondition::GarrukOwnEtbFerociousV1
         | TriggerCondition::GarrukControlledCreaturePowerEntryV1
         | TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),

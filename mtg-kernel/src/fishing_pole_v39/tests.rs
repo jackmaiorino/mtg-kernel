@@ -99,3 +99,30 @@ fn actual_registered_longbow_grant_never_becomes_a_named_pole_cost_both_seats() 
         assert_eq!(state, restored);
     }
 }
+
+#[test]
+fn registered_untap_stun_and_noop_emit_no_fishing_journal_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        state.objects.get_mut(host).tapped = true;
+        state.objects.get_mut(host).counters.stun = 1;
+        let original = state.engine.event_history.clone();
+        assert!(!engine::attempt_untap(&mut state, host));
+        assert!(state.objects.get(host).tapped);
+        assert_eq!(state.objects.get(host).counters.stun, 0);
+        assert_eq!(state.engine.event_history, original);
+        assert!(engine::attempt_untap(&mut state, host));
+        assert!(!engine::attempt_untap(&mut state, host));
+        assert_eq!(state.engine.event_history, original);
+        lifecycle::validate_state(&state).unwrap();
+        assert!(!lifecycle::requires_successor(&state));
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "future.rs"]
+mod future;

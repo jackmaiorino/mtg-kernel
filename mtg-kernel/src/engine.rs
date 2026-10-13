@@ -9179,6 +9179,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || effect::crystal_prevention_v1::validate(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9247,6 +9248,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     if crate::garruks_uprising_v1::validate_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -9272,6 +9274,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     }
     if crate::librarian_activation_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -13256,6 +13259,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     let finalized = state.stack.last().expect("trigger just published").clone();
     crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::arahbo_v1::publish(state, &finalized)?;
+    crate::fishing_pole_v39::lifecycle::publish_trigger(state, &finalized)?;
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
@@ -13479,6 +13483,11 @@ fn triggered_stack_item_expected_target_spec(
 
     crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::fishing_pole_v39::lifecycle::validate_source(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -13755,6 +13764,7 @@ pub(crate) fn validated_stack_item_target_spec(
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
+    crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
     validated_stack_item_target_metadata(item, state)
 }
 
@@ -14275,6 +14285,7 @@ pub(crate) fn counter_stack_item_by_id(
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
     crate::krenko_v1::validate_state(state)?;
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     if stack_item_id == StackItemId::default() {
         return Err("cannot counter an unstamped stack incarnation".to_string());
     }
@@ -14315,6 +14326,7 @@ pub(crate) fn counter_stack_item_by_id(
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
+    let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
@@ -14387,6 +14399,10 @@ pub(crate) fn counter_stack_item_by_id(
     crate::cerberus_capture_v1::record_countered(state, &item);
     crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
     crate::krenko_v1::countered(state, krenko_counter_owner)?;
+    crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_counter_owner.as_ref(), true)?;
+    if let Some(owner) = fishing_counter_owner {
+        crate::fishing_pole_v39::lifecycle::complete(state, owner, None)?;
+    }
     crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);
@@ -14847,6 +14863,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -14868,6 +14894,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         crate::krenko_v1::RemovalV1::Resolving,
     )
     .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+
+    if crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_owner.as_ref(), false)
+        .is_err()
     {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -14916,6 +14952,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = fishing_owner {
+        if crate::fishing_pole_v39::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = krenko_owner {
         if crate::krenko_v1::resolve(state, owner, &ctx).is_err() {
             state.engine.halted =
@@ -15512,6 +15556,8 @@ pub(crate) fn attempt_untap(state: &mut GameState, object: ObjectId) -> bool {
         return false;
     }
     live.tapped = false;
+    let original = AbilitySourceContractV4::capture(state, object);
+    crate::fishing_pole_v39::lifecycle::record_untap(state, original);
     crate::standard_cards_v1::release_untapped_locks(state);
     true
 }
@@ -17776,6 +17822,7 @@ fn action_matches_pending_activation_stage(
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::krenko_v1::validate_state(state)?;
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     crate::linked_aura_operation_v1::step(state, action)
@@ -21133,6 +21180,7 @@ struct FrozenActivationSource {
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
     payment_history_start: usize,
+    fishing_ability_index: u8,
 }
 
 fn freeze_activation_source(
@@ -21168,6 +21216,7 @@ fn freeze_activation_source(
         granted_by,
         fixed_departure: None,
         payment_history_start: state.engine.event_history.len(),
+        fishing_ability_index: pending.ability_index,
     }
 }
 
@@ -21288,6 +21337,15 @@ fn push_paid_activation(
         frozen.source,
     )
     .is_err()
+        || crate::fishing_pole_v39::lifecycle::record_paid(
+            state,
+            stack_item_id,
+            frozen.payment_history_start,
+            frozen.source,
+            frozen.granted_by,
+            frozen.fishing_ability_index,
+        )
+        .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
         state.engine.halted = Some((

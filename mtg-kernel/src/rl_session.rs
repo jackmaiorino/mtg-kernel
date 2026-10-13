@@ -5439,6 +5439,11 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
+            return Err(RlContractError(
+                "Fishing Pole requires its unadmitted V39 owning transport".into(),
+            ));
+        }
         if crate::inspiration_observation_v1::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7224,6 +7229,11 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
+            return Err(RlContractError(
+                "Fishing Pole requires its unadmitted V39 owning transport".into(),
+            ));
+        }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37

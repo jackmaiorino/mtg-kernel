@@ -2022,6 +2022,11 @@ fn build_observation_common_v2(
         accept_banner,
         accept_inspiration,
     ) = capabilities;
+    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "Fishing Pole requires its unadmitted V39 transport".into(),
+        ));
+    }
     if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(state) {
         return Err(RlContractError(
             "Inspiration union and mandatory bounds require V37".into(),
@@ -2410,6 +2415,11 @@ fn build_policy_observation_parts_common(
         accept_banner,
         accept_inspiration,
     ) = capabilities;
+    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "Fishing Pole requires its unadmitted V39 transport".into(),
+        ));
+    }
     if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(state) {
         return Err(RlContractError(
             "Inspiration union and mandatory bounds require V37".into(),
@@ -3332,6 +3342,11 @@ fn build_policy_observation_storage_common(
         accept_banner,
         accept_inspiration,
     ) = accepted_statics;
+    if crate::fishing_pole_v39::lifecycle::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Fishing Pole requires its unadmitted V39 transport".into(),
+        ));
+    }
     if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Inspiration union and mandatory bounds require V37".into(),
