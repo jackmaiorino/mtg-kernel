@@ -393,7 +393,7 @@ pub(crate) fn parts_for_faebloom_v43(
         crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
     )
 }
-fn parts_for_common_scope(
+pub(crate) fn parts_for_common_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
     actor: PlayerId,

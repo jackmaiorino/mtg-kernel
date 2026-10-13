@@ -7636,6 +7636,31 @@ fn pending_cast_quote_v1(
     )
 }
 
+/// Scoped quote adapter for the exact printed Divine successor. It returns
+/// genuine prepared mana plans, not a guessed sum of printed costs.
+pub(crate) fn divine_pending_quote_v44(
+    state: &GameState,
+    kicked: bool,
+) -> Result<Option<mana::PaymentPlan>, String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .ok_or("Divine pending cast absent")?;
+    validate_pending_cast(state, pending)?;
+    let selector = crate::rules_meaning_divine_v44::live_selector()?;
+    crate::rules_meaning_divine_v44::meaning(&selector, pending.source_contract.card_def)?;
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let Some(payment) = pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, 0, state)
+    else {
+        return Ok(None);
+    };
+    if !payment.delve_exiled.is_empty() || !payment.convoke_tapped.is_empty() {
+        return Err("Divine quote contains an unrepresented nonmana payment".into());
+    }
+    Ok(Some(payment.mana))
+}
+
 fn maximum_payable_x(
     def: &card_def::CardDef,
     pending: &PendingCast,

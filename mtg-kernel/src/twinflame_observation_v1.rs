@@ -431,25 +431,15 @@ pub(crate) fn parts_for_ajani_v42(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<TwinflameObservationV1, RlContractError> {
-    let mut parts = observe_inner_ajani_v42(
+    parts_for_common_scope(
         state,
         surface,
         actor,
         step,
         physical,
         substep,
-        (true, true, false),
-    )?;
-    if !owns_family_menu(state) {
-        parts.prevention_menu = None;
-        parts.optional_discard_menu = None;
-        parts.optional_fight_menu = None;
-        parts.combat_allocation = None;
-    }
-    parts.schema.clear();
-    parts.producer_sha256.clear();
-    parts.projection_sha256.clear();
-    Ok(parts)
+        crate::rl::CommonProjectionScopeV42::FullAjaniV42,
+    )
 }
 pub(crate) fn parts_for_faebloom_v43(
     state: &GameState,
@@ -459,14 +449,44 @@ pub(crate) fn parts_for_faebloom_v43(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<TwinflameObservationV1, RlContractError> {
-    let mut parts = observe_inner_ajani_v42(
+    parts_for_common_scope(
         state,
         surface,
         actor,
         step,
         physical,
         substep,
-        (true, true, true),
+        crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
+    )
+}
+pub(crate) fn parts_for_common_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let mut parts = observe_inner_scoped(
+        state,
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        (
+            (
+                true,
+                true,
+                matches!(
+                    scope,
+                    crate::rl::CommonProjectionScopeV42::FullFaebloomV43
+                        | crate::rl::CommonProjectionScopeV42::DivineV44
+                ),
+            ),
+            Some(scope),
+        ),
     )?;
     if !owns_family_menu(state) {
         parts.prevention_menu = None;
@@ -507,7 +527,29 @@ fn observe_inner_ajani_v42(
     substep: (u32, u32),
     accepted_scope: (bool, bool, bool),
 ) -> Result<TwinflameObservationV1, RlContractError> {
-    let (accepted_union, accept_ajani, accept_faebloom) = accepted_scope;
+    observe_inner_scoped(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        (accepted_scope, None),
+    )
+}
+fn observe_inner_scoped(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    accepted_scope: (
+        (bool, bool, bool),
+        Option<crate::rl::CommonProjectionScopeV42>,
+    ),
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope) = accepted_scope;
     let (substep_index, substep_count) = substep;
     validate_projection_authority(state)?;
     // The union gives each real pending menu to its actual typed family. Do not
@@ -559,13 +601,13 @@ fn observe_inner_ajani_v42(
     let base = if accepted_union {
         crate::rl::common_family_observation_storage_scoped(
             (
-                if accept_faebloom {
+                explicit_scope.unwrap_or(if accept_faebloom {
                     crate::rl::CommonProjectionScopeV42::FullFaebloomV43
                 } else if accept_ajani {
                     crate::rl::CommonProjectionScopeV42::FullAjaniV42
                 } else {
                     crate::rl::CommonProjectionScopeV42::ExistingV40
-                },
+                }),
                 state,
             ),
             surface,
