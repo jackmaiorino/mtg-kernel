@@ -306,6 +306,24 @@ pub(super) fn project_base(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectedAkromaV40, Error> {
+    project_base_with_handles(observation, actions, human, families)
+        .map(|(state, actions, indexes, _)| (state, actions, indexes))
+}
+
+pub(super) fn project_base_with_handles(
+    observation: &AkromaObservationV1,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        HumanVisibleStateV1<HumanAkromaExtensionsV40>,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
@@ -402,7 +420,7 @@ pub(super) fn project_base(
             label,
         })
         .collect();
-    Ok((state, actions, indexes))
+    Ok((state, actions, indexes, handles))
 }
 
 struct BoundAkromaV40 {

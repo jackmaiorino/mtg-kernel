@@ -1,5 +1,4 @@
 //! Sealed GameOutcome successor. Complete typed authority stays backend-only.
-use super::visible::Handles;
 use super::*;
 use crate::game_outcome_observation_v41::GameOutcomeObservationV41;
 use crate::rl::ActionSemanticV1;
@@ -157,15 +156,9 @@ fn project_base(
         .validate_artifact()
         .map_err(|_| Error::InvalidVisibleReference)?;
     let base = &observation.predecessor;
-    let (old, actions, indexes) = super::akroma_v40::project_base(base, actions, human, families)?;
-    // Current battlefield sources already have handles before historical rows are inserted.
-    let handles = Handles::from_parts(
-        &base.projection,
-        &base.own_hand,
-        &base.known_hand_cards,
-        &base.known_library_cards,
-        base.extensions.decision_local_library.as_ref(),
-    )?;
+    let (old, actions, indexes, handles) =
+        super::akroma_v40::project_base_with_handles(base, actions, human, families)?;
+    // Use the exact finalized shared canonical handles, including all family roles.
     let mut sources = observation
         .protection
         .sources
@@ -350,6 +343,42 @@ mod tests {
         put(&mut state, actor, "Mountain", Zone::Hand);
         put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         FastActorSessionV1::from_akroma_v40_fixture_state(state)
+    }
+
+    #[test]
+    #[ignore = "requires registered Herald; physical battlefield ordering projection fixture"]
+    fn herald_source_uses_the_exact_shared_canonical_battlefield_handle() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for herald_first in [false, true] {
+                let mut state = ready_state_for(actor);
+                let order = if herald_first {
+                    ["Herald of Eternal Dawn", "Forest", "Llanowar Elves"]
+                } else {
+                    ["Llanowar Elves", "Forest", "Herald of Eternal Dawn"]
+                };
+                for name in order {
+                    put(&mut state, actor, name, Zone::Battlefield);
+                }
+                put(&mut state, actor, "Forest", Zone::Hand);
+                let core = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+                let FastActorResponseV1::Decision(expected) = core.current_response() else {
+                    panic!("actual battlefield priority")
+                };
+                let session = HumanGameOutcomeSessionV41::from_session(core, actor.into()).unwrap();
+                let menu = HumanGameOutcomeProjectorV41::new(actor.into())
+                    .project_current(&session, expected)
+                    .unwrap();
+                let herald = menu.state.public.battlefield[actor.index()]
+                    .iter()
+                    .find(|row| row.stable.name == "Herald of Eternal Dawn")
+                    .unwrap();
+                assert_eq!(menu.state.extensions.sources.len(), 1);
+                assert_eq!(menu.state.extensions.sources[0].source, herald.stable);
+                assert!(menu.state.extensions.sources[0].printed_rules_active);
+                assert!(menu.state.extensions.cannot_lose[actor.index()]);
+                assert!(menu.state.extensions.cannot_win[actor.opponent().index()]);
+            }
+        }
     }
 
     #[test]
