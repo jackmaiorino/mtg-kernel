@@ -2024,7 +2024,7 @@ pub struct ChosenColorCreatureBoostDefV1 {
     pub toughness: i16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GameOutcomeProtectionDefV1 {
     ControllerCannotLoseAndOpponentsCannotWin,
 }

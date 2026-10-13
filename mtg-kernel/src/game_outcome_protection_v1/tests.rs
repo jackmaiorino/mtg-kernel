@@ -154,3 +154,34 @@ fn actual_herald_control_and_simultaneous_lethal_departure_preserve_loss_scope_b
         assert!(state.players[actor.opponent().index()].has_lost);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_prevented_loss() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = cast_herald(actor);
+        crate::event::propose_and_commit(&mut state, crate::event::ProposedEvent::draw(actor));
+        assert!(state.players[actor.index()].drew_from_empty);
+        // Named physical lethal-damage prerequisite. Both conditions exist
+        // before the first SBA pass, rather than removing the source later.
+        state.objects.get_mut(source).damage = 6;
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for branch in [&mut state, &mut replay] {
+            crate::trigger::sba_fixed_point(branch);
+            assert_eq!(branch.objects.get(source).zone, Zone::Graveyard);
+            assert!(!branch.players[actor.index()].drew_from_empty);
+            assert!(!branch.players[actor.index()].has_lost);
+            assert!(!cannot_lose(branch, actor));
+            // A new empty draw after the protection ends is a real new loss.
+            crate::event::propose_and_commit(branch, crate::event::ProposedEvent::draw(actor));
+            crate::trigger::sba_fixed_point(branch);
+            assert!(branch.players[actor.index()].has_lost);
+        }
+        assert_eq!(state, replay);
+    }
+}
