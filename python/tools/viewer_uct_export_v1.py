@@ -130,6 +130,11 @@ def attach_execution(frames, rows, searches, header, binding_path, primary_path)
         bindings['core_hash']!=primary['core_hash'] or primary['core_hash']!=primary['replay_core_hash'] or
         bindings['actions']!=len(rows) or primary['actions']!=[row['selected'] for row in rows]):
         raise ValueError('UCT execution binding primary identity differs')
+    expected_searches=[{'index':i,'step':s['record']['step'],'budget':s['record']['budget'],
+        'transitions':s['record']['transitions'],'completed':s['record']['completed_natural'],
+        'attempted':s['record']['attempted'],'tree':s['record']['tree']} for i,s in sorted(searches.items())]
+    if primary.get('searches')!=expected_searches or primary.get('decisions')!=[row['evidence'] for row in rows if row.get('evidence')]:
+        raise ValueError('UCT execution binding search or decision receipt differs')
     by_key={tuple(key(b['decision']).values()):b for b in bindings['bindings']}
     if len(by_key)!=len(bindings['bindings']):raise ValueError('Duplicate UCT execution binding key')
     roots={i:next(f for f in frames if f['key']==key(s['record']['decision'])) for i,s in searches.items()}

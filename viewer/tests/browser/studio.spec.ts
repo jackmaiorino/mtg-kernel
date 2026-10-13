@@ -37,6 +37,17 @@ test('actual guide lifecycle distinguishes refresh from reuse and locates the ga
   await status.screenshot({path:'test-results/search-lifecycle-320.png'});
 });
 
+test('a link between reuse decisions of one tree restores its requested search event',async({page})=>{
+  await openFixture(page);const r=structuredClone(lifecycle),next=structuredClone(r.frames[2]);
+  next.id='d18';next.key.step=18;next.key.physical=18;r.frames.push(next);
+  await page.locator('input[type=file]').setInputFiles({name:'reuse-links.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(r))});
+  await page.evaluate(id=>{window.location.hash=`game=${id}&decision=d17&searchEvent=5`;},r.id);
+  await expect(page.getByRole('slider',{name:'Search event timeline'})).toHaveValue('5');
+  await page.evaluate(id=>{window.location.hash=`game=${id}&decision=d18&searchEvent=2`;},r.id);
+  await expect(page.getByRole('slider',{name:'Search event timeline'})).toHaveValue('2');
+  await expect(page).toHaveURL(/decision=d18&searchEvent=2/);
+});
+
 test('full UCT tree exposes discovery, rollout moves and discarded attempts',async({page})=>{
   await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(pooledUct))});
   await page.getByRole('button',{name:'Watch this search unfold'}).click();

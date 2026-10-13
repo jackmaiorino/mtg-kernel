@@ -41,7 +41,10 @@ class UctTests(unittest.TestCase):
         raw,f=fixture();f['id']='d15';raw['nodes'][0].update(n=[8,0],wins=[8,0],visits=8)
         evidence={'search':0,'chooser':'new_root','lookup':'supported','refreshed':None,'edge_backups':8,'remaining_before':384000,'remaining_after':384000}
         rows=[{'selected':1,'evidence':evidence}]
-        primary={'actions':[1],'core_hash':42,'replay_core_hash':42}
+        raw['record']['step']=15
+        primary={'actions':[1],'core_hash':42,'replay_core_hash':42,'decisions':[evidence],
+            'searches':[{'index':0,'step':15,'budget':raw['record']['budget'],'transitions':raw['record']['transitions'],
+                'completed':raw['record']['completed_natural'],'attempted':raw['record']['attempted'],'tree':copy.deepcopy(raw['record']['tree'])}]}
         with tempfile.TemporaryDirectory() as folder:
             p=Path(folder)/'primary.json';p.write_text(json.dumps(primary))
             bindings={'schema':'mtg-kernel-uct-execution-bindings/v1','primary_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'core_hash':42,'actions':1,
@@ -55,6 +58,9 @@ class UctTests(unittest.TestCase):
             for mutate in [lambda x:x['bindings'][0]['decision'].update(substep_index=1),lambda x:x['bindings'][0].update(live=0),lambda x:x.update(core_hash=43)]:
                 broken=copy.deepcopy(bindings);mutate(broken);b.write_text(json.dumps(broken))
                 with self.assertRaises(ValueError):attach_execution([copy.deepcopy(f)],rows,{0:raw},{'search_start':15},b,p)
+            altered=copy.deepcopy(primary);altered['searches'][0]['budget']+=1;p.write_text(json.dumps(altered))
+            changed=copy.deepcopy(bindings);changed['primary_sha256']=hashlib.sha256(p.read_bytes()).hexdigest();b.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError,'receipt differs'):attach_execution([copy.deepcopy(f)],rows,{0:raw},{'search_start':15},b,p)
 
     def test_full_attempts_reconcile_and_private_cards_are_removed_before_metadata(self):
         raw,f=fixture();result=replay(raw,VisibleExporter(),f)
