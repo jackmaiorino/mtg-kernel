@@ -78,3 +78,28 @@ source does not admit model weights, frozen feature tensors, search sampling,
 a catalog/profile hash, or Full support. The actual Partial-to-Full registry
 promotion and internal 2/2 Cat at the reserved next position remain parent
 work after source review and qualification.
+
+
+## Genuine mixed-source fixture checkpoint
+
+The current parent3237 turn-ledger fixes are composed. Five additional actual
+Full-Ajani groups use real paid cast/activation and accepted physical producer
+boundaries, with genuine V42 input and owning restore checks: Herald-protected
+life zero and negative three produce an authenticated zero-token completion;
+the real copy allocator gives a token Ajani starting loyalty before a genuine
+legend choice and its own paid activation; actual Lightning Bolt deals three
+to Ajani, or six with the opposing actual Twinflame source, with real loyalty
+loss and owner-graveyard SBA; a paid Temporal Manipulation opens a same-seat
+extra turn and permits exactly one new loyalty activation; an actually
+controlled opponent-owned Ajani waits for its controller's real sorcery window
+and ultimate tokens still use that original controller's current life after
+physical owner reentry. Serialized branches match and expired bindings refuse.
+
+Ajani's original turn records and epoch check now use turn_key_v1, retaining
+the genuine journal occurrence index as the once-per-turn identity. Ordinary
+round-key behavior is unchanged when no scheduler exists. Accepted physical
+copy/control/loyalty helpers are labeled as primitive boundaries; no fabricated
+printed planeswalker-copy spell or Employment-on-planeswalker claim is made.
+All five new groups remain ignored until genuine Full promotion and the actual
+2/2 Cat blueprint, uncompiled and unrun. This is prepared coverage, not observed
+gameplay or mixed-family/native/model/sampler admission.
