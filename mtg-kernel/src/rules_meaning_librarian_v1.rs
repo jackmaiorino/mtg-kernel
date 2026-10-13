@@ -163,6 +163,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16, root: RootV1) -> Result<Mean
         || def.starting_loyalty.is_some()
         || def.enters_with_plus_one_counters.is_some()
         || def.controlled_counter_keyword.is_some()
+        || def.controlled_creature_grant.is_some()
         || def.is_land
         || !def.produces_mana.is_empty()
         || (def.mana_ability)().is_some()

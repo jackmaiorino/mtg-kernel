@@ -4429,6 +4429,7 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
+        changed |= crate::controlled_creature_grants_v1::detach_protected_nonauras(state);
         // 704.5m: an Aura attached to an illegal object or player, or not
         // attached at all, is put into its owner's graveyard. The current
         // attachment grammar supports creature Auras only and requires both
@@ -4441,6 +4442,17 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+                if aura.v4.attached_to.is_some_and(|link| {
+                    crate::controlled_creature_grants_v1::protects_from_colors(
+                        state,
+                        link.object,
+                        crate::engine::object_color_mask(state, id),
+                    )
+                }) && (definition.attachment.is_some()
+                    || crate::standard_cards_v1::is_aura(definition))
+                {
+                    return Some(id);
+                }
                 if crate::standard_cards_v1::is_aura(definition) {
                     // This module's Auras: the enchant restriction includes
                     // control ("enchant creature you control").

@@ -3902,6 +3902,17 @@ fn legal_targets_for_controller_from_source(
         });
     }
     if let Some(source) = source {
+        let colors = state
+            .objects
+            .try_get(source.object)
+            .filter(|live| {
+                live.zone == source.zone && live.zone_change_count == source.zone_change_count
+            })
+            .map_or_else(
+                || card_def::mana_colors_mask(card_def::CARD_DEFS[source.card_def as usize].colors),
+                |_| object_color_mask(state, source.object),
+            );
+        targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
     }
@@ -9054,6 +9065,13 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
                 return false;
             }
             if crate::standard_legends_v1::skrelv_blocks(state, attacker, id) {
+                return false;
+            }
+            if crate::controlled_creature_grants_v1::protects_from_colors(
+                state,
+                attacker,
+                object_color_mask(state, id),
+            ) {
                 return false;
             }
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
@@ -16185,6 +16203,11 @@ pub fn damage_is_prevented_by_protection(
         object.zone == Zone::Battlefield
             && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
                 && object_is_monocolored(state, source))
+                || crate::controlled_creature_grants_v1::protects_from_colors(
+                    state,
+                    target,
+                    object_color_mask(state, source),
+                )
                 || crate::standard_legends_v1::katilda_protected_from(state, target, source))
     })
 }
@@ -16533,6 +16556,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                     .has(kw)
         })
     {
+        return true;
+    }
+    if crate::controlled_creature_grants_v1::grants_keyword(state, id, kw) {
         return true;
     }
     if crate::garruks_uprising_v1::grants_keyword(state, id, kw) {

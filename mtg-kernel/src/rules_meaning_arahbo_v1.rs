@@ -167,6 +167,7 @@ pub fn meaning_v1(
         || def.attachment.is_some()
         || def.enters_with_plus_one_counters.is_some()
         || def.controlled_counter_keyword.is_some()
+        || def.controlled_creature_grant.is_some()
         || !def.mana_ability_choices.is_empty()
         || def.enters_battlefield_tapped
         || def.mana_ability_def.is_some()
