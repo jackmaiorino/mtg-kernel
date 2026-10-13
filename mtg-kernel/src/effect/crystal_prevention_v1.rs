@@ -673,7 +673,11 @@ fn original_damage(
     state: &GameState,
     ctx: &ExecCtx,
     op: &EffectOp,
+    path: &[u16],
 ) -> Result<DamageProposed, String> {
+    if crate::twinflame_tyrant_v1::sampling::selected(op) {
+        return crate::twinflame_tyrant_v1::sampling::damage(state, ctx, op, path);
+    }
     let (target, amount, historical_source) = match op {
         EffectOp::DealDamage { target, amount } => {
             let historical = ctx.stack_item_id.filter(|id| {
@@ -892,6 +896,8 @@ fn has_damage(op: &EffectOp) -> bool {
     }
     match op {
         EffectOp::DealDamage { .. }
+        | EffectOp::DealDamageDynamic { .. }
+        | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
         | EffectOp::CreatureTargetPowerDamage {
             plus1_plus1: 0.., ..
@@ -954,6 +960,8 @@ fn supported(op: &EffectOp) -> bool {
             ..
         } => true,
         EffectOp::DealDamage { .. }
+        | EffectOp::DealDamageDynamic { .. }
+        | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
         | EffectOp::CreatureTargetPowerDamage {
             plus1_plus1: 0.., ..
@@ -1146,6 +1154,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
         return Err("private Crystal ownership cannot enter the public trigger log".into());
     }
     crate::twinflame_tyrant_v1::ordering::validate(state)?;
+    crate::twinflame_tyrant_v1::sampling::validate(state)?;
     validate_shields(state)?;
     validate_damage_operations(state)?;
     validate_batch_preparations(state)?;
@@ -1518,6 +1527,8 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 });
             }
             EffectOp::DealDamage { .. }
+            | EffectOp::DealDamageDynamic { .. }
+            | EffectOp::DealDamageByControlledCreatureCount { .. }
             | EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
             ) => {
@@ -1537,7 +1548,16 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                         op,
                     )?;
                 }
-                let damage = original_damage(state, &pending.ctx, op)?;
+                if crate::twinflame_tyrant_v1::sampling::selected(op) {
+                    crate::twinflame_tyrant_v1::sampling::capture(
+                        state,
+                        owner,
+                        &pending.ctx,
+                        op,
+                        path,
+                    )?;
+                }
+                let damage = original_damage(state, &pending.ctx, op, path)?;
                 if damage.amount <= 0 {
                     steps.push(step);
                     continue;
@@ -1939,6 +1959,8 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                 && (!matches!(
                     op,
                     EffectOp::DealDamage { .. }
+                        | EffectOp::DealDamageDynamic { .. }
+                        | EffectOp::DealDamageByControlledCreatureCount { .. }
                         | EffectOp::CreatureTargetPowerDamage { .. }
                         | EffectOp::StandardV1(
                             crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
@@ -2014,10 +2036,12 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                     });
                 }
                 EffectOp::DealDamage { .. }
+                | EffectOp::DealDamageDynamic { .. }
+                | EffectOp::DealDamageByControlledCreatureCount { .. }
                 | EffectOp::StandardV1(
                     crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1,
                 ) => {
-                    let damage = original_damage(state, &pending.ctx, op)?;
+                    let damage = original_damage(state, &pending.ctx, op, path)?;
                     if step.conditional_result.is_some() {
                         return Err("Crystal damage carries a foreign branch".into());
                     }
@@ -2748,7 +2772,7 @@ fn choice_original_damage(
             .map(BatchDamageV2::proposed)
             .ok_or_else(|| "Crystal creature-power menu has no genuine damage".into());
     }
-    original_damage(state, ctx, op)
+    original_damage(state, ctx, op, &choice.path)
 }
 fn capture_creature_power(
     state: &mut GameState,
@@ -4130,7 +4154,7 @@ pub(crate) fn offer(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<bool, String> {
-    let damage = original_damage(state, &continuation.ctx, op)?;
+    let damage = original_damage(state, &continuation.ctx, op, path)?;
     offer_damage(state, continuation, damage, path, None)
 }
 fn offer_damage(

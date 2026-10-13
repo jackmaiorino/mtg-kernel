@@ -998,4 +998,170 @@ mod future_printed {
             );
         }
     }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn large_real_bite_down_with_guaranteed_barricade_prevention_commits_zero_without_overflow_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            cast(&mut state, actor);
+            let dealing = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+            let recipient = put(
+                &mut state,
+                actor.opponent(),
+                "Shivan Dragon",
+                Zone::Battlefield,
+            );
+            // Independent registered static prevention operand and original real counters.
+            put(
+                &mut state,
+                actor.opponent(),
+                "Crystal Barricade",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(dealing).counters.plus1_plus1 = i32::MAX / 2 - 4;
+            assert_eq!(engine::effective_power(&state, dealing), i32::MAX / 2 + 1);
+            assert!(state.engine.active_replacements.is_empty());
+            let spell = put(&mut state, actor, "Bite Down", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(dealing))).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+            let saved = serde_json::to_vec(&state).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(recipient).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(recipient).damage, 0);
+                assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                assert!(branch.engine.event_history.iter().any(|e| matches!(e,
+                    CommittedEvent::CrystalDamageOperationV3 { operation }
+                        if operation.input.source == dealing && operation.input.amount == i32::MAX / 2 + 1
+                            && operation.output.is_none() && operation.damage_history.is_none())));
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn actual_lotleth_dynamic_damage_samples_original_graveyard_before_ordering_both_seats() {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for double_first in [false, true] {
+                let mut state = ready(actor);
+                cast(&mut state, actor);
+                put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+                put(&mut state, actor, "Shivan Dragon", Zone::Graveyard);
+                put(&mut state, actor, "Forest", Zone::Graveyard);
+                let giant = put(&mut state, actor, "Lotleth Giant", Zone::Hand);
+                state
+                    .engine
+                    .active_replacements
+                    .push(event::ActiveReplacement {
+                        id: 90_059,
+                        source: giant,
+                        kind: event::ReplacementEffectKind::PreventNextDamage {
+                            target: Target::Player(actor.opponent()),
+                            remaining: 2,
+                        },
+                    });
+                state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 6;
+                engine::step(&mut state, Action::CastSpell(giant)).unwrap();
+                let mut targeted = false;
+                for _ in 0..32 {
+                    let decision = engine::advance_until_decision(&mut state);
+                    if crate::effect::crystal_prevention_v1::is_choice(&state) {
+                        break;
+                    }
+                    match decision {
+                        Decision::ChooseTargets {
+                            player,
+                            legal_targets,
+                            ..
+                        } => {
+                            assert!(!targeted);
+                            assert_eq!(player, actor);
+                            assert_eq!(legal_targets, vec![Target::Player(actor.opponent())]);
+                            engine::step(
+                                &mut state,
+                                Action::ChooseTarget(Target::Player(actor.opponent())),
+                            )
+                            .unwrap();
+                            targeted = true;
+                        }
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut state, Action::Pass).unwrap()
+                        }
+                        other => panic!("actual Lotleth ETB traversal {other:?}"),
+                    }
+                }
+                assert!(targeted);
+                let Some(PendingEffectChoice::ChooseOption {
+                    purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                    ..
+                }) = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .as_ref()
+                else {
+                    panic!("actual dynamic menu missing")
+                };
+                assert_eq!(choice.original_amount, 2);
+                let option = choice
+                    .options
+                    .iter()
+                    .position(|o| {
+                        if double_first {
+                            matches!(o, PreventionV1::Multiplier(_))
+                        } else {
+                            matches!(o, PreventionV1::Replacement(_))
+                        }
+                    })
+                    .unwrap();
+                let lives = state.players.each_ref().map(|p| p.life);
+                let saved = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    engine::step(branch, Action::ChooseEffectOption(option as u16)).unwrap();
+                    finish(branch);
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        lives[actor.opponent().index()] - if double_first { 2 } else { 0 }
+                    );
+                    crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                    sampling::validate(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+                let mut malformed: GameState = serde_json::from_slice(&saved).unwrap();
+                let at = malformed
+                    .engine
+                    .event_history
+                    .iter()
+                    .position(|e| {
+                        matches!(e, CommittedEvent::TwinflameDynamicDamageSampleV38 { .. })
+                    })
+                    .unwrap();
+                malformed.engine.event_history[at] = CommittedEvent::LifeGain {
+                    player: actor,
+                    amount: 0,
+                };
+                let bytes = serde_json::to_vec(&malformed).unwrap();
+                assert!(engine::step(&mut malformed, Action::Pass).is_err());
+                assert_eq!(serde_json::to_vec(&malformed).unwrap(), bytes);
+            }
+        }
+    }
 }

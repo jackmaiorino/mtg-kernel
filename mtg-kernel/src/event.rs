@@ -1298,6 +1298,9 @@ pub enum CommittedEvent {
     TwinflameCombatOperationV38 {
         operation: Box<crate::twinflame_tyrant_v1::combat::OperationV38>,
     },
+    TwinflameDynamicDamageSampleV38 {
+        sample: Box<crate::twinflame_tyrant_v1::sampling::SampleV38>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2131,6 +2134,7 @@ fn prepare_commit_crystal_damage(
         touched: damage.touched_by.clone(),
     };
     let historical_source = damage.historical_source;
+    let mut guaranteed_zero = false;
     if preventers.iter().any(|o| {
         matches!(
             o,
@@ -2154,7 +2158,7 @@ fn prepare_commit_crystal_damage(
             lifelink_player: lifelink_gain_for(state, &ProposedEvent::Damage(damage.clone()))
                 .map(|(p, _)| p),
         };
-        crate::twinflame_tyrant_v1::ordering::prepared_amount(&preparation)?;
+        guaranteed_zero = crate::twinflame_tyrant_v1::ordering::prepared_amount(&preparation)? == 0;
         state
             .engine
             .event_history
@@ -2162,7 +2166,14 @@ fn prepare_commit_crystal_damage(
                 preparation: Box::new(preparation),
             });
     }
-    let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
+    // Full prevention commutes to the exact zero result, even when an
+    // unchosen multiplier-first intermediate exceeds the damage representation.
+    // Its independently published options/preparation remain mandatory proof.
+    let prepared = if guaranteed_zero {
+        None
+    } else {
+        apply_replacements(state, ProposedEvent::Damage(damage))
+    };
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());
     }

@@ -89,6 +89,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
                     | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
                     | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
             )
         })
 }
@@ -230,6 +231,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
     let producer = [
         include_str!("twinflame_tyrant_v1.rs"),
         include_str!("twinflame_tyrant_v1/ordering.rs"),
+        include_str!("twinflame_tyrant_v1/sampling.rs"),
         include_str!("twinflame_tyrant_v1/combat.rs"),
         include_str!("card_def.rs"),
         include_str!("event.rs"),
@@ -270,6 +272,7 @@ impl PrintedMeaningV1 {
 
 pub mod combat;
 pub mod ordering;
+pub mod sampling;
 
 #[cfg(test)]
 mod tests;

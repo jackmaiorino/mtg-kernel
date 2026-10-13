@@ -117,6 +117,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("twinflame_observation_v1.rs"),
         include_str!("twinflame_tyrant_v1.rs"),
         include_str!("twinflame_tyrant_v1/ordering.rs"),
+        include_str!("twinflame_tyrant_v1/sampling.rs"),
         include_str!("twinflame_tyrant_v1/combat.rs"),
         include_str!("crystal_public_v1.rs"),
         include_str!("crystal_barricade_v1.rs"),
