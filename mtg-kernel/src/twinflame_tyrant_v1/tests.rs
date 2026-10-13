@@ -907,4 +907,95 @@ mod future_printed {
             }
         }
     }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn real_bite_down_owned_menu_refuses_overflow_before_mutation_and_accepts_prevention_first_both_seats(
+    ) {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            cast(&mut state, actor);
+            let dealing = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+            let recipient = put(
+                &mut state,
+                actor.opponent(),
+                "Shivan Dragon",
+                Zone::Battlefield,
+            );
+            // Labeled real counter operand, sampled by the actual registered power-damage root.
+            state.objects.get_mut(dealing).counters.plus1_plus1 = i32::MAX / 2 - 4;
+            let original_amount = engine::effective_power(&state, dealing);
+            assert_eq!(original_amount, i32::MAX / 2 + 1);
+            state
+                .engine
+                .active_replacements
+                .push(event::ActiveReplacement {
+                    id: 90_058,
+                    source: recipient,
+                    kind: event::ReplacementEffectKind::PreventNextDamage {
+                        target: Target::Object(recipient),
+                        remaining: original_amount,
+                    },
+                });
+            let spell = put(&mut state, actor, "Bite Down", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(dealing))).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if crate::effect::crystal_prevention_v1::is_choice(&state) {
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            let pending = state.engine.pending_effect.as_ref().unwrap();
+            let Some(PendingEffectChoice::ChooseOption {
+                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                ..
+            }) = pending.choice.as_ref()
+            else {
+                panic!("actual power-damage menu missing")
+            };
+            assert_eq!(choice.original_amount, original_amount);
+            let multiplier = choice
+                .options
+                .iter()
+                .position(|o| matches!(o, PreventionV1::Multiplier(_)))
+                .unwrap();
+            let prevention = choice
+                .options
+                .iter()
+                .position(|o| matches!(o, PreventionV1::Replacement(_)))
+                .unwrap();
+            let saved = serde_json::to_vec(&state).unwrap();
+            for _ in 0..2 {
+                state = serde_json::from_slice(&saved).unwrap();
+                assert!(
+                    engine::step(&mut state, Action::ChooseEffectOption(multiplier as u16))
+                        .is_err()
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), saved);
+            }
+            let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseEffectOption(prevention as u16)).unwrap();
+                finish(branch);
+                assert_eq!(branch.objects.get(recipient).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(recipient).damage, 0);
+                assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
 }

@@ -47,6 +47,9 @@ pub(crate) fn has_multiplier(choice: &ChoiceV1) -> bool {
             .iter()
             .any(|o| matches!(o, PreventionV1::Multiplier(_)))
 }
+/// A comparison bound for representable stored amounts, never a damage result.
+/// The mathematical bound above i32::MAX admits every representable amount;
+/// each actual selected doubling is separately checked before input publication.
 pub(crate) fn amount_bound(choice: &ChoiceV1) -> i32 {
     choice
         .applied_multipliers
@@ -66,7 +69,10 @@ pub(crate) fn expected_after(choice: &ChoiceV1, index: u16) -> Result<ChoiceV1, 
                 return Err("multiplier applied twice to one event".into());
             }
             after.applied_multipliers.0.push(*source);
-            after.remaining_amount = after.remaining_amount.saturating_mul(2);
+            after.remaining_amount = after
+                .remaining_amount
+                .checked_mul(2)
+                .ok_or("Twinflame doubled damage exceeds the current i32 damage representation")?;
         }
         PreventionV1::Barricade(_) | PreventionV1::Protection(_) => after.remaining_amount = 0,
         PreventionV1::Replacement(r) => {
@@ -415,11 +421,13 @@ pub(crate) fn commuting_amount(input: i32, options: &[PreventionV1]) -> Result<i
             _ => amount,
         }));
     }
-    Ok(options.iter().fold(input, |amount, o| {
+    options.iter().try_fold(input, |amount, o| {
         if matches!(o, PreventionV1::Multiplier(_)) {
-            amount.saturating_mul(2)
+            amount.checked_mul(2).ok_or_else(|| {
+                "Twinflame doubled damage exceeds the current i32 damage representation".to_string()
+            })
         } else {
-            amount
+            Ok(amount)
         }
-    }))
+    })
 }

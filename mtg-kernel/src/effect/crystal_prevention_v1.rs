@@ -1246,7 +1246,9 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                         return Err("multiplier answer repeated source".into());
                     }
                     expected.applied_multipliers.0.push(*source);
-                    expected.remaining_amount = expected.remaining_amount.saturating_mul(2);
+                    expected.remaining_amount = expected.remaining_amount.checked_mul(2).ok_or(
+                        "Twinflame doubled damage exceeds the current i32 damage representation",
+                    )?;
                 }
                 PreventionV1::Barricade(_) | PreventionV1::Protection(_) => {
                     expected.remaining_amount = 0
@@ -4344,6 +4346,11 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         gorehorn: None,
         equipment: None,
     };
+    // Arithmetic validation precedes the independent actual input occurrence.
+    // A legal prevention-first answer can reduce an otherwise overflowing packet.
+    if crate::twinflame_tyrant_v1::ordering::has_multiplier(&choice) {
+        crate::twinflame_tyrant_v1::ordering::expected_after(&choice, index)?;
+    }
     let multiplier_input = if crate::twinflame_tyrant_v1::ordering::has_multiplier(&choice) {
         Some(crate::twinflame_tyrant_v1::ordering::record_input(
             state, &owner, &before, index,
@@ -4363,7 +4370,10 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
                 return Err("multiplier source already applied".into());
             }
             choice.applied_multipliers.0.push(source);
-            choice.remaining_amount = choice.remaining_amount.saturating_mul(2);
+            choice.remaining_amount = choice
+                .remaining_amount
+                .checked_mul(2)
+                .ok_or("Twinflame doubled damage exceeds the current i32 damage representation")?;
         }
         PreventionV1::Barricade(_) | PreventionV1::Protection(_) => choice.remaining_amount = 0,
         PreventionV1::Replacement(replacement) => {

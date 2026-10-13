@@ -165,13 +165,23 @@ pub(crate) fn validate_commuting_damage(
             "Twinflame multiplier requires affected-controller replacement ordering".into(),
         );
     }
+    let mut amount = damage.amount;
+    for _ in &sources {
+        amount = amount
+            .checked_mul(2)
+            .ok_or("Twinflame doubled damage exceeds the current i32 damage representation")?;
+    }
     Ok(sources)
 }
 
 pub(crate) fn replace(state: &GameState, damage: &mut DamageProposed) -> Result<(), String> {
+    let mut amount = damage.amount;
     for _ in validate_commuting_damage(state, damage)? {
-        damage.amount = damage.amount.saturating_mul(2);
+        amount = amount
+            .checked_mul(2)
+            .ok_or("Twinflame doubled damage exceeds the current i32 damage representation")?;
     }
+    damage.amount = amount;
     Ok(())
 }
 
