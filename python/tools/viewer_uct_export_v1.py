@@ -108,8 +108,16 @@ def replay(raw, exporter, frame):
     for n in nodes:
         table.extend(struct.pack('<IIII',n['id'],int(n['committed']),n['visits'],len(n['actions'])))
         for visits,won in zip(n['edgeVisits'],n['edgeWins']):table.extend(struct.pack('<II',visits,won))
-    return {'schema':'mtg-kernel-uct-search-replay/v1','complete':True,'key':frame['key'],
-        'treeDigest':record['tree']['hash'],'tableDigest':hashlib.sha256(table).hexdigest(),'boards':boards,'nodes':nodes,'actions':actions,
+    objects,object_ids,pooled_boards=[],{},[]
+    def object_ref(obj):
+        encoded=json.dumps(obj,sort_keys=True,separators=(',',':'))
+        if encoded not in object_ids:object_ids[encoded]=len(objects);objects.append(obj)
+        return object_ids[encoded]
+    for b in boards:
+        players=[dict(p,battlefield=[object_ref(o) for o in p['battlefield']],graveyard=[object_ref(o) for o in p['graveyard']],hand=[]) for p in b['players']]
+        pooled_boards.append(dict(b,players=players,exile=[object_ref(o) for o in b['exile']]))
+    return {'schema':'mtg-kernel-uct-search-replay/v1','complete':True,'key':frame['key'],'storage':'object-pool/v1','objects':objects,
+        'treeDigest':record['tree']['hash'],'tableDigest':hashlib.sha256(table).hexdigest(),'boards':pooled_boards,'nodes':nodes,'actions':actions,
         'simulations':simulations,'firstCombo':first_combo,
         'worlds':'Approximate sampled information sets with a uniform public deck prior. Both sampled hands are hidden; only focal non-forced choices become UCT tree nodes.'}
 

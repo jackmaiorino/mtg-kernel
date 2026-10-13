@@ -5,6 +5,7 @@ import replayFixture from './fixtures/search-replay.json';
 import graphFixture from './fixtures/search-graph.json';
 import retained from './fixtures/retained-search.json';
 import uctFixture from './fixtures/uct-search.json';
+import pooledUct from './fixtures/uct-pooled.json';
 import { uctEvents, uctGraphAt } from '../src/uct-playback';
 import { graphAt, graphLayout } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
@@ -13,6 +14,14 @@ import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
 describe('full UCT discovery traces',()=>{
+  it('restores pooled snapshots losslessly and rejects broken or unused pooled states',async()=>{
+    const r=parseRecording(pooledUct);await verifySearchDigests(r);
+    expect(r.frames[0].search!.uctReplay!.boards[0]).toEqual(r.frames[0].board);
+    const broken=structuredClone(pooledUct);broken.frames[0].search.uctReplay.boards[0].players[0].battlefield=[9];
+    expect(()=>parseRecording(broken)).toThrow(/pooled snapshot/);
+    const unused=structuredClone(pooledUct);unused.frames[0].search.uctReplay.objects.push(unused.frames[0].search.uctReplay.objects[0]);
+    expect(()=>parseRecording(unused)).toThrow(/pooled snapshot/);
+  });
   it('reconciles natural wins, draws and discarded proposals, revealing branches before backup',async()=>{
     const r=parseRecording(uctFixture);await verifySearchDigests(r);const u=r.frames[0].search!.uctReplay!;
     expect(u.firstCombo).toBe(0);expect(uctEvents(u).filter(e=>e.phase==='rollout')).toHaveLength(8);

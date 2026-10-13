@@ -5,6 +5,7 @@ import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
 import uct from '../fixtures/uct-search.json' with {type:'json'};
+import pooledUct from '../fixtures/uct-pooled.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -15,7 +16,7 @@ async function openFixture(page: import('@playwright/test').Page) {
 }
 
 test('full UCT tree exposes discovery, rollout moves and discarded attempts',async({page})=>{
-  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(uct))});
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(pooledUct))});
   await page.getByRole('button',{name:'Watch this search unfold'}).click();
   await expect(page.locator('.decision-evidence')).toContainText('Tree choices, rollout actions');
   await page.getByRole('button',{name:'Watch its discovery'}).click();

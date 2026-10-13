@@ -52,9 +52,9 @@ const replaySchema = z.object({
   }).strict()).min(1).max(512),
 }).strict();
 export type SearchReplay = z.infer<typeof replaySchema>;
-const uctSchema=z.object({
+const uctBaseSchema=z.object({
   schema:z.literal('mtg-kernel-uct-search-replay/v1'),complete:z.literal(true),key:keySchema,
-  treeDigest:hash,tableDigest:hash,worlds:text,boards:z.array(boardSchema).min(1).max(8192),
+  treeDigest:hash,tableDigest:hash,worlds:text,
   actions:z.array(actionSchema).max(65536),
   nodes:z.array(z.object({id:u32,actor:seat,board:u32,parent:z.tuple([u32,u32]).nullable(),
     actions:z.array(actionSchema).min(1).max(65536),liveOrder:z.array(u32),committed:z.boolean(),
@@ -65,6 +65,25 @@ const uctSchema=z.object({
     leaf:u32.nullable(),terminal:z.object({kind:text,winner:seat.nullable()}).strict().nullable(),combo:z.boolean(),
   }).strict()).min(1).max(4096),firstCombo:u32.nullable(),
 }).strict();
+const pooledPlayerSchema=playerSchema.extend({battlefield:z.array(u32),graveyard:z.array(u32),hand:z.array(u32).length(0)}).strict();
+const pooledBoardSchema=boardSchema.extend({players:z.tuple([pooledPlayerSchema,pooledPlayerSchema]),exile:z.array(u32)}).strict();
+const uctWireSchema=z.discriminatedUnion('storage',[
+  uctBaseSchema.extend({storage:z.literal('inline').optional(),boards:z.array(boardSchema).min(1).max(8192)}).strict(),
+  uctBaseSchema.extend({storage:z.literal('object-pool/v1'),objects:z.array(objectSchema).max(1000000),boards:z.array(pooledBoardSchema).min(1).max(8192)}).strict(),
+]);
+const uctSchema=uctWireSchema.transform((value,context)=>{
+  if(value.storage!=='object-pool/v1')return value;
+  const used=new Set<number>();let references=0,broken=false;
+  const expand=(ids:number[])=>ids.map(id=>{
+    references++;used.add(id);
+    if(id>=value.objects.length){broken=true;return value.objects[0];}
+    return value.objects[id];
+  });
+  const boards=value.boards.map(b=>({...b,exile:expand(b.exile),players:b.players.map(p=>({...p,battlefield:expand(p.battlefield),graveyard:expand(p.graveyard),hand:expand(p.hand)})) as z.infer<typeof boardSchema>['players']}));
+  if(broken||used.size!==value.objects.length||references>1000000){context.addIssue({code:'custom',message:'UCT pooled snapshot references are broken, unused, or exceed the decoded bound'});return z.NEVER;}
+  const {storage:_storage,objects:_objects,...rest}=value;
+  return {...rest,boards};
+});
 export type UctReplay=z.infer<typeof uctSchema>;
 const searchSchema = z.object({
   digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
