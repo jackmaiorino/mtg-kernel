@@ -7998,6 +7998,11 @@ fn validate_standard_choose_permanent_origin(
 }
 
 pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), String> {
+    // A linked checkpoint can hold the original row outside the live stack.
+    // Its validator replays the authenticated starting state and parent root.
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return crate::linked_aura_operation_v1::validate(state);
+    }
     vampire_gourmand_resolution_v1::validate(state)
 }
 
