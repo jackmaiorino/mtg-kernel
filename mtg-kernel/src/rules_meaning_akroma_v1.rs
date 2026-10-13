@@ -112,6 +112,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16, root: RootV1) -> Result<Mean
         || d.ward_cost.is_some()
         || d.equipment.is_some()
         || d.starting_loyalty.is_some()
+        || d.game_outcome_protection_v1.is_some()
         || d.enters_with_plus_one_counters.is_some()
         || d.controlled_counter_keyword.is_some()
         || d.as_enters_color_choice_v1.is_some()
