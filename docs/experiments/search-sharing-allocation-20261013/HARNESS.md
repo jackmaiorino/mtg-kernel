@@ -16,12 +16,14 @@ must use the qualified guarded launcher owned by the experiment lead.
 | `PROFILE_EVALUATE=0/1` | Disable fresh evaluation during calibration; default 1 |
 | `PROFILE_EVAL_WORLDS` | Fixed scheduled fresh evaluation worlds, default 128 |
 | `PROFILE_EVAL_CAP` | Transition cap per fresh continuation, default 65536 |
-| `PROFILE_EVAL_ONLY` | Prior selection JSONL; reconstruct and validate the root, then evaluate its selected action |
+| `PROFILE_EVAL_CONTINUATION=frozen-tree/plain` | Primary frozen searched continuation (default), or secondary fixed-action/plain continuation |
+| `PROFILE_EVAL_ONLY` | Prior selection JSONL for secondary `plain` mode only; reconstruct and validate the root before use |
 
 The selection transition cap remains a safety/work limit. CPU cutoff can
 overshoot by one simulation. Replaying the recorded `work_attempts` with the
 same transition ceiling reproduces the deterministic primary hash; cutoff
-provenance and timings are excluded from that hash. Zero completed work is a
+provenance and timings, including sharing cost, are excluded from that hash.
+The primary includes a canonical full-tree digest. Zero completed work is a
 support failure, not a chosen action. The handler's CPU clock begins before
 source reconstruction. The launcher records full process CPU, including
 checkpoint loading, startup, final serialization and output writes. Report
@@ -47,20 +49,35 @@ support. `selection`, `work_attempts` and `primary_sha256` record the search.
 `output_serialize_cpu_seconds` measures an additional serialization pass;
 the launcher's full process ledger includes actual output I/O.
 
-Fresh evaluation uses separate `/fresh-action-evaluation` seed namespaces,
-`Purpose::EvalWorld`, and paired policy streams common to all arms. It forces
-only the selected root action, then uses plain frozen continuation policies.
-It never executes the adaptive selection tree. Rejected, truncated and faulty
-samples remain in the fixed scheduled denominator; they are recorded as
-unknown rather than resampled. Unsupported roots have no evaluation samples.
+Primary evaluation uses separate `/fresh-action-evaluation` seed namespaces,
+`Purpose::EvalWorld`, and paired policy streams common to all arms. It executes
+that arm's frozen searched tree with no updates or new search. Matching
+supported descendants use the existing eight-backup execution rule; unseen
+or unsupported decisions use the ordinary frozen-policy fallback. Unsupported
+roots still run all 128 scheduled worlds through that fallback. C uses a
+private execution tree clone whose root skip mask forces its active supported
+choice. The original search tree's counts and eligibility remain immutable,
+and all descendant nodes and counts are identical. Clone CPU and estimated
+payload memory are reported. Rejected, truncated and faulty samples remain
+in the fixed scheduled denominator as unknown rather than being resampled.
+
+Optional `plain` secondary evaluation forces only the selected root action
+and then uses plain frozen continuation policies. It measures conditional
+policy quality and can miss multi-step search lines. Unsupported secondary
+roots have no evaluation samples. Evaluation-only jobs require this explicit
+secondary continuation setting; primary trees are evaluated inline and are
+never serialized as bulk evidence.
 
 `evaluation.samples` contains `(index, world_seed, outcome)` or a sample
 rejection; `outcome.w`, `unknown`, `end`, and transition counters are explicit.
 `evaluation.wins`, `independent_natural`, `unknown`, and `scheduled` summarize
-the fixed panel. `evaluation_id` binds the seed namespace, canonical selected
-action, count and cap. Identical action IDs across arms permit exact result
-reuse with explicit provenance; those results count once as independent
-terminal samples. `evaluation_sha256` hashes deterministic evaluation output.
+the fixed panel. Primary `evaluation_id` binds the seed namespace, treatment,
+full execution-tree hash, C's forced root edge/mask, count and cap. Two arms
+with the same root action still have separate searched continuations and
+cannot reuse their primary evaluations. `root_fallbacks` reports support
+fallbacks independently of wins. `evaluation_sha256` hashes deterministic
+evaluation output. Secondary plain evaluation IDs bind the selected canonical
+action, allowing exact reuse only within that explicitly secondary contract.
 Evaluation-only jobs verify the prior row's root hashes, step, source ID,
 position, seed, arm, bank binding, key mode and interchange setting before use.
 
