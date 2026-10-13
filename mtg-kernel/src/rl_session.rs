@@ -5457,6 +5457,7 @@ impl RlEpisodeSessionV1 {
                 self.episode_id,
                 "fail_closed:controlled_creature_grant_successor_required".into(),
                 self.policy_step_count,
+                self.physical_decision_count,
             ));
             return;
         }
@@ -7255,6 +7256,7 @@ impl FastActorSessionV1 {
                 self.episode_id,
                 "fail_closed:controlled_creature_grant_successor_required".into(),
                 self.policy_step_count,
+                self.physical_decision_count,
             ));
             return;
         }
