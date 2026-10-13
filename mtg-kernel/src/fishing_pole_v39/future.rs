@@ -663,6 +663,7 @@ fn projected_source(state: &GameState, source: ObjectId) -> crate::rl::CardStabl
         .unwrap();
     let row = observation
         .projection
+        .surface
         .stack
         .iter()
         .find(|row| row.source.arena_id == source.0)

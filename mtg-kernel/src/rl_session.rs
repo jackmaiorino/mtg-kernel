@@ -4533,8 +4533,8 @@ enum FlatActionContractModeV1 {
     ZulAshurV35,
     BannerV36,
     InspirationV37,
-    FishingPoleV39,
     AkromaV40,
+    FishingPoleV39,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5482,24 +5482,6 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
-            crate::akroma_public_v1::validate_state(&self.state)
-        } else {
-            crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
-        })
-        .is_err()
-        {
-            self.current = None;
-            self.terminal = Some(halted_terminal(
-                &self.deck_ids,
-                self.deck_hashes,
-                self.episode_id,
-                "fail_closed:controlled_creature_grant_successor_required".into(),
-                self.policy_step_count,
-                self.physical_decision_count,
-            ));
-            return;
-        }
         self.advance_to_decision_or_terminal_profiled(None);
     }
 
@@ -7340,6 +7322,24 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
+            crate::akroma_public_v1::validate_state(&self.state)
+        } else {
+            crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
             && self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)

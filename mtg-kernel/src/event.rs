@@ -1280,12 +1280,12 @@ pub enum CommittedEvent {
     InspirationEngineDepartureV1 {
         departure: Box<crate::effect::InspirationDepartureV1>,
     },
-    FishingPoleJournalV39 {
-        journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
-    },
     ProtectionSourceColorDepartureV1 {
         snapshot: crate::controlled_creature_grants_v1::DepartureColorV1,
         departure_history_index: u64,
+    },
+    FishingPoleJournalV39 {
+        journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
     },
 }
 

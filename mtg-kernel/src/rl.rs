@@ -3836,7 +3836,7 @@ pub(crate) fn policy_observation_extensions_common_for_human_v8(
     )
 }
 
-pub(crate) fn policy_observation_extensions_fishing_union_v40(
+pub(crate) fn policy_observation_extensions_fishing_v39(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<PolicyObservationExtensionsV6> {
@@ -3847,6 +3847,13 @@ pub(crate) fn policy_observation_extensions_fishing_union_v40(
         true,
         true,
     )
+}
+
+pub(crate) fn policy_observation_extensions_fishing_union_v40(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_fishing_v39(state, actor)
 }
 
 fn policy_observation_extensions_with_text_v6(

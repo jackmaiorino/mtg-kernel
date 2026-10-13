@@ -84,6 +84,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("fishing_pole_v39/lifecycle.rs"),
             include_str!("rules_meaning_fishing_pole_v39.rs"),
             include_str!("rl_session/fishing_pole_v39.rs"),
+            include_str!("policy_surface_v5.rs"),
             include_str!("human_bo3_v1/fishing_pole_v39.rs"),
             include_str!("sower_public_v1.rs"),
             include_str!("human_bo3_v1/sower_v14.rs"),

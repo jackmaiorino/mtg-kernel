@@ -151,15 +151,32 @@ impl FastActorSessionV1 {
             return Err(RlContractError("wrong Akroma snapshot owner".into()));
         }
         crate::akroma_public_v1::validate_state(&restored.state).map_err(RlContractError)?;
-        restored.environment_revision = self
+        let next_revision = self
             .environment_revision
             .max(restored.environment_revision)
             .checked_add(1)
             .ok_or_else(|| RlContractError("Akroma mixed restore revision exhausted".into()))?;
         if let Some(mut current) = restored.current.take() {
+            // Authenticate the original snapshot relation before rebinding its owner.
             prepare_current(&restored, &mut current)
-                .map_err(|_| RlContractError("invalid Akroma restored menu".into()))?;
+                .map_err(|_| RlContractError("invalid original Akroma restored menu".into()))?;
+            restored
+                .surface
+                .rebind_owned_revision_after_restore_v1(
+                    &restored.state,
+                    restored.environment_revision,
+                    next_revision,
+                )
+                .map_err(|_| {
+                    RlContractError("invalid original restored combat scan owner".into())
+                })?;
+            restored.environment_revision = next_revision;
+            current.environment_revision = next_revision;
+            prepare_current(&restored, &mut current)
+                .map_err(|_| RlContractError("invalid rebound Akroma restored menu".into()))?;
             restored.current = Some(current);
+        } else {
+            restored.environment_revision = next_revision;
         }
         *self = restored;
         Ok(())
@@ -311,6 +328,68 @@ mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::put;
 
+    #[test]
+    fn genuine_attacker_scan_restore_rebinds_derived_owner_and_accepts_next_action_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let elf = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(elf).summoning_sick = false;
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                put(&mut state, seat, "Forest", Zone::Battlefield);
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+            state.step = crate::state::Step::DeclareAttackers;
+            let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let FastActorResponseV1::Decision(old) = session.current_response() else {
+                panic!("actual attacker scan");
+            };
+            assert_eq!(
+                old.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let snapshot = session.snapshot_v1();
+            let before = session.privileged_core_environment_hash();
+            let mut corrupt = snapshot.clone();
+            corrupt.0.current.as_mut().unwrap().environment_revision += 1;
+            assert!(session.akroma_restore_v40(&corrupt).is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            assert_eq!(
+                session.current_response(),
+                FastActorResponseV1::Decision(old)
+            );
+            session.akroma_restore_v40(&snapshot).unwrap();
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("restored attacker scan");
+            };
+            assert_ne!(old.environment_revision, current.environment_revision);
+            assert_eq!(
+                current.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let candidate = session
+                .current
+                .as_ref()
+                .unwrap()
+                .candidates
+                .iter()
+                .position(|c| {
+                    matches!(
+                        c.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    )
+                })
+                .unwrap();
+            session
+                .step(current.episode_id, current.step, candidate as u32)
+                .unwrap();
+            assert!(session.state.engine.combat.attackers.contains(&elf));
+        }
+    }
     #[test]
     fn repeated_owning_restore_never_revives_previous_private_union_binding_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
