@@ -4491,6 +4491,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
 fn object_name_for(name: &str) -> &str {
     match name {
         "Nameless Creature Copy Token" => "",
+        "Ajani Cat Token" => "Cat Token",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
@@ -4847,6 +4848,35 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "AjaniFullV42" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(1)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::counter_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToOneCreature)",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(-3)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::strike_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "Creature",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(-8)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::cats_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         "Krenko, Mob Boss" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Tap],
             effect: AbilityEffectRecipe::StandardProgram("crate::krenko_v1::program"),
@@ -6515,6 +6545,19 @@ fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
 /// Rust source for a card's activated abilities. `canonical` omits the
 /// face of single-faced abilities so earlier catalogs keep their card
 /// database identity byte for byte.
+// Only an explicitly admitted full record selects this preparation. The
+// historical Partial record still passes its original name and emits &[];
+// no active metadata, numeric ID or catalog capability is changed here.
+fn activated_recipe_key(card: &CardJson) -> &str {
+    if card.name == "Ajani, Caller of the Pride"
+        && card.engine_capability == EngineCapabilityJson::Full
+    {
+        "AjaniFullV42"
+    } else {
+        &card.name
+    }
+}
+
 fn activated_abilities_src(name: &str, canonical: bool) -> String {
     let recipes = activated_ability_recipes_for(name);
     if recipes.is_empty() {
@@ -7648,7 +7691,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // others silently stale.
     let mut activated_effects = Vec::new();
     for card in cards {
-        for recipe in activated_ability_recipes_for(&card.name) {
+        for recipe in activated_ability_recipes_for(activated_recipe_key(card)) {
             if !activated_effects.contains(&recipe.effect) {
                 activated_effects.push(recipe.effect);
             }
@@ -9905,7 +9948,10 @@ fn codegen(cards: &[CardJson]) -> String {
         if executable && !c.is_token {
             // A land without a mana ability must still have printed rules
             // text the kernel executes (Evolving Wilds' fetch ability).
-            if c.is_land && !has_mana_program && activated_ability_recipes_for(&c.name).is_empty() {
+            if c.is_land
+                && !has_mana_program
+                && activated_ability_recipes_for(activated_recipe_key(c)).is_empty()
+            {
                 panic!(
                     "cards_v1.json: executable land {:?} has no generated mana program",
                     c.name
@@ -10012,7 +10058,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(
             out,
             "        activated_abilities: {},",
-            activated_abilities_for(&c.name)
+            activated_abilities_for(activated_recipe_key(c))
         )
         .unwrap();
         writeln!(out, "        plot_cost: {},", plot_cost_for(&c.name)).unwrap();
@@ -10586,7 +10632,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&special_for(&c.name).canonical_token());
         canon.push('|');
         canon.push_str("activated=");
-        canon.push_str(&activated_abilities_token(&c.name));
+        canon.push_str(&activated_abilities_token(activated_recipe_key(c)));
         canon.push('|');
         canon.push_str("escape=");
         canon.push_str(&escape_for(&c.name));

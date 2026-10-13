@@ -636,6 +636,7 @@ pub mod fishing_pole_public_v39;
 pub(crate) mod fishing_pole_v39;
 pub mod rules_meaning_fishing_pole_v39;
 
+pub mod ajani_full_v42;
 pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
@@ -643,3 +644,9 @@ pub mod controlled_creature_grants_v1;
 pub mod rules_meaning_akroma_v1;
 pub mod twinflame_observation_v1;
 pub mod twinflame_tyrant_v1;
+
+pub mod rules_meaning_ajani_v42;
+
+pub mod ajani_public_v42;
+
+pub mod ajani_observation_v42;

@@ -36,6 +36,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod ajani_v42;
 pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
@@ -4422,6 +4423,7 @@ fn flat_validate_expected_decision_akroma_inner(
             FlatActionContractModeV1::TwinflameV38
                 | FlatActionContractModeV1::AkromaV40
                 | FlatActionContractModeV1::LimitedCommonV1
+                | FlatActionContractModeV1::AjaniV42
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4444,7 +4446,7 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1),
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4577,6 +4579,7 @@ enum FlatActionContractModeV1 {
     FishingPoleV39,
     TwinflameV38,
     LimitedCommonV1,
+    AjaniV42,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5531,6 +5534,18 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::ajani_full_v42::lifecycle::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:ajani_v42_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7238,7 +7253,12 @@ impl FastActorSessionV1 {
                 )
             })?;
             let mut rederived = current.clone();
-            akroma_v40::prepare_current(self, &mut rederived).map_err(|_| {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42 {
+                ajani_v42::prepare_current(self, &mut rederived)
+            } else {
+                akroma_v40::prepare_current(self, &mut rederived)
+            }
+            .map_err(|_| {
                 session_error(
                     RlSessionErrorCode::StaleEnvironmentBinding,
                     "invalid Akroma complete binding",
@@ -7388,12 +7408,29 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if (crate::ajani_full_v42::lifecycle::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::AjaniV42)
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
+                && crate::ajani_observation_v42::validate_state(&self.state).is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:ajani_v42_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::twinflame_tyrant_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,
                 FlatActionContractModeV1::TwinflameV38
                     | FlatActionContractModeV1::AkromaV40
                     | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7425,7 +7462,11 @@ impl FastActorSessionV1 {
             return;
         }
         if (if self.is_common_v40() {
-            crate::akroma_public_v1::validate_state(&self.state)
+            if self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42 {
+                crate::ajani_observation_v42::validate_state(&self.state)
+            } else {
+                crate::akroma_public_v1::validate_state(&self.state)
+            }
         } else {
             crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
         })
@@ -7536,6 +7577,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ArahboV31
                     | FlatActionContractModeV1::AkromaV40
                     | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
             )
         {
             self.current = None;
@@ -7589,6 +7631,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ArahboV31
                     | FlatActionContractModeV1::AkromaV40
                     | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7909,6 +7952,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:twinflame_v38:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AjaniV42 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = ajani_v42::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:ajani_v42:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
