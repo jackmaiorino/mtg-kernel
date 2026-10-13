@@ -19,8 +19,9 @@ Rules compared at every node:
   mean result when none has m. The pick takes the same floor of 8 backups as
   the current rule (`floor 8`), and, as a secondary reading, a floor of m.
 
-Stop rules are evaluated on the root at checkpoints (every attempt for small
-searches; `--checkpoints` evenly spaced attempts otherwise):
+Stop rules are evaluated on the root after every attempt (the bounds rule,
+whose bounds are costlier, at every attempt for small searches and at
+`--checkpoints` evenly spaced attempts otherwise):
 
 - strict: every root edge has been tried and the leader's worst case (all
   remaining attempts go to it and lose) beats every rival's best case (all
@@ -35,12 +36,18 @@ A line count takes the attempts through a root edge whose later tree choices
 all equal the best-line pick (floor m) of their node at that checkpoint.
 Remaining attempts are the remaining transitions over the mean transitions per
 natural attempt so far.
+
+Values and line counts are kept incrementally (an attempt changes only the
+nodes on its path), so a search costs time linear in its attempts.
 """
 
 import argparse
+import functools
 import glob
+import gzip
 import json
 import math
+import multiprocessing
 import os
 import random
 import sys
@@ -50,6 +57,46 @@ CURRENT_FLOOR = 8
 EPS = 1e-12
 
 
+def _betacf(a, b, x):
+    """Continued fraction of the incomplete beta function (modified Lentz)."""
+    tiny, qab, qap, qam = 1e-300, a + b, a + 1.0, a - 1.0
+    c, d = 1.0, 1.0 - qab * x / qap
+    d = 1.0 / (d if abs(d) > tiny else tiny)
+    h = d
+    for m in range(1, 1000):
+        m2 = 2 * m
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        h *= d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + aa / c
+        c = c if abs(c) > tiny else tiny
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return h
+
+
+def betainc(a, b, x):
+    """Regularized incomplete beta I_x(a, b)."""
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    front = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+                     + a * math.log(x) + b * math.log1p(-x))
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _betacf(a, b, x) / a
+    return 1.0 - front * _betacf(b, a, 1.0 - x) / b
+
+
+@functools.lru_cache(maxsize=1 << 16)
 def cp_low(s, n, alpha=0.05):
     """One-sided Clopper-Pearson lower bound for s successes in n."""
     if n == 0 or s == 0:
@@ -57,15 +104,8 @@ def cp_low(s, n, alpha=0.05):
     lo, hi = 0.0, 1.0
     for _ in range(60):
         p = (lo + hi) / 2
-        # P(X >= s) at p, through the log-space binomial tail.
-        tail = 0.0
-        for k in range(s, n + 1):
-            tail += math.exp(
-                math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
-                + (k * math.log(p) if k else 0.0)
-                + ((n - k) * math.log1p(-p) if n - k else 0.0)
-            )
-        if tail < alpha:
+        # P(X >= s) at p is I_p(s, n - s + 1).
+        if betainc(s, n - s + 1, p) < alpha:
             lo = p
         else:
             hi = p
@@ -78,12 +118,28 @@ def cp_up(s, n, alpha=0.05):
     return 1.0 - cp_low(n - s, n, alpha)
 
 
+def load_json(path):
+    if path.endswith(".gz"):
+        with gzip.open(path, "rt") as f:
+            return json.load(f)
+    with open(path) as f:
+        return json.load(f)
+
+
+def find(dirs, kind):
+    """`*.<kind>.json` and `*.<kind>.json.gz` files under the directories."""
+    out = set()
+    for d in dirs:
+        for ext in ("json", "json.gz"):
+            out.update(glob.glob(os.path.join(d, "**", f"*.{kind}.{ext}"), recursive=True))
+    return sorted(out)
+
+
 class Search:
     """One logged selection: nodes in creation order, attempts in order."""
 
     def __init__(self, path):
-        with open(path) as f:
-            d = json.load(f)
+        d = load_json(path)
         self.path = path
         self.meta = {k: v for k, v in d.items() if k not in ("nodes", "sims")}
         self.nodes = d["nodes"]
@@ -109,72 +165,101 @@ class Search:
 
 
 class State:
-    """Counts after the first T natural attempts of a search."""
+    """Counts after the first T natural attempts of a search, with each
+    threshold m's best-line values, picks (floor m) and line counts kept
+    incrementally: an attempt changes only the nodes on its path."""
 
-    def __init__(self, s):
+    def __init__(self, s, m_values):
         self.s = s
-        N = len(s.nodes)
-        self.n = [[0] * s.nodes[i]["k"] for i in range(N)]
-        self.w = [[0] * s.nodes[i]["k"] for i in range(N)]
+        K = [node["k"] for node in s.nodes]
+        N = len(K)
+        zeros = lambda: [[0] * k for k in K]  # noqa: E731
+        self.n, self.w = zeros(), zeros()
         self.thr = [[0, 0] for _ in range(N)]  # through: tries, wins
-        self.kids = [defaultdict(lambda: defaultdict(int)) for _ in range(N)]  # a -> child -> count
-        self.clean = [defaultdict(lambda: [0, 0]) for _ in range(N)]  # a -> [count, wins]
-        self.dirty = [defaultdict(lambda: [0, 0]) for _ in range(N)]
+        # Direct results at a path's last edge: with no rollout-policy choice
+        # of ours after it (clean), and after one (dirty): tries, wins.
+        self.ct, self.cw, self.dt, self.dw = zeros(), zeros(), zeros(), zeros()
+        self.ms = list(m_values)
+        self.Q = {m: [[0.0] * k for k in K] for m in self.ms}
+        self.V = {m: [0.0] * N for m in self.ms}
+        self.P = {m: [None] * N for m in self.ms}  # best-line pick, floor m
+        # Per edge: sum of visits times value over its child nodes.
+        self.KS = {m: [[0.0] * k for k in K] for m in self.ms}
+        self.KV = zeros()  # per edge: sum of its child nodes' visits
+        # Line counts (wins, tries, world-only wins) of the attempts through a
+        # node whose choices from it down follow the picks, and per edge the
+        # sum over its child nodes.
+        self.L = {m: [(0, 0, 0)] * N for m in self.ms}
+        self.LK = {m: [[(0, 0, 0)] * k for k in K] for m in self.ms}
         self.T = 0
         self.spent = 0
-        self.attempts = []  # per attempt: (root edge, path, win, world_only)
 
     def add(self, sim):
         _, win, transitions, rollout_choices, flat = sim
         path = [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
-        if any(n < 0 for n, _ in path):
+        if not path or any(n < 0 for n, _ in path):
             raise ValueError(f"{self.s.path}: broken path in attempt {sim[0]}")
-        world_only = rollout_choices == 0
-        for j, (node, a) in enumerate(path):
+        for node, a in path:
             self.n[node][a] += 1
             self.w[node][a] += win
-            self.thr[node][0] += 1
-            self.thr[node][1] += win
-            if j + 1 < len(path):
-                self.kids[node][a][path[j + 1][0]] += 1
-            else:
-                bucket = self.clean if world_only else self.dirty
-                bucket[node][a][0] += 1
-                bucket[node][a][1] += win
+            t = self.thr[node]
+            t[0] += 1
+            t[1] += win
+        for node, a in path[:-1]:
+            self.KV[node][a] += 1
+        last, la = path[-1]
+        if rollout_choices == 0:
+            self.ct[last][la] += 1
+            self.cw[last][la] += win
+        else:
+            self.dt[last][la] += 1
+            self.dw[last][la] += win
+        for m in self.ms:
+            self._values(path, m)
         self.T += 1
         self.spent += transitions
-        self.attempts.append((path[0][1] if path else None, path, win, world_only))
+
+    def _values(self, path, m):
+        s = self.s
+        Q, V, P, KS, L, LK = self.Q[m], self.V[m], self.P[m], self.KS[m], self.L[m], self.LK[m]
+        carry = None
+        for i, a in reversed(path):
+            if carry is not None:
+                vb, va, lb, la = carry
+                KS[i][a] += va - vb
+                x = LK[i][a]
+                LK[i][a] = (x[0] + la[0] - lb[0], x[1] + la[1] - lb[1], x[2] + la[2] - lb[2])
+            cnt = self.KV[i][a] + self.ct[i][a]
+            tot = KS[i][a] + self.cw[i][a]
+            if cnt >= m:
+                Q[i][a] = tot / cnt
+            else:
+                Q[i][a] = (tot + self.dw[i][a]) / (cnt + self.dt[i][a])
+            n_i, q_i, skip = self.n[i], Q[i], s.skip[i]
+            best, pick = None, None
+            for e in s.perm[i]:
+                if skip[e] or n_i[e] < m:
+                    continue
+                if best is None or q_i[e] > best:
+                    best, pick = q_i[e], e
+            visits, wins = self.thr[i]
+            old_v, old_l = V[i], L[i]
+            V[i] = best if best is not None else wins / visits
+            P[i] = pick
+            lw = lt = lc = 0
+            for e in ((pick,) if pick is not None else range(len(n_i))):
+                if n_i[e] == 0:
+                    continue
+                k = LK[i][e]
+                lw += self.cw[i][e] + self.dw[i][e] + k[0]
+                lt += self.ct[i][e] + self.dt[i][e] + k[1]
+                lc += self.cw[i][e] + k[2]
+            L[i] = (lw, lt, lc)
+            carry = ((visits - 1) * old_v, visits * V[i], old_l, L[i])
 
     def best_line(self, m):
         """Q per (node, edge) and V per node under the best-line rule."""
-        s = self.s
-        V = [None] * len(s.nodes)
-        Q = [dict() for _ in range(len(s.nodes))]
-        # Children are created after their parents: descending ids are bottom-up.
-        for i in range(len(s.nodes) - 1, -1, -1):
-            if self.thr[i][0] == 0:
-                continue
-            best = None
-            for a in range(len(self.n[i])):
-                if self.n[i][a] == 0 or s.skip[i][a]:
-                    continue
-                csum, ccnt = 0.0, 0
-                for c, cnt in self.kids[i][a].items():
-                    csum += cnt * V[c]
-                    ccnt += cnt
-                cl = self.clean[i].get(a, (0, 0))
-                csum += cl[1]
-                ccnt += cl[0]
-                if ccnt >= m:
-                    q = csum / ccnt
-                else:
-                    dt = self.dirty[i].get(a, (0, 0))
-                    q = (csum + dt[1]) / (ccnt + dt[0])
-                Q[i][a] = q
-                if self.n[i][a] >= m and (best is None or q > best):
-                    best = q
-            V[i] = best if best is not None else self.thr[i][1] / self.thr[i][0]
-        return Q, V
+        return self.Q[m], self.V[m]
 
     def pick(self, i, value, floor):
         """Greatest value among edges with at least `floor` backups, ties to
@@ -194,25 +279,16 @@ class State:
     def bestline_pick(self, i, Q, floor):
         return self.pick(i, lambda a: Q[i][a], floor)
 
-    def line_counts(self, Q, m):
+    def line_counts(self, m):
         """Per root edge: (wins, tries, world-only wins) of attempts whose later
         tree choices all follow the best-line pick (floor m)."""
-        picks = {}
-        out = defaultdict(lambda: [0, 0, 0])
-        for a0, path, win, world_only in self.attempts:
-            ok = True
-            for node, a in path[1:]:
-                if node not in picks:
-                    picks[node] = self.bestline_pick(node, Q, m)
-                p = picks[node]
-                if p is not None and p != a:
-                    ok = False
-                    break
-            if ok:
-                c = out[a0]
-                c[0] += win
-                c[1] += 1
-                c[2] += win and world_only
+        r = self.s.root
+        out = {}
+        for a in range(len(self.n[r])):
+            if self.n[r][a]:
+                k = self.LK[m][r][a]
+                out[a] = (self.cw[r][a] + self.dw[r][a] + k[0],
+                          self.ct[r][a] + self.dt[r][a] + k[1], self.cw[r][a] + k[2])
         return out
 
 
@@ -222,48 +298,50 @@ def checkpoints(total, limit):
     return sorted({max(1, round(total * (j + 1) / limit)) for j in range(limit)})
 
 
-def stop_rules(s, m, ks, limit, any_line_win=False):
-    """Fire point and leader of each stop rule over the search's attempts."""
-    st = State(s)
+def stop_rules(s, m_values, ks, limit, any_line_win=False):
+    """Fire point and leader of each stop rule over the search's attempts,
+    per threshold m."""
+    st = State(s, m_values)
     marks = set(checkpoints(len(s.sims), limit))
-    fired = {}
     names = ["strict", "bounds"] + [f"proven{k}" for k in ks]
+    fired = {m: {} for m in m_values}
     r = s.root
+    edges = [a for a in range(len(st.n[r])) if not s.skip[r][a]]
     for t, sim in enumerate(s.sims, 1):
         st.add(sim)
-        if t not in marks or len(fired) == len(names):
-            continue
-        Q, V = st.best_line(m)
-        lead = st.bestline_pick(r, Q, m)
-        if lead is None:
-            continue
-        mean_tr = st.spent / st.T if st.T else 0
-        R = max(0.0, (s.cap - st.spent) / mean_tr) if mean_tr and s.cap else 0.0
-        edges = [a for a in range(len(st.n[r])) if not s.skip[r][a]]
-        rivals = [a for a in edges if a != lead]
-        ql, nl = Q[r][lead], st.n[r][lead]
-        if "strict" not in fired and all(st.n[r][a] > 0 for a in edges):
-            worst = ql * nl / (nl + R)
-            if all(worst > (Q[r][c] * st.n[r][c] + R) / (st.n[r][c] + R) for c in rivals):
-                fired["strict"] = (t, st.spent, lead)
-        need_lines = "bounds" not in fired or (
-            ql >= 1 - EPS and any(f"proven{k}" not in fired for k in ks)
-        )
-        if not need_lines:
-            continue
-        lines = st.line_counts(Q, m)
-        lw, ln, lworld = lines.get(lead, (0, 0, 0))
-        if any_line_win:
-            lworld = lw
-        if "bounds" not in fired and ln:
-            ups = [cp_up(*lines[c][:2]) if c in lines else 1.0 for c in rivals]
-            if cp_low(lw, ln) > max(ups, default=0.0):
-                fired["bounds"] = (t, st.spent, lead)
-        if ql >= 1 - EPS:
-            for k in ks:
-                if f"proven{k}" not in fired and lworld >= k:
-                    fired[f"proven{k}"] = (t, st.spent, lead)
-    return {n: fired.get(n) for n in names}, st
+        for m in m_values:
+            f = fired[m]
+            if len(f) == len(names):
+                continue
+            Q = st.Q[m]
+            lead = st.bestline_pick(r, Q, m)
+            if lead is None:
+                continue
+            rivals = [a for a in edges if a != lead]
+            ql, nl = Q[r][lead], st.n[r][lead]
+            if "strict" not in f and all(st.n[r][a] > 0 for a in edges):
+                mean_tr = st.spent / st.T
+                R = max(0.0, (s.cap - st.spent) / mean_tr) if mean_tr and s.cap else 0.0
+                worst = ql * nl / (nl + R)
+                if all(worst > (Q[r][c] * st.n[r][c] + R) / (st.n[r][c] + R) for c in rivals):
+                    f["strict"] = (t, st.spent, lead)
+            check_bounds = "bounds" not in f and t in marks
+            check_proven = ql >= 1 - EPS and any(f"proven{k}" not in f for k in ks)
+            if not (check_bounds or check_proven):
+                continue
+            lines = st.line_counts(m)
+            lw, ln, lworld = lines.get(lead, (0, 0, 0))
+            if any_line_win:
+                lworld = lw
+            if check_bounds and ln:
+                ups = [cp_up(*lines[c][:2]) if c in lines else 1.0 for c in rivals]
+                if cp_low(lw, ln) > max(ups, default=0.0):
+                    f["bounds"] = (t, st.spent, lead)
+            if check_proven:
+                for k in ks:
+                    if f"proven{k}" not in f and lworld >= k:
+                        f[f"proven{k}"] = (t, st.spent, lead)
+    return {m: {n: fired[m].get(n) for n in names} for m in m_values}, st
 
 
 def integrity(s, st):
@@ -332,13 +410,7 @@ def analyse(s, args, actual_hits):
         row["skipped"] = "no root or no natural attempts"
         return row, []
     out_nodes = []
-    stops = {}
-    final = None
-    for m in m_values:
-        fired, st = stop_rules(s, m, args.k, args.checkpoints, args.any_line_win)
-        stops[m] = fired
-        final = st
-    st = final
+    stops, st = stop_rules(s, m_values, args.k, args.checkpoints, args.any_line_win)
     row["integrity_mismatched_nodes"] = integrity(s, st)
     r = s.root
     cur = st.current_pick(r)
@@ -346,6 +418,8 @@ def analyse(s, args, actual_hits):
     row["current_value"] = st.w[r][cur] / st.n[r][cur] if cur is not None else None
     row["root_mean"] = st.thr[r][1] / st.thr[r][0]
     row["by_m"] = {}
+    hit_ids = {s.key_index[k] for k in actual_hits if k in s.key_index}
+    current = [st.current_pick(i) for i in range(len(s.nodes))]
     for m in m_values:
         Q, V = st.best_line(m)
         p8 = st.bestline_pick(r, Q, CURRENT_FLOOR)
@@ -363,20 +437,27 @@ def analyse(s, args, actual_hits):
                                       "saved_share": 1 - spent / s.cap if s.cap else None,
                                       "pick": lead, "equals_full_bestline": lead == pm,
                                       "equals_full_current": lead == cur}
-        row["by_m"][str(m)] = rec
-        # Every tree node with a supported current pick, and the actual history.
-        hit_ids = {s.key_index[k] for k in actual_hits if k in s.key_index}
-        for i in range(len(s.nodes)):
-            c = st.current_pick(i)
+        # Every tree node with a supported current pick is counted; the root,
+        # the actual history's nodes and Spy / Dread Return target nodes are
+        # also listed.
+        supported = changed = 0
+        for i, c in enumerate(current):
             if c is None:
                 continue
             p = st.bestline_pick(i, Q, CURRENT_FLOOR)
-            out_nodes.append({"search": row["file"], "m": m, "node": i, "depth": s.nodes[i]["depth"],
-                              "root": i == r, "actual": i in hit_ids, "kinds": node_kind(s, i),
-                              "current": c, "bestline": p, "current_class": choice_class(s, i, c),
-                              "bestline_class": choice_class(s, i, p),
-                              "current_value": st.w[i][c] / st.n[i][c],
-                              "bestline_value": Q[i][p] if p is not None else None})
+            supported += 1
+            changed += p != c
+            kinds = node_kind(s, i)
+            if i == r or i in hit_ids or kinds:
+                out_nodes.append({"search": row["file"], "m": m, "node": i, "depth": s.nodes[i]["depth"],
+                                  "root": i == r, "actual": i in hit_ids, "kinds": kinds,
+                                  "current": c, "bestline": p, "current_class": choice_class(s, i, c),
+                                  "bestline_class": choice_class(s, i, p),
+                                  "current_value": st.w[i][c] / st.n[i][c],
+                                  "bestline_value": Q[i][p] if p is not None else None})
+        rec["supported_nodes"] = supported
+        rec["supported_nodes_changed"] = changed
+        row["by_m"][str(m)] = rec
     mana = []
     for i in range(len(s.nodes)):
         for g in mana_split(s, st, i):
@@ -390,9 +471,8 @@ def load_actual(dirs):
     """Root identity -> outcome and matched node keys of guide histories."""
     by_root = {}
     for d in dirs:
-        for p in glob.glob(os.path.join(d, "**", "*.actual.json"), recursive=True):
-            with open(p) as f:
-                a = json.load(f)
+        for p in find([d], "actual"):
+            a = load_json(p)
             for srch in a.get("searches", []):
                 k = srch["search"]
                 root = a["search_root"] if k == 0 else f"{a['search_root']}/refresh{k}"
@@ -475,7 +555,9 @@ def summarise(rows, nodes, m_values, ks):
                     moves[f"{x['current_class']}->{x['bestline_class']}"] += 1
             return {"nodes": len(xs), "changed": sum(1 for x in xs if x["current"] != x["bestline"]),
                     "changes": dict(moves)}
-        sm["all_supported_nodes"] = tally(lambda x: True)
+        sm["all_supported_nodes"] = {"nodes": sum(x["supported_nodes"] for x in rs),
+                                     "changed": sum(x["supported_nodes_changed"] for x in rs)}
+        sm["listed_nodes"] = tally(lambda x: True)
         sm["actual_history_nodes"] = tally(lambda x: x["actual"])
         sm["spy_target_nodes"] = tally(lambda x: "spy_target" in x["kinds"])
         sm["spy_target_actual"] = tally(lambda x: "spy_target" in x["kinds"] and x["actual"])
@@ -495,48 +577,70 @@ def summarise(rows, nodes, m_values, ks):
     return out
 
 
+_JOB = {}
+
+
+def _init(args, actual, extra):
+    _JOB.update(args=args, actual=actual, extra=extra)
+
+
+def _one(p):
+    """Rescores one search log: its row, listed nodes and calibration rows."""
+    args, actual, extra = _JOB["args"], _JOB["actual"], _JOB["extra"]
+    s = Search(p)
+    a = actual.get((s.meta.get("model"), s.meta.get("root"), s.meta.get("tree_hash")))
+    row, ns = analyse(s, args, a["keys"] if a else [])
+    cal = []
+    if row.get("skipped"):
+        return row, ns, cal
+    outcomes = None
+    if a and a.get("valid") and a.get("end") in ("win", "loss"):
+        outcomes = [1.0 if a["end"] == "win" else 0.0]
+        game = a["game"]
+    elif f"{s.meta.get('model')}\t{s.meta.get('root')}" in extra:
+        outcomes = extra[f"{s.meta.get('model')}\t{s.meta.get('root')}"]
+        game = s.meta.get("root")
+    for o in outcomes or []:
+        c = {"game": game, "outcome": o, "v_current": row["current_value"], "v_root_mean": row["root_mean"]}
+        for m in map(str, args.m):
+            c[f"v_bestline_m{m}"] = row["by_m"][m]["value_pick_floor8"]
+            c[f"v_bestline_root_m{m}"] = row["by_m"][m]["root_value"]
+        cal.append(c)
+    return row, ns, cal
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("logs", nargs="+", help="directories of S4A_PATH_LOG files")
+    ap.add_argument("logs", nargs="+", help="directories of S4A_PATH_LOG files (.json or .json.gz)")
     ap.add_argument("--out", required=True, help="output directory")
     ap.add_argument("--m", type=int, nargs="+", default=[3, 8])
     ap.add_argument("--k", type=int, nargs="+", default=[5, 8])
     ap.add_argument("--checkpoints", type=int, default=400,
-                    help="evaluate stop rules at every attempt up to this many, else at this many points")
+                    help="evaluate the bounds rule at every attempt up to this many, else at this many points")
     ap.add_argument("--any-line-win", action="store_true",
                     help="proven-k counts every line win (for logs without rollout-choice counts)")
     ap.add_argument("--outcomes", help="optional JSON {model + '\\t' + root: [results 0/1]} for searches without guides")
+    ap.add_argument("--jobs", type=int, default=1, help="worker processes, one search log each")
     args = ap.parse_args(argv)
     actual = load_actual(args.logs)
-    extra = {}
-    if args.outcomes:
-        with open(args.outcomes) as f:
-            extra = json.load(f)
+    extra = load_json(args.outcomes) if args.outcomes else {}
+    files = find(args.logs, "search")
     rows, nodes, cal = [], [], []
-    files = sorted(p for d in args.logs for p in glob.glob(os.path.join(d, "**", "*.search.json"), recursive=True))
-    for p in files:
-        s = Search(p)
-        a = actual.get((s.meta.get("model"), s.meta.get("root"), s.meta.get("tree_hash")))
-        row, ns = analyse(s, args, a["keys"] if a else [])
+    if args.jobs > 1:
+        pool = multiprocessing.Pool(args.jobs, initializer=_init, initargs=(args, actual, extra))
+        results = pool.imap(_one, files)
+    else:
+        pool = None
+        _init(args, actual, extra)
+        results = map(_one, files)
+    for row, ns, c in results:
         rows.append(row)
         nodes.extend(ns)
-        if row.get("skipped"):
-            continue
-        outcomes = None
-        if a and a.get("valid") and a.get("end") in ("win", "loss"):
-            outcomes = [1.0 if a["end"] == "win" else 0.0]
-            game = a["game"]
-        elif f"{s.meta.get('model')}\t{s.meta.get('root')}" in extra:
-            outcomes = extra[f"{s.meta.get('model')}\t{s.meta.get('root')}"]
-            game = s.meta.get("root")
-        if outcomes:
-            for o in outcomes:
-                c = {"game": game, "outcome": o, "v_current": row["current_value"], "v_root_mean": row["root_mean"]}
-                for m in map(str, args.m):
-                    c[f"v_bestline_m{m}"] = row["by_m"][m]["value_pick_floor8"]
-                    c[f"v_bestline_root_m{m}"] = row["by_m"][m]["root_value"]
-                cal.append(c)
+        cal.extend(c)
         print(f"{row['file']}: attempts {row['attempts']}", file=sys.stderr)
+    if pool:
+        pool.close()
+        pool.join()
     os.makedirs(args.out, exist_ok=True)
     summary = summarise(rows, nodes, args.m, args.k)
     summary["calibration"] = calibration([c for c in cal if c["v_current"] is not None]) if cal else None

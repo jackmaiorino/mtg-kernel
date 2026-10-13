@@ -73,7 +73,7 @@ class BestLine(unittest.TestCase):
         s.nodes, s.sims, s.path = log["nodes"], log["sims"], "x"
         s.perm = [n["perm"] for n in s.nodes]
         s.skip = [[False] * n["k"] for n in s.nodes]
-        st = B.State(s)
+        st = B.State(s, [3])
         for sim in s.sims[:3]:
             st.add(sim)
         Q, V = st.best_line(3)
