@@ -13,6 +13,8 @@ use crate::surface_v2::{
     HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
 };
 use serde::{Deserialize, Serialize};
+mod hunter_order_v45;
+pub use hunter_order_v45::TriggerOrderContextV45;
 
 pub const POLICY_SURFACE_VERSION: u32 = 5;
 pub const POLICY_ENVIRONMENT_HASH_ALGORITHM: &str =
@@ -376,6 +378,8 @@ impl CombatScanV5 {
 pub struct PolicySurfaceV5 {
     inner: HarnessSurfaceV2,
     scan: Option<CombatScanV5>,
+    hunter_order_enabled_v45: bool,
+    hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
 }
 
 impl PolicySurfaceV5 {
@@ -399,6 +403,8 @@ impl PolicySurfaceV5 {
         Self {
             inner: HarnessSurfaceV2::new_with_priority_mode_v1(mode, audit),
             scan: None,
+            hunter_order_enabled_v45: false,
+            hunter_order_v45: None,
         }
     }
 
@@ -409,6 +415,8 @@ impl PolicySurfaceV5 {
         Self {
             inner: HarnessSurfaceV2::new_with_suppression_audit_mode(mode),
             scan: None,
+            hunter_order_enabled_v45: false,
+            hunter_order_v45: None,
         }
     }
 
@@ -433,6 +441,12 @@ impl PolicySurfaceV5 {
     }
 
     pub fn discard_unanswered_scan(&mut self) -> Result<(), String> {
+        if let Some(order) = &self.hunter_order_v45 {
+            if !order.prefix.is_empty() {
+                return Err("refusing to discard partially answered Hunter ordering".into());
+            }
+            self.hunter_order_v45 = None;
+        }
         match &self.scan {
             None => Ok(()),
             Some(CombatScanV5::Attackers { cursor: 0, .. })
@@ -522,10 +536,25 @@ impl PolicySurfaceV5 {
             )?;
             scan.validate_shape()?;
         }
+        if let Some(order) = self.hunter_order_v45.as_ref() {
+            self.validate_hunter_order_header_v45(
+                state,
+                previous,
+                &PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers {
+                    player: order.player,
+                    pending: order.pending.clone(),
+                })),
+                self.hunter_order_substeps_v45(state)?
+                    .ok_or("Hunter ordering substeps absent")?,
+            )?;
+        }
         if let Some(scan) = self.scan.as_mut() {
             let (CombatScanV5::Attackers { binding, .. } | CombatScanV5::Blockers { binding, .. }) =
                 scan;
             *binding = CombatScanBindingV5::OwnedEnvironmentRevision(next);
+        }
+        if let Some(order) = self.hunter_order_v45.as_mut() {
+            order.binding = CombatScanBindingV5::OwnedEnvironmentRevision(next);
         }
         Ok(())
     }
@@ -550,6 +579,18 @@ impl PolicySurfaceV5 {
         state: &mut GameState,
         binding_mode: EnvironmentBindingModeV5,
     ) -> Result<PolicyDecisionV5, String> {
+        if let Some(order) = &self.hunter_order_v45 {
+            let origin =
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers {
+                    player: order.player,
+                    pending: order.pending.clone(),
+                }));
+            let EnvironmentBindingModeV5::OwnedRevision(revision) = binding_mode else {
+                return Err("Hunter ordering requires its owning revision".into());
+            };
+            self.initialize_hunter_order_v45(state, &origin, revision)?;
+            return Ok(origin);
+        }
         if let Some(scan) = &self.scan {
             scan.validate_binding(state, &self.inner, binding_mode)?;
             return policy_decision_for_scan(scan);
@@ -584,7 +625,16 @@ impl PolicySurfaceV5 {
                 });
                 policy_decision_for_scan(self.scan.as_ref().expect("scan just initialized"))
             }
-            other => Ok(PolicyDecisionV5::Surface(other)),
+            other => {
+                let origin = PolicyDecisionV5::Surface(other);
+                if self.hunter_order_enabled_v45 {
+                    let EnvironmentBindingModeV5::OwnedRevision(revision) = binding_mode else {
+                        return Err("Hunter ordering opt-in requires owning surface".into());
+                    };
+                    self.initialize_hunter_order_v45(state, &origin, revision)?;
+                }
+                Ok(origin)
+            }
         }
     }
 
@@ -636,6 +686,13 @@ impl PolicySurfaceV5 {
             return Err("invalid owned policy environment revision transition".to_string());
         }
 
+        if self.hunter_order_v45.is_some() {
+            return self.validate_hunter_order_action_v45(
+                state,
+                action,
+                EnvironmentBindingModeV5::OwnedRevision(current_revision),
+            );
+        }
         let Some(scan) = self.scan.as_ref() else {
             if !matches!(action, PolicyActionV5::Surface(_)) {
                 return Err("policy combat inclusion action without an active scan".to_string());
@@ -841,6 +898,9 @@ impl PolicySurfaceV5 {
         binding_mode: EnvironmentBindingModeV5,
         next_owned_revision: Option<u64>,
     ) -> Result<(), String> {
+        if self.hunter_order_v45.is_some() {
+            return self.apply_hunter_order_v45(state, action, binding_mode, next_owned_revision);
+        }
         let Some(scan) = self.scan.as_mut() else {
             return match action {
                 PolicyActionV5::Surface(action) => self.inner.apply(state, action),

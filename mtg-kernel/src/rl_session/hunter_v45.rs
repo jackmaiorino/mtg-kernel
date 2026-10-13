@@ -47,6 +47,15 @@ fn visible_semantic(
         Ok(captured.clone())
     };
     match &mut semantic {
+        #[cfg(feature = "limited-fdn-fixtures")]
+        A::ChooseTriggerOrderNext {
+            actor,
+            source,
+            trigger_index,
+            ..
+        } => {
+            *source = pending_source(*trigger_index, source, *actor)?;
+        }
         A::OrderTriggers {
             actor,
             pending_sources,
@@ -85,6 +94,13 @@ pub(super) fn actual_candidates(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
     if let Some(candidates) =
         crate::divine_actions_v44::candidates_hunter_scoped_v45(origin, state, surface, true)?
     {
@@ -110,6 +126,18 @@ fn validate_additional_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<bool, FlatActionDecisionSliceErrorV1> {
+    if session
+        .surface
+        .validate_hunter_order_header_v45(
+            &session.state,
+            session.environment_revision,
+            &current.origin_decision,
+            (current.substep_index, current.substep_count),
+        )
+        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    {
+        return Ok(true);
+    }
     if crate::linked_aura_operation_v1::has_pending(&session.state) {
         let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
         else {
@@ -355,6 +383,7 @@ impl FastActorSessionV1 {
             flat_action_cache_spare_v2: None,
             terminal: None,
         };
+        session.surface.enable_hunter_order_v45();
         session.advance_to_decision_or_terminal();
         Ok(session)
     }
@@ -409,7 +438,23 @@ impl FastActorSessionV1 {
         self.flat_action_contract_mode = FlatActionContractModeV1::HunterV45;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
+        self.surface.enable_hunter_order_v45();
         if let Some(mut current) = self.current.take() {
+            self.surface
+                .initialize_hunter_order_v45(
+                    &self.state,
+                    &current.origin_decision,
+                    self.environment_revision,
+                )
+                .map_err(RlContractError)?;
+            if let Some((index, count)) = self
+                .surface
+                .hunter_order_substeps_v45(&self.state)
+                .map_err(RlContractError)?
+            {
+                current.substep_index = index;
+                current.substep_count = count;
+            }
             prepare_current(&self, &mut current)
                 .map_err(|error| RlContractError(format!("hunter_v45:{error:?}")))?;
             self.current = Some(current);
@@ -429,6 +474,7 @@ impl FastActorSessionV1 {
             crate::surface_v2::PriorityModeV1::EngineWindowsV1,
             SuppressionAuditMode::Off,
         );
+        session.surface.enable_hunter_order_v45();
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
@@ -556,4 +602,4 @@ impl FastActorSessionV1 {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests;
+pub(crate) mod tests;

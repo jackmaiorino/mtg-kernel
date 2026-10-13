@@ -138,6 +138,7 @@ pub struct HumanHunterExtensionsV45 {
     pub faebloom: HumanFaebloomFactsV43,
     pub divine: HumanDivineFactsV44,
     pub hunter: HumanHunterFactsV45,
+    pub trigger_order: Option<crate::policy_surface_v5::TriggerOrderContextV45>,
     pub creature_target_traits: Vec<HumanCreatureTargetTraitsV43>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -408,6 +409,7 @@ fn state(
             faebloom: project_faebloom(&observation.faebloom, handles)?,
             divine: project_divine(&observation.divine, handles)?,
             hunter: project_hunter(&observation.hunter, handles)?,
+            trigger_order: observation.trigger_order.clone(),
             creature_target_traits: observation
                 .creature_target_traits
                 .iter()
@@ -524,12 +526,7 @@ fn label(
         order,
     } = action
     {
-        if observation
-            .hunter
-            .trigger_order
-            .iter()
-            .any(|row| row.controller == *actor)
-        {
+        if let Some(stage) = observation.trigger_order.as_ref() {
             if *actor != human {
                 return Err(Error::NotHumanTurn);
             }
@@ -569,15 +566,32 @@ fn label(
             if *trigger_index >= *pending_count || ordered_prefix.contains(trigger_index) {
                 return Err(Error::InvalidVisibleReference);
             }
+            if stage.controller != *actor
+                || stage.pending_count != *pending_count
+                || stage.ordered_prefix != *ordered_prefix
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
             let suffix = observation
                 .hunter
                 .trigger_order
                 .iter()
                 .find(|row| row.controller == *actor && row.group_position == *trigger_index)
-                .map(|row| format!("Hunter occurrence #{}", row.occurrence + 1))
+                .map(|row| {
+                    let instruction = match observation.hunter.occurrences[row.occurrence].root {
+                        crate::rules_meaning_high_society_hunter_v1::RootV1::Attack => {
+                            "optional sacrifice for counter"
+                        }
+                        crate::rules_meaning_high_society_hunter_v1::RootV1::OtherNontokenDeath => {
+                            "draw one"
+                        }
+                        _ => "printed trigger",
+                    };
+                    format!("Hunter {instruction} occurrence #{}", row.occurrence + 1)
+                })
                 .unwrap_or_else(|| format!("trigger #{}", trigger_index + 1));
             return Ok(format!(
-                "Place {} {suffix} next ({} already ordered)",
+                "Place {} {suffix} next ({} already ordered; last placed resolves first)",
                 handles.name(source)?,
                 ordered_prefix.len()
             ));

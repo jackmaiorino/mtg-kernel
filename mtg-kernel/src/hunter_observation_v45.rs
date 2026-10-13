@@ -38,6 +38,7 @@ pub struct HunterObservationV45 {
     pub projection_sha256: String,
     pub divine: crate::divine_public_v44::FactsV44,
     pub hunter: crate::high_society_hunter_public_v45::FactsV45,
+    pub trigger_order: Option<crate::policy_surface_v5::TriggerOrderContextV45>,
     pub ajani: crate::ajani_public_v42::FactsV42,
     pub faebloom: crate::faebloom_public_v43::FactsV43,
     pub creature_target_traits: Vec<crate::faebloom_observation_v43::CreatureTargetTraitsV43>,
@@ -63,6 +64,7 @@ pub fn producer_sha256() -> String {
         include_str!("rl_session/flat_action_v3.rs"),
         include_str!("rl_session/flat_action_v4.rs"),
         include_str!("policy_surface_v5.rs"),
+        include_str!("policy_surface_v5/hunter_order_v45.rs"),
         include_str!("surface_v2.rs"),
         include_str!("human_bo3_v1/hunter_v45.rs"),
         include_str!("human_bo3_v1/visible.rs"),
@@ -183,6 +185,9 @@ pub(crate) fn observe_parts_v45(
         creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
         divine: crate::divine_public_v44::facts(state, origin, actor)?,
         hunter: crate::high_society_hunter_public_v45::capture(state)?,
+        trigger_order: surface
+            .hunter_order_context_v45(state)
+            .map_err(RlContractError)?,
     };
     observation.projection_sha256 = commitment(&observation)?;
     for part in &mut parts {

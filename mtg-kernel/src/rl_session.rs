@@ -3403,6 +3403,25 @@ fn flat_validate_current_binding_header_akroma_inner(
     if current.candidates.is_empty() {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
+    if accept_akroma
+        && session.flat_action_contract_mode == FlatActionContractModeV1::HunterV45
+        && session
+            .surface
+            .validate_hunter_order_header_v45(
+                &session.state,
+                session.environment_revision,
+                &current.origin_decision,
+                (current.substep_index, current.substep_count),
+            )
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    {
+        if current.origin_decision.actor(&session.state) != Some(current.actor)
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        return Ok(());
+    }
     flat_validate_current_decision_relations_v1(current, &session.state)
 }
 
@@ -7780,7 +7799,26 @@ impl FastActorSessionV1 {
             }
             _ => {}
         }
-        let (substep_index, substep_count) = surfaced.substep();
+        let (substep_index, substep_count) =
+            match self.surface.hunter_order_substeps_v45(&self.state) {
+                Ok(Some(substeps))
+                    if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 =>
+                {
+                    substeps
+                }
+                Ok(None) => surfaced.substep(),
+                _ => {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        "fail_closed:Hunter trigger ordering".into(),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            };
         if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
             let _ = self.surface.discard_unanswered_scan();
             self.terminal = Some(truncated_terminal(

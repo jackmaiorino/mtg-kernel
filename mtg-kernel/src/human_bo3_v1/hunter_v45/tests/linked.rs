@@ -100,8 +100,10 @@ fn genuine_hunter_sacrifice_and_foreign_aura_owner_prompt_use_distinct_sources_a
         assert_eq!(row.source.as_ref().unwrap().arena_id, aura.0);
         assert_eq!(public.hunter.occurrences[0].source.arena_id, hunter.0);
         let menu = projector.project_current(&session, e).unwrap();
-        assert!(menu.hunter.occurrences[0].sacrifice_paid);
-        assert!(menu.hunter.occurrences[0].sacrificed.is_some());
+        assert!(menu.state.extensions.hunter.occurrences[0].sacrifice_paid);
+        assert!(menu.state.extensions.hunter.occurrences[0]
+            .sacrificed
+            .is_some());
         assert!(menu
             .actions
             .iter()

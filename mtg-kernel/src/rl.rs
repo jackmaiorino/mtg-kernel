@@ -4773,6 +4773,20 @@ pub(crate) fn limited_trigger_order_candidates_v1(
     ordered_prefix: &[usize],
     state: &GameState,
 ) -> Result<Vec<PolicyLegalActionCandidateV5>> {
+    legal_action_records_v5(hunter_trigger_order_candidates_v45(
+        player,
+        pending,
+        ordered_prefix,
+        state,
+    )?)
+}
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) fn hunter_trigger_order_candidates_v45(
+    player: PlayerId,
+    pending: &[crate::trigger::PendingTrigger],
+    ordered_prefix: &[usize],
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
     let mut selected = vec![false; pending.len()];
     for &index in ordered_prefix {
         let chosen = selected
@@ -4803,7 +4817,7 @@ pub(crate) fn limited_trigger_order_candidates_v1(
             ))),
         });
     }
-    legal_action_records_v5(candidates)
+    Ok(candidates)
 }
 
 pub(crate) fn core_policy_action_candidates_v5(

@@ -2,6 +2,7 @@ use super::*;
 use crate::mana::ManaColor;
 use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
+pub(crate) mod ordering;
 
 fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
     let response = session.current_response();

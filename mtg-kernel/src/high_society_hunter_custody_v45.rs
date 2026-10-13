@@ -419,7 +419,7 @@ pub(crate) fn linked_paid_incarnation(
             if *object == chosen.object && *to != Zone::Battlefield)
         });
         if matches!((sacrificed, moved), (Some(s), Some(m)) if s < m) {
-            return Ok(Some(chosen.clone()));
+            return Ok(Some(*chosen));
         }
     }
     Ok(None)

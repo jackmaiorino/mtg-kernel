@@ -4,6 +4,7 @@ use crate::mana::ManaColor;
 use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 mod linked;
+mod ordering;
 mod simultaneous;
 
 fn expected(session: &HumanHunterSessionV45) -> FastActorDecisionV1 {
