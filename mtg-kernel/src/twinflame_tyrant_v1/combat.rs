@@ -178,7 +178,7 @@ fn rebased(p: &PendingV38, at: usize) -> ChoiceV1 {
         .collect();
     packet
 }
-fn allocation_choices(p: &PendingV38) -> Vec<usize> {
+pub(crate) fn allocation_choices(p: &PendingV38) -> Vec<usize> {
     let group = group(p);
     let shared = group.iter().any(|a| {
         group.iter().any(|b| {

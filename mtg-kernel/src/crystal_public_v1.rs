@@ -93,7 +93,7 @@ pub struct SavedRaidDamageSourceV4 {
     pub lifelink: bool,
     pub deathtouch: bool,
 }
-type DamageOriginV3 = (
+pub(crate) type DamageOriginV3 = (
     CardStableRefV1,
     Option<SavedDamageSourceV1>,
     Option<SavedFixedDamageSourceV3>,
@@ -209,7 +209,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
-fn public_ref(
+pub(crate) fn public_ref(
     state: &GameState,
     id: crate::ids::ObjectId,
 ) -> Result<CardStableRefV1, RlContractError> {
@@ -227,7 +227,7 @@ fn public_ref(
     }
     crate::sower_restriction_capture_v1::masked_ref(id, o)
 }
-fn damage_origin(
+pub(crate) fn damage_origin(
     state: &GameState,
     choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
 ) -> Result<DamageOriginV3, RlContractError> {
@@ -366,7 +366,7 @@ fn damage_origin(
         None,
     ))
 }
-fn discard_menu(
+pub(crate) fn discard_menu(
     state: &GameState,
     actor: PlayerId,
 ) -> Result<Option<DiscardMenuV2>, RlContractError> {
