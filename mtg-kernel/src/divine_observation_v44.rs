@@ -38,6 +38,8 @@ pub struct DivineObservationV44 {
     pub projection_sha256: String,
     pub divine: crate::divine_public_v44::FactsV44,
     pub ajani: crate::ajani_public_v42::FactsV42,
+    pub faebloom: crate::faebloom_public_v43::FactsV43,
+    pub creature_target_traits: Vec<crate::faebloom_observation_v43::CreatureTargetTraitsV43>,
 }
 pub(crate) type DivinePublicPartsV44 = (
     DivineObservationV44,
@@ -55,8 +57,10 @@ pub fn producer_sha256() -> String {
         include_str!("rl.rs"),
         include_str!("akroma_family_public_v40.rs"),
         include_str!("planeswalker_v1.rs"),
-        include_str!("rl_session/ajani_v42.rs"),
-        include_str!("human_bo3_v1/ajani_v42.rs"),
+        include_str!("rl_session/divine_v44.rs"),
+        include_str!("human_bo3_v1/divine_v44.rs"),
+        include_str!("divine_actions_v44.rs"),
+        include_str!("faebloom_observation_v43.rs"),
     ] {
         h.update([0]);
         h.update(s.as_bytes());
@@ -156,6 +160,8 @@ pub(crate) fn observe_parts_v44(
         roots,
         projection_sha256: String::new(),
         ajani: crate::ajani_public_v42::facts(state)?,
+        faebloom: crate::faebloom_public_v43::capture(state)?,
+        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
         divine: crate::divine_public_v44::facts(state, origin, actor)?,
     };
     observation.projection_sha256 = commitment(&observation)?;

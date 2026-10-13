@@ -212,7 +212,9 @@ pub struct CreatureTargetTraitsV43 {
     pub hexproof: bool,
     pub protection_from_monocolored: bool,
 }
-fn target_traits(state: &GameState) -> Result<Vec<CreatureTargetTraitsV43>, RlContractError> {
+pub(crate) fn target_traits(
+    state: &GameState,
+) -> Result<Vec<CreatureTargetTraitsV43>, RlContractError> {
     use crate::card_def::{CardType, Keywords};
     state
         .objects
