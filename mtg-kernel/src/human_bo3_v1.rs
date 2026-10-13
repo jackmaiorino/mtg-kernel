@@ -299,10 +299,15 @@ mod akroma_early_v40;
 mod akroma_families_v40;
 pub use akroma_early_v40::{HumanEarlyV40, HumanZombieContextV40};
 mod akroma_v40;
+mod game_outcome_v41;
 pub use akroma_families_v40::HumanFamilyV40;
 pub use akroma_v40::{
     HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
     HumanAkromaSnapshotV40, HumanColorDepartureV40, HumanDecisionAkromaV40,
+};
+pub use game_outcome_v41::{
+    HumanDecisionGameOutcomeV41, HumanGameOutcomeExtensionsV41, HumanGameOutcomeProjectorV41,
+    HumanGameOutcomeSessionV41, HumanGameOutcomeSnapshotV41, HumanGameOutcomeSourceV41,
 };
 
 #[cfg(test)]

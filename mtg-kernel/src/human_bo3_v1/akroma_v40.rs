@@ -300,7 +300,7 @@ type ProjectedAkromaV40 = (
     Vec<u32>,
 );
 
-fn project_base(
+pub(super) fn project_base(
     observation: &AkromaObservationV1,
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,

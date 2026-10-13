@@ -50,6 +50,7 @@ pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod fiery_v33;
 pub(crate) mod frenzied_v15;
+pub(crate) mod game_outcome_v41;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
 pub(crate) mod inspiration_v37;
