@@ -3811,6 +3811,9 @@ fn standard_program_for(name: &str) -> Option<Special> {
         ),
         // Mill three, then make a mandatory non-targeted own-graveyard choice.
         // Flashback {5}{U}{U} is modeled in `flashback_for`.
+        "Faebloom Trick" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
+            "None", "FaebloomCreateFaeriesV43", "EffectOp::FaebloomCreateFaeriesV43",
+        ),
         "Inspiration from Beyond" => program(
             "None",
             "Sequence(MillCards(Controller,3),SelectObjectsV1(Controller,Graveyard,InstantOrSorcery,1,1,Hand))",

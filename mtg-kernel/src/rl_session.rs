@@ -3339,6 +3339,9 @@ fn flat_validate_current_binding_header_akroma_inner(
     current: &FastActorCurrentDecisionV1,
     accept_akroma: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if crate::faebloom_trick_v43::requires_successor(&session.state, Some(current.actor)) {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     if !accept_akroma
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
@@ -5527,6 +5530,18 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::faebloom_trick_v43::requires_successor(&self.state, None) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:faebloom_v43_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7384,6 +7399,18 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::faebloom_trick_v43::requires_successor(&self.state, None) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:faebloom_v43_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::twinflame_tyrant_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,

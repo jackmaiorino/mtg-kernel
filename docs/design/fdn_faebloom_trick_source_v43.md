@@ -1,0 +1,13 @@
+# Faebloom Trick prepared source
+
+The pinned printing is a {2}{U} Instant with a targetless two-Faerie creation program, followed by a distinct mandatory reflexive trigger targeting one opposing creature. The existing actual Faerie Token blueprint is reused. Source bytes and SHA-256 values are in the adjacent provenance JSON.
+
+This core checkpoint publishes the genuine paid or copied spell before resolution. A nonserializable loan is acquired from its exact full live row before engine removal. Independently committed removal input binds the counter, resolving or other-departure path; actual ordered CreateToken events bind creation and exactly one reflexive capture. Captures enter ordinary APNAP/legend/deferred trigger custody. Finalized reflexive publication retains the original spell contract and an independently committed Targeted recipient occurrence. Its actual removal input binds tap, illegal-target no-op or counter completion. Physical spell closure requires real Stack departure; copies are briefly restored only for the existing immediate real cease path. No user decision occurs in that internal interval.
+
+Waiting, live and completed owners are mandatory. Erasure, replay, duplicate operation, foreign capture and private-log relocation refuse before Step or Advance. Actual engine publication/removal/creation/departure journals are trusted original occurrences; this does not authenticate wholesale replacement of all original history.
+
+The generic detached executor refuses both new leaves. Frozen RulesVector records them as Opaque; old public constructors refuse dependent Faebloom states. All predecessor enum prefixes, absent state serde/hash, catalog data, IDs and profiles remain unchanged. There is no new intrinsic ETB or cast trigger pretending to be the reflexive ability.
+
+Prepared checks comprise two universal absence/detached-root groups and five explicitly ignored genuine-printing groups covering both seats, paid targetless cast, creation-before-target, priority/restore, exact-ID counter primitives, no eligible opposing creature, Shroud/hexproof, short payment, target departure/reentry, erased owners and saved-row replay. These groups are source-inspected and native-unrun. Exact-ID counter and incarnation setup are labeled physical kernel primitives, not additional printed-producer claims.
+
+Remaining assigned work: precise rooted meaning, complete distinct V43 common Public/backend/fixed-seat Human transport, additional real copied-spell and blue-protection/control response fixtures, named peer review, then parent-owned serial registration and native qualification. This checkpoint is not a complete delivery or Full/model/sampler admission. Sampler paths explicitly refuse retained new journals.

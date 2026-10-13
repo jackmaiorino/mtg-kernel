@@ -172,6 +172,7 @@ impl Scan<'_> {
             | BindGarrukEtbDrawV1
             | BindGarrukPowerEntryDrawV1
             | GarrukDrawFromCaptureV1 {..}
+            | FaebloomCreateFaeriesV43 | FaebloomTapFromCaptureV43 { .. }
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | ExileTopChooseOneUntilNextTurn { .. }
@@ -964,6 +965,14 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(e, crate::event::CommittedEvent::FaebloomJournalV43 { .. }))
+    {
+        return true;
+    }
     if !state.engine.twinflame_combat_v38.is_empty() {
         return true;
     }
@@ -1015,6 +1024,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
+                | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
                 | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
                 | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
@@ -1369,7 +1379,7 @@ pub(super) fn conflicts(
             | InspirationResolutionBoundaryV1 { .. } => false,
             TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
-                | InspirationEngineDepartureV1 { .. } => true,
+                | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. } => true,
         }
     })
 }

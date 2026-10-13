@@ -2791,6 +2791,14 @@ fn validate_spell_sourced_trigger(
         }
         return Ok(());
     }
+    if item
+        .inline_effect
+        .as_ref()
+        .and_then(crate::faebloom_trick_v43::capture_of)
+        .is_some()
+    {
+        return crate::faebloom_trick_v43::validate_trigger_metadata(state, item);
+    }
     if let Some(EffectOp::CreateStormCopies { binding }) = item.inline_effect.as_ref() {
         if contract != binding.source_contract
             || item.source != binding.source_contract.source
@@ -3131,6 +3139,19 @@ fn triggered_ability_targeting_source(
     source_contract: Option<AbilitySourceContractV4>,
     effect: &EffectOp,
 ) -> Option<TargetingSource> {
+    if let EffectOp::FaebloomTapFromCaptureV43 {
+        source: original, ..
+    } = effect
+    {
+        return Some(TargetingSource {
+            object: original.source,
+            card_def: original.card_def,
+            zone: original.zone,
+            zone_change_count: original.zone_change_count,
+            other_than: None,
+            original_source_incarnation_only: false,
+        });
+    }
     if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
         return None;
     }
@@ -9181,6 +9202,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::faebloom_trick_v43::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::controlled_creature_grants_v1::validate_color_history(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9238,6 +9265,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if crate::faebloom_trick_v43::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
     if crate::source_power_activation_v1::validate_state(state).is_err()
         || crate::raid_entry_v1::validate_state(state).is_err()
@@ -12858,9 +12891,12 @@ fn pending_trigger_modes(
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let source = state.objects.try_get(pending.source)?;
     trigger::unselected_trigger_modes(
-        pending
-            .source_contract
-            .map_or(source.card_def, |contract| contract.card_def),
+        match &pending.effect {
+            EffectOp::FaebloomTapFromCaptureV43 { source, .. } => source.card_def,
+            _ => pending
+                .source_contract
+                .map_or(source.card_def, |contract| contract.card_def),
+        },
         &pending.effect,
     )
 }
@@ -12958,6 +12994,7 @@ pub(crate) fn validate_pending_trigger(
         ) || pending
             .source_contract
             .is_some_and(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
+            || crate::faebloom_trick_v43::capture_of(&pending.effect).is_some()
             || matches!(
                 expected,
                 TargetSpec::UpToTwoCardsInSingleGraveyard
@@ -13055,6 +13092,9 @@ fn pending_trigger_spell_source_contract(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<StackSourceContractV4>, String> {
+    if let Some(index) = crate::faebloom_trick_v43::capture_of(&pending.effect) {
+        return crate::faebloom_trick_v43::source_at(state, index).map(Some);
+    }
     if pending.is_madness_offer || pending.source_contract.is_some() {
         return Ok(None);
     }
@@ -13316,6 +13356,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
     crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::arahbo_v1::publish(state, &finalized)?;
     crate::fishing_pole_v39::lifecycle::publish_trigger(state, &finalized)?;
@@ -14308,6 +14349,12 @@ fn plan_spell_departure(
 }
 
 fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Result<(), String> {
+    let faebloom_source = match &departure {
+        SpellDeparture::Move { source, .. } | SpellDeparture::Cease { source } => *source,
+    };
+    let faebloom_departure = crate::faebloom_trick_v43::departure_candidate(state, faebloom_source);
+    let faebloom_start = state.engine.event_history.len();
+    let mut faebloom_ceased = false;
     match departure {
         SpellDeparture::Move { source, to_zone } => {
             event::propose_and_commit(state, ProposedEvent::zone_change(source, to_zone));
@@ -14324,12 +14371,21 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
                         .v4
                         .source_contract
                         .is_some_and(|contract| contract.zone_change_count == live_generation)
-            }) && !event::cease_to_exist(state, source)
-            {
+            }) && {
+                let ceased = event::cease_to_exist(state, source);
+                faebloom_ceased = ceased;
+                !ceased
+            } {
                 return Err("the virtual spell copy could not cease to exist".to_string());
             }
         }
     }
+    crate::faebloom_trick_v43::record_departure(
+        state,
+        faebloom_departure,
+        faebloom_start,
+        faebloom_ceased,
+    )?;
     Ok(())
 }
 
@@ -14391,6 +14447,7 @@ pub(crate) fn counter_stack_item_by_id(
     let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
     let zul_owner = crate::zul_ashur_v1::acquire(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
+    let faebloom_counter_owner = crate::faebloom_trick_v43::acquire(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -14413,6 +14470,13 @@ pub(crate) fn counter_stack_item_by_id(
     }
     crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
 
+    if let Some(owner) = faebloom_counter_owner {
+        crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::Countered,
+        )?;
+    }
     crate::extra_turn_v1::record_countered(state, temporal_owner);
     crate::banishing_light_v1::record_removed(
         state,
@@ -14574,6 +14638,18 @@ pub(crate) fn apply_live_stack_spell_departure(
     validate_spell_stack_source(state, &item)?;
     let departure = plan_spell_departure(state, &item, requested_zone)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    if let Some(owner) = crate::faebloom_trick_v43::acquire(state, &item)? {
+        state
+            .stack
+            .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id);
+        crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::OtherDeparture {
+                zone: requested_zone,
+            },
+        )?;
+    }
     apply_spell_departure(state, departure)?;
     crate::extra_turn_v1::record_other_departure(state, temporal_owner);
     Ok(true)
@@ -14932,6 +15008,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let faebloom_owner = match crate::faebloom_trick_v43::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -15011,6 +15097,22 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = faebloom_owner {
+        if crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::Resolving {
+                target_legal: targets_legal,
+            },
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = fishing_owner {
         if crate::fishing_pole_v39::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
             state.engine.halted =
@@ -19358,6 +19460,9 @@ pub(crate) fn copy_spell_for(
     copy.v4.optional_additional_cost_paid = None;
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
+    }
     Some((copy_source, copy_stack_item))
 }
 
@@ -19441,6 +19546,9 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
     );
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
+    }
     (copy_source, copy_stack_item)
 }
 
@@ -20958,6 +21066,7 @@ fn finalize_owned_cast(
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
+    crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     if matches!(
         paid_optional_additional_cost,
         Some(OptionalAdditionalCostDef::Casualty(_))

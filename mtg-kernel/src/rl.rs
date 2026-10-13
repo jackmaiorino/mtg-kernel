@@ -1877,6 +1877,8 @@ pub fn observe_v1(
     )
     .map_err(RlContractError)?;
     refuse_unrepresented_shroud(state)?;
+    crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     refuse_unrepresented_twinflame(state, false)?;
     if crate::inspiration_observation_v1::requires_successor(state) {
         return Err(RlContractError(
@@ -2070,6 +2072,8 @@ fn build_observation_common_v2_fishing_v39(
     accept_akroma: bool,
 ) -> Result<ObservationV2> {
     let (capabilities, accept_fishing) = capabilities;
+    crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2522,6 +2526,8 @@ fn build_policy_observation_parts_common_fishing_v39(
     accept_akroma: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (capabilities, accept_fishing) = capabilities;
+    crate::faebloom_trick_v43::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -3644,6 +3650,8 @@ fn build_policy_observation_storage_common_fishing_v39(
             "Fishing Pole requires its unadmitted V39 transport".into(),
         ));
     }
+    crate::faebloom_trick_v43::require_legacy_supported(request.state, Some(request.acting_player))
+        .map_err(RlContractError)?;
     refuse_unrepresented_twinflame(request.state, accept_twinflame)?;
     if !accept_inspiration && crate::inspiration_observation_v1::requires_successor(request.state) {
         return Err(RlContractError(
