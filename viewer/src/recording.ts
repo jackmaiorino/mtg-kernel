@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validateUct, validateExecution, verifyUctDigest } from './uct-playback';
 
 export const SCHEMA = 'mtg-kernel-viewer-recording/v1';
 export const MAX_BYTES = 64 * 1024 * 1024;
@@ -51,11 +52,56 @@ const replaySchema = z.object({
   }).strict()).min(1).max(512),
 }).strict();
 export type SearchReplay = z.infer<typeof replaySchema>;
+const uctBaseSchema=z.object({
+  schema:z.literal('mtg-kernel-uct-search-replay/v1'),complete:z.literal(true),key:keySchema,
+  treeDigest:hash,tableDigest:hash,worlds:text,
+  actions:z.array(actionSchema).max(65536),
+  nodes:z.array(z.object({id:u32,actor:seat,board:u32,parent:z.tuple([u32,u32]).nullable(),
+    actions:z.array(actionSchema).min(1).max(65536),liveOrder:z.array(u32),committed:z.boolean(),
+    visits:u32,edgeVisits:z.array(u32),edgeWins:z.array(u32)}).strict()).min(1).max(4096),
+  simulations:z.array(z.object({ordinal:u32,reason:z.enum(['win','natural_nonwin','nonnatural','truncated','fault','rejected']),backedUp:z.boolean(),
+    choices:z.array(z.object({node:u32,action:u32,board:u32,step:u32,physical:u32,substep:u32,live:u32,expanded:z.boolean(),scores:z.array(z.number().finite().nullable())}).strict()).max(256),
+    rollout:z.array(z.tuple([u32,u32,u32,u32,u32,u32,u32,u32.nullable(),u32.nullable()])).max(100000),
+    leaf:u32.nullable(),terminal:z.object({kind:text,winner:seat.nullable()}).strict().nullable(),combo:z.boolean(),
+  }).strict()).min(1).max(4096),firstCombo:u32.nullable(),
+}).strict();
+const pooledPlayerSchema=playerSchema.extend({battlefield:z.array(u32),graveyard:z.array(u32),hand:z.array(u32).length(0)}).strict();
+const pooledBoardSchema=boardSchema.extend({players:z.tuple([pooledPlayerSchema,pooledPlayerSchema]),exile:z.array(u32)}).strict();
+const uctWireSchema=z.discriminatedUnion('storage',[
+  uctBaseSchema.extend({storage:z.literal('inline').optional(),boards:z.array(boardSchema).min(1).max(8192)}).strict(),
+  uctBaseSchema.extend({storage:z.literal('object-pool/v1'),objects:z.array(objectSchema).max(1000000),boards:z.array(pooledBoardSchema).min(1).max(8192)}).strict(),
+]);
+const uctSchema=uctWireSchema.transform((value,context)=>{
+  if(value.storage!=='object-pool/v1')return value;
+  const used=new Set<number>();let references=0;
+  const reject=()=>{context.addIssue({code:'custom',message:'UCT pooled snapshot references are broken, unused, or exceed the decoded bound'});return z.NEVER;};
+  for(const board of value.boards){
+    for(const ids of [board.exile,...board.players.flatMap(p=>[p.battlefield,p.graveyard,p.hand])]){
+      references+=ids.length;
+      if(references>1000000)return reject();
+      for(const id of ids){if(id>=value.objects.length)return reject();used.add(id);}
+    }
+  }
+  if(used.size!==value.objects.length)return reject();
+  const expand=(ids:number[])=>ids.map(id=>value.objects[id]);
+  const boards=value.boards.map(b=>({...b,exile:expand(b.exile),players:b.players.map(p=>({...p,battlefield:expand(p.battlefield),graveyard:expand(p.graveyard),hand:expand(p.hand)})) as z.infer<typeof boardSchema>['players']}));
+  const {storage:_storage,objects:_objects,...rest}=value;
+  return {...rest,boards};
+});
+export type UctReplay=z.infer<typeof uctSchema>;
 const searchSchema = z.object({
   digest: hash, stats: z.array(z.object({ index: u32, visits: u32, valueSum: i64, meanValue: i64 }).strict()),
   simulations: u32, transitions: u32, nodes: u32, tier: text, stabilityHalves: z.boolean(), valueScale: text,
   replay: replaySchema.optional(),
+  uctReplay:uctSchema.optional(),
   algorithm: z.literal('persistent-uct').optional(), digestOrigin: z.literal('exported-table').optional(),
+}).strict();
+const refreshReason=z.enum(['initial','supported','unsupported','miss','depth_limit','before_search']);
+const lifecycleSchema=z.object({
+  mode:z.enum(['new-search','reuse','policy']),reason:refreshReason,
+  root:text.nullable(),node:u32.nullable(),action:u32.nullable(),backups:u32.nullable(),
+  remainingBefore:u32.nullable(),remainingAfter:u32.nullable(),
+  previous:z.object({root:text,node:u32.nullable(),reason:refreshReason}).strict().nullable(),
 }).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
@@ -64,9 +110,10 @@ const frameSchema = z.object({
   terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
   decisionSource: z.object({ kind: z.enum(['search-root','search-continuation']), root: text,
     treeDigest: hash, artifactSha256: hash }).strict().optional(),
+  searchLifecycle:lifecycleSchema.optional(),
 }).strict();
 const recordingSchema = z.object({
-  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2','mtg-kernel-viewer-recording/v3']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
+  schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2','mtg-kernel-viewer-recording/v3','mtg-kernel-viewer-recording/v4']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
   description: text, perspective: seat, complete: z.boolean(), coverage: z.enum(['every-step', 'decision-snapshots']),
   identity: z.object({ source: text, runtime: text, checkpoint: text, cardDatabase: text, sourceSha256: hash }).strict(),
   seats: z.tuple([z.object({ name: text, deck: text }).strict(), z.object({ name: text, deck: text }).strict()]),
@@ -74,6 +121,7 @@ const recordingSchema = z.object({
   bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
   reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: commit, originalRuntime: hash,
     sourceArtifactSha256: hash, openingArtifactSha256: hash, runtimeRules: text }).strict().optional(),
+  executionBinding:z.object({artifactSha256:hash,primarySha256:hash}).strict().optional(),
 }).strict();
 export type Recording = z.infer<typeof recordingSchema>;
 export type Frame = Recording['frames'][number];
@@ -105,7 +153,7 @@ export function parseRecording(raw: unknown): Recording {
   for (const f of r.frames) {
     if (ids.has(f.id) || keys.has(frameKey(f.key))) throw new Error('Duplicate decision identity');
     ids.add(f.id); keys.add(frameKey(f.key));
-    if ((f.decisionSource || f.search?.algorithm || f.search?.digestOrigin) && r.schema !== 'mtg-kernel-viewer-recording/v3') throw new Error('Recorded decision provenance requires recording format v3');
+    if ((f.decisionSource || f.search?.algorithm || f.search?.digestOrigin) && !['mtg-kernel-viewer-recording/v3','mtg-kernel-viewer-recording/v4'].includes(r.schema)) throw new Error('Recorded decision provenance requires recording format v3 or v4');
     if (f.decisionSource && f.key.actor !== r.perspective) throw new Error('Recorded search choice belongs to a different perspective');
     if (f.key.actor !== r.perspective && (f.policy || f.search || f.actions.length !== 1)) throw new Error('Opposing private decision diagnostics are not permitted');
     if (f.actions.some((a, i) => a.index !== i) || f.executed >= f.actions.length) throw new Error('Executed action or engine order is invalid');
@@ -136,6 +184,10 @@ export function parseRecording(raw: unknown): Recording {
         if (r.schema === SCHEMA) throw new Error('Search replay requires recording format v2');
         validateReplay(f, r);
       }
+      if(f.search.uctReplay){
+        if(r.schema!=='mtg-kernel-viewer-recording/v4'||f.search.replay||f.search.algorithm!=='persistent-uct')throw new Error('Full UCT trace requires recording format v4');
+        validateUct(f,r);
+      }
     }
   }
   const byId = new Map(r.frames.map(f => [f.id,f]));
@@ -149,6 +201,7 @@ export function parseRecording(raw: unknown): Recording {
         (source.kind==='search-root') !== (f.id===root.id) || (source.kind==='search-continuation' && f.search)) throw new Error('Recorded search continuation has a broken root or source binding');
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
+  validateExecution(r);
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');
   return r;
 }
@@ -223,5 +276,6 @@ export async function verifySearchDigests(r: Recording): Promise<void> {
     [f.executed, f.search.transitions, f.search.simulations, f.search.nodes].forEach((n, i) => data.setUint32(suffix + i * 4, n, true));
     const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
     if (digest !== f.search.digest) throw new Error('Search table does not match its recorded digest');
+    if(f.search.uctReplay)await verifyUctDigest(f.search.uctReplay);
   }
 }

@@ -5,6 +5,9 @@ import replay from '../fixtures/search-replay.json' with { type: 'json' };
 import graph from '../fixtures/search-graph.json' with {type:'json'};
 import rootChoices from '../fixtures/root-choices.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
+import uct from '../fixtures/uct-search.json' with {type:'json'};
+import pooledUct from '../fixtures/uct-pooled.json' with {type:'json'};
+import lifecycle from '../fixtures/uct-lifecycle.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -13,6 +16,54 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+
+test('actual guide lifecycle distinguishes refresh from reuse and locates the game without changing its decision',async({page})=>{
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'lifecycle.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(lifecycle))});
+  const status=page.getByRole('region',{name:'Actual game search lifecycle'});
+  await expect(status.getByRole('heading',{name:'Starts a new search'})).toBeVisible();
+  await page.getByRole('button',{name:'Next decision',exact:true}).click();
+  await expect(status.locator('.lifecycle-refresh')).toContainText('no move had the eight completed rollouts');
+  await expect(status.locator('.lifecycle-refresh')).toContainText('node 1');
+  await page.getByRole('button',{name:'Next decision',exact:true}).click();
+  await expect(status.getByRole('heading',{name:'Follows the existing tree'})).toBeVisible();
+  await expect(page.locator('[data-actual-node="1"]')).toBeVisible();
+  await expect(page).toHaveURL(/decision=d17/);
+  await page.getByRole('button',{name:'Return to search discovery'}).click();
+  await expect(page.locator('[data-actual-node="1"]')).toHaveCount(0);
+  await page.getByRole('button',{name:'Locate actual game in tree'}).click();
+  await expect(page.locator('[data-actual-node="1"]')).toBeVisible();await expect(page).toHaveURL(/decision=d17/);
+  await expect(page).toHaveURL(/searchView=actual/);
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await status.screenshot({path:'test-results/search-lifecycle-320.png'});
+});
+
+test('a link between reuse decisions of one tree restores its requested search event',async({page})=>{
+  await openFixture(page);const r=structuredClone(lifecycle),next=structuredClone(r.frames[2]);
+  next.id='d18';next.key.step=18;next.key.physical=18;r.frames.push(next);
+  await page.locator('input[type=file]').setInputFiles({name:'reuse-links.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(r))});
+  await page.evaluate(id=>{window.location.hash=`game=${id}&decision=d17&searchEvent=5`;},r.id);
+  await expect(page.getByRole('slider',{name:'Search event timeline'})).toHaveValue('5');
+  await page.evaluate(id=>{window.location.hash=`game=${id}&decision=d18&searchEvent=2`;},r.id);
+  await expect(page.getByRole('slider',{name:'Search event timeline'})).toHaveValue('2');
+  await expect(page).toHaveURL(/decision=d18&searchEvent=2/);
+});
+
+test('full UCT tree exposes discovery, rollout moves and discarded attempts',async({page})=>{
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(pooledUct))});
+  await page.getByRole('button',{name:'Watch this search unfold'}).click();
+  await expect(page.locator('.decision-evidence')).toContainText('Tree choices, rollout actions');
+  await page.getByRole('button',{name:'Watch its discovery'}).click();
+  await expect(page.locator('.search-discovery')).toContainText('attempt 1');
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(1);await expect(page.locator('.search-caption')).toContainText('Selected at a UCT tree node');
+  await page.getByRole('button',{name:'Next search event',exact:true}).click();await page.getByRole('button',{name:'Next search event',exact:true}).click();await expect(page.locator('[data-node]')).toHaveCount(2);
+  await page.getByRole('button',{name:'See complete graph'}).click();await expect(page.locator('[data-node]')).toHaveCount(3);await expect(page.locator('.search-caption')).toContainText('without a backup');
+  await page.getByText('Inspect every simulated move', {exact:false}).click();await page.getByLabel('Inspect rollout move').selectOption('1');
+  await expect(page.locator('.search-caption')).toContainText('step 16');
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({path:'test-results/uct-search-320.png',fullPage:true});
+});
 
 test('retained search choices link to roots and show legal moves without fabricated scores',async({page})=>{
   await openFixture(page);

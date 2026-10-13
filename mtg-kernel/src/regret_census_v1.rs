@@ -33,6 +33,12 @@ pub fn run_viewer_replay_v1(path: &std::path::Path) -> Result<(), String> {
     stage4a::viewer_replay::run(path)
 }
 
+/// A fresh frozen-policy opening followed by the existing persistent UCT guide.
+#[cfg(feature = "viewer-recording-v1")]
+pub fn run_spy_viewer_capture_v1(path: &std::path::Path) -> Result<(), String> {
+    stage4a::viewer_uct::run(path)
+}
+
 const MAX_PHYSICAL: u64 = 4096;
 
 #[derive(Clone, Debug)]
