@@ -80,6 +80,19 @@ fn genuine_later_apnap_aura_owner_has_v30_public_choices_restore_and_retry_both_
             let completed = session.public_observation(next).unwrap();
             assert!(completed.linked_exile.attachment_choice.is_none());
             assert_eq!(completed.linked_exile.confirmed_attachments.len(), 2);
+            assert_eq!(
+                crate::banishing_public_v1::facts(session.inner.garruk_fixture_state_mut())
+                    .unwrap()
+                    .3
+                    .len(),
+                0,
+                "historical confirmations are scoped to the Garruk successor"
+            );
+            for row in &completed.linked_exile.confirmed_attachments {
+                assert_eq!(row.aura.zone, Zone::Exile);
+                assert_eq!(row.owner, row.aura.owner);
+                assert_eq!(row.current_chosen_host.as_ref().unwrap().arena_id, host.0);
+            }
             let entries = completed
                 .entry_occurrences
                 .iter()
@@ -342,6 +355,16 @@ mod future_printed {
     fn actual_human_cast_trample_and_original_draw_public_facts_restore_and_stale_bindings() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = basic(actor, "Island");
+            // Genuine entry draw needs a physical library card. Untapped lands
+            // retain ordinary priority after the draw instead of auto-decking.
+            for seat in [actor, actor.opponent()] {
+                for _ in 0..4 {
+                    put(&mut state, seat, "Forest", Zone::Library);
+                }
+                put(&mut state, seat, "Forest", Zone::Battlefield);
+            }
+            let expected_draw = state.players[actor.index()].library[0];
+            let library_before = state.players[actor.index()].library.len();
             state.step = Step::Main1;
             let source = put(&mut state, actor, "Garruk's Uprising", Zone::Hand);
             let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
@@ -428,6 +451,13 @@ mod future_printed {
                 crate::garruk_public_v1::EntryLifecycleV1::DrawAttempted
             );
             assert_eq!(public.entry_occurrences[0].card_was_drawn, Some(true));
+            let actual = session.inner.garruk_fixture_state_mut();
+            assert_eq!(
+                actual.players[actor.index()].library.len(),
+                library_before - 1
+            );
+            assert_eq!(actual.objects.get(expected_draw).zone, Zone::Hand);
+            assert!(actual.players[actor.index()].hand.contains(&expected_draw));
         }
     }
     #[test]

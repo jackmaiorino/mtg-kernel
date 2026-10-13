@@ -9149,7 +9149,8 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         return Decision::Halted { mechanic, source };
     }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
-    if crate::raid_entry_v1::validate_state(state).is_err()
+    if crate::source_power_activation_v1::validate_state(state).is_err()
+        || crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || crate::zul_ashur_v1::validate_state(state).is_err()
@@ -9169,7 +9170,8 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
-    if crate::raid_entry_v1::validate_state(state).is_err()
+    if crate::source_power_activation_v1::validate_state(state).is_err()
+        || crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || crate::zul_ashur_v1::validate_state(state).is_err()
@@ -28329,3 +28331,11 @@ mod ashroot_declaration_boundary_tests;
 
 #[cfg(test)]
 mod shroud_target_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/crystal_native95_tests.rs"]
+mod crystal_native95_tests;
