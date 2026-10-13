@@ -173,7 +173,12 @@ pub(super) fn normalized_origin(
     if !validate_additional_origin(session, &original)?
         && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
     {
-        flat_validate_origin_decision_common_scoped(&original, &session.state, (true, true))?;
+        flat_validate_origin_decision_common_scoped_v42(
+            &original,
+            &session.state,
+            true,
+            crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
+        )?;
     }
     let common =
         crate::rl::policy_observation_extensions_faebloom_v43(&session.state, current.actor)
