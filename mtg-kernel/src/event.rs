@@ -1434,6 +1434,13 @@ pub fn apply_replacements(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
@@ -2890,6 +2897,21 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
+    // Validate the entire replacement roster before any shield or packet mutates.
+    if let Some(source) = events.iter().find_map(|event| match event {
+        ProposedEvent::Damage(damage)
+            if crate::twinflame_tyrant_v1::validate_commuting_damage(state, damage).is_err() =>
+        {
+            Some(damage.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();

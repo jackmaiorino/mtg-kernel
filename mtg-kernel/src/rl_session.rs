@@ -4339,6 +4339,9 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
+    if crate::twinflame_tyrant_v1::requires_successor(&session.state) {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
     if (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
         || (crate::krenko_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34)
@@ -5439,6 +5442,18 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::inspiration_observation_v1::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7224,6 +7239,18 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37

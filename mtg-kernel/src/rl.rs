@@ -1837,6 +1837,11 @@ pub fn card_name(card_id: u16) -> String {
 }
 
 fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    if crate::twinflame_tyrant_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Twinflame damage multiplier requires an explicit successor".into(),
+        ));
+    }
     if state.objects.iter().any(|(id, object)| {
         object.zone == Zone::Battlefield
             && engine::has_effective_keyword(state, id, Keywords::SHROUD)
