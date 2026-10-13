@@ -2045,6 +2045,12 @@ pub(crate) fn propose_and_commit_crystal_power_owned(
 }
 /// Separate actual interpreter operation. Completion alone cannot invent its
 /// replacement preparation or omit its accepted positive/fully-prevented result.
+pub(crate) fn twinflame_packet_lifelink_player(
+    state: &GameState,
+    damage: DamageProposed,
+) -> Option<PlayerId> {
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
 pub(crate) fn twinflame_lifelink_player(
     state: &GameState,
     choice: &crate::effect::crystal_prevention_v1::ChoiceV1,

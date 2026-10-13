@@ -1,4 +1,4 @@
-//! Scoped scalar ordering proof, shared with the genuine Crystal removed owner.
+//! Scoped scalar and simultaneous ordering proof, shared with the genuine Crystal removed owner.
 use crate::effect::crystal_prevention_v1::{ChoiceV1, PreventionV1};
 use crate::state::AbilitySourceContractV4;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,28 @@ impl std::hash::Hash for AppliedMultipliersV38 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         if !self.is_empty() {
             std::hash::Hash::hash(&"twinflame-applied/v38", h);
+            std::hash::Hash::hash(&self.0, h);
+        }
+    }
+}
+/// Empty captures contribute no predecessor hash bytes or serialized field.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PreparedBatchOptionsV38(pub Vec<BatchPacketInputV38>);
+#[derive(Debug, Clone, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize)]
+pub struct BatchPacketInputV38 {
+    pub options: Vec<PreventionV1>,
+    pub lifelink_player: Option<crate::ids::PlayerId>,
+}
+impl PreparedBatchOptionsV38 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl std::hash::Hash for PreparedBatchOptionsV38 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        if !self.is_empty() {
+            std::hash::Hash::hash(&"twinflame-batch-options/v38", h);
             std::hash::Hash::hash(&self.0, h);
         }
     }
@@ -161,9 +183,8 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
             || input.previous as usize >= at
             || previous.pending.as_deref() != Some(input.before.as_ref())
             || !has_multiplier(choice)
-            || choice.batch.is_some()
         {
-            return Err("multiplier input changed captured scalar menu".into());
+            return Err("multiplier input changed captured menu".into());
         }
         let mut operations = state
             .engine
@@ -189,22 +210,11 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         }
         let expected = expected_after(choice, input.option)?;
         let terminal = expected.remaining_amount <= 0 || expected.options.is_empty();
-        let mut after = (*input.before).clone();
-        after.choice = if terminal {
-            None
-        } else {
-            Some(PendingEffectChoice::ChooseOption {
-                player: expected.chooser,
-                path: expected.path.clone(),
-                options: vec![
-                    crate::effect::EffectOp::Sequence(Vec::new());
-                    expected.options.len()
-                ],
-                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 {
-                    choice: Box::new(expected.clone()),
-                },
-            })
-        };
+        let after = crate::effect::crystal_prevention_v1::replacement_answer_pending(
+            state,
+            &input.before,
+            &expected,
+        )?;
         let Some(E::CrystalPreventionBoundaryV1 { boundary }) =
             state.engine.event_history.get(operation_at + 1)
         else {
@@ -222,7 +232,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         {
             return Err("multiplier operation changed remaining packet or continuation".into());
         }
-        if terminal && expected.remaining_amount > 0 {
+        if choice.batch.is_none() && terminal && expected.remaining_amount > 0 {
             let index = operation
                 .damage
                 .ok_or("surviving multiplier packet lost actual Damage")?
@@ -236,7 +246,8 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         } else if operation.damage.is_some() || operation.life_gain.is_some() {
             return Err("uncommitted multiplier packet claimed an outcome".into());
         }
-        if terminal
+        if choice.batch.is_none()
+            && terminal
             && expected.remaining_amount > 0
             && operation.life_gain.is_some() != input.lifelink_player.is_some()
         {
@@ -380,15 +391,31 @@ pub(crate) fn preparation_at<'a>(
     Ok(value)
 }
 pub(crate) fn prepared_amount(p: &PreparationV38) -> Result<i32, String> {
+    commuting_amount(p.input.amount, &p.options)
+}
+pub(crate) fn commuting_amount(input: i32, options: &[PreventionV1]) -> Result<i32, String> {
     use crate::event::ReplacementEffectKind as R;
-    if p.options.iter().any(|o|matches!(o,PreventionV1::Barricade(_)|PreventionV1::Protection(_)) || matches!(o,PreventionV1::Replacement(r) if matches!(r.kind,R::PreventDamageFromColorUntilEndOfTurn{..}|R::PreventCombatDamageToObjectUntilEndOfTurn{..}))) {return Ok(0);}
-    if p.options
+    if options.iter().any(|o|matches!(o,PreventionV1::Barricade(_)|PreventionV1::Protection(_)) || matches!(o,PreventionV1::Replacement(r) if matches!(r.kind,R::PreventDamageFromColorUntilEndOfTurn{..}|R::PreventCombatDamageToObjectUntilEndOfTurn{..}))) {return Ok(0);}
+    let numeric = options
         .iter()
-        .any(|o| matches!(o, PreventionV1::Replacement(_)))
+        .any(|o| matches!(o, PreventionV1::Replacement(_)));
+    if numeric
+        && options
+            .iter()
+            .any(|o| matches!(o, PreventionV1::Multiplier(_)))
     {
         return Err("noncommuting packet bypassed actual replacement menu".into());
     }
-    Ok(p.options.iter().fold(p.input.amount, |amount, o| {
+    if numeric {
+        return Ok(options.iter().fold(input, |amount, o| match o {
+            PreventionV1::Replacement(r) => match r.kind {
+                R::PreventNextDamage { remaining, .. } => amount - remaining.min(amount),
+                _ => 0,
+            },
+            _ => amount,
+        }));
+    }
+    Ok(options.iter().fold(input, |amount, o| {
         if matches!(o, PreventionV1::Multiplier(_)) {
             amount.saturating_mul(2)
         } else {

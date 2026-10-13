@@ -157,6 +157,11 @@ pub struct BatchCaptureV2 {
     pub fight: Option<FightCaptureV3>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::twinflame_tyrant_v1::ordering::PreparedBatchOptionsV38::is_empty"
+    )]
+    pub multiplier_options: crate::twinflame_tyrant_v1::ordering::PreparedBatchOptionsV38,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FightCaptureV3 {
@@ -424,8 +429,8 @@ impl OwnerV1 {
             && events.iter().all(|e| {
                 matches!(e, crate::event::ProposedEvent::Damage(d)
                 if !d.is_combat && d.historical_source.is_none()
-                    && capture.proposals.iter().any(|original| original.source == d.source && original.target == d.target
-                        && d.amount > 0 && d.amount <= original.amount))
+                    && capture.proposals.iter().enumerate().any(|(slot, original)| original.source == d.source && original.target == d.target
+                        && d.amount > 0 && d.amount <= capture.multiplier_options.0.get(slot).map_or(original.amount, |packet| packet.options.iter().fold(original.amount, |amount, o| if matches!(o, PreventionV1::Multiplier(_)) { amount.saturating_mul(2) } else { amount }))))
             })
     }
     pub(crate) fn permits_creature_power(
@@ -1217,7 +1222,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 let (_, next_choice) = advance_batch_choice(state, &expected)?;
                 next.choice = next_choice.map(menu);
                 if next.choice.is_none()
-                    && !matches!(state.engine.event_history.get(index - 1),
+                    && !matches!(state.engine.event_history.get(index - if crate::twinflame_tyrant_v1::ordering::has_multiplier(&answer.before) { 2 } else { 1 }),
                     Some(CommittedEvent::CrystalExecutionV1 { execution })
                         if execution.batch_commit.is_some() && execution.previous == previous.history_index
                             && execution.before.as_ref() == old && execution.after.as_deref() == Some(&next))
@@ -2192,6 +2197,26 @@ fn validate_executions(state: &GameState) -> Result<(), String> {
                             last_damage,
                             index,
                         )?;
+                        let next_instruction = execution
+                            .steps
+                            .iter()
+                            .skip(step_index + 1)
+                            .flat_map(|step| {
+                                step.damage_history.iter().chain(&step.nondamage_history)
+                            })
+                            .map(|at| *at as usize)
+                            .min()
+                            .unwrap_or(index);
+                        validate_multiplier_batch_gains(
+                            state,
+                            capture,
+                            &capture.initial_outcomes,
+                            capture
+                                .preparation
+                                .ok_or("Twinflame batch gain lost preparation")?
+                                as usize,
+                            next_instruction,
+                        )?;
                         if let Some(at) = step.damage_history.last() {
                             last_damage = *at as usize;
                         }
@@ -3071,12 +3096,6 @@ fn capture_batch(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<BatchCaptureV2, String> {
-    if crate::twinflame_tyrant_v1::requires_successor(state) {
-        return Err(
-            "Twinflame simultaneous replacement ordering remains a required successor".into(),
-        );
-    }
-
     if !batch_recipe(op) {
         return Err("Crystal batch is not a supported printed recipe".into());
     }
@@ -3151,6 +3170,33 @@ fn capture_batch(
     // All menus and both fight powers are fixed before any shield is consumed.
     // Each current shield has one fixed recipient, so these distinct recipients
     // cannot consume one another's shield or require cross-packet allocation.
+    let all_options = proposals
+        .iter()
+        .map(|p| applicable(state, &p.proposed()))
+        .collect::<Vec<_>>();
+    let multiplier_options = if all_options
+        .iter()
+        .flatten()
+        .any(|o| matches!(o, PreventionV1::Multiplier(_)))
+    {
+        crate::twinflame_tyrant_v1::ordering::PreparedBatchOptionsV38(
+            all_options
+                .into_iter()
+                .zip(&proposals)
+                .map(|(options, packet)| {
+                    crate::twinflame_tyrant_v1::ordering::BatchPacketInputV38 {
+                        options,
+                        lifelink_player: crate::event::twinflame_packet_lifelink_player(
+                            state,
+                            packet.proposed(),
+                        ),
+                    }
+                })
+                .collect(),
+        )
+    } else {
+        Default::default()
+    };
     let options = proposals
         .iter()
         .map(|p| {
@@ -3184,6 +3230,7 @@ fn capture_batch(
         active_player: state.active_player,
         fight,
         preparation: None,
+        multiplier_options,
     };
     let events = capture
         .proposals
@@ -3404,28 +3451,78 @@ fn validate_batch_capture(
     if choices != capture.choice_order {
         return Err("Crystal batch changed APNAP choice order".into());
     }
-    for ((proposal, options), outcome) in capture
+    if !capture.multiplier_options.is_empty()
+        && (capture.multiplier_options.0.len() != capture.proposals.len()
+            || !capture
+                .multiplier_options
+                .0
+                .iter()
+                .flat_map(|p| &p.options)
+                .any(|o| matches!(o, PreventionV1::Multiplier(_))))
+    {
+        return Err("Twinflame batch lost complete original applicable options".into());
+    }
+    for (slot, ((proposal, options), outcome)) in capture
         .proposals
         .iter()
         .zip(&capture.options)
         .zip(&capture.initial_outcomes)
+        .enumerate()
     {
+        let captured = capture.multiplier_options.0.get(slot).map(|p| &p.options);
+        if options
+            .as_ref()
+            .is_some_and(|menu| captured.is_some_and(|original| original != menu))
+        {
+            return Err("Twinflame batch changed captured original menu".into());
+        }
+        let bound = captured.map_or(proposal.amount, |options| {
+            options.iter().fold(proposal.amount, |amount, option| {
+                if matches!(option, PreventionV1::Multiplier(_)) {
+                    amount.saturating_mul(2)
+                } else {
+                    amount
+                }
+            })
+        });
         match (options, outcome) {
             (Some(options), BatchOutcomeV2::Waiting)
                 if !options.is_empty()
-                    && options
-                        .iter()
-                        .any(|o| matches!(o, PreventionV1::Barricade(_)))
+                    && options.iter().any(|o| {
+                        matches!(o, PreventionV1::Barricade(_) | PreventionV1::Multiplier(_))
+                    })
                     && options.iter().any(|o| {
                         matches!(o, PreventionV1::Replacement(r)
                     if matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
                     }) => {}
-            (None, BatchOutcomeV2::Prevented) => {}
+            (None, BatchOutcomeV2::Prevented) => {
+                if let Some(options) = captured {
+                    if proposal.amount > 0
+                        && crate::twinflame_tyrant_v1::ordering::commuting_amount(
+                            proposal.amount,
+                            options,
+                        )? > 0
+                    {
+                        return Err("Twinflame batch erased automatic positive damage".into());
+                    }
+                }
+            }
             (None, BatchOutcomeV2::Damage(d))
                 if d.source == proposal.source
                     && d.target == proposal.target
                     && d.amount > 0
-                    && d.amount <= proposal.amount => {}
+                    && d.amount <= bound =>
+            {
+                if let Some(options) = captured {
+                    let amount = crate::twinflame_tyrant_v1::ordering::commuting_amount(
+                        proposal.amount,
+                        options,
+                    )?;
+                    if d.amount != amount {
+                        return Err("Twinflame batch changed prepared automatic damage".into());
+                    }
+                }
+            }
             _ => return Err("Crystal batch changed genuine initial replacement outcomes".into()),
         }
     }
@@ -3466,6 +3563,28 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
     {
         return Err("Crystal waiting batch changed prebatch battlefield".into());
     }
+    for (proposal, packet) in capture.proposals.iter().zip(&capture.multiplier_options.0) {
+        let original_sources = packet
+            .options
+            .iter()
+            .filter_map(|option| match option {
+                PreventionV1::Multiplier(source) => Some(*source),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let live_sources = crate::twinflame_tyrant_v1::sources(state, &proposal.proposed())?
+            .into_iter()
+            .map(|id| crate::state::AbilitySourceContractV4::capture(state, id))
+            .collect::<Vec<_>>();
+        if original_sources != live_sources
+            || packet.lifelink_player
+                != crate::event::twinflame_packet_lifelink_player(state, proposal.proposed())
+        {
+            return Err(
+                "Twinflame waiting batch changed original multiplier or lifelink sources".into(),
+            );
+        }
+    }
     if let Some(fight) = capture.fight.as_ref() {
         for slot in 0..2 {
             let id = resolve_fighter(state, &capture.ctx, &capture.op, slot);
@@ -3501,7 +3620,19 @@ fn advance_batch_choice(
     {
         return Err("Crystal batch repeated a completed recipient".into());
     }
-    progress.outcomes[at] = BatchOutcomeV2::Prevented;
+    if choice.remaining_amount > 0 && !choice.options.is_empty() {
+        return Err("Crystal batch advanced before completing recipient replacements".into());
+    }
+    progress.outcomes[at] = if choice.remaining_amount > 0 {
+        BatchOutcomeV2::Damage(BatchDamageV2 {
+            source: choice.source,
+            target: choice.target,
+            amount: choice.remaining_amount,
+            touched: choice.touched.clone(),
+        })
+    } else {
+        BatchOutcomeV2::Prevented
+    };
     progress.cursor = progress
         .cursor
         .checked_add(1)
@@ -3516,6 +3647,21 @@ fn advance_batch_choice(
         None
     };
     Ok((progress, next))
+}
+pub(crate) fn replacement_answer_pending(
+    state: &GameState,
+    before: &EffectContinuation,
+    choice: &ChoiceV1,
+) -> Result<EffectContinuation, String> {
+    let mut after = before.clone();
+    after.choice = if choice.remaining_amount > 0 && !choice.options.is_empty() {
+        Some(menu(choice.clone()))
+    } else if choice.batch.is_some() {
+        advance_batch_choice(state, choice)?.1.map(menu)
+    } else {
+        None
+    };
+    Ok(after)
 }
 fn batch_survivors(
     outcomes: &[BatchOutcomeV2],
@@ -3559,8 +3705,44 @@ fn validate_batch_choice_record(
     if progress.cursor >= capture.choice_order.len() {
         return Err("Crystal batch cursor reached closure inside menu".into());
     }
-    for at in capture.choice_order.iter().take(progress.cursor) {
-        expected_outcomes[*at] = BatchOutcomeV2::Prevented;
+    for (cursor, at) in capture
+        .choice_order
+        .iter()
+        .take(progress.cursor)
+        .enumerate()
+    {
+        let mut answers = boundaries(state).filter_map(|boundary| {
+            let answer = boundary.answer.as_ref()?;
+            let old = answer.before.batch.as_ref()?;
+            if old.capture != progress.capture || old.cursor != cursor {
+                return None;
+            }
+            let after =
+                crate::twinflame_tyrant_v1::ordering::expected_after(&answer.before, answer.option);
+            match after {
+                Ok(after) if after.remaining_amount <= 0 || after.options.is_empty() => {
+                    Some(Ok(after))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            }
+        });
+        let after = answers
+            .next()
+            .ok_or("Crystal batch lost completed recipient answer")??;
+        if answers.next().is_some() {
+            return Err("Crystal batch repeated completed recipient".into());
+        }
+        expected_outcomes[*at] = if after.remaining_amount > 0 {
+            BatchOutcomeV2::Damage(BatchDamageV2 {
+                source: after.source,
+                target: after.target,
+                amount: after.remaining_amount,
+                touched: after.touched,
+            })
+        } else {
+            BatchOutcomeV2::Prevented
+        };
     }
     if progress.outcomes != expected_outcomes {
         return Err("Crystal batch erased or rewrote prior recipient outcomes".into());
@@ -3580,15 +3762,28 @@ fn validate_batch_choice_record(
             return Err("Crystal batch changed applied replacement identities".into());
         }
     }
-    expected_options
-        .retain(|o| !matches!(o, PreventionV1::Replacement(r) if touched.contains(&r.id)));
+    let mut multipliers = Vec::new();
+    for source in &choice.applied_multipliers.0 {
+        if multipliers.contains(source)
+            || !original
+                .options
+                .contains(&PreventionV1::Multiplier(*source))
+        {
+            return Err("Crystal batch changed applied multiplier sources".into());
+        }
+        multipliers.push(*source);
+    }
+    expected_options.retain(|o| {
+        !matches!(o, PreventionV1::Replacement(r) if touched.contains(&r.id))
+            && !matches!(o, PreventionV1::Multiplier(source) if multipliers.contains(source))
+    });
     if choice.source != original.source
         || choice.target != original.target
         || choice.historical_source.is_some()
         || choice.creature_power.is_some()
         || choice.original_amount != original.original_amount
         || choice.remaining_amount <= 0
-        || choice.remaining_amount > choice.original_amount
+        || choice.remaining_amount > crate::twinflame_tyrant_v1::ordering::amount_bound(choice)
         || choice.chooser != original.chooser
         || choice.options != expected_options
         || choice.remaining_frames != frames
@@ -3636,6 +3831,54 @@ fn validate_batch_damage_occurrences(
     }
     Ok(())
 }
+fn validate_multiplier_batch_gains(
+    state: &GameState,
+    capture: &BatchCaptureV2,
+    outcomes: &[BatchOutcomeV2],
+    previous: usize,
+    until: usize,
+) -> Result<(), String> {
+    if capture.multiplier_options.is_empty() {
+        return Ok(());
+    }
+    let mut gains: Vec<(ObjectId, PlayerId, i32)> = Vec::new();
+    for (packet, outcome) in capture.multiplier_options.0.iter().zip(outcomes) {
+        let (Some(player), BatchOutcomeV2::Damage(damage)) = (packet.lifelink_player, outcome)
+        else {
+            continue;
+        };
+        if let Some((_, _, amount)) = gains
+            .iter_mut()
+            .find(|(source, owner, _)| *source == damage.source && *owner == player)
+        {
+            *amount = amount
+                .checked_add(damage.amount)
+                .ok_or("Twinflame simultaneous lifelink overflow")?;
+        } else {
+            gains.push((damage.source, player, damage.amount));
+        }
+    }
+    let actual = state
+        .engine
+        .event_history
+        .get(previous + 1..until)
+        .ok_or("Twinflame batch gain interval invalid")?
+        .iter()
+        .filter_map(|event| match event {
+            CommittedEvent::LifeGain { player, amount } => Some((*player, *amount)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if actual
+        != gains
+            .into_iter()
+            .map(|(_, player, amount)| (player, amount))
+            .collect::<Vec<_>>()
+    {
+        return Err("Twinflame batch lost ordered actual lifelink gains".into());
+    }
+    Ok(())
+}
 fn validate_batch_commit_execution(
     state: &GameState,
     index: usize,
@@ -3655,7 +3898,17 @@ fn validate_batch_commit_execution(
         return Err("Crystal batch commit lost prior boundary".into());
     };
     let Some(CommittedEvent::CrystalPreventionBoundaryV1 { boundary: next }) =
-        state.engine.event_history.get(index + 1)
+        state.engine.event_history.get(
+            index
+                + if matches!(
+                    state.engine.event_history.get(index + 1),
+                    Some(CommittedEvent::TwinflameReplacementOperationV38 { .. })
+                ) {
+                    2
+                } else {
+                    1
+                },
+        )
     else {
         return Err("Crystal batch commit lost immediate answered boundary".into());
     };
@@ -3681,7 +3934,9 @@ fn validate_batch_commit_execution(
         return Err("Crystal batch commit changed complete owning continuation".into());
     }
     validate_batch_choice_record(state, old, &previous.root, &answer.before)?;
-    let (progress, next_choice) = advance_batch_choice(state, &answer.before)?;
+    let completed =
+        crate::twinflame_tyrant_v1::ordering::expected_after(&answer.before, answer.option)?;
+    let (progress, next_choice) = advance_batch_choice(state, &completed)?;
     if next_choice.is_some()
         || progress.capture != commit.capture
         || progress.outcomes != commit.outcomes
@@ -3699,7 +3954,9 @@ fn validate_batch_commit_execution(
         &commit.damage_history,
         previous_index,
         index,
-    )
+    )?;
+    let capture = batch_capture_at(state, commit.capture, &answer.before.path)?;
+    validate_multiplier_batch_gains(state, capture, &commit.outcomes, previous_index, index)
 }
 fn cannot_prevent(state: &GameState) -> bool {
     state.engine.until_end_of_turn.iter().any(|e| {
@@ -4027,9 +4284,6 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         equipment: None,
     };
     let multiplier_input = if crate::twinflame_tyrant_v1::ordering::has_multiplier(&choice) {
-        if choice.batch.is_some() {
-            return Err("multiplier batch ordering pending successor".into());
-        }
         Some(crate::twinflame_tyrant_v1::ordering::record_input(
             state, &owner, &before, index,
         )?)
@@ -4067,20 +4321,11 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
             };
         }
     }
-    let next = if choice.remaining_amount > 0 {
+    if choice.remaining_amount > 0 {
         choice.options = applicable_after(state, &choice.damage(), &choice.applied_multipliers);
-        if choice.options.is_empty() {
-            if multiplier_input.is_none() {
-                return Err("Crystal static prevention disappeared during resolution".into());
-            }
-            let (damage, gain) =
-                crate::event::commit_twinflame_ordered_scalar(state, &owner, &before, &choice)?;
-            multiplier_damage = Some(damage);
-            multiplier_gain = gain;
-            None
-        } else {
-            Some(menu(choice))
-        }
+    }
+    let next = if choice.remaining_amount > 0 && !choice.options.is_empty() {
+        Some(menu(choice))
     } else if choice.batch.is_some() {
         let (progress, next_choice) = advance_batch_choice(state, &choice)?;
         if next_choice.is_none() {
@@ -4111,7 +4356,7 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
                     .map_err(|_| "Crystal history exceeds u32")?,
                 previous,
                 item: Box::new(owner.expected.clone()),
-                before: Box::new(before),
+                before: Box::new(before.clone()),
                 after: Some(Box::new(after)),
                 steps: Vec::new(),
                 discard_commit: None,
@@ -4131,6 +4376,15 @@ pub(crate) fn answer(state: &mut GameState, index: u16) -> Result<(), String> {
         }
         next_choice.map(menu)
     } else {
+        if choice.remaining_amount > 0 {
+            if multiplier_input.is_none() {
+                return Err("Crystal static prevention disappeared during resolution".into());
+            }
+            let (damage, gain) =
+                crate::event::commit_twinflame_ordered_scalar(state, &owner, &before, &choice)?;
+            multiplier_damage = Some(damage);
+            multiplier_gain = gain;
+        }
         None
     };
     state.engine.pending_effect.as_mut().unwrap().choice = next;

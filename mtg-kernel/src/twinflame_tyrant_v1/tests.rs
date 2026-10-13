@@ -34,6 +34,7 @@ fn absent_applied_multiplier_wrapper_contributes_no_hash_bytes() {
     }
     let mut h = Bytes::default();
     ordering::AppliedMultipliersV38::default().hash(&mut h);
+    ordering::PreparedBatchOptionsV38::default().hash(&mut h);
     assert!(h.0.is_empty());
 }
 
@@ -304,6 +305,176 @@ mod future_printed {
                     let before = serde_json::to_vec(&bad).unwrap();
                     assert!(engine::step(&mut bad, Action::Pass).is_err());
                     assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+                }
+            }
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn genuine_bushwhack_batch_orders_both_players_before_damage_and_binds_outcomes_both_seats() {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for double_first in [false, true] {
+                let mut state = ready(actor);
+                cast(&mut state, actor);
+                // The second active printing is a physical opposing static operand.
+                // The actual spell and both fight participants use registered definitions.
+                put(
+                    &mut state,
+                    actor.opponent(),
+                    "Twinflame Tyrant",
+                    Zone::Battlefield,
+                );
+                let fighters = [
+                    put(&mut state, actor, "Shivan Dragon", Zone::Battlefield),
+                    put(
+                        &mut state,
+                        actor.opponent(),
+                        "Shivan Dragon",
+                        Zone::Battlefield,
+                    ),
+                ];
+                for (slot, fighter) in fighters.iter().enumerate() {
+                    state.objects.get_mut(*fighter).v4.lifelink_keyword_counters = 1;
+                    state
+                        .engine
+                        .active_replacements
+                        .push(event::ActiveReplacement {
+                            id: 90_040 + slot as u32,
+                            source: *fighter,
+                            kind: event::ReplacementEffectKind::PreventNextDamage {
+                                target: Target::Object(*fighter),
+                                remaining: 5,
+                            },
+                        });
+                }
+                let spell = put(&mut state, actor, "Bushwhack", Zone::Hand);
+                state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+                engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::ChooseSpellMode { .. }
+                ));
+                engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
+                for fighter in fighters {
+                    assert!(
+                        matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(fighter)))
+                    );
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(fighter)))
+                        .unwrap();
+                }
+                for _ in 0..12 {
+                    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+                        matches!(
+                            p.choice,
+                            Some(PendingEffectChoice::ChooseOption {
+                                purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { .. },
+                                ..
+                            })
+                        )
+                    }) {
+                        break;
+                    }
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut state),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                let lives = state.players.each_ref().map(|p| p.life);
+                let before = serde_json::to_vec(&state).unwrap();
+                let mut replay: GameState = serde_json::from_slice(&before).unwrap();
+                for branch in [&mut state, &mut replay] {
+                    for chooser in [actor, actor.opponent()] {
+                        let Some(PendingEffectChoice::ChooseOption {
+                            player,
+                            purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                            ..
+                        }) = branch
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .unwrap()
+                            .choice
+                            .as_ref()
+                        else {
+                            panic!("real affected batch menu")
+                        };
+                        assert_eq!(*player, chooser);
+                        assert!(fighters
+                            .iter()
+                            .all(|id| branch.objects.get(*id).damage == 0));
+                        assert_eq!(branch.players.each_ref().map(|p| p.life), lives);
+                        let option = choice
+                            .options
+                            .iter()
+                            .position(|option| {
+                                if double_first {
+                                    matches!(option, PreventionV1::Multiplier(_))
+                                } else {
+                                    matches!(option, PreventionV1::Replacement(_))
+                                }
+                            })
+                            .unwrap();
+                        engine::step(branch, Action::ChooseEffectOption(option as u16)).unwrap();
+                        if double_first {
+                            engine::step(branch, Action::ChooseEffectOption(0)).unwrap();
+                        }
+                    }
+                    finish(branch);
+                    assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                    for fighter in fighters {
+                        assert_eq!(
+                            branch.objects.get(fighter).damage,
+                            if double_first { 5 } else { 0 }
+                        );
+                        assert_eq!(
+                            branch.objects.get(fighter).zone,
+                            if double_first {
+                                Zone::Graveyard
+                            } else {
+                                Zone::Battlefield
+                            }
+                        );
+                    }
+                    for player in [actor, actor.opponent()] {
+                        assert_eq!(
+                            branch.players[player.index()].life,
+                            lives[player.index()] + if double_first { 5 } else { 0 }
+                        );
+                    }
+                    crate::effect::validate_pending_effect_choice(branch).unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                for kind in 0..3 {
+                    let mut malformed: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    let at = malformed
+                        .engine
+                        .event_history
+                        .iter()
+                        .position(|event| match kind {
+                            0 => matches!(event, CommittedEvent::CrystalBatchPreparedV3 { .. }),
+                            1 => {
+                                matches!(event, CommittedEvent::TwinflameReplacementInputV38 { .. })
+                            }
+                            _ => matches!(
+                                event,
+                                CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                            ),
+                        })
+                        .unwrap();
+                    malformed.engine.event_history[at] = CommittedEvent::LifeGain {
+                        player: actor,
+                        amount: 0,
+                    };
+                    let bytes = serde_json::to_vec(&malformed).unwrap();
+                    assert!(engine::step(&mut malformed, Action::Pass).is_err());
+                    assert_eq!(serde_json::to_vec(&malformed).unwrap(), bytes);
                 }
             }
         }
