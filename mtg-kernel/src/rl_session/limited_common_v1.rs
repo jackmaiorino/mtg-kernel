@@ -151,3 +151,61 @@ pub(super) fn validate_origin(
     }
     Ok(true)
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests {
+    use super::*;
+    #[test]
+    fn genuine_london_origin_and_ordered_candidates_are_mandatory_and_old_mode_refuses_both_seats()
+    {
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let core = FastActorSessionV1::reset_limited_common_v1(
+                7,
+                17,
+                (100, 100),
+                ["p0".into(), "p1".into()],
+                [vec![forest; 40], vec![forest; 40]],
+                actor,
+            )
+            .unwrap();
+            let FastActorResponseV1::Decision(expected) = core.current_response() else {
+                panic!("London");
+            };
+            core.akroma_current_decision_input_v40(expected, actor.into())
+                .unwrap();
+            let mut legacy = core.clone();
+            legacy.flat_action_contract_mode = FlatActionContractModeV1::AkromaV40;
+            let before = legacy.privileged_core_environment_hash();
+            assert!(legacy
+                .akroma_current_decision_input_v40(expected, actor.into())
+                .is_err());
+            assert_eq!(legacy.privileged_core_environment_hash(), before);
+            for reorder in [false, true] {
+                let mut corrupt = core.clone();
+                let current = corrupt.current.as_mut().unwrap();
+                if reorder {
+                    current.candidates.swap(0, 1);
+                } else {
+                    let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                        Decision::ChooseLondonMulligan { mulligan_count, .. },
+                    )) = &mut current.origin_decision
+                    else {
+                        panic!("actual stored London origin");
+                    };
+                    *mulligan_count += 1;
+                }
+                let before = corrupt.privileged_core_environment_hash();
+                assert!(corrupt
+                    .akroma_current_decision_input_v40(expected, actor.into())
+                    .is_err());
+                assert!(corrupt.step(expected.episode_id, expected.step, 0).is_err());
+                assert_eq!(corrupt.privileged_core_environment_hash(), before);
+            }
+        }
+    }
+}
