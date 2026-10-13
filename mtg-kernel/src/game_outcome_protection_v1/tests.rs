@@ -45,7 +45,7 @@ fn catalog_without_outcome_protection_keeps_state_and_loss_rules_both_seats() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-fn cast_herald(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn cast_herald(actor: PlayerId) -> (GameState, ObjectId) {
     cast_herald_on_turn(actor, actor)
 }
 
@@ -55,6 +55,12 @@ fn cast_herald(actor: PlayerId) -> (GameState, ObjectId) {
 ))]
 fn cast_herald_on_turn(actor: PlayerId, active_player: PlayerId) -> (GameState, ObjectId) {
     let mut state = ready_state_for(active_player);
+    for owner in [active_player, active_player.opponent()] {
+        for _ in 0..16 {
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+    }
+    put(&mut state, actor, "Forest", Zone::Battlefield);
     let source = put(&mut state, actor, "Herald of Eternal Dawn", Zone::Hand);
     let def = &CARD_DEFS[usize::from(state.objects.get(source).card_def)];
     assert!(def.is_executable());

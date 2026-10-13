@@ -201,6 +201,18 @@ pub enum FamilyFactsV40 {
     Banner(Box<BannerFactsV40>),
     Inspiration(Box<InspirationFactsV40>),
     Fishing(Box<FishingFactsV40>),
+    GameOutcome(Box<GameOutcomeFactsV40>),
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameOutcomeFactsV40 {
+    pub protection: crate::game_outcome_protection_public_v1::PublicFactsV1,
+    pub roots: Vec<crate::rules_meaning_game_outcome_protection_v1::MeaningV1>,
+}
+#[derive(Clone, PartialEq)]
+pub(crate) struct GameOutcomeProjectionV40 {
+    pub(crate) facts: GameOutcomeFactsV40,
+    projection: crate::rl::PublicObservationProjectionV5,
 }
 // Backend-only temporaries; never exported as standalone predecessor artifacts.
 #[derive(Clone, PartialEq)]
@@ -229,10 +241,12 @@ pub(crate) enum FamilyProjectionV40 {
     Banner(Box<crate::banner_observation_v1::BannerObservationV1>),
     Inspiration(Box<crate::inspiration_observation_v1::InspirationObservationV1>),
     Fishing(Box<FishingProjectionV40>),
+    GameOutcome(Box<GameOutcomeProjectionV40>),
 }
 impl FamilyProjectionV40 {
     pub(crate) fn facts(&self) -> FamilyFactsV40 {
         match self {
+            Self::GameOutcome(o) => FamilyFactsV40::GameOutcome(Box::new(o.facts.clone())),
             Self::Fishing(o) => FamilyFactsV40::Fishing(Box::new(FishingFactsV40 {
                 poles: o.parts.facts.poles.clone(),
                 operations: o.parts.facts.operations.clone(),
@@ -356,6 +370,7 @@ impl FamilyProjectionV40 {
     }
     pub(crate) fn projection(&self) -> &crate::rl::PublicObservationProjectionV5 {
         match self {
+            Self::GameOutcome(o) => &o.projection,
             Self::Fishing(o) => &o.parts.projection,
             Self::Early(o) => &o.projection,
             Self::Sower(o) => &o.projection,
@@ -386,6 +401,7 @@ impl FamilyProjectionV40 {
 impl FamilyProjectionV40 {
     pub(crate) fn set_projection(&mut self, projection: &crate::rl::PublicObservationProjectionV5) {
         match self {
+            Self::GameOutcome(o) => o.projection = projection.clone(),
             Self::Fishing(o) => o.parts.projection = projection.clone(),
             Self::Early(o) => o.projection = projection.clone(),
             Self::Sower(o) => o.projection = projection.clone(),
@@ -424,7 +440,8 @@ pub(crate) fn build(
     let base = crate::rl::akroma_family_observation_storage_v40(
         state, surface, actor, step, physical, substep,
     )?;
-    Ok(vec![
+    let game_outcome_projection = base.projection.clone();
+    let mut parts = vec![
         FamilyProjectionV40::Early(Box::new(crate::akroma_early_public_v40::build(
             state,
             base.projection,
@@ -516,9 +533,35 @@ pub(crate) fn build(
             )?,
             actions: Vec::new(),
         })),
-    ])
+    ];
+    if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
+        let protection = crate::game_outcome_protection_public_v1::capture(state, &selector)
+            .map_err(|_| RlContractError("invalid current game-outcome facts".into()))?;
+        let roots = crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| def.is_executable() && def.game_outcome_protection_v1.is_some())
+            .map(|(index, _)| {
+                let card_id = u16::try_from(index)
+                    .map_err(|_| RlContractError("game-outcome definition index".into()))?;
+                crate::rules_meaning_game_outcome_protection_v1::meaning(&selector, card_id)
+                    .map_err(|_| RlContractError("unsupported game-outcome printed root".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        parts.push(FamilyProjectionV40::GameOutcome(Box::new(
+            GameOutcomeProjectionV40 {
+                facts: GameOutcomeFactsV40 { protection, roots },
+                projection: game_outcome_projection,
+            },
+        )));
+    }
+    Ok(parts)
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if let Ok(selector) = crate::rules_meaning_game_outcome_protection_v1::live_selector() {
+        crate::game_outcome_protection_public_v1::capture(state, &selector)
+            .map_err(|_| "invalid game-outcome current public authority".to_string())?;
+    }
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::planeswalker_v1::validate_heartfire_recipients_v12(state)?;
     crate::effect::validate_pending_effect_choice(state)?;

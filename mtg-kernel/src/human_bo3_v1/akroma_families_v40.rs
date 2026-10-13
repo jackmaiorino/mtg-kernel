@@ -31,6 +31,7 @@ pub enum HumanFamilyV40 {
     Banner(Box<super::banner_v36::HumanBannerExtensionsV36>),
     Inspiration(Box<super::inspiration_v37::HumanInspirationExtensionsV37>),
     Fishing(Box<super::fishing_pole_v39::HumanFishingPoleExtensionsV39>),
+    GameOutcome(Box<super::game_outcome_family_v40::HumanGameOutcomeFamilyV40>),
 }
 pub(super) fn register(
     projections: &[FamilyProjectionV40],
@@ -38,6 +39,9 @@ pub(super) fn register(
 ) -> Result<(), Error> {
     for projection in projections {
         match projection {
+            FamilyProjectionV40::GameOutcome(o) => {
+                super::game_outcome_family_v40::register(&o.facts, handles)?;
+            }
             FamilyProjectionV40::Fishing(o) => {
                 super::fishing_pole_v39::register_for_akroma_parts(&o.parts, handles)?
             }
@@ -120,6 +124,9 @@ pub(super) fn states(
     projections
         .iter()
         .map(|projection| match projection {
+            FamilyProjectionV40::GameOutcome(o) => Ok(HumanFamilyV40::GameOutcome(Box::new(
+                super::game_outcome_family_v40::state(&o.facts, handles)?,
+            ))),
             FamilyProjectionV40::Fishing(o) => Ok(HumanFamilyV40::Fishing(Box::new(
                 super::fishing_pole_v39::state_for_akroma_parts(&o.parts, handles, human)?,
             ))),
@@ -201,6 +208,7 @@ pub(super) fn unary(
 ) -> Result<(), Error> {
     for fact in facts {
         match fact {
+            HumanFamilyV40::GameOutcome(o) => super::game_outcome_family_v40::unary(o, unary)?,
             HumanFamilyV40::Fishing(o) => {
                 super::fishing_pole_v39::unary_for_akroma_parts(o, unary)?
             }
@@ -257,6 +265,7 @@ pub(super) fn label(
     }
     for projection in projections {
         let selected = match projection {
+            FamilyProjectionV40::GameOutcome(_) => None,
             FamilyProjectionV40::Fishing(_) => None,
 
             FamilyProjectionV40::Early(o) => {

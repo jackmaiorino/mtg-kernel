@@ -1863,6 +1863,11 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+        state,
+        Some(acting_player),
+    )
+    .map_err(RlContractError)?;
     refuse_unrepresented_shroud(state)?;
     if crate::inspiration_observation_v1::requires_successor(state) {
         return Err(RlContractError(
@@ -2055,6 +2060,13 @@ fn build_observation_common_v2_fishing_v39(
 ) -> Result<ObservationV2> {
     let (capabilities, accept_fishing) = capabilities;
     refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    if !accept_akroma {
+        crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
     let (
         accept_cant_block,
         accept_temporary_control,
@@ -2487,6 +2499,13 @@ fn build_policy_observation_parts_common_fishing_v39(
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (capabilities, accept_fishing) = capabilities;
     refuse_unrepresented_shroud_for_akroma(state, accept_akroma)?;
+    if !accept_akroma {
+        crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
     let (
         accept_cant_block,
         accept_temporary_control,
@@ -3533,6 +3552,13 @@ fn build_policy_observation_storage_common_fishing_v39(
     ),
 ) -> Result<PolicyObservationStorageV6> {
     let (request, accept_akroma) = request;
+    if !accept_akroma {
+        crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
     let (accepted_statics, accept_fishing) = accepted_statics;
     let (
         accept_authority,

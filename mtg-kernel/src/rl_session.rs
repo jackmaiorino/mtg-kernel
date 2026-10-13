@@ -1938,7 +1938,14 @@ fn flat_validate_origin_decision_akroma_inner(
     if (if accept_akroma {
         crate::akroma_public_v1::validate_state(state)
     } else {
-        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
+        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state).and_then(
+            |()| {
+                crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+                    state,
+                    Some(current.actor),
+                )
+            },
+        )
     })
     .is_err()
     {
@@ -3331,6 +3338,14 @@ fn flat_validate_current_binding_header_akroma_inner(
     current: &FastActorCurrentDecisionV1,
     accept_akroma: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !accept_akroma
+        && crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
@@ -3396,6 +3411,10 @@ fn flat_validate_current_binding_header_v2(
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
     if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&session.state)
         .is_err()
+        || crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
     {
         return Err(invalid());
     }
@@ -4363,6 +4382,14 @@ fn flat_validate_expected_decision_akroma_inner(
     expected: FastActorDecisionV1,
     accept_akroma: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !accept_akroma
+        && crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
     if !accept_akroma && session.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
     }
@@ -5492,6 +5519,7 @@ impl RlEpisodeSessionV1 {
     ) {
         if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
             .is_err()
+            || crate::game_outcome_protection_v1::requires_successor(&self.state, None)
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7165,6 +7193,17 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && crate::game_outcome_protection_v1::requires_successor(
+                &self.state,
+                self.current.as_ref().map(|current| current.actor),
+            )
+        {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "unrepresented game-outcome protection requires common successor",
+            ));
+        }
         if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
             let current = self.current.as_ref().ok_or_else(|| {
                 session_error(
@@ -7323,6 +7362,20 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
+            && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:game_outcome_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if (if self.flat_action_contract_mode == FlatActionContractModeV1::AkromaV40 {
             crate::akroma_public_v1::validate_state(&self.state)
         } else {

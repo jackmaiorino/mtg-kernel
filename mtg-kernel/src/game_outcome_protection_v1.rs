@@ -12,6 +12,46 @@ fn enabled() -> bool {
     })
 }
 
+/// Printed source scopes visible to a consumer, including a spell about to
+/// establish protection. Opponent hands, libraries and face-down identities
+/// do not determine public refusal.
+pub(crate) fn requires_successor(state: &GameState, actor: Option<PlayerId>) -> bool {
+    if !enabled() {
+        return false;
+    }
+    let printed = |source| {
+        state.objects.try_get(source).is_some_and(|object| {
+            object.v4.face_down_v1.is_none()
+                && object.v4.face_index == 0
+                && CARD_DEFS
+                    .get(usize::from(object.card_def))
+                    .is_some_and(|def| {
+                        def.is_executable() && def.game_outcome_protection_v1.is_some()
+                    })
+        })
+    };
+    state.objects.iter().any(|(source, object)| {
+        (object.zone == Zone::Battlefield
+            || (object.zone == Zone::Hand && actor == Some(object.owner)))
+            && printed(source)
+    }) || state.stack.iter().any(|item| printed(item.source))
+        || state
+            .engine
+            .pending_cast
+            .as_ref()
+            .is_some_and(|cast| printed(cast.spell))
+}
+
+pub(crate) fn require_legacy_consumer_supported(
+    state: &GameState,
+    actor: Option<PlayerId>,
+) -> Result<(), String> {
+    if requires_successor(state, actor) {
+        return Err("game-outcome protection requires its explicit common consumer member".into());
+    }
+    Ok(())
+}
+
 pub fn active(state: &GameState, source: ObjectId) -> bool {
     state.objects.try_get(source).is_some_and(|object| {
         object.zone == Zone::Battlefield
@@ -65,4 +105,4 @@ pub(crate) fn consume_protected_empty_draws(state: &mut GameState, protected: [b
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

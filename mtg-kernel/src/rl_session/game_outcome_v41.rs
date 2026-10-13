@@ -78,3 +78,66 @@ impl FastActorSessionV1 {
         Ok(())
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests {
+    use super::*;
+    use crate::ids::PlayerId;
+
+    #[test]
+    #[ignore = "requires actual registered Herald and genuine paid spell fixture"]
+    fn paid_herald_common_facts_binding_and_legacy_refusal_before_work_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, _) = crate::game_outcome_protection_v1::tests::cast_herald(actor);
+            let before = serde_json::to_vec(&state).unwrap();
+            let surface = PolicySurfaceV5::new_for_session();
+            assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
+            assert!(crate::rl::observe_policy_v8(&state, &surface, actor, 0, 0, 0, 1).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            let legacy = FastActorSessionV1::from_human_v8_fixture_state(state.clone());
+            assert!(matches!(
+                legacy.current_response(),
+                FastActorResponseV1::Terminal(_)
+            ));
+            assert_eq!(serde_json::to_vec(&legacy.state).unwrap(), before);
+
+            let session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("genuine common successor priority")
+            };
+            let seat = expected.acting_player;
+            let (observation, _, binding) = session
+                .game_outcome_current_decision_input_v41(expected, seat)
+                .unwrap();
+            assert!(observation.protection.cannot_lose[actor.index()]);
+            let mut forged = binding.clone();
+            forged.observation.protection.cannot_lose[actor.index()] = false;
+            let unchanged = session.privileged_core_environment_hash();
+            assert!(session
+                .game_outcome_validate_bound_decision_v41(expected, seat, &forged)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), unchanged);
+            let mut forged = binding;
+            let common = forged
+                .predecessor
+                .families
+                .iter_mut()
+                .find_map(|family| match family {
+                    crate::akroma_family_public_v40::FamilyProjectionV40::GameOutcome(facts) => {
+                        Some(facts)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            common.facts.protection.cannot_win[actor.opponent().index()] = false;
+            assert!(session
+                .game_outcome_validate_bound_decision_v41(expected, seat, &forged)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), unchanged);
+        }
+    }
+}

@@ -94,6 +94,17 @@ pub fn observe_v41(
         .map_err(|_| RlContractError("Herald selector unavailable".into()))?;
     let protection = protection::capture(state, &selector)
         .map_err(|_| RlContractError("Herald public facts disagree with engine".into()))?;
+    let common = predecessor.families.iter().find_map(|family| match family {
+        crate::akroma_family_public_v40::FamilyFactsV40::GameOutcome(facts) => {
+            Some(&facts.protection)
+        }
+        _ => None,
+    });
+    if common != Some(&protection) {
+        return Err(RlContractError(
+            "Herald supplement differs from common family".into(),
+        ));
+    }
     let mut record = GameOutcomeObservationV41 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256_v41(),
