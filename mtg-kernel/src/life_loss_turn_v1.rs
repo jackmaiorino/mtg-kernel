@@ -22,11 +22,11 @@ fn begin_turn(state: &mut GameState) {
         .engine
         .event_history
         .push(CommittedEvent::LifeLossTurnBeganV1 {
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         });
     state.life_loss_turn_v1 = Some(LifeLossTurnV1 {
-        turn: state.turn,
+        turn: state.turn_key_v1(),
         active_player: state.active_player,
         players: [false; 2],
     });
@@ -79,7 +79,7 @@ pub(crate) fn flags(state: &GameState) -> Result<[bool; 2], String> {
     let ledger = state
         .life_loss_turn_v1
         .ok_or("missing selected life-loss ledger")?;
-    if ledger.turn != state.turn || ledger.active_player != state.active_player {
+    if ledger.turn != state.turn_key_v1() || ledger.active_player != state.active_player {
         return Err("life-loss ledger belongs to another turn".into());
     }
     let boundary = state
@@ -90,7 +90,7 @@ pub(crate) fn flags(state: &GameState) -> Result<[bool; 2], String> {
         .ok_or("life-loss ledger lost its actual turn anchor")?;
     if state.engine.event_history[boundary]
         != (CommittedEvent::LifeLossTurnBeganV1 {
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         })
     {
