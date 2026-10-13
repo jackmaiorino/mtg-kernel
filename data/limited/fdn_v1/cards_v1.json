@@ -7129,6 +7129,156 @@
       "decks": [
         "FDN_reference_inspiration_from_beyond.dck"
       ]
+    },
+    {
+      "name": "Herald of Eternal Dawn",
+      "engine_capability": "full",
+      "mana_cost": "{4}{W}{W}{W}",
+      "mana_value": 7,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 6,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_herald_of_eternal_dawn.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flash",
+        "flying",
+        "controller_cannot_lose_opponents_cannot_win"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HeraldOfEternalDawn.java",
+      "is_token": false
+    },
+    {
+      "name": "Akroma's Memorial",
+      "engine_capability": "full",
+      "mana_cost": "{7}",
+      "mana_value": 7,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_akromas_memorial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controlled_creatures_flying_first_strike_vigilance_trample_haste",
+        "protection_from_black_and_red"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AkromasMemorial.java",
+      "is_token": false
+    },
+    {
+      "name": "Fishing Pole",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_fishing_pole.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "equipment",
+        "granted_activation",
+        "bait_counter",
+        "untap_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FishingPole.java",
+      "is_token": false
+    },
+    {
+      "name": "Fish Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Fish"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java",
+      "is_token": true,
+      "object_name": "Fish"
+    },
+    {
+      "name": "Twinflame Tyrant",
+      "engine_capability": "full",
+      "mana_cost": "{3}{R}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_twinflame_tyrant.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "double_controlled_source_damage_to_opponent"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TwinflameTyrant.java",
+      "is_token": false
     }
   ]
 }

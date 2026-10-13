@@ -398,7 +398,10 @@ fn registered_copied_heartfire_crystal_menu_captured_controller_private_mapping_
     menu_check(false);
 }
 #[test]
-#[ignore = "requires genuine Akroma registration; actual Heartfire/Crystal roots and labeled shield primitive remain"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_memorial_copied_heartfire_crystal_three_family_replacement_restore_both_seats() {
     menu_check(true);
 }
@@ -408,7 +411,10 @@ fn registered_copied_heartfire_captured_identity_reentry_privacy_owning_restore_
     check(false);
 }
 #[test]
-#[ignore = "requires genuine Akroma registration; real Heartfire and typed copy provenance are unchanged"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_memorial_copied_heartfire_union_uses_original_public_source_and_damage_facts_both_seats()
 {
     check(true);
@@ -579,7 +585,10 @@ fn real_fishing_and_copied_heartfire_rows_keep_independent_original_sources_and_
 }
 
 #[test]
-#[ignore = "requires genuine Twinflame registration; actual copied Heartfire payment and V40 history route"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_both_seats() {
     use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -778,7 +787,10 @@ fn actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_b
 }
 
 #[test]
-#[ignore = "requires genuine Twinflame registration; actual Incinerating Blast optional discard DTO and owning choices"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_twinflame_incinerating_discard_parts_and_owning_decline_pay_restore_both_seats() {
     use crate::akroma_family_public_v40::FamilyFactsV40;
     for actor in [PlayerId::P0, PlayerId::P1] {

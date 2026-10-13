@@ -135,7 +135,10 @@ fn refuses(state: &mut GameState) {
     assert_eq!(serde_json::to_vec(state).unwrap(), before);
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn printed_cast_equip_named_cost_first_and_zero_bait_real_untap_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -178,7 +181,10 @@ fn printed_cast_equip_named_cost_first_and_zero_bait_real_untap_both_seats() {
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -239,7 +245,10 @@ fn multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats() {
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn multiple_poles_foreign_named_cost_short_mana_sickness_and_longbow_remain_distinct_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -296,7 +305,10 @@ fn multiple_poles_foreign_named_cost_short_mana_sickness_and_longbow_remain_dist
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn source_and_host_departure_control_change_and_exact_counter_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -331,7 +343,10 @@ fn source_and_host_departure_control_change_and_exact_counter_restore_both_seats
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn original_pole_departure_reentry_does_not_receive_bait_or_fish_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -351,7 +366,10 @@ fn original_pole_departure_reentry_does_not_receive_bait_or_fish_both_seats() {
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn untap_uncollected_pending_live_beneficiary_counter_balance_and_completed_replay_refuse_readonly_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -395,7 +413,10 @@ fn untap_uncollected_pending_live_beneficiary_counter_balance_and_completed_repl
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_natural_untap_and_stun_replacement_mandatory_trigger_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -436,7 +457,10 @@ fn genuine_natural_untap_and_stun_replacement_mandatory_trigger_both_seats() {
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_registered_quirion_return_forest_cost_untaps_equipped_host_and_original_owner_gets_fish_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -481,7 +505,10 @@ fn actual_registered_quirion_return_forest_cost_untaps_equipped_host_and_origina
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn original_untap_controller_survives_host_departure_and_pole_control_change_with_coherent_capture_forgery_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -543,7 +570,10 @@ fn original_untap_controller_survives_host_departure_and_pole_control_change_wit
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -570,7 +600,10 @@ fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_bo
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn manufactured_counter_operation_completion_requires_real_original_removal_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);
@@ -720,7 +753,10 @@ fn projected_source(state: &GameState, source: ObjectId) -> crate::rl::CardStabl
     reference
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_copied_pole_grant_and_original_controller_untap_survive_departure_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = copied_pole(actor);
@@ -765,7 +801,10 @@ fn genuine_copied_pole_grant_and_original_controller_untap_survive_departure_res
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_copied_pole_leaves_before_untap_resolution_keeps_public_original_and_creates_no_fish() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = copied_pole(actor);
@@ -790,7 +829,10 @@ fn genuine_copied_pole_leaves_before_untap_resolution_keeps_public_original_and_
     }
 }
 #[test]
-#[ignore = "requires actual future Fishing Pole, Fish and neutral sentinel registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for disguised in [false, true] {
@@ -841,7 +883,10 @@ fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_
 }
 
 #[test]
-#[ignore = "requires actual future Fishing Pole and Fish registration"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn private_underlying_pole_is_not_enumerated_as_a_public_current_pole_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, _, pole) = copied_pole(actor);
@@ -886,7 +931,10 @@ fn mixed_memorial(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     (state, host, pole)
 }
 #[test]
-#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_readonly_both_seats()
 {
     use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
@@ -978,7 +1026,10 @@ fn real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_re
     }
 }
 #[test]
-#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seats() {
     use crate::akroma_family_public_v40::FamilyFactsV40;
     use crate::human_bo3_v1::{
@@ -1096,7 +1147,10 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
     }
 }
 #[test]
-#[ignore = "requires genuine future Fishing/Fish and Akroma registrations"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_mixed_copied_pole_untap_original_controller_history_and_human_restore_both_seats() {
     use crate::akroma_family_public_v40::FamilyFactsV40;
     use crate::human_bo3_v1::{HumanAkromaProjectorV40, HumanAkromaSessionV40};
