@@ -445,8 +445,7 @@ impl OwnerV1 {
         (removed || waiting)
             && capture.ctx == context(&self.expected)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
-            && (matches!(capture.op, EffectOp::DamageAllCreatures { .. })
-                || fight_recipe(&capture.op))
+            && batch_recipe(&capture.op)
             && events.iter().all(|e| {
                 matches!(e, crate::event::ProposedEvent::Damage(d)
                 if !d.is_combat && d.historical_source.is_none()
@@ -888,7 +887,10 @@ fn optional_source_fight(op: &EffectOp) -> bool {
             && source_fight_recipe(&options[1]))
 }
 fn batch_recipe(op: &EffectOp) -> bool {
-    matches!(op, EffectOp::DamageAllCreatures { .. }) || fight_recipe(op)
+    matches!(
+        op,
+        EffectOp::DamageAllCreatures { .. } | EffectOp::DamageAllTargets { .. }
+    ) || fight_recipe(op)
 }
 fn has_damage(op: &EffectOp) -> bool {
     if fight_recipe(op) {
@@ -899,6 +901,7 @@ fn has_damage(op: &EffectOp) -> bool {
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
+        | EffectOp::DamageAllTargets { .. }
         | EffectOp::CreatureTargetPowerDamage {
             plus1_plus1: 0.., ..
         }
@@ -963,6 +966,7 @@ fn supported(op: &EffectOp) -> bool {
         | EffectOp::DealDamageDynamic { .. }
         | EffectOp::DealDamageByControlledCreatureCount { .. }
         | EffectOp::DamageAllCreatures { .. }
+        | EffectOp::DamageAllTargets { .. }
         | EffectOp::CreatureTargetPowerDamage {
             plus1_plus1: 0.., ..
         }
@@ -3201,10 +3205,41 @@ fn capture_batch(
     } else {
         None
     };
-    let proposals = fight
-        .as_ref()
-        .map(|f| fight_proposals(ctx, op, f))
-        .transpose()?;
+    let proposals = if let EffectOp::DamageAllTargets { amount } = op {
+        Some(
+            ctx.targets
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(slot, target)| {
+                    let Target::Object(id) = target else {
+                        return None;
+                    };
+                    (ctx.target_incarnation_matches(slot, state)
+                        && state
+                            .objects
+                            .try_get(id)
+                            .is_some_and(|o| o.zone == Zone::Battlefield)
+                        && crate::engine::object_has_type(
+                            state,
+                            id,
+                            crate::card_def::CardType::Creature,
+                        ))
+                    .then_some(BatchDamageV2 {
+                        source: ctx.source,
+                        target,
+                        amount: *amount,
+                        touched: Vec::new(),
+                    })
+                })
+                .collect(),
+        )
+    } else {
+        fight
+            .as_ref()
+            .map(|f| fight_proposals(ctx, op, f))
+            .transpose()?
+    };
     let roster = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|p| state.players[p.index()].battlefield.iter().copied())
@@ -3324,16 +3359,32 @@ fn capture_batch(
     if !owner.permits_batch(state, &capture, &events) {
         return Err("Crystal batch lost exact pre-pop source loan".into());
     }
-    for (proposal, options) in capture.proposals.iter().zip(&capture.options) {
+    for (slot, (proposal, options)) in capture.proposals.iter().zip(&capture.options).enumerate() {
         if options.is_some() {
             capture.initial_outcomes.push(BatchOutcomeV2::Waiting);
         } else if proposal.amount <= 0 {
             capture.initial_outcomes.push(BatchOutcomeV2::Prevented);
         } else {
-            let outcome = crate::event::apply_replacements(
-                state,
-                crate::event::ProposedEvent::Damage(proposal.proposed()),
-            );
+            let guaranteed_zero = capture
+                .multiplier_options
+                .0
+                .get(slot)
+                .map(|packet| {
+                    crate::twinflame_tyrant_v1::ordering::commuting_amount(
+                        proposal.amount,
+                        &packet.options,
+                    )
+                })
+                .transpose()?
+                .is_some_and(|amount| amount == 0);
+            let outcome = if guaranteed_zero {
+                None
+            } else {
+                crate::event::apply_replacements(
+                    state,
+                    crate::event::ProposedEvent::Damage(proposal.proposed()),
+                )
+            };
             if state.engine.halted.is_some() {
                 return Err("Crystal batch replacement preparation halted".into());
             }
@@ -3444,6 +3495,32 @@ fn validate_batch_capture(
         return Err("Crystal batch repeated battlefield recipient".into());
     }
     let expected = match op {
+        EffectOp::DamageAllTargets { amount } => {
+            if capture.fight.is_some() {
+                return Err("targeted area damage carries foreign fight facts".into());
+            }
+            if capture.roster.iter().any(|r|r.selected && !ctx.targets.iter().zip(&ctx.target_contracts).any(|(target,contract)|
+                *target==Target::Object(r.object.object) && matches!(contract,
+                    crate::state::StackTargetContractV4::Object {object,owner,zone:Zone::Battlefield,zone_change_count,..}
+                    if *object==r.object.object && *owner==r.owner && *zone_change_count==r.object.expected_zone_change_count))) {
+                return Err("targeted area damage borrowed a foreign recipient incarnation".into());
+            }
+            ctx.targets
+                .iter()
+                .filter_map(|target| {
+                    capture
+                        .roster
+                        .iter()
+                        .find(|r| r.selected && *target == Target::Object(r.object.object))
+                        .map(|r| BatchDamageV2 {
+                            source: ctx.source,
+                            target: Target::Object(r.object.object),
+                            amount: *amount,
+                            touched: Vec::new(),
+                        })
+                })
+                .collect()
+        }
         EffectOp::DamageAllCreatures { amount, .. } => {
             if capture.fight.is_some() {
                 return Err("Crystal area damage carries foreign fight".into());
@@ -3632,6 +3709,24 @@ fn validate_live_batch(state: &GameState, capture: &BatchCaptureV2) -> Result<()
                     || live.controller != r.controller
                     || live.card_def != r.card_def
                     || match &capture.op {
+                        EffectOp::DamageAllTargets { .. } => {
+                            capture
+                                .ctx
+                                .targets
+                                .iter()
+                                .copied()
+                                .enumerate()
+                                .any(|(slot, target)| {
+                                    target == Target::Object(r.object.object)
+                                        && capture.ctx.target_incarnation_matches(slot, state)
+                                        && crate::engine::object_has_type(
+                                            state,
+                                            r.object.object,
+                                            crate::card_def::CardType::Creature,
+                                        )
+                                })
+                                != r.selected
+                        }
                         EffectOp::DamageAllCreatures { filter, .. } => {
                             creature_matches_filter(
                                 state,

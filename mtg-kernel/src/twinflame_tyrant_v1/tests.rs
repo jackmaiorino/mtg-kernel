@@ -1164,4 +1164,135 @@ mod future_printed {
             }
         }
     }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn genuine_cast_into_fire_multi_target_ordering_and_returned_target_exclusion_both_seats() {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for returned in [false, true] {
+                for double_first in [false, true] {
+                    let mut state = ready(actor);
+                    cast(&mut state, actor);
+                    let own = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+                    let opposing = put(
+                        &mut state,
+                        actor.opponent(),
+                        "Shivan Dragon",
+                        Zone::Battlefield,
+                    );
+                    state
+                        .engine
+                        .active_replacements
+                        .push(event::ActiveReplacement {
+                            id: 90_060,
+                            source: opposing,
+                            kind: event::ReplacementEffectKind::PreventNextDamage {
+                                target: Target::Object(opposing),
+                                remaining: 1,
+                            },
+                        });
+                    let spell = put(&mut state, actor, "Cast Into the Fire", Zone::Hand);
+                    state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+                    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+                    engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut state),
+                        Decision::ChooseSpellMode { .. }
+                    ));
+                    engine::step(&mut state, Action::ChooseSpellMode(0)).unwrap();
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(own))).unwrap();
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(opposing)))
+                        .unwrap();
+                    if returned {
+                        let old = state.objects.get(own).zone_change_count;
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(own, Zone::Hand),
+                        );
+                        event::propose_and_commit(
+                            &mut state,
+                            event::ProposedEvent::zone_change(own, Zone::Battlefield),
+                        );
+                        assert_eq!(state.objects.get(own).zone_change_count, old + 2);
+                    }
+                    for _ in 0..24 {
+                        let decision = engine::advance_until_decision(&mut state);
+                        if crate::effect::crystal_prevention_v1::is_choice(&state) {
+                            break;
+                        }
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "{decision:?}"
+                        );
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                    assert_eq!(state.objects.get(own).damage, 0);
+                    assert_eq!(state.objects.get(opposing).damage, 0);
+                    let Some(PendingEffectChoice::ChooseOption {
+                        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                        ..
+                    }) = state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .choice
+                        .as_ref()
+                    else {
+                        panic!("actual multi-target menu missing")
+                    };
+                    assert_eq!(choice.target, Target::Object(opposing));
+                    assert_eq!(choice.original_amount, 1);
+                    let slot = choice
+                        .options
+                        .iter()
+                        .position(|option| {
+                            if double_first {
+                                matches!(option, PreventionV1::Multiplier(_))
+                            } else {
+                                matches!(option, PreventionV1::Replacement(_))
+                            }
+                        })
+                        .unwrap();
+                    let saved = serde_json::to_vec(&state).unwrap();
+                    let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+                    for branch in [&mut state, &mut restored] {
+                        engine::step(branch, Action::ChooseEffectOption(slot as u16)).unwrap();
+                        finish(branch);
+                        assert_eq!(branch.objects.get(own).damage, if returned { 0 } else { 1 });
+                        assert_eq!(
+                            branch.objects.get(opposing).damage,
+                            if double_first { 1 } else { 0 }
+                        );
+                        assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+                        crate::effect::crystal_prevention_v1::validate(branch).unwrap();
+                        let captures: Vec<_> = branch
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|e| match e {
+                                CommittedEvent::CrystalBatchPreparedV3 { capture }
+                                    if matches!(
+                                        capture.op,
+                                        crate::effect::EffectOp::DamageAllTargets { amount: 1 }
+                                    ) =>
+                                {
+                                    Some(capture)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(captures.len(), 1);
+                        assert_eq!(captures[0].proposals.len(), if returned { 1 } else { 2 });
+                        assert!(captures[0].proposals.iter().all(|p| p.source == spell));
+                    }
+                    assert_eq!(
+                        serde_json::to_vec(&state).unwrap(),
+                        serde_json::to_vec(&restored).unwrap()
+                    );
+                }
+            }
+        }
+    }
 }
