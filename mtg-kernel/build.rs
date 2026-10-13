@@ -7074,6 +7074,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Grappling Kraken" => "controlled_land_enters:target_opponent_controlled_creature:tap_then_stun_counter:1:exact_incarnation",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
+        "Fiendish Panda" => "positive_controller_life_gain_event:counter_exact_original_source:1;self_creature_death:return_another_target_non_bear_own_graveyard_creature_card_mv_at_most_original_last_battlefield_signed_power",
         "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
         "Soul-Shackled Zombie" => "etb:exile_up_to_two_targets_from_single_graveyard:if_creature_actually_exiled_each_opponent_loses_two_controller_gains_two",
         "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",

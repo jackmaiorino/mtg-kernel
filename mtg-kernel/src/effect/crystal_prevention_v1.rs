@@ -559,6 +559,11 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // These two fixed owned roots can only sacrifice/counter or draw.
         // Their genuine capture/publication is authenticated by Hunter custody.
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
+        // These leaves authenticate their original collected capture before
+        // countering an exact source or moving a legal graveyard target. ETB
+        // triggers from the returned card are separately published roots.
+        EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
         EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
         EffectOp::Conditional { then, else_, .. } => {

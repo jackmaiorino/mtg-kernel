@@ -1343,6 +1343,19 @@ pub enum CommittedEvent {
     HighSocietyHunterJournalV45 {
         journal: Box<crate::high_society_hunter_custody_v45::JournalV45>,
     },
+    FiendishPandaLifeGainCaptureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        gain_history_index: u64,
+        amount: i32,
+    },
+    FiendishPandaDeathCaptureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        departure_history_index: u64,
+        power: i32,
+    },
+    FiendishPandaCaptureCollectedV1 {
+        capture_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3048,7 +3061,8 @@ fn commit_with_entry_batch_and_source_color(
     crate::banishing_light_v1::record_entry(state, entry_history_index);
     crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
     if committed_death {
-        for capture in death_captures {
+        for mut capture in death_captures {
+            crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
             state.engine.event_log.push(capture.clone());
             state.engine.event_history.push(capture);
         }
@@ -3093,6 +3107,9 @@ fn commit_with_entry_batch_and_source_color(
         }
     }
     crate::life_gain_turn_v1::capture_committed_gain(state);
+    // The predecessor first-gain hook consumes the actual last LifeGain.
+    // Panda uses its original index and can then append its own markers.
+    crate::fiendish_panda_v1::record_gain(state, entry_history_index);
     if let Some(object) = entry_counter_object {
         crate::standard_cards_v1::initialize_entry_counters(state, object);
         let live = state.objects.get(object);

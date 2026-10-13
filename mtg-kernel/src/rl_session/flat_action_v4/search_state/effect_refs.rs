@@ -52,6 +52,8 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            FiendishPandaCounterFromCaptureV1 { .. }
+            | FiendishPandaReturnFromCaptureV1 { .. } => true,
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
@@ -1386,7 +1388,10 @@ pub(super) fn conflicts(
             TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
-                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. } => true,
+                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. }
+                | FiendishPandaLifeGainCaptureV1 { .. }
+                | FiendishPandaDeathCaptureV1 { .. }
+                | FiendishPandaCaptureCollectedV1 { .. } => true,
         }
     })
 }

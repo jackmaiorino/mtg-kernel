@@ -1891,6 +1891,8 @@ pub fn observe_v1(
 ) -> Result<ObservationV1> {
     crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
+    crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -2133,6 +2135,8 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
     accepted_planes: (bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
     crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
@@ -4932,6 +4936,7 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::fiendish_panda_v1::require_legacy_supported(state, None).map_err(RlContractError)?;
     crate::high_society_hunter_v1::require_legacy_supported(state, None)
         .map_err(RlContractError)?;
     let mut out = Vec::new();
@@ -4946,6 +4951,8 @@ fn core_surface_action_candidates_v1(
                 plot_actions,
             } => {
                 let actor = (*player).into();
+                crate::fiendish_panda_v1::require_legacy_supported(state, Some(*player))
+                    .map_err(RlContractError)?;
                 crate::high_society_hunter_v1::require_legacy_supported(state, Some(*player))
                     .map_err(RlContractError)?;
                 for &id in castable_spells {

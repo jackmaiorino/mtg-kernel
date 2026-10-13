@@ -84,6 +84,8 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::HighSocietyHunterFromCaptureV45 { .. }
         | EffectOp::FaebloomCreateFaeriesV43
         | EffectOp::FaebloomTapFromCaptureV43 { .. } => {

@@ -1,5 +1,5 @@
 {
-  "state": "unregistered_target_primitive_only",
+  "state": "unregistered_event_capture_core_and_precise_meaning",
   "base_commit": "78d3957bc9b92cb262422dc0e0b012380448cb78",
   "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
   "references": [
@@ -27,5 +27,8 @@
   "rust": "1.94.1",
   "compilation": "unrun",
   "gameplay": "unrun",
-  "registration": "absent"
+  "registration": "absent",
+  "core_base_commit": "b3ceb928c55c8866fede3acad1ac5b9073833dd6",
+  "complete_publication_custody": false,
+  "safe_consumer_admitted": false
 }
