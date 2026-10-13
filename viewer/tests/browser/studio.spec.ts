@@ -73,6 +73,16 @@ test('the UCT console keeps the tree, timeline and attempt panel on one screen',
   for(const part of [page.getByRole('slider',{name:'Search event timeline'}),page.locator('.search-graph-canvas'),page.getByRole('complementary',{name:'This attempt'}),page.getByRole('complementary',{name:'First move options'})])await expect(part).toBeInViewport();
   await page.getByRole('button',{name:'Next attempt'}).click();await expect(page.locator('.search-phase')).toContainText('Attempt 2 /');
   await expect(page.getByRole('complementary',{name:'First move options'})).toContainText('1/1');
+  const node=page.getByRole('group',{name:'Accumulated explored search graph'}).locator('[data-node]').last(),details=page.getByRole('dialog',{name:'Position details'});
+  await node.click();
+  await expect(details.getByRole('list',{name:'Choices from the search root'})).toContainText('Cast Spy');await expect(details).toContainText('1 try through here · 1 won (100%)');
+  await expect(page.locator('.uct-board-head')).toContainText('BOARD AT THE SELECTED TREE POSITION');
+  const canvas=(await page.locator('.search-graph-canvas').boundingBox())!,card=(await details.boundingBox())!;
+  expect(card.x>=canvas.x&&card.y>=canvas.y&&card.x+card.width<=canvas.x+canvas.width+1&&card.y+card.height<=canvas.y+canvas.height+1).toBe(true);
+  await page.getByRole('button',{name:'Close position details'}).click();await expect(details).toHaveCount(0);
+  await expect(page.locator('.uct-board-head')).toContainText('HYPOTHETICAL BOARD');
+  await node.click();await details.getByRole('button',{name:'Watch attempt 1'}).click();
+  await expect(page.locator('.search-phase')).toContainText('Attempt 1 /');await expect(details).toHaveCount(0);
 });
 
 test('retained search choices link to roots and show legal moves without fabricated scores',async({page})=>{
