@@ -1,0 +1,67 @@
+{
+  "schema": "mtg-kernel/fdn/fishing-pole-prepared-source/v1",
+  "status": "unregistered-source-preparation-not-qualified",
+  "source_base": "411a1c011c939d267fa9e52a7744ff4bc7c078a8",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "source_sha256": {
+    "Mage.Sets/src/mage/cards/f/FishingPole.java": "ff20a5319a77ddad1d467617dfd35d5bd28bcb35eaddec3c4a341221e849eef3",
+    "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java": "0598de8f369665c2cb4293dd8b597db529a4c985cc766156b86e563038ffb541"
+  },
+  "cards": [
+    {
+      "name": "Fishing Pole",
+      "engine_capability": "full",
+      "mana_cost": "{1}",
+      "mana_value": 1,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Equipment"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "equipment",
+        "granted_activation",
+        "bait_counter",
+        "untap_trigger"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FishingPole.java"
+    },
+    {
+      "name": "Fish Token",
+      "object_name": "Fish",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Fish"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FishNoAbilityToken.java",
+      "is_token": true
+    }
+  ]
+}
