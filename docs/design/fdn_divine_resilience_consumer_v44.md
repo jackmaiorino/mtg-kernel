@@ -89,6 +89,12 @@ Pinned Rust1.94.1 rustfmt and Git diff checks are the allowed checks for this
 source lane. None of these test groups has been run here. Parent owns serial
 compilation, strict lint, gameplay qualification and integration.
 
+The scoped source review identified and repaired an incomplete finalized-row
+mapping, missing observation-producer dependencies and the frozen benchmark's
+exhaustive semantic visitor. The benchmark explicitly refuses entry-color and
+V44 choices before selecting from any affected menu. Its existing categories
+remain unchanged; this is compile readiness, not benchmark admission.
+
 ## Remaining limits
 
 The new consumer handles the exact ordinary hand-cast Divine producer. Copied

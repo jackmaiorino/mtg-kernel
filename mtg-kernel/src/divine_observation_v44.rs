@@ -60,6 +60,8 @@ pub fn producer_sha256() -> String {
         include_str!("rl_session/divine_v44.rs"),
         include_str!("human_bo3_v1/divine_v44.rs"),
         include_str!("divine_actions_v44.rs"),
+        include_str!("rl_variable_cast_v1.rs"),
+        include_str!("policy_observation_variable_cast_v1.rs"),
         include_str!("faebloom_observation_v43.rs"),
     ] {
         h.update([0]);
@@ -68,6 +70,7 @@ pub fn producer_sha256() -> String {
     for s in [
         crate::ajani_public_v42::producer_sha256(),
         crate::akroma_public_v1::producer_sha256_v1(),
+        crate::faebloom_public_v43::producer_sha256(),
     ] {
         h.update([1]);
         h.update(s.as_bytes());

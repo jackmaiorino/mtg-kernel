@@ -1099,7 +1099,8 @@ fn project_divine(
             })
         })
         .transpose()?;
-    lized
+    let finalized = facts
+        .finalized
         .iter()
         .map(|p| {
             Ok(HumanDivineFinalizedV44 {
