@@ -147,7 +147,11 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
     if !requires_successor(state) {
         return Ok(());
     }
-    let _ = meanings()?;
+    if meanings()?.len() != 2 {
+        return Err(RlContractError(
+            "selected catalog has no exact Inspiration roots".into(),
+        ));
+    }
     if let Some(p) = state.engine.pending_effect.as_ref() {
         if state
             .objects
@@ -230,6 +234,51 @@ pub(crate) fn mill_card_ref(
     {
         return Err(RlContractError(
             "private mill identities belong only to the original chooser".into(),
+        ));
+    }
+    let started = p
+        .resolving_item
+        .v4
+        .inspiration_started_v1
+        .0
+        .ok_or_else(|| RlContractError("private mill lost original started row".into()))?;
+    let inputs = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|e| match e {
+            crate::event::CommittedEvent::InspirationResolutionInputV1 { input }
+                if input.previous == started
+                    && input.kind == crate::effect::InspirationInputKindV1::Drive
+                    && input.pending.resolving_item == p.resolving_item
+                    && input.pending.ctx == p.ctx =>
+            {
+                input.mill.as_ref()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [original] = inputs.as_slice() else {
+        return Err(RlContractError(
+            "private mill lacks unique genuine initial prefix".into(),
+        ));
+    };
+    let current = chosen
+        .iter()
+        .chain(legal)
+        .map(|c| {
+            c.expected_object
+                .ok_or_else(|| RlContractError("private mill card lacks bound incarnation".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if current.len() != original.len()
+        || original.len() > 3
+        || original
+            .iter()
+            .any(|binding| current.iter().filter(|b| *b == binding).count() != 1)
+    {
+        return Err(RlContractError(
+            "private mill partition differs from original owned input".into(),
         ));
     }
     let binding = chosen

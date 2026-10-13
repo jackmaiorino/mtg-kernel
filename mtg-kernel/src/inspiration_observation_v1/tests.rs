@@ -209,16 +209,22 @@ pub(crate) mod registered {
                 serde_json::to_vec(&state).unwrap(),
                 serde_json::to_vec(&restored).unwrap()
             );
-            for mode in 0..3 {
+            for mode in 0..4 {
                 let mut bad = at_mill(actor, "Island");
                 let candidate = bad.players[actor.index()].library[0];
                 match mode {
                     0 => bad.objects.get_mut(candidate).zone_change_count += 1,
                     1 => bad.objects.get_mut(candidate).owner = actor.opponent(),
-                    _ => bad.engine.event_history.retain(|e| {
+                    2 => bad.engine.event_history.retain(|e| {
                         !matches!(
                             e,
                             crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                        )
+                    }),
+                    _ => bad.engine.event_history.retain(|e| {
+                        !matches!(
+                            e,
+                            crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
                         )
                     }),
                 }
