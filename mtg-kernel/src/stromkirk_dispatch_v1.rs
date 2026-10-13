@@ -276,7 +276,8 @@ fn validate_open_turn(state: &GameState, capture: u64) -> Result<(), String> {
     else {
         unreachable!()
     };
-    if state.turn != *turn || state.active_player != source_at(state, capture)?.controller {
+    if state.turn_key_v1() != *turn || state.active_player != source_at(state, capture)?.controller
+    {
         return Err("Stromkirk open occurrence crossed its original turn".into());
     }
     Ok(())
