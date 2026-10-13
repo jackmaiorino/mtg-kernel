@@ -34,6 +34,7 @@ pub(crate) mod e_supported;
 mod identity;
 mod interchange;
 mod labels;
+mod pathlog;
 mod play;
 mod profile_roots;
 mod refresh;
