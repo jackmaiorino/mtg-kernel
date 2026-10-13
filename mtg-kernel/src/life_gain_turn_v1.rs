@@ -32,11 +32,11 @@ fn begin_turn(state: &mut GameState) {
         .engine
         .event_history
         .push(CommittedEvent::LifeGainTurnBeganV1 {
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         });
     state.life_gain_turn_v1 = Some(LifeGainTurnV1 {
-        turn: state.turn,
+        turn: state.turn_key_v1(),
         active_player: state.active_player,
         history_index,
         captures: Vec::new(),
@@ -67,7 +67,7 @@ pub(crate) fn event_ordinals(
         .life_gain_turn_v1
         .as_ref()
         .ok_or("first-life-gain trigger requires its turn-history ledger")?;
-    if ledger.turn != state.turn || ledger.active_player != state.active_player {
+    if ledger.turn != state.turn_key_v1() || ledger.active_player != state.active_player {
         return Err("first-life-gain ledger belongs to another turn".into());
     }
     let expected = CommittedEvent::LifeGainTurnBeganV1 {
@@ -433,7 +433,7 @@ mod tests {
             .engine
             .event_history
             .push(CommittedEvent::LifeGainTurnBeganV1 {
-                turn: state.turn,
+                turn: state.turn_key_v1(),
                 active_player: state.active_player,
             });
         assert!(event_ordinals(&state, &[]).unwrap_err().contains("newer"));

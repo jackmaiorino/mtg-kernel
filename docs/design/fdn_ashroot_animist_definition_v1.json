@@ -1,0 +1,20 @@
+{
+  "name": "Ashroot Animist",
+  "set": "FDN",
+  "collector_number": "117",
+  "rarity": "rare",
+  "scryfall_id": "dece147f-d71a-4c95-9fe5-f5c862ef14ac",
+  "oracle_id": "3f008b57-6471-4785-9571-3b90193da7e2",
+  "mana_cost": "{2}{R}{G}",
+  "mana_value": 4,
+  "colors": ["R", "G"],
+  "types": ["Creature"],
+  "subtypes": ["Lizard", "Druid"],
+  "power": 4,
+  "toughness": 4,
+  "keywords": ["trample"],
+  "rules_text": "Trample. Whenever this creature attacks, another target creature you control gains trample and gets +X/+X until end of turn, where X is this creature's power.",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_source": "Mage.Sets/src/mage/cards/a/AshrootAnimist.java",
+  "status": "unregistered source preparation; no native, gameplay, public, Human, model or sampler admission"
+}

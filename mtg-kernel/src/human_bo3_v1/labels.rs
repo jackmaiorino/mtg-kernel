@@ -631,6 +631,58 @@ pub(super) fn label_frenzied_v15(
     label_parts_v8(action, &parts, handles, human)
 }
 
+pub(super) fn label_librarian_v20(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    let selected = match action {
+        A::CastSpell { source, .. } if definition(source)?.name == "Mild-Mannered Librarian" => {
+            Some((
+                source,
+                crate::rules_meaning_librarian_v1::RootV1::PrintedCreatureSpell,
+            ))
+        }
+        A::ActivateAbility {
+            source,
+            ability_index,
+            granted_ability,
+            ..
+        } if granted_ability.is_none() && definition(source)?.name == "Mild-Mannered Librarian" => {
+            Some((
+                source,
+                crate::rules_meaning_librarian_v1::RootV1::PrintedActivation {
+                    ability_index: u16::from(*ability_index),
+                },
+            ))
+        }
+        _ => None,
+    };
+    if let Some((source, root)) = selected {
+        let selector = crate::rules_meaning_librarian_v1::live_selector()
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        crate::rules_meaning_librarian_v1::meaning(&selector, source.card_db_id, root)
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        if actor(action) != Some(human) {
+            return Err(Error::UnsupportedPrompt);
+        }
+        return Ok(match root {
+            crate::rules_meaning_librarian_v1::RootV1::PrintedCreatureSpell => format!(
+                "Begin casting {} (printed cost {{G}}): a green 1/1 Human creature",
+                handles.name(source)?
+            ),
+            crate::rules_meaning_librarian_v1::RootV1::PrintedActivation { .. } => {
+                if source.zone != Zone::Battlefield {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                format!("Activate {} (printed cost {{3}}{{G}}; activate only once): replace its creature types with Werewolf and put two +1/+1 counters on the original permanent, then you draw a card. The captured controller draws even if the source departs. Payment consumes the once allowance even if countered", handles.name(source)?)
+            }
+        });
+    }
+    label_parts_v8(action, observation, handles, human)
+}
+
 pub(super) fn label_sower_v14(
     action: &A,
     observation: &super::life_ward_v8::ProjectionPartsV8<'_>,

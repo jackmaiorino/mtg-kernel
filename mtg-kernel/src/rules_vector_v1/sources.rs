@@ -294,6 +294,11 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             AmtF::Dynamic
         }
         ManaAbilityAmountDef::Dynamic(value) => reads::dynamic_value(value, out),
+        ManaAbilityAmountDef::EachControlledPermanentColor => {
+            // The frozen vocabulary cannot express a simultaneous color set.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
     };
     out.effect(
         EffectAtom::new(EvF::AddMana)
@@ -479,6 +484,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         restricted_mana_abilities,
         animation,
         activated_ability_generic_reductions,
+        combat_static_rules,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
@@ -760,6 +766,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         }
     }
     if let Some(rich) = mana_ability_def {
+        if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
+            walk.opaque
+                .push("one mana of each effective controlled permanent color");
+        }
         walk.rec("mana_ability_def", Value::String(format!("{rich:?}")));
         walk.ability(CtxF::Mana, |out| mana_ability_facts(rich, out));
     }
@@ -833,6 +843,13 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 }
             }
         });
+    }
+    if *combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE {
+        walk.rec(
+            "combat_static_rules",
+            Value::String(format!("{combat_static_rules:?}")),
+        );
+        walk.opaque.push("printed combat requirement and blocked-subtype restriction require their precise successor");
     }
     if let Some(rule) = enters_tapped_unless_controller {
         walk.rec(

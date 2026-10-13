@@ -1,0 +1,18 @@
+{
+  "schema": "mtg-kernel/fdn-unregistered-source/v1",
+  "name": "Temporal Manipulation",
+  "base": "7367989cfc99d06102f4ebf0c9167e1983ea9eaf",
+  "reference": {
+    "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "mage_source": "Mage.Sets/src/mage/cards/t/TemporalManipulation.java",
+    "queue_source": "Mage/src/main/java/mage/game/turn/TurnMods.java:useNextExtraTurn"
+  },
+  "cost": "{3}{U}{U}",
+  "type": "Sorcery",
+  "text": "Take an extra turn after this one.",
+  "target": "None",
+  "effect": "TakeExtraTurnAfterThisOneV1",
+  "registration": "absent",
+  "qualification": "all native, typecheck and actual printed gameplay unrun",
+  "disposition": "prepared source only; selected meaning/Public/Human V23, model and sampler admission are separate"
+}
