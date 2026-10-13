@@ -329,3 +329,9 @@ pub use ajani_v42::{
 
 #[cfg(test)]
 mod tests;
+
+pub mod faebloom_v43;
+pub use faebloom_v43::{
+    HumanDecisionFaebloomV43, HumanFaebloomProjectorV43, HumanFaebloomSessionV43,
+    HumanFaebloomSnapshotV43,
+};

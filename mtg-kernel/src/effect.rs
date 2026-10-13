@@ -1684,6 +1684,11 @@ pub enum EffectOp {
     AjaniLoyaltyV42 {
         ability_index: u8,
     },
+    FaebloomCreateFaeriesV43,
+    FaebloomTapFromCaptureV43 {
+        capture: u64,
+        source: crate::state::StackSourceContractV4,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -8024,6 +8029,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
+    crate::faebloom_trick_v43::validate_state(state)?;
     crate::raid_entry_v1::validate_state(state)?;
     crate::extra_turn_v1::validate(state)?;
     crate::ashroot_animist_v1::validate_state(state)?;
@@ -19013,7 +19019,10 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ctx.source,
             ));
         }
-        EffectOp::BindArahboCatEntryV1 | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
+        EffectOp::FaebloomCreateFaeriesV43
+        | EffectOp::FaebloomTapFromCaptureV43 { .. }
+        | EffectOp::BindArahboCatEntryV1
+        | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,

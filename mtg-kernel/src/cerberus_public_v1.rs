@@ -306,6 +306,24 @@ pub(crate) fn parts_for_ajani_v42(
         crate::rl::CommonProjectionScopeV42::FullAjaniV42,
     )
 }
+pub(crate) fn parts_for_faebloom_v43(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CerberusObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
+    )
+}
 pub(crate) fn parts_for_common_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
