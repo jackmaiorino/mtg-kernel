@@ -14,10 +14,19 @@ use mtg_kernel::trigger;
 const DWYNEN: &str = "Dwynen, Gilt-Leaf Daen";
 
 fn ready() -> GameState {
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[forest; 40], &[forest; 40], |_| "Forest".into(), 123);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[forest; 40],
+        &[forest; 40],
+        |_| "Forest".into(),
+        123,
+        active,
+    );
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     state
 }
 
@@ -115,8 +124,7 @@ fn one_copy_for_each_controller_does_not_invoke_the_legend_rule() {
 
 #[test]
 fn both_controllers_choose_in_apnap_order_before_any_moves() {
-    let mut state = ready();
-    state.active_player = PlayerId::P1;
+    let mut state = ready_for(PlayerId::P1);
     let p0: Vec<_> = (0..2)
         .map(|_| put(&mut state, PlayerId::P0, DWYNEN, Zone::Battlefield))
         .collect();

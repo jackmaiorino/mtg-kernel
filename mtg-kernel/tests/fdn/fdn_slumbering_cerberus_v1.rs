@@ -232,8 +232,10 @@ fn every_players_end_step_uses_either_owners_actual_creature_death_and_restore()
             for dead_owner in [actor, actor.opponent()] {
                 let mut state = ready(actor);
                 let source = cast(&mut state, actor, "Slumbering Cerberus");
+                if state.active_player != active {
+                    reach(&mut state, active, Step::Main1);
+                }
                 state.objects.get_mut(source).tapped = true;
-                state.active_player = active;
                 state.priority_player = active;
                 die(&mut state, dead_owner);
                 end(&mut state);
