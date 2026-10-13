@@ -16,7 +16,7 @@ class QualificationTests(unittest.TestCase):
     def test_missing_parallel_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = {"binary": {"sha256": "binary"}, "workload": {"mode": "search"},
-                    "inputs": [], "storage": {"volume": "D"}, "eligible_workers": 2}
+                    "inputs": [], "storage": {"volume": "D"}, "eligible_workers": 2, "cores_claimed": 1}
             receipt = Path(directory) / "receipt.json"
             launch.publish(receipt, {"compatible": launch.compatibility(spec), "parity": True,
                                      "rates": {"1": {"completed_jobs": 1, "wall_seconds": 1, "completed_per_second": 1}}})
@@ -27,7 +27,7 @@ class QualificationTests(unittest.TestCase):
     def test_fastest_eligible_and_changed_workload(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = {"binary": {"sha256": "binary"}, "workload": {"mode": "search"},
-                    "inputs": [], "storage": {"volume": "D"}, "eligible_workers": 2}
+                    "inputs": [], "storage": {"volume": "D"}, "eligible_workers": 2, "cores_claimed": 1}
             receipt = Path(directory) / "receipt.json"
             rates = {str(n): {"completed_jobs": 3, "wall_seconds": 3 / n, "completed_per_second": n} for n in (1, 2, 4)}
             launch.publish(receipt, {"compatible": launch.compatibility(spec), "parity": True, "rates": rates})

@@ -55,7 +55,7 @@ def prepare(args):
             "binary": {"path": str(Path(args.binary).resolve()), "sha256": digest(args.binary)},
             "host_slots": {"path": str(Path(args.host_slots).resolve()), "sha256": digest(args.host_slots)},
             "inputs": index["assets"], "collab_input_ref": index["collab_ref"],
-            "eligible_workers": args.eligible_workers, "cpu_cap_seconds": args.cpu_cap,
+            "eligible_workers": args.eligible_workers, "cores_claimed": args.cores_claimed, "cpu_cap_seconds": args.cpu_cap,
             "external_cpu_seconds": args.external_cpu, "qualification_cpu_cap_seconds": args.qualification_cpu_cap,
             "output_cap_bytes": 4 * GIB, "projected_output_bytes": 64 * 1024**2,
             "ledger": str(root / "CPU-LEDGER.jsonl"), "cold_binary_root": "E:/pinned-binaries",
@@ -86,6 +86,7 @@ if __name__ == "__main__":
     parser.add_argument("--phase", choices=("qualify", "measure"), default="qualify")
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)
+    parser.add_argument("--cores-claimed", type=int, default=2)
     parser.add_argument("--decks", default="0,1,2")
     parser.add_argument("--seeds", default="search-sharing-allocation-20261013/qualification/r1")
     parser.add_argument("--budgets", default="16000,64000")

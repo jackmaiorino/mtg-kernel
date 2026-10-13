@@ -104,7 +104,7 @@ def compatibility(spec):
     return {"host": platform.node().upper(), "binary_sha256": spec["binary"]["sha256"],
             "workload_sha256": identity(spec["workload"]),
             "input_sha256s": sorted(a["sha256"] for a in spec["inputs"]),
-            "storage": spec["storage"]}
+            "storage": spec["storage"], "cores_claimed": spec["cores_claimed"]}
 
 
 def qualification_guard(spec, workers):
@@ -129,6 +129,7 @@ def validate(spec, workers, phase):
     require(spec["schema"] == SCHEMA, "unsupported manifest schema")
     require(spec["host"].upper() == platform.node().upper(), "manifest names another host")
     require(1 <= workers <= spec["eligible_workers"] <= (os.cpu_count() or 1), "invalid worker count")
+    require(1 <= spec["cores_claimed"] <= (os.cpu_count() or 1), "invalid claimed core count")
     require(0 < spec["cpu_cap_seconds"] <= CPU_CAP, "CPU cap exceeds authorized 12 aggregate hours")
     require(spec["projected_output_bytes"] >= 0, "negative output projection")
     require(spec.get("external_cpu_seconds", 0) >= 0, "negative external CPU accounting")
@@ -243,9 +244,9 @@ def execute(spec, workers, phase, label):
     active = {}
     pending = list(range(len(results)))
     cores = sorted(psutil.Process().cpu_affinity())
-    require(len(cores) == workers, "current claimed affinity does not match worker allocation")
+    require(len(cores) == spec["cores_claimed"], "current claimed affinity does not match core allocation")
     groups = list(dict.fromkeys(job["group"] for job in spec["jobs"]))
-    group_core = {group: cores[i % workers] for i, group in enumerate(groups)}
+    group_core = {group: cores[i % len(cores)] for i, group in enumerate(groups)}
     error = None
     last_checkpoint = 0.0
     try:
@@ -258,10 +259,11 @@ def execute(spec, workers, phase, label):
             require(now_cpu + overhead + margin < phase_cap, "qualification CPU cap reached")
             storage_guard(spec, workers * 1024 * 1024)
             require(not (root / "STOP").exists(), "experiment STOP file present")
-            used_cores = {item["core"] for item in active.values()}
+            used_groups = {spec["jobs"][index]["group"] for index in active}
             for index in list(pending):
-                core = group_core[spec["jobs"][index]["group"]]
-                if core in used_cores:
+                group = spec["jobs"][index]["group"]
+                core = group_core[group]
+                if group in used_groups or len(active) >= workers:
                     continue
                 job = spec["jobs"][index]
                 folder = destination / job["id"]
@@ -287,7 +289,7 @@ def execute(spec, workers, phase, label):
                 nt.NtResumeProcess.argtypes = [ctypes.c_void_p]
                 require(nt.NtResumeProcess(int(child._handle)) == 0, "cannot resume configured native process")
                 pending.remove(index)
-                used_cores.add(core)
+                used_groups.add(group)
             for index, item in list(active.items()):
                 child, job = item["child"], spec["jobs"][index]
                 elapsed = time.monotonic() - item["started"]
@@ -394,7 +396,7 @@ def main(argv=None):
         shutil.copy2(spec["binary"]["path"], target)
     require(digest(target) == spec["binary"]["sha256"], "cold binary pin differs")
     command = [sys.executable, "-B", str(slots), "run", "--lane", "codex-search-sharing-allocation-20261013",
-               "--work-id", args.label, "--cores", str(args.workers), "--priority", "below_normal"]
+               "--work-id", args.label, "--cores", str(spec["cores_claimed"]), "--priority", "below_normal"]
     if spec.get("wait_for_cores"):
         command += ["--wait", "--wait-timeout", str(spec["wait_timeout_seconds"])]
     command += ["--",

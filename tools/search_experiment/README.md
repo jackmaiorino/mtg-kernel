@@ -46,6 +46,12 @@ python tools/search_experiment/launch.py qualify --batch ROOT/q-serial/completio
 `dispatch` verifies inputs, binary, storage reserve and allotment, pins the binary
 under E:/pinned-binaries/SHA, then enters the existing host_slots `run --wait`
 queue with BelowNormal priority. Current reservations remain authoritative.
+`--cores-claimed` is separate from `--eligible-workers`: when only one eligible
+logical CPU is available, set cores claimed to 1 and compare one versus two real
+workers from at least two independent matched groups. Both workers remain on
+that single core; no reserved core is used. The receipt pins the claimed core
+count. If one worker finishes useful work fastest, it is the measured best
+allocation on that available topology; multicore scaling remains unmeasured.
 `worker` also checks live containment before spawning native work. Every process
 starts suspended, is pinned to its assigned core and has execution throttling
 disabled/verified before resuming. A retained handle supplies final user+kernel
