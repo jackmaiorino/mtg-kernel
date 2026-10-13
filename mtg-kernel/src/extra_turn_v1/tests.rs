@@ -127,6 +127,13 @@ pub(crate) mod future_printed {
                 return;
             }
             let decision = next(state);
+            // Advancing may resolve the last item and return the active
+            // player's fresh priority window. Do not pass that new window:
+            // a following genuine sorcery cast still needs this main phase.
+            if state.stack.is_empty() {
+                validate(state).unwrap();
+                return;
+            }
             pass(state, decision);
         }
         panic!("stack did not resolve");
