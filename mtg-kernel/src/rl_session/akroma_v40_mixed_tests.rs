@@ -233,3 +233,80 @@ fn actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_b
         assert_eq!(input(restored).2.observation, binding.observation);
     }
 }
+
+#[test]
+#[ignore = "requires genuine Twinflame registration; actual Employment and Bolt paths are retained"]
+fn actual_employment_twinflame_full_family_and_ordered_owner_binding_both_seats() {
+    use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let state =
+            crate::twinflame_observation_v1::tests::at_scalar_with_employment(actor, true, true);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let (session, expected, binding) = input(state.clone());
+        assert_eq!(expected.acting_player, actor.opponent().into());
+        assert!(binding.observation.families.iter().any(|row| matches!(row, FamilyFactsV40::Employment(o) if o.installations.len()==1 && o.installations[0].captured_controller == actor.into())));
+        let twin = binding
+            .observation
+            .families
+            .iter()
+            .find_map(|row| match row {
+                FamilyFactsV40::Twinflame(o) => Some(o),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(twin.multiplier_sources.len(), 1);
+        assert_eq!(twin.prevention_menu.as_ref().unwrap().remaining_damage, 3);
+        assert!(twin
+            .prevention_menu
+            .as_ref()
+            .unwrap()
+            .options
+            .iter()
+            .any(|o| o.kind == "multiplier"));
+        assert!(binding
+            .observation
+            .families
+            .iter()
+            .any(|row| matches!(row, FamilyFactsV40::Crystal(o) if o.prevention_menu.is_none())));
+        for mutation in 0..3 {
+            let mut forged = binding.clone();
+            match mutation {
+                0 => {
+                    let part = forged
+                        .families
+                        .iter_mut()
+                        .find_map(|row| match row {
+                            FamilyProjectionV40::Twinflame(o) => Some(o),
+                            _ => None,
+                        })
+                        .unwrap();
+                    part.prevention_menu.as_mut().unwrap().options.reverse();
+                }
+                1 => {
+                    let part = forged
+                        .observation
+                        .families
+                        .iter_mut()
+                        .find_map(|row| match row {
+                            FamilyFactsV40::Twinflame(o) => Some(o),
+                            _ => None,
+                        })
+                        .unwrap();
+                    part.prevention_menu.as_mut().unwrap().remaining_damage = 6;
+                }
+                _ => forged.candidates.reverse(),
+            }
+            let before = session.privileged_core_environment_hash();
+            assert!(session
+                .akroma_validate_bound_decision_v40(expected, expected.acting_player, &forged)
+                .is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+        }
+        let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(input(restored).2.observation, binding.observation);
+        assert_eq!(
+            serde_json::to_vec(session.akroma_fixture_state()).unwrap(),
+            bytes
+        );
+    }
+}

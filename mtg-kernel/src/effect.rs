@@ -6037,7 +6037,10 @@ fn validate_creature_choice_origin(
     Ok(())
 }
 
-fn effect_op_at_structural_path<'a>(root: &'a EffectOp, path: &[u16]) -> Option<&'a EffectOp> {
+pub(crate) fn effect_op_at_structural_path<'a>(
+    root: &'a EffectOp,
+    path: &[u16],
+) -> Option<&'a EffectOp> {
     let Some((&head, tail)) = path.split_first() else {
         return Some(root);
     };

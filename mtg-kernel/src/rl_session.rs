@@ -57,6 +57,7 @@ pub(crate) mod gourmand_v29;
 pub(crate) mod inspiration_v37;
 pub(crate) mod krenko_v34;
 pub(crate) mod strongbox_v32;
+pub(crate) mod twinflame_v38;
 pub(crate) mod zul_ashur_v35;
 
 pub(crate) mod human_opening_v1;
@@ -4414,6 +4415,14 @@ fn flat_validate_expected_decision_akroma_inner(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
+    if crate::twinflame_tyrant_v1::requires_successor(&session.state)
+        && !matches!(
+            session.flat_action_contract_mode,
+            FlatActionContractModeV1::TwinflameV38 | FlatActionContractModeV1::AkromaV40
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
     if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40)
         || (crate::krenko_v1::requires_successor(&session.state)
@@ -4432,7 +4441,7 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => true,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && session.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40,
                 _ => false,
             }
@@ -4563,6 +4572,7 @@ enum FlatActionContractModeV1 {
     InspirationV37,
     AkromaV40,
     FishingPoleV39,
+    TwinflameV38,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5517,6 +5527,18 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
             .is_err()
             || crate::game_outcome_protection_v1::requires_successor(&self.state, None)
@@ -7362,6 +7384,26 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if (crate::twinflame_tyrant_v1::requires_successor(&self.state)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::TwinflameV38 | FlatActionContractModeV1::AkromaV40
+            ))
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
+                && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if self.flat_action_contract_mode != FlatActionContractModeV1::AkromaV40
             && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
         {
@@ -7843,6 +7885,22 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::TwinflameV38 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = twinflame_v38::prepare_current(self, &mut current) {
+                    self.current = None;
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:twinflame_v38:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

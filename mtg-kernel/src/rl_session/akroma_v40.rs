@@ -80,6 +80,9 @@ pub(super) fn actual_candidates(
     origin: &PolicyDecisionV5,
     state: &crate::state::GameState,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    if crate::twinflame_tyrant_v1::combat::has_pending(state) {
+        return super::twinflame_v38::actual_candidates(origin, state);
+    }
     if matches!(
         origin,
         PolicyDecisionV5::Surface(crate::surface::SurfaceDecision::Decision(
@@ -105,7 +108,9 @@ pub(super) fn normalized_origin(
     original.candidates = actual_candidates(&current.origin_decision, &session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
-    flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
+    if !crate::twinflame_tyrant_v1::combat::has_pending(&session.state) {
+        flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
+    }
     let common =
         crate::rl::policy_observation_extensions_fishing_union_v40(&session.state, current.actor)
             .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
@@ -327,7 +332,6 @@ mod mixed_tests;
 mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::put;
-
     #[test]
     fn genuine_attacker_scan_restore_rebinds_derived_owner_and_accepts_next_action_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {

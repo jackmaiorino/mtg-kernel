@@ -299,6 +299,11 @@ pub struct EngineState {
     /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
     #[serde(skip)]
     pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
+    )]
+    pub twinflame_combat_v38: crate::twinflame_tyrant_v1::combat::StateV38,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -9212,6 +9217,24 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
+    if crate::twinflame_tyrant_v1::combat::has_pending(state)
+        && effect::validate_pending_effect_choice(state).is_err()
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    match crate::twinflame_tyrant_v1::combat::decision(state) {
+        Ok(Some(decision)) => return decision,
+        Ok(None) => {}
+        Err(_) => {
+            let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+            let source = ObjectId(0);
+            state.engine.halted = Some((mechanic, source));
+            return Decision::Halted { mechanic, source };
+        }
+    }
     crate::linked_aura_operation_v1::advance(state)
 }
 
@@ -9359,6 +9382,15 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             continue;
         }
 
+        match crate::twinflame_tyrant_v1::combat::decision(state) {
+            Ok(Some(decision)) => return decision,
+            Ok(None) => {}
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                continue;
+            }
+        }
         if crate::combat_damage_v1::has_pending_assignment(state) {
             match crate::combat_damage_v1::drain_or_decide(state) {
                 Ok(Some(decision)) => return decision,
@@ -17252,7 +17284,9 @@ fn combat_has_first_or_double_strike(state: &GameState) -> bool {
 /// needs to flip a keyword bit, not restructure this function.
 fn deal_combat_damage(state: &mut GameState) {
     if combat_has_first_or_double_strike(state) {
-        combat_damage_wave(state, true);
+        if combat_damage_wave(state, true) {
+            return;
+        }
         trigger::sba_fixed_point(state);
         combat_damage_wave(state, false);
     } else {
@@ -17281,7 +17315,7 @@ fn is_still_in_combat(state: &GameState, id: ObjectId) -> bool {
     state.objects.get(id).zone == Zone::Battlefield
 }
 
-fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
+fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
     let attackers = state.engine.combat.attackers.clone();
     let blocked_by = state.engine.combat.blocked_by.clone();
     let mut events = Vec::new();
@@ -17322,12 +17356,29 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
     }
 
-    commit_combat_damage_events(state, events);
+    commit_combat_damage_events_inner(
+        state,
+        events,
+        first_strike_wave && state.engine.combat.foundations_v1.is_none(),
+    )
 }
 
+pub(crate) fn resume_legacy_combat_normal_v38(state: &mut GameState) {
+    trigger::sba_fixed_point(state);
+    if state.engine.halted.is_none() {
+        combat_damage_wave(state, false);
+    }
+}
 pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
+    commit_combat_damage_events_inner(state, events, false);
+}
+fn commit_combat_damage_events_inner(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    legacy_normal_after: bool,
+) -> bool {
     let event_start = state.engine.event_log.len();
-    let events = events
+    let events: Vec<ProposedEvent> = events
         .into_iter()
         .map(|mut event| {
             if let ProposedEvent::Damage(damage) = &mut event {
@@ -17336,7 +17387,20 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
             event
         })
         .collect();
+    match crate::twinflame_tyrant_v1::combat::begin(state, &events, legacy_normal_after) {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            return true;
+        }
+    }
     event::propose_and_commit_batch(state, events);
+    finish_combat_damage_events_v38(state, event_start);
+    false
+}
+pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start: usize) {
     let combat_player_damage = state.engine.event_log[event_start..]
         .iter()
         .filter_map(|event| match *event {
@@ -17860,6 +17924,20 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
+    crate::twinflame_tyrant_v1::combat::validate(state)?;
+    if crate::twinflame_tyrant_v1::combat::has_pending(state) {
+        crate::heraldic_banner_v1::validate_state(state)?;
+        event::validate_exile_if_dies_replacements(state).map_err(|source| {
+            format!("invalid exile-if-dies replacement authority for {source:?}")
+        })?;
+        effect::validate_pending_effect_choice(state)?;
+        return match action {
+            Action::ChooseEffectOption(index) => {
+                crate::twinflame_tyrant_v1::combat::answer(state, index)
+            }
+            _ => Err("only the actual combat replacement/allocation menu may be answered".into()),
+        };
+    }
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     crate::linked_aura_operation_v1::step(state, action)
