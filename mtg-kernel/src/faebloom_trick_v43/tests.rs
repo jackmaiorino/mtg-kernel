@@ -91,6 +91,11 @@ mod future_printed {
             if player==actor && castable_spells.contains(&source))
         );
         engine::step(state, Action::CastSpell(source)).unwrap();
+        let priority = next(state);
+        assert!(
+            matches!(priority, Decision::CastSpellOrPass { player, .. } if player == actor),
+            "actual finalized caster priority: {priority:?}"
+        );
         let item = state.stack.last().unwrap().clone();
         assert!(item.targets.is_empty());
         assert_eq!(item.v4.target_spec, Some(TargetSpec::None));
