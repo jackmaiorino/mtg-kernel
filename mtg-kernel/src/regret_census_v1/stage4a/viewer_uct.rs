@@ -21,10 +21,86 @@ use std::{
 pub(super) const SCHEMA: &str = "mtg-kernel-uct-viewer-capture/v1";
 
 fn visible(s: &FastActorSessionV1) -> Result<Value, String> {
-    let mut v = serde_json::to_value(s.viewer_observation_v1(PlayerSeatV1::P0)?)
+    let v = serde_json::to_value(s.viewer_observation_v1(PlayerSeatV1::P0)?)
         .map_err(|e| e.to_string())?;
-    v["own_hand"] = json!([]);
-    Ok(v)
+    Ok(compact_public(v))
+}
+
+// Keep the full observed board while dropping redundant observation diagnostics.
+// This representation never feeds engine state or action selection.
+fn compact_public(v: Value) -> Value {
+    fn fields(v: &Value, names: &[&str]) -> Value {
+        Value::Object(
+            names
+                .iter()
+                .filter_map(|&name| v.get(name).map(|value| (name.to_owned(), value.clone())))
+                .collect(),
+        )
+    }
+    fn objects(v: &Value) -> Value {
+        if let Some(a) = v.as_array() {
+            return Value::Array(a.iter().map(objects).collect());
+        }
+        let mut o = fields(
+            v,
+            &[
+                "card_name",
+                "face_index",
+                "tapped",
+                "damage",
+                "counters",
+                "is_token",
+            ],
+        );
+        o["stable"] = fields(
+            &v["stable"],
+            &["arena_id", "card_db_id", "owner", "controller"],
+        );
+        o["characteristics"] = fields(
+            &v["characteristics"],
+            &["effective_power", "effective_toughness"],
+        );
+        o
+    }
+    let p = &v["projection"];
+    let mut projection = fields(
+        p,
+        &[
+            "turn",
+            "phase",
+            "active_player",
+            "priority_player",
+            "life_totals",
+            "hand_counts",
+            "library_counts",
+            "mana_pools",
+            "combat",
+        ],
+    );
+    for zone in ["battlefield", "graveyards", "exile"] {
+        projection[zone] = objects(&p[zone]);
+    }
+    projection["stack"] = Value::Array(
+        p["stack"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| {
+                fields(
+                    item,
+                    &[
+                        "source",
+                        "source_name",
+                        "card_name",
+                        "controller",
+                        "actor",
+                        "targets",
+                    ],
+                )
+            })
+            .collect(),
+    );
+    json!({"acting_player":"p0","projection":projection,"own_hand":[]})
 }
 
 fn refs(v: &Value, out: &mut Vec<u64>) {
