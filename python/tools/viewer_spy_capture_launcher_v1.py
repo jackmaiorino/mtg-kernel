@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 from viewer_capture_launcher_v1 import require_guard, sha
-from viewer_export_v1 import terminal
+from viewer_export_v1 import terminal, Exporter
 
 RAW_CAP = 2 * 1024**3
 WORKING_CAP = 8 * 1024**3
@@ -115,6 +115,12 @@ def main():
     else:
         q=json.loads(qualification.read_text())
         if q['pins']!=pinned or q['cores']!=guard['cores'] or q['inventory_sha256']!=sha(args.inventory):raise ValueError('Missing or incompatible throughput qualification')
+        # Validate complete search tables even though short qualification games stop at step185.
+        from viewer_uct_export_v1 import export_capture
+        for result in q['results']:
+            if result.get('capture'):
+                path=Path(result['capture'])
+                export_capture(path,Exporter({},'p0',None,path.parent/'unused-assets',False),allow_incomplete_game=True)
         acquisition=args.root/'acquisition.json'
         if acquisition.exists():raise ValueError('Preserve existing acquisition and interrupted attempts')
         started=time.monotonic();results=[];report={'state':'started','pins':pinned,'max_games':3,'max_seconds':5400,'raw_cap':RAW_CAP,'qualification_sha256':sha(qualification),'results':results,

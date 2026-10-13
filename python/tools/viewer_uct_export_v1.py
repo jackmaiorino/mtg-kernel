@@ -113,7 +113,7 @@ def replay(raw, exporter, frame):
         'simulations':simulations,'firstCombo':first_combo,
         'worlds':'Approximate sampled information sets with a uniform public deck prior. Both sampled hands are hidden; only focal non-forced choices become UCT tree nodes.'}
 
-def export_capture(path, exporter):
+def export_capture(path, exporter, *, allow_incomplete_game=False):
     header, footer, rows, searches = None, None, [], {}
     with path.open('rb') as stream:
         while line:=stream.readline(8*1024*1024+1):
@@ -139,8 +139,10 @@ def export_capture(path, exporter):
                 elif kind=='search_simulation':r['simulations'].append(row['simulation'])
                 else:r['complete']=row['complete']
             else: raise ValueError('Unknown UCT capture row')
-    if not header or not footer or not footer['complete'] or footer['written']!=len(rows) or not rows or not rows[-1]['terminal']:
+    if not header or not footer or footer.get('stop_reason') or footer['written']!=len(rows) or not rows:
         raise ValueError('UCT gameplay capture is incomplete')
+    complete=bool(footer['complete'] and rows[-1]['terminal'])
+    if not allow_incomplete_game and not complete:raise ValueError('UCT gameplay capture is incomplete')
     frames=[]
     for i,row in enumerate(rows):
         d=row['decision']
@@ -165,4 +167,4 @@ def export_capture(path, exporter):
         if e and e.get('chooser')=='reused' and raw and raw['nodes']:
             root=by_step[raw['record']['step']]
             f['decisionSource']={'kind':'search-continuation','root':root['id'],'treeDigest':raw['record']['tree']['hash'],'artifactSha256':source_hash}
-    return header,frames,True
+    return header,frames,complete
