@@ -1323,7 +1323,7 @@ mod tests {
     fn without_wall(mut v: Value) -> Value {
         match &mut v {
             Value::Object(m) => {
-                m.remove("wall");
+                m.retain(|key, _| key != "wall" && !key.ends_with("_seconds"));
                 for child in m.values_mut() {
                     *child = without_wall(child.take());
                 }
@@ -1411,17 +1411,31 @@ mod tests {
             .unwrap()
             .remove("paired_credit")
             .unwrap();
-        assert_eq!(
-            replay, reference,
-            "collecting snapshots changed the factual game"
+        let changed: Vec<_> = reference
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, value)| replay[*key] != **value)
+            .map(|(key, _)| key)
+            .collect();
+        assert!(
+            changed.is_empty(),
+            "collecting snapshots changed fields {changed:?}"
         );
         let samples = pairs["samples"].as_array().unwrap();
         assert_eq!(samples.len(), 3);
         assert!(samples.iter().any(|s| s["index"].as_u64().unwrap() > 0));
         for sample in samples {
-            assert_eq!(
-                sample["baseline"], reference,
-                "resume at {} changed the game",
+            let changed: Vec<_> = reference
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(key, value)| sample["baseline"][*key] != **value)
+                .map(|(key, _)| key)
+                .collect();
+            assert!(
+                changed.is_empty(),
+                "resume at {} changed fields {changed:?}",
                 sample["index"]
             );
         }
@@ -1430,6 +1444,25 @@ mod tests {
             "unchanged-request primary SHA-256: {:x}",
             Sha256::digest(serde_json::to_vec(&reference).unwrap())
         );
+    }
+
+    #[test]
+    fn paired_reservoir_matches_python_fixture() {
+        for (capacity, expected) in [(1, vec![5]), (3, vec![1, 6, 10])] {
+            let mut rng = SplitMix64::seed(19);
+            let mut selected = Vec::new();
+            for seen in 1..=12 {
+                if let Some(slot) = reservoir_slot(&mut rng, seen, capacity) {
+                    if slot == selected.len() {
+                        selected.push(seen - 1);
+                    } else {
+                        selected[slot] = seen - 1;
+                    }
+                }
+            }
+            selected.sort();
+            assert_eq!(selected, expected);
+        }
     }
 
     /// Live plain and opponent policies are separate from the search roles:

@@ -83,6 +83,8 @@ class PairedCredit(unittest.TestCase):
                 estimates = [sum(values[i] for i in subset) * len(values) / k
                              for subset in itertools.combinations(range(len(values)), k)]
                 self.assertAlmostEqual(sum(estimates) / len(estimates), sum(values))
+        self.assertEqual(A.reservoir_indices(19, 12, 1), [5])
+        self.assertEqual(A.reservoir_indices(19, 12, 3), [1, 6, 10])
 
     def test_update_replay_and_zero_signal_preserve_parameters_and_momentum(self):
         rows = [collect(self.wb) for _ in range(18)]
