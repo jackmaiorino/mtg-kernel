@@ -8,6 +8,7 @@
 use super::play::{acting, PlayErr};
 use super::tree::{raw_decision, Canon, Key, Node};
 use crate::card_def::CARD_DEFS;
+use crate::effect::{EffectOp, ObjectRef, PlayerRef};
 use crate::rl_session::{FastActorDecisionKindV1, FastActorDecisionV1, FastActorSessionV1};
 use crate::state::{Counters, Step};
 use serde_json::{json, Value};
@@ -81,6 +82,43 @@ fn basic(name: &str) -> bool {
     matches!(name, "Plains" | "Island" | "Swamp" | "Mountain" | "Forest")
 }
 
+// Reviewed current-pool bystanders: their printed abilities are vanilla,
+// ETB/death/cast/combat triggers, or independent activated abilities. None
+// observes a basic land tap/ManaAdded event or changes basic mana output.
+// Unknown cards, global statics, auras and equipment conservatively reject.
+fn bystander(name: &str) -> bool {
+    matches!(
+        name,
+        "Balustrade Spy"
+            | "Lotleth Giant"
+            | "Tinder Wall"
+            | "Gurmag Angler"
+            | "Voldaren Epicure"
+            | "Kessig Flamebreather"
+            | "Goblin Bushwhacker"
+            | "Burning-Tree Emissary"
+            | "Eldrazi Spawn Token"
+    )
+}
+
+fn pure_basic_definition(id: usize) -> bool {
+    let Some(def) = CARD_DEFS.get(id).filter(|def| basic(def.name)) else {
+        return false;
+    };
+    let choices = def.primary_mana_ability_choices(None);
+    if choices.len() != 1
+        || def.mana_ability_def.is_some()
+        || def.conditional_tap_yield.is_some()
+        || !def.additional_mana_abilities.is_empty()
+        || !def.restricted_mana_abilities.is_empty()
+    {
+        return false;
+    }
+    matches!(def.mana_ability_program_for(choices[0], None), Some(EffectOp::Sequence(ops))
+        if matches!(ops.as_slice(), [EffectOp::TapObject { object: ObjectRef::ThisSource },
+            EffectOp::AddMana { player: PlayerRef::Controller, colors }] if colors == &choices))
+}
+
 /// Reads public battlefield cards and public pending/priority status only.
 /// In particular, no hidden object, library order, sampled deck identity,
 /// opponent private hand, or private RNG enters either a key or a guard.
@@ -121,19 +159,28 @@ fn guard(s: &FastActorSessionV1, d: FastActorDecisionV1) -> Result<(), &'static 
         || !e.until_next_turn_keywords.is_empty()
         || st.initiative.is_some()
         || st.monarch.is_some()
-        || !st.exile.is_empty()
         || !st.command.is_empty()
         || st
             .players
             .iter()
-            .any(|p| !p.graveyard.is_empty() || !p.restricted_mana_pool.0.is_empty())
+            .any(|p| !p.restricted_mana_pool.0.is_empty())
     {
         return Err("effects_or_public_zones");
     }
     for id in st.players.iter().flat_map(|p| &p.battlefield) {
         let o = st.objects.get(*id);
         // Test face-down status before reading the concealed definition.
-        if o.v4.face_down_v1.is_some() || !basic(CARD_DEFS[o.card_def as usize].name) {
+        if o.v4.face_down_v1.is_some() {
+            return Err("nonbasic_board");
+        }
+        let name = CARD_DEFS[o.card_def as usize].name;
+        if bystander(name) {
+            if !o.attachments.is_empty() || o.v4.attached_to.is_some() || o.v4.face_index != 0 {
+                return Err("modified_bystander");
+            }
+            continue;
+        }
+        if !pure_basic_definition(o.card_def as usize) {
             return Err("nonbasic_board");
         }
         if o.damage != 0
@@ -169,6 +216,10 @@ fn view(mut obs: Value, menu: &[Value], cn: &Canon) -> Result<Vec<u8>, PlayErr> 
 }
 
 impl Sharing {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "explicit observed equivalence and work position"
+    )]
     pub(crate) fn probe(
         &mut self,
         cursor: &mut Cursor,
@@ -272,7 +323,7 @@ impl Sharing {
     }
 
     /// Returns pooled guidance only after a second incoming history exists.
-    /// The transient Node copy is used solely for UCT selection. The stored
+    /// Borrowed pooled counts are used solely for UCT selection. The stored
     /// node, frozen choice and eight-backup support check remain untouched.
     pub(crate) fn select(
         &mut self,
@@ -284,13 +335,11 @@ impl Sharing {
         if g.histories.len() < 2 || g.n.iter().all(|&n| n == 0) {
             return None;
         }
-        let mut guidance = node.clone();
-        guidance.visits = g.n.iter().sum();
-        guidance.n.clone_from(&g.n);
-        guidance.wins.clone_from(&g.wins);
-        let selected = guidance.select_with(urgency);
+        let started = Instant::now();
+        let selected = node.select_evidence(urgency, g.n.iter().sum(), &g.n, &g.wins);
         self.guidance_hits += 1;
         self.guidance_changes += u64::from(selected != node.select_with(urgency));
+        self.seconds += started.elapsed().as_secs_f64();
         Some(selected)
     }
 
@@ -334,6 +383,9 @@ impl Cursor {
         let m = &probe.menu[live as usize];
         let pure_tap = probe.safe
             && m["action_kind"] == "activate_mana_ability"
+            && m["source"]["card_db_id"]
+                .as_u64()
+                .is_some_and(|id| pure_basic_definition(id as usize))
             && m.get("cost_target").is_none_or(Value::is_null);
         if !pure_tap {
             self.run = None;
@@ -488,12 +540,46 @@ mod tests {
         assert!(probe.group.is_none());
         assert_eq!(pools.rejected["pending_context"], 1);
         let altered = root().census_edited_clone_v1(|st| {
-            put(st, PlayerId::P0, "Balustrade Spy", Zone::Battlefield);
+            put(st, PlayerId::P0, "Guttersnipe", Zone::Battlefield);
         });
         assert_eq!(
             guard(&altered, super::super::play::decision(&altered).unwrap()),
             Err("nonbasic_board")
         );
+    }
+
+    #[test]
+    fn reviewed_bystanders_and_public_graveyard_preserve_real_commutation() {
+        let mut state = ready_state();
+        for name in ["Mountain", "Swamp", "Balustrade Spy", "Lotleth Giant"] {
+            put(&mut state, PlayerId::P0, name, Zone::Battlefield);
+        }
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        put(&mut state, PlayerId::P0, "Dread Return", Zone::Graveyard);
+        put(
+            &mut state,
+            PlayerId::P1,
+            "Voldaren Epicure",
+            Zone::Battlefield,
+        );
+        for _ in 0..10 {
+            put(&mut state, PlayerId::P1, "Island", Zone::Library);
+        }
+        let s = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut pools = Sharing::default();
+        let (a, pa, _) = endpoint(&mut pools, s.clone(), &["Mountain", "Swamp"], 3);
+        let (b, pb, _) = endpoint(&mut pools, s, &["Swamp", "Mountain"], 3);
+        assert!(pa.group.is_some(), "{:?}", pools.json());
+        assert_eq!(pa.group, pb.group);
+        assert_eq!(pa.view, pb.view);
+        // Whole engine state agrees after removing only the inert permanent
+        // journal's order. RNG and all hidden objects are checked here solely
+        // as test evidence; production keying never reads them.
+        let mut sa = a.game_state().clone();
+        let mut sb = b.game_state().clone();
+        sa.engine.event_history.clear();
+        sb.engine.event_history.clear();
+        assert_eq!(sa, sb);
     }
 
     #[test]

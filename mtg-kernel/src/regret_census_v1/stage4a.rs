@@ -24,6 +24,7 @@
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
 
+mod allocation_experiment;
 mod arms;
 mod bank;
 mod bank_trace;
@@ -35,14 +36,13 @@ mod identity;
 mod interchange;
 mod labels;
 mod play;
-mod profile_roots;
-mod allocation_experiment;
-mod root_allocation;
 mod process_cpu;
-mod sharing;
+mod profile_roots;
 mod refresh;
 mod replay_labels;
+mod root_allocation;
 mod seeds;
+mod sharing;
 mod tree;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
