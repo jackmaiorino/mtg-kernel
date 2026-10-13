@@ -183,7 +183,10 @@ fn registered_partial_ajani_recipient_full_loyalty_binding_remains_scoped_both_s
     }
 }
 #[test]
-#[ignore = "requires genuine Akroma registration; real Employment source and costs stay unchanged"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, spell, target) = setup(actor);
@@ -235,7 +238,10 @@ fn actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_b
 }
 
 #[test]
-#[ignore = "requires genuine Twinflame registration; actual Employment and Bolt paths are retained"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_employment_twinflame_full_family_and_ordered_owner_binding_both_seats() {
     use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
     for actor in [PlayerId::P0, PlayerId::P1] {

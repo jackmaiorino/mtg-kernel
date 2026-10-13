@@ -4138,6 +4138,15 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Herald of Eternal Dawn"
+            if cfg!(all(
+                feature = "limited-fdn-fixtures",
+                not(feature = "standard-magezero-fixtures")
+            )) =>
+        {
+            keywords.push("Keywords::FLASH");
+            keywords.push("Keywords::FLYING");
+        }
         "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
         "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" | "Ashroot Animist" => {
             keywords.push("Keywords::TRAMPLE")

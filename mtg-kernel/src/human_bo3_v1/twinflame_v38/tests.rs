@@ -272,7 +272,7 @@ fn fixed_human_seat_has_no_opponent_public_hand_view_and_trusted_callback_binds_
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires actual Twinflame registration"]
+
 fn genuine_scalar_owning_human_order_target_mask_restore_and_readonly_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for player_target in [false, true] {
@@ -380,7 +380,7 @@ fn genuine_scalar_owning_human_order_target_mask_restore_and_readonly_both_seats
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "requires actual Twinflame registration"]
+
 fn genuine_shared_shield_human_combat_allocation_completion_restore_and_readonly_both_seats() {
     use crate::twinflame_tyrant_v1::combat;
     for actor in [PlayerId::P0, PlayerId::P1] {

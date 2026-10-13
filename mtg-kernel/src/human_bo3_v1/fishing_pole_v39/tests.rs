@@ -392,7 +392,10 @@ mod future_printed {
         (session, projector, host, pole)
     }
     #[test]
-    #[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn real_cast_equip_named_bait_menu_restore_retry_and_old_mode_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut session, mut projector, host, pole) = equipped(actor, "Lightning Bolt");
@@ -471,7 +474,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_untap_fish_public_lifecycle_departed_host_historical_relation_and_private_forgeries_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -553,7 +559,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_attached_fishing_hidden_hand_substitution_and_foreign_menu_readonly_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut first, mut projector, _, _) = equipped(actor, "Lightning Bolt");

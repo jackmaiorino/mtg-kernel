@@ -2671,12 +2671,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 431 (Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
+        // batches append through id 436 (Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                432
+                437
             } else {
                 192
             }
@@ -2688,6 +2689,11 @@ mod tests {
             assert_eq!(card_id_by_name("Kellan, Planar Trailblazer"), Some(429));
             assert_eq!(card_id_by_name("Heraldic Banner"), Some(430));
             assert_eq!(card_id_by_name("Inspiration from Beyond"), Some(431));
+            assert_eq!(card_id_by_name("Herald of Eternal Dawn"), Some(432));
+            assert_eq!(card_id_by_name("Akroma's Memorial"), Some(433));
+            assert_eq!(card_id_by_name("Fishing Pole"), Some(434));
+            assert_eq!(card_id_by_name("Fish Token"), Some(435));
+            assert_eq!(card_id_by_name("Twinflame Tyrant"), Some(436));
         }
     }
 

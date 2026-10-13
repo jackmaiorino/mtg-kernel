@@ -107,7 +107,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_seven_mana_cast_five_keywords_two_protections_late_entry_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -189,7 +192,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_flash_response_fizzles_announced_bolt_and_refuses_old_projections_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -240,7 +246,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn debt_real_black_equipment_targeting_damage_and_prevention_override_restore() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -292,7 +301,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn current_control_layer_timestamp_departure_reentry_and_restored_queries() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -349,7 +361,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_blocker_validation_refuses_flying_black_red_and_allows_blue_restore() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -405,7 +420,10 @@ mod future_printed {
     }
 
     #[test]
-    #[ignore = "requires actual Akroma registration; source preparation only"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn prebatch_color_lki_preserves_green_original_after_reentry_and_missing_receipts_refuse() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for witness_first in [false, true] {
