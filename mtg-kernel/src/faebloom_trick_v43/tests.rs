@@ -143,6 +143,22 @@ mod future_printed {
             assert_eq!(state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::CreateToken {token_def,controller,..}
                 if Some(*token_def)==crate::card_def::card_id_by_name("Faerie Token") && *controller==actor)).count(),2);
             assert!(!state.objects.get(target).tapped);
+            let facts = crate::faebloom_public_v43::capture(&state).unwrap();
+            assert_eq!(facts.spells.len(), 1);
+            assert_eq!(facts.reflexives.len(), 1);
+            assert_eq!(facts.spells[0].original_source.zone, Zone::Stack);
+            assert_eq!(
+                facts.spells[0].original_source.zone_change_count,
+                original.v4.source_contract.unwrap().zone_change_count
+            );
+            assert_eq!(
+                facts.reflexives[0].stage,
+                crate::faebloom_public_v43::StageV43::Waiting
+            );
+            crate::faebloom_public_v43::validate(&state, &facts).unwrap();
+            let mut forged = facts.clone();
+            forged.reflexives[0].controller = actor.opponent().into();
+            assert!(crate::faebloom_public_v43::validate(&state, &forged).is_err());
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
@@ -323,12 +339,125 @@ mod future_printed {
             );
             finish(&mut state, row.v4.stack_item_id);
             assert!(!state.objects.get(target).tapped);
+            let facts = crate::faebloom_public_v43::capture(&state).unwrap();
+            assert!(facts.reflexives[0].current_target.is_none());
+            assert_eq!(
+                facts.reflexives[0].stage,
+                crate::faebloom_public_v43::StageV43::NoLegalTarget
+            );
             assert!(state
                 .engine
                 .event_history
                 .iter()
                 .any(|e| matches!(journal(e), Some(JournalV43::NoLegalTarget { .. }))));
             assert_eq!(state.step, Step::Main1);
+        }
+    }
+    #[test]
+    #[ignore = "genuine unregistered Faebloom printing; parent serial admission required"]
+    fn actual_paid_spell_and_accepted_copy_have_distinct_creation_and_reflexive_controllers() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let own = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let opposing = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let original = cast(&mut state, actor);
+            // Accepted exact spell-copy kernel producer from a genuinely paid live spell.
+            // This fixture does not claim an additional printed copy card is admitted.
+            let (copy_source, copy_id) =
+                engine::copy_spell_for(&mut state, original.source, actor.opponent()).unwrap();
+            let decision = creation(&mut state);
+            assert!(
+                matches!(decision,Decision::ChooseTargets {player,legal_targets,..}
+                if player==actor.opponent() && legal_targets.contains(&Target::Object(own)))
+            );
+            assert!(!state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == copy_id));
+            assert!(state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == original.v4.stack_item_id));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(own))).unwrap();
+            let copied_reflexive = state.stack.last().unwrap().clone();
+            assert_eq!(copied_reflexive.source, copy_source);
+            assert_eq!(copied_reflexive.controller, actor.opponent());
+            engine::counter_stack_item_by_id(&mut state, copied_reflexive.v4.stack_item_id)
+                .unwrap();
+            validate_state(&state).unwrap();
+            assert!(!state.objects.get(own).tapped);
+            // Wait for the original creation rather than treating the earlier copy receipt as new work.
+            for _ in 0..12 {
+                let decision = next(&mut state);
+                let creations = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(journal(e), Some(JournalV43::Created { .. })))
+                    .count();
+                if creations == 2 {
+                    assert!(
+                        matches!(decision,Decision::ChooseTargets {player,legal_targets,..}
+                        if player==actor && legal_targets.contains(&Target::Object(opposing)))
+                    );
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(opposing))).unwrap();
+            let original_reflexive = state.stack.last().unwrap().clone();
+            assert_eq!(original_reflexive.controller, actor);
+            assert_ne!(
+                original_reflexive.v4.stack_item_id,
+                copied_reflexive.v4.stack_item_id
+            );
+            finish(&mut state, original_reflexive.v4.stack_item_id);
+            assert!(state.objects.get(opposing).tapped);
+            let facts = crate::faebloom_public_v43::capture(&state).unwrap();
+            assert_eq!(facts.spells.len(), 2);
+            assert_eq!(facts.reflexives.len(), 2);
+            assert_eq!(facts.spells.iter().filter(|s| s.copied_spell).count(), 1);
+            assert_eq!(
+                facts
+                    .reflexives
+                    .iter()
+                    .filter(|r| r.stage == crate::faebloom_public_v43::StageV43::Countered)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                facts
+                    .reflexives
+                    .iter()
+                    .filter(|r| r.stage == crate::faebloom_public_v43::StageV43::Tapped)
+                    .count(),
+                1
+            );
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                crate::faebloom_public_v43::capture(&restored).unwrap(),
+                facts
+            );
+            assert_eq!(
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,CommittedEvent::CreateToken {token_def,..}
+                if Some(*token_def)==crate::card_def::card_id_by_name("Faerie Token")))
+                    .count(),
+                4
+            );
         }
     }
 }
