@@ -1,6 +1,7 @@
 //! Exact printed Herald meaning, separate from frozen vector representations.
 use crate::card_def::{
-    CardType, GameOutcomeProtectionDefV1, Keywords, Subtype, TargetSpec, CARD_DEFS,
+    CardType, CombatStaticRulesDef, GameOutcomeProtectionDefV1, Keywords, Subtype, TargetSpec,
+    CARD_DEFS,
 };
 use crate::effect::{EffectOp, ObjectRef};
 use crate::mana::{Cost, ManaColor, Pip};
@@ -93,6 +94,11 @@ pub fn meaning(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, ErrorV1
         || def.transform_face.is_some()
         || def.alt_cost.is_some()
         || def.flashback.is_some()
+        || def.plot_cost.is_some()
+        || def.madness_cost.is_some()
+        || def.escape.is_some()
+        || def.optional_additional_cost.is_some()
+        || def.kicked_target_spec.is_some()
         || def.adventure.is_some()
         || def.mode2.is_some()
         || def.mode3.is_some()
@@ -109,11 +115,30 @@ pub fn meaning(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, ErrorV1
         || def.kicker_cost.is_some()
         || def.additional_cost.is_some()
         || def.changeling
+        || def.spell_cannot_be_countered
+        || def.records_mana_spent
+        || def.delve
+        || def.enters_battlefield_tapped
+        || def.enters_battlefield_tapped_unless.is_some()
+        || def.enters_tapped_unless_controller.is_some()
+        || def.as_enters_choose_color_other_than.is_some()
+        || def.attachment.is_some()
+        || def.animation.is_some()
+        || def.minimum_blockers != 1
+        || def.cant_be_blocked_by_monarchs_creatures
+        || def.combat_static_rules != CombatStaticRulesDef::NONE
         || def.as_enters_color_choice_v1.is_some()
         || def.chosen_color_creature_boost_v1.is_some()
         || (def.mana_ability)().is_some()
         || def.mana_ability_def.is_some()
+        || !def.produces_mana.is_empty()
+        || !def.mana_ability_choices.is_empty()
+        || def.mana_ability_includes_chosen_color
+        || def.conditional_tap_yield.is_some()
         || !def.additional_mana_abilities.is_empty()
+        || !def.additional_mana_ability_conditions.is_empty()
+        || !def.restricted_mana_abilities.is_empty()
+        || !def.activated_ability_generic_reductions.is_empty()
     {
         return Err(ErrorV1::UnsupportedDefinition);
     }
