@@ -216,7 +216,6 @@ mod future {
     }
 
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn genuine_cast_zero_target_paid_once_and_targeted_counter_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for targeted in [false, true] {
@@ -248,7 +247,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn genuine_strike_departure_reentry_control_target_fizzle_and_natural_expiry_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for stale in [false, true] {
@@ -310,7 +308,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn ultimate_uses_original_controller_current_life_after_source_departure_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -354,7 +351,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires actual Full Ajani promotion and 2/2 Cat token admission"]
     fn paid_owner_erasure_coherent_source_rewrite_counter_and_completed_replay_both_seats() {
         use lifecycle::JournalV42;
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -449,10 +445,49 @@ mod future {
         assert_eq!(restored.ajani, public.ajani);
         assert_eq!(restored.families, public.families);
         assert_eq!(restored.projection, public.projection);
+        // The same genuine mixed input must also pass the fixed-seat safe
+        // Human producer and invalidate a retained request across owning restore.
+        use crate::human_bo3_v1::{
+            HumanActionRequestV1, HumanAjaniProjectorV42, HumanAjaniSessionV42,
+            HumanDecisionErrorV1,
+        };
+        let mut human = HumanAjaniSessionV42::from_session(session, actor.into()).unwrap();
+        let mut projector = HumanAjaniProjectorV42::new(actor.into());
+        let menu = projector.project_current(&human, current).unwrap();
+        assert_eq!(
+            menu.state.extensions.ajani.activations.len(),
+            public.ajani.activations.len()
+        );
+        let json = serde_json::to_string(&menu).unwrap();
+        for private in [
+            "arena_id",
+            "event_history",
+            "source_contract",
+            "root_sha256",
+        ] {
+            assert!(!json.contains(private));
+        }
+        let saved = human.snapshot_v42();
+        let request = HumanActionRequestV1 {
+            prompt_seq: menu.prompt_seq,
+            action_index: 0,
+        };
+        human.restore_v42(&saved).unwrap();
+        let before = human.current_response();
+        assert_eq!(
+            projector.submit(&mut human, request),
+            Err(HumanDecisionErrorV1::StaleDecision)
+        );
+        assert_eq!(human.current_response(), before);
+        let FastActorResponseV1::Decision(current) = human.current_response() else {
+            panic!("mixed Human restored prompt");
+        };
+        let next = projector.project_current(&human, current).unwrap();
+        assert_eq!(next.state, menu.state);
+        assert_eq!(next.actions, menu.actions);
         public
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn protected_herald_nonpositive_ultimate_is_real_zero_operation_with_mixed_restore_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -498,7 +533,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn genuine_copy_allocator_initializes_loyalty_before_real_legend_choice_then_token_can_activate_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -534,7 +568,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn real_bolt_planeswalker_damage_and_twin_multiplier_preserve_loyalty_and_owner_on_restore_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -591,7 +624,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn paid_temporal_same_seat_extra_turn_reopens_one_loyalty_use_with_new_occurrence_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -645,7 +677,6 @@ mod future {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani promotion and 2/2 Cat token"]
     fn stolen_source_sorcery_timing_and_original_controller_life_survive_owner_reentry_both_seats()
     {
         for owner in [PlayerId::P0, PlayerId::P1] {
@@ -737,6 +768,147 @@ mod future {
                 Some(6)
             );
             assert_eq!(public.ajani.activations[0].created_tokens.len(), 6);
+        }
+    }
+    #[test]
+    fn genuine_v42_priority_target_finalization_and_cleanup_complete_roster_authority_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let source = cast(&mut state, actor);
+            let first = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let second = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            genuine_public_and_owning_restore(&state, actor);
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::ActivateAbility(source, 1)).unwrap();
+            assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
+            genuine_public_and_owning_restore(&state, actor);
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(first))).unwrap();
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert_eq!(crate::planeswalker_v1::loyalty(&state, source), Some(1));
+            genuine_public_and_owning_restore(&state, actor);
+            finish(&mut state);
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            let other_source = cast(&mut state, actor);
+            activate(&mut state, other_source, 1, Some(second));
+            finish(&mut state);
+            let boosts = state.engine.until_end_of_turn.clone();
+            assert_eq!(boosts.len(), 2);
+            for target in [first, second] {
+                assert!(engine::has_effective_keyword(
+                    &state,
+                    target,
+                    Keywords::DOUBLE_STRIKE
+                ));
+            }
+            let original_history = state.engine.event_history.clone();
+            let mut early = restored(&state);
+            early.engine.until_end_of_turn.clear();
+            let i = early.engine.event_history.len() as u64;
+            early
+                .engine
+                .event_history
+                .push(CommittedEvent::AjaniJournalV42 {
+                    journal: Box::new(lifecycle::JournalV42::Cleanup {
+                        index: i,
+                        input: i - 1,
+                        boosts: boosts.clone(),
+                    }),
+                });
+            assert_eq!(
+                &early.engine.event_history[..original_history.len()],
+                original_history.as_slice()
+            );
+            assert_cleanup_refusal(&early);
+            let mut replay = restored(&state);
+            for current in [&mut state, &mut replay] {
+                for _ in 0..100 {
+                    let decision = next(current);
+                    if current.active_player != actor {
+                        break;
+                    }
+                    let action = match decision {
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+                        Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
+                        Decision::Discard { count, choices, .. } => {
+                            Action::Discard(choices.into_iter().take(count as usize).collect())
+                        }
+                        other => panic!("{other:?}"),
+                    };
+                    engine::step(current, action).unwrap();
+                }
+                assert_ne!(current.active_player, actor);
+                lifecycle::validate_state(current).unwrap();
+                assert!(current.engine.until_end_of_turn.is_empty());
+                for target in [first, second] {
+                    assert!(!engine::has_effective_keyword(
+                        current,
+                        target,
+                        Keywords::DOUBLE_STRIKE
+                    ));
+                }
+            }
+            assert_eq!(state, replay);
+            let input = state.engine.event_history.iter().position(|event|
+                matches!(event, CommittedEvent::AjaniJournalV42 { journal } if matches!(journal.as_ref(), lifecycle::JournalV42::CleanupInput { .. }))).unwrap();
+            for mode in 0..4 {
+                let mut bad = restored(&state);
+                match mode {
+                    0 => {
+                        bad.engine.event_history[input] = CommittedEvent::BeginningEndStep {
+                            active_player: actor,
+                            creature_died_this_turn: false,
+                        }
+                    }
+                    1 => {
+                        for index in [input, input + 1] {
+                            let CommittedEvent::AjaniJournalV42 { journal } =
+                                &mut bad.engine.event_history[index]
+                            else {
+                                unreachable!()
+                            };
+                            match journal.as_mut() {
+                                lifecycle::JournalV42::CleanupInput { boosts, .. }
+                                | lifecycle::JournalV42::Cleanup { boosts, .. } => {
+                                    boosts.pop();
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        bad.engine.until_end_of_turn.push(boosts[1].clone());
+                    }
+                    2 => bad.engine.until_end_of_turn.push(boosts[0].clone()),
+                    _ => {
+                        let CommittedEvent::AjaniJournalV42 { journal } =
+                            &mut bad.engine.event_history[input]
+                        else {
+                            unreachable!()
+                        };
+                        let lifecycle::JournalV42::CleanupInput { active, .. } = journal.as_mut()
+                        else {
+                            unreachable!()
+                        };
+                        *active = actor.opponent();
+                    }
+                }
+                assert_cleanup_refusal(&bad);
+            }
+        }
+    }
+    fn assert_cleanup_refusal(state: &GameState) {
+        let bytes = serde_json::to_vec(state).unwrap();
+        for _ in 0..3 {
+            let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert!(lifecycle::validate_state(&restored).is_err());
+            assert!(engine::step(&mut restored, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+            assert!(matches!(
+                engine::advance_until_decision(&mut restored),
+                Decision::Halted { .. }
+            ));
         }
     }
 }

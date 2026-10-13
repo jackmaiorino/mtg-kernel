@@ -338,7 +338,11 @@ fn restored_intervening_condition_rechecks_round_active_seat_and_missing_history
                 1 => state.active_player = actor.opponent(),
                 _ => state.attack_declaration_turn_v1 = None,
             }
-            finish(&mut state);
+            if mode < 2 {
+                super::fixture_turn_v1::stale_turn_refuses_readonly(&mut state);
+            } else {
+                finish(&mut state);
+            }
             assert!(tokens(&state, actor).is_empty());
         }
     }

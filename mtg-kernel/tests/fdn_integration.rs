@@ -1,5 +1,10 @@
 //! Consolidated integration tests; CI runs each module in its own process.
 
+#[cfg(feature = "limited-fdn-fixtures")]
+mod fixture_turn_v1 {
+    include!("common/fixture_turn_v1.rs");
+}
+
 #[path = "fdn/fdn_activated_combat_v1.rs"]
 mod fdn_activated_combat_v1;
 #[path = "fdn/fdn_aetherize_v1.rs"]

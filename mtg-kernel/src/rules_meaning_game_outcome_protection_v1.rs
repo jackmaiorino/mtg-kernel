@@ -187,7 +187,6 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-
     fn actual_registered_printed_prohibition_rederives_every_fact() {
         let id = crate::card_def::card_id_by_name("Herald of Eternal Dawn").unwrap();
         let record = meaning(&live_selector().unwrap(), id).unwrap();

@@ -229,7 +229,6 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "requires genuine Full Ajani and its distinct 2/2 Cat token"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")

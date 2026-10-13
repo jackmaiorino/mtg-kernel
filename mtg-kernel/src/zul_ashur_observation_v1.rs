@@ -3,8 +3,7 @@ use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
 use crate::rl::{
-    CardPrivateV1, CardStableRefV1, KnownLibraryCardV4, PlayerSeatV1,
-    PublicObservationProjectionV5, RlContractError,
+    CardPrivateV1, KnownLibraryCardV4, PlayerSeatV1, PublicObservationProjectionV5, RlContractError,
 };
 use crate::state::GameState;
 use serde::{Deserialize, Serialize};

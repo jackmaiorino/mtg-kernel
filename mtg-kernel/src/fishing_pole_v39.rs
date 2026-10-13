@@ -84,7 +84,7 @@ pub(crate) fn named_cost(components: &[CostComponent]) -> bool {
     components.contains(&CostComponent::TapFishingPoleAttachedToSource)
 }
 
-pub(crate) fn printed_grant_cost() -> &'static [CostComponent] {
+pub(crate) const fn printed_grant_cost() -> &'static [CostComponent] {
     const COST: &[CostComponent] = &[
         CostComponent::Mana(crate::mana::Cost {
             generic: 1,
@@ -97,7 +97,7 @@ pub(crate) fn printed_grant_cost() -> &'static [CostComponent] {
     COST
 }
 
-pub(crate) fn profile() -> card_def::EquipmentDef {
+pub(crate) const fn profile() -> card_def::EquipmentDef {
     card_def::EquipmentDef {
         power_delta: 0,
         toughness_delta: 0,

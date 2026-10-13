@@ -182,8 +182,7 @@ fn enchantment_cast_does_not_trigger_until_its_controllers_end_step() {
     let source = scavenging(&mut state, PlayerId::P1);
     assert!(matches!(end(&mut state), Decision::CastSpellOrPass { .. }));
     assert!(state.stack.is_empty());
-    state.active_player = PlayerId::P1;
-    state.priority_player = PlayerId::P1;
+    super::fixture_turn_v1::reach(&mut state, PlayerId::P1, Step::Main1);
     assert_mode(end(&mut state), PlayerId::P1, source, &[1]);
 }
 

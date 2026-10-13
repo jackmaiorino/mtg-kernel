@@ -180,9 +180,9 @@ fn skeleton_activation_does_not_follow_a_returned_graveyard_incarnation() {
 
 #[test]
 fn skeleton_can_activate_at_opponents_end_step() {
-    let mut state = ready(PlayerId::P0);
+    let mut state = ready(PlayerId::P1);
+    state.priority_player = PlayerId::P0;
     let source = put(&mut state, PlayerId::P0, Zone::Graveyard);
-    state.active_player = PlayerId::P1;
     state.step = Step::End;
     activate(&mut state, source);
     settle(&mut state);

@@ -15,10 +15,19 @@ use mtg_kernel::surface_v2::{
     HarnessSurfaceV2, PriorityModeV1, SuppressionAuditMode, SurfaceAction, SurfaceDecision,
 };
 fn ready() -> GameState {
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
     let island = card_id_by_name("Island").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[island; 40], &[island; 40], |_| "Island".into(), 123);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[island; 40],
+        &[island; 40],
+        |_| "Island".into(),
+        123,
+        active,
+    );
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     state
 }
 
@@ -411,8 +420,7 @@ fn pre_target_life_ward_traits_preserve_visibility_and_actual_aura_suppression()
     };
     for owner in [PlayerId::P0, PlayerId::P1] {
         let payer = owner.opponent();
-        let mut state = ready();
-        state.active_player = payer;
+        let mut state = ready_for(payer);
         state.priority_player = payer;
         let sire = put(&mut state, owner, "Sire of Seven Deaths", Zone::Battlefield);
         let own = put(&mut state, payer, "Sire of Seven Deaths", Zone::Hand);

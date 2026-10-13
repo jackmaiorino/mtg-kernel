@@ -22,6 +22,31 @@ pub enum RootV39 {
     GrantedBaitActivation,
     EquippedCreatureUntaps,
 }
+
+/// Closed printing discriminators. Frozen runtime enums remain unchanged.
+#[derive(Serialize)]
+enum PrintedCostV39 {
+    Mana(Cost),
+    Tap,
+    TapFishingPoleAttachedToSource,
+}
+#[derive(Serialize)]
+enum PrintedUntapConditionV39 {
+    FishingPoleEquippedCreatureUntappedV39,
+}
+fn printed_cost(components: &[CostComponent]) -> Result<Vec<PrintedCostV39>, ErrorV39> {
+    components
+        .iter()
+        .map(|component| match component {
+            CostComponent::Mana(cost) => Ok(PrintedCostV39::Mana(*cost)),
+            CostComponent::Tap => Ok(PrintedCostV39::Tap),
+            CostComponent::TapFishingPoleAttachedToSource => {
+                Ok(PrintedCostV39::TapFishingPoleAttachedToSource)
+            }
+            _ => Err(ErrorV39::UnsupportedDefinition),
+        })
+        .collect()
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum RuleV39 {
@@ -232,7 +257,9 @@ pub fn meaning(selector: &SelectorV39, id: u16, root: RootV39) -> Result<Meaning
     let [ability] = d.activated_abilities else {
         return Err(ErrorV39::UnsupportedDefinition);
     };
-    let equip = EffectOp::AttachSourceToTarget;
+    let equip = EffectOp::AttachSourceToTarget {
+        object: ObjectRef::Target(0),
+    };
     if ability.cost
         != [CostComponent::Mana(Cost {
             generic: 2,
@@ -304,10 +331,16 @@ pub fn meaning(selector: &SelectorV39, id: u16, root: RootV39) -> Result<Meaning
         },
         _ => return Err(ErrorV39::WrongRoot),
     };
+    let untap_condition = match trigger.condition {
+        crate::trigger::TriggerCondition::FishingPoleEquippedCreatureUntappedV39 => {
+            PrintedUntapConditionV39::FishingPoleEquippedCreatureUntappedV39
+        }
+        _ => return Err(ErrorV39::UnsupportedDefinition),
+    };
     let facts = serde_json::json!({
         "card_id":id,"root":root,"cost":d.cost,"mana_value":d.mana_value,"types":d.types,"subtypes":d.subtypes,"colors":d.colors,
-        "keywords":d.keywords,"spell_program":(d.spell_effect)(),"equip_cost":ability.cost,"equip_target":ability.target_spec,"equip_program":(ability.effect)(),
-        "grant_cost":grant.cost,"grant_target":grant.target_spec,"grant_program":(grant.effect)(),"untap_condition":trigger.condition,"untap_program":(trigger.effect)(),
+        "keywords":d.keywords,"spell_program":(d.spell_effect)(),"equip_cost":printed_cost(ability.cost)?,"equip_target":ability.target_spec,"equip_program":(ability.effect)(),
+        "grant_cost":printed_cost(grant.cost)?,"grant_target":grant.target_spec,"grant_program":(grant.effect)(),"untap_condition":untap_condition,"untap_program":(trigger.effect)(),
         "fish_token":token,"rule":rule,
     });
     let root_sha256 =
@@ -357,7 +390,6 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-
     fn actual_four_roots_reconstruct_complete_ordered_facts_and_refuse_every_forgery() {
         let id = crate::card_def::card_id_by_name("Fishing Pole").unwrap();
         let selector = live_selector().unwrap();
