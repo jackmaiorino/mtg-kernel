@@ -845,6 +845,7 @@ fn real_heartfire_sacrifice_uses_captured_power_with_mixed_prevention_and_restor
             state.objects.get_mut(fire).v4.lifelink_keyword_counters = 1;
             state.players[caster.index()].mana_pool[ManaColor::R.pool_index()] = 1;
             priority(&mut state, caster);
+            let original_source_generation = state.objects.get(fire).zone_change_count;
             engine::step(&mut state, Action::ActivateAbility(fire, 0)).unwrap();
             assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
             engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
@@ -860,6 +861,7 @@ fn real_heartfire_sacrifice_uses_captured_power_with_mixed_prevention_and_restor
                 control_primitive(&mut state, fire, actor);
                 state.objects.get_mut(fire).counters.plus1_plus1 = 100;
                 assert!(engine::effective_power(&state, fire) > 2);
+                assert!(state.objects.get(fire).zone_change_count > original_source_generation);
             }
             let life_before = state.players[caster.index()].life;
             mixed_menu(&mut state);
@@ -889,7 +891,7 @@ fn real_heartfire_sacrifice_uses_captured_power_with_mixed_prevention_and_restor
             .unwrap();
             let menu = public.prevention_menu.unwrap();
             assert_eq!(menu.source.zone, Zone::Battlefield);
-            assert_eq!(menu.source.zone_change_count, 0);
+            assert_eq!(menu.source.zone_change_count, original_source_generation);
             let saved = menu.source_history.unwrap();
             assert_eq!(saved.signed_power, 2);
             assert_eq!(saved.captured_controller, caster.into());
@@ -1685,7 +1687,9 @@ fn real_incinerating_optional_discard_and_decline_preserve_controller_privacy_an
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay in [false, true] {
             let mut state = ready(actor);
-            let wall = source(&mut state, actor.opponent());
+            let wall = source(&mut state, actor);
+            // Genuine own-turn payment, then the named physical control boundary.
+            control_primitive(&mut state, wall, actor.opponent());
             let recipient = put(
                 &mut state,
                 actor.opponent(),
@@ -1759,7 +1763,9 @@ fn real_incinerating_empty_hand_skips_optional_cost_and_empty_library_records_ac
     for actor in [PlayerId::P0, PlayerId::P1] {
         for empty_library in [false, true] {
             let mut state = ready(actor);
-            let wall = source(&mut state, actor.opponent());
+            let wall = source(&mut state, actor);
+            // Genuine own-turn payment, then the named physical control boundary.
+            control_primitive(&mut state, wall, actor.opponent());
             let recipient = put(
                 &mut state,
                 actor.opponent(),
@@ -1831,7 +1837,9 @@ fn real_incinerating_empty_hand_skips_optional_cost_and_empty_library_records_ac
 fn real_incinerating_madness_discard_uses_actual_exile_draw_and_later_trigger() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
-        let wall = source(&mut state, actor.opponent());
+        let wall = source(&mut state, actor);
+        // Genuine own-turn payment, then the named physical control boundary.
+        control_primitive(&mut state, wall, actor.opponent());
         let recipient = put(
             &mut state,
             actor.opponent(),
@@ -1874,7 +1882,9 @@ fn real_incinerating_private_capture_and_independent_discard_operation_forgeries
     use mtg_kernel::event::CommittedEvent;
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
-        let wall = source(&mut state, actor.opponent());
+        let wall = source(&mut state, actor);
+        // Genuine own-turn payment, then the named physical control boundary.
+        control_primitive(&mut state, wall, actor.opponent());
         let recipient = put(
             &mut state,
             actor.opponent(),
@@ -2011,14 +2021,10 @@ fn real_fixed_and_chosen_power_damage_require_independent_positive_or_prevented_
         for power_root in [false, true] {
             for entirely_prevented in [false, true] {
                 let mut state = ready(actor);
-                let wall = source(
-                    &mut state,
-                    if entirely_prevented {
-                        actor.opponent()
-                    } else {
-                        actor
-                    },
-                );
+                let wall = source(&mut state, actor);
+                if entirely_prevented {
+                    control_primitive(&mut state, wall, actor.opponent());
+                }
                 let dealer = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
                 let recipient = put(
                     &mut state,
@@ -2720,6 +2726,13 @@ fn real_bushwhack_basic_land_mode_keeps_its_existing_private_search_owner() {
         let mut state = ready(actor);
         let wall = source(&mut state, actor);
         let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        // Both printed modes are genuinely legal, so the real mode menu exists.
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
         shield(&mut state, wall, creature, 1);
         let original_shields = state.engine.active_replacements.clone();
         let spell = put(&mut state, actor, "Bushwhack", Zone::Hand);
