@@ -32,7 +32,7 @@ pub struct MeaningV1 {
     pub protection_sampled_before_simultaneous_sba_departures: bool,
     pub protected_empty_draw_attempt_expires_at_its_sba_check: bool,
     pub life_and_poison_conditions_persist_after_source_leaves: bool,
-    pub no_target_payment_choice_or_saved_duration: bool,
+    pub static_prohibition_has_no_target_payment_choice_or_saved_duration: bool,
     pub model_and_sampler_admitted: bool,
 }
 
@@ -65,6 +65,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, ErrorV1
         .get(usize::from(card_id))
         .ok_or(ErrorV1::UnsupportedDefinition)?;
     if def.name != "Herald of Eternal Dawn"
+        || def.object_name != def.name
         || !def.capability.is_fully_supported()
         || def.cost
             != (Cost {
@@ -155,7 +156,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16) -> Result<MeaningV1, ErrorV1
         protection_sampled_before_simultaneous_sba_departures: true,
         protected_empty_draw_attempt_expires_at_its_sba_check: true,
         life_and_poison_conditions_persist_after_source_leaves: true,
-        no_target_payment_choice_or_saved_duration: true,
+        static_prohibition_has_no_target_payment_choice_or_saved_duration: true,
         model_and_sampler_admitted: false,
     })
 }
