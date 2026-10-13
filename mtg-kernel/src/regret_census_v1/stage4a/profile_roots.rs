@@ -85,10 +85,20 @@ pub(super) fn profile_case(
         let mut roles = bank_roles(policy, &sh.opponents)?;
         let mut diag = super::arms::SearchDiag::default();
         let _ = crate::search_profile_v1::take();
+        let _ = crate::native_flat_tensorizer_v2::take_digest_memo_counts_v1();
+        #[cfg(feature = "s4a-profile-v1")]
+        let _ = crate::search_profile_v1::digest::take_json();
         let started = Instant::now();
         let (sel, tree) = roles.select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
         let wall = started.elapsed().as_secs_f64();
-        let profile = crate::search_profile_v1::take_json();
+        let digest_memo = crate::native_flat_tensorizer_v2::take_digest_memo_counts_v1()
+            .map(|(hits, misses)| json!({"hits":hits,"misses":misses}));
+        #[allow(unused_mut, reason = "digest counters exist only with the feature")]
+        let mut profile = crate::search_profile_v1::take_json();
+        #[cfg(feature = "s4a-profile-v1")]
+        {
+            profile["digest"] = crate::search_profile_v1::digest::take_json();
+        }
         let teacher = root_teacher(&root, mode, &tree, actions[step as usize])?;
         let mut keys = diag.keys.json();
         keys["keying_seconds"] = Value::Null;
@@ -105,7 +115,7 @@ pub(super) fn profile_case(
             "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),
             "bank_binding_sha256":binding,"selection":sel.json(),
             "keying_seconds":diag.keys.seconds,"primary_sha256":primary_sha256,
-            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"profile":profile}),
+            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"digest_memo":digest_memo,"profile":profile}),
         );
     }
     Ok(rows)
