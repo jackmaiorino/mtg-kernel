@@ -2031,6 +2031,12 @@ pub struct ControlledCreatureGrantDef {
     pub protection_color_mask: u8,
 }
 
+/// Printed damage replacement evaluated from each live source's current controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DamageReplacementDefV1 {
+    DoubleControlledSourceToOpponent,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2250,6 +2256,7 @@ pub struct CardDef {
     pub combat_static_rules: CombatStaticRulesDef,
     pub as_enters_color_choice_v1: Option<AsEntersColorChoiceDefV1>,
     pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
+    pub damage_replacement_v1: Option<DamageReplacementDefV1>,
 }
 
 impl CardDef {

@@ -30,6 +30,7 @@ pub enum HumanFamilyV40 {
     ZulAshur(Box<super::zul_ashur_v35::HumanZulAshurExtensionsV35>),
     Banner(Box<super::banner_v36::HumanBannerExtensionsV36>),
     Inspiration(Box<super::inspiration_v37::HumanInspirationExtensionsV37>),
+    Twinflame(Box<super::twinflame_v38::HumanTwinflameExtensionsV38>),
 }
 pub(super) fn register(
     projections: &[FamilyProjectionV40],
@@ -103,6 +104,9 @@ pub(super) fn register(
             }
             FamilyProjectionV40::Inspiration(o) => {
                 super::inspiration_v37::register_for_akroma_parts(o, handles)?
+            }
+            FamilyProjectionV40::Twinflame(o) => {
+                super::twinflame_v38::register_for_akroma_parts(o, handles)?
             }
         }
     }
@@ -185,6 +189,9 @@ pub(super) fn states(
             FamilyProjectionV40::Inspiration(o) => Ok(HumanFamilyV40::Inspiration(Box::new(
                 super::inspiration_v37::state_for_akroma_parts(o, handles, human)?,
             ))),
+            FamilyProjectionV40::Twinflame(o) => Ok(HumanFamilyV40::Twinflame(Box::new(
+                super::twinflame_v38::state_for_akroma_parts(o, handles, human)?,
+            ))),
         })
         .collect()
 }
@@ -225,6 +232,7 @@ pub(super) fn unary(
             HumanFamilyV40::Inspiration(o) => {
                 super::inspiration_v37::unary_for_akroma_parts(o, unary)?
             }
+            HumanFamilyV40::Twinflame(o) => super::twinflame_v38::unary_for_akroma_parts(o, unary)?,
         }
     }
     Ok(())
@@ -236,6 +244,19 @@ pub(super) fn label(
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<Option<String>, Error> {
+    for projection in projections {
+        if let FamilyProjectionV40::Twinflame(o) = projection {
+            if o.prevention_menu.is_some()
+                || o.combat_allocation.is_some()
+                || o.optional_discard_menu.is_some()
+                || o.optional_fight_menu.is_some()
+            {
+                return Ok(Some(super::twinflame_v38::label_for_akroma_parts(
+                    action, o, handles, human,
+                )?));
+            }
+        }
+    }
     for projection in projections {
         let selected = match projection {
             FamilyProjectionV40::Early(o) => {
@@ -444,6 +465,15 @@ pub(super) fn label(
             FamilyProjectionV40::Inspiration(o) => {
                 if o.meanings.iter().any(|root| Some(root.card_id) == card_id) {
                     Some(super::inspiration_v37::label_for_akroma_parts(
+                        action, o, handles, human,
+                    )?)
+                } else {
+                    None
+                }
+            }
+            FamilyProjectionV40::Twinflame(o) => {
+                if o.meanings.iter().any(|root| Some(root.card_id) == card_id) {
+                    Some(super::twinflame_v38::label_for_akroma_parts(
                         action, o, handles, human,
                     )?)
                 } else {
