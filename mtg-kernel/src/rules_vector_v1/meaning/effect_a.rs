@@ -145,6 +145,9 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
             let _ = mana_value;
             (GRAVEYARD, Some(RelF::You))
         }
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => {
+            (GRAVEYARD, Some(RelF::You))
+        }
         TargetSpec::PermanentCardInOwnGraveyard => (GRAVEYARD, Some(RelF::You)),
         TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(mana_value) => {
             // The mana-value bound is a target legality fact (targets table).

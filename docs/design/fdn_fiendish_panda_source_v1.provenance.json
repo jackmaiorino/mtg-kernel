@@ -1,0 +1,31 @@
+{
+  "state": "unregistered_target_primitive_only",
+  "base_commit": "78d3957bc9b92cb262422dc0e0b012380448cb78",
+  "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "references": [
+    {
+      "path": "Mage.Sets/src/mage/cards/f/FiendishPanda.java",
+      "blob": "d6845da4c1b4e94fb0bab7765985e1a82e1ca27f",
+      "bytes": 3421,
+      "sha256": "ab1cb0abdbd6939c61bc02b78261dad22fb1fff23a3b459e47c28ff6039e923a"
+    },
+    {
+      "path": "Mage/src/main/java/mage/filter/predicate/mageobject/AnotherPredicate.java",
+      "blob": "6df56973dd5d4dc90ebf27db83b330658b71f7b0",
+      "bytes": 623,
+      "sha256": "08af228d7593501bbdabbbab0dd9659f100b53611006951ad0c4dea3a70f2742"
+    }
+  ],
+  "printing": {
+    "set": "FDN",
+    "collector_number": "120",
+    "scryfall_id": "4e434d74-cad0-45f5-bc8d-f34aa5e1d879",
+    "oracle_id": "b5d64271-4478-4c55-8c71-ba8f02b47fac"
+  },
+  "rulings_url": "https://magic.wizards.com/en/news/feature/foundations-release-notes",
+  "target_spec_stable_id": 103,
+  "rust": "1.94.1",
+  "compilation": "unrun",
+  "gameplay": "unrun",
+  "registration": "absent"
+}
