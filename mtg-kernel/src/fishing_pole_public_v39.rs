@@ -109,6 +109,7 @@ pub fn facts_v39(state: &GameState) -> Result<FactsV39, RlContractError> {
     for (id, live) in state.objects.iter() {
         if live.zone != Zone::Battlefield
             || !crate::fishing_pole_v39::selected_definition(live.card_def)
+            || live.v4.face_down_v1.is_some()
         {
             continue;
         }

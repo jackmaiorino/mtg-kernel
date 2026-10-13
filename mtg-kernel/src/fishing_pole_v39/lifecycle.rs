@@ -23,6 +23,8 @@ pub enum JournalV39 {
     },
     PaymentInput {
         host: AbilitySourceContractV4,
+        /// Event-time public mask of the actual host, not its hidden printing.
+        host_face_down: Option<bool>,
         pole: AbilitySourceContractV4,
         ability_index: u8,
         taps: [u64; 2],
@@ -394,10 +396,17 @@ pub(crate) fn record_paid(
     let ([host_tap], [pole_tap]) = (host_taps.as_slice(), pole_taps.as_slice()) else {
         return Err("Fishing payment lacks unique original taps".into());
     };
+    let host_face_down = state
+        .objects
+        .get(host.source)
+        .v4
+        .face_down_v1
+        .map(|face| face.disguised);
     let origin = append(
         state,
         JournalV39::PaymentInput {
             host,
+            host_face_down,
             pole,
             ability_index,
             taps: [*host_tap, *pole_tap],
@@ -447,6 +456,45 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         return Err("Fishing live row changed or replayed".into());
     }
     Ok(())
+}
+/// Only actual Fishing publications acquire historical public source transport.
+/// A host's hidden printing is never inferred from a newer arena incarnation.
+pub(crate) fn public_stack_source(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<(AbilitySourceContractV4, Option<bool>)>, String> {
+    if !tracked(item) {
+        return Ok(None);
+    }
+    validate_state(state)?;
+    validate_item(state, item)?;
+    let origins = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
+                JournalV39::Published {
+                    origin,
+                    item: original,
+                } if original.as_ref() == item => Some(*origin),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [origin] = origins.as_slice() else {
+        return Err("Fishing historical projection lost unique original publication".into());
+    };
+    match at(state, *origin)? {
+        JournalV39::Captured { .. } => Ok(Some((origin_pole(state, *origin)?, None))),
+        JournalV39::PaymentInput {
+            host,
+            host_face_down,
+            ..
+        } => Ok(Some((*host, *host_face_down))),
+        _ => Err("Fishing historical projection lost original source visibility".into()),
+    }
 }
 pub(crate) struct OwnerV39 {
     origin: u64,

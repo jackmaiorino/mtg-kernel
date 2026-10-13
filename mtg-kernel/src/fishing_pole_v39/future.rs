@@ -634,3 +634,232 @@ fn manufactured_counter_operation_completion_requires_real_original_removal_both
         refuses(&mut erased);
     }
 }
+
+// The accepted generic copy allocator is a physical primitive here, not a claim
+// that an admitted FDN spell copies arbitrary artifacts.
+fn copied_pole(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let (mut state, host, original) = fixture(actor);
+    let token = crate::standard_cards_v1::create_token_copy(&mut state, original, actor).unwrap();
+    assert!(state.objects.get(token).v4.is_token);
+    assert_eq!(
+        state.objects.get(token).card_def,
+        state.objects.get(original).card_def
+    );
+    assert!(state.engine.event_history.iter().any(|event| matches!(event,
+        CommittedEvent::CreateToken { object, controller, .. } if *object == token && *controller == actor)));
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(original, Zone::Hand));
+    finish(&mut state);
+    equip(&mut state, actor, token, host);
+    (state, host, token)
+}
+fn projected_source(state: &GameState, source: ObjectId) -> crate::rl::CardStableRefV1 {
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    let session = FastActorSessionV1::from_fishing_pole_v39_fixture_state(snapshot(state));
+    let FastActorResponseV1::Decision(expected) = session.current_response() else {
+        panic!("genuine copied Pole menu");
+    };
+    let (observation, _, _) = session
+        .fishing_pole_current_decision_input_v39(expected, expected.acting_player)
+        .unwrap();
+    let row = observation
+        .projection
+        .stack
+        .iter()
+        .find(|row| row.source.arena_id == source.0)
+        .unwrap();
+    let historical = observation
+        .extensions
+        .historical_public_sources
+        .iter()
+        .find(|row| row.source.arena_id == source.0)
+        .unwrap();
+    assert_eq!(row.source, historical.source);
+    let reference = row.source.clone();
+    let human = crate::human_bo3_v1::HumanFishingPoleSessionV39::from_session(
+        session,
+        expected.acting_player,
+    )
+    .unwrap();
+    let mut projector =
+        crate::human_bo3_v1::HumanFishingPoleProjectorV39::new(expected.acting_player);
+    let prompt = projector.project_current(&human, expected).unwrap();
+    let rendered = serde_json::to_value(&prompt).unwrap();
+    fn safe(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, child) in fields {
+                    assert!(!matches!(
+                        key.as_str(),
+                        "arena_id"
+                            | "zone_change_count"
+                            | "card_db_id"
+                            | "event_history"
+                            | "producer_sha256"
+                            | "binding"
+                    ));
+                    safe(child);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    safe(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    safe(&rendered);
+    let saved = human.snapshot_v39();
+    let mut human = human;
+    human.restore_v39(&saved).unwrap();
+    let crate::rl_session::FastActorResponseV1::Decision(current) = human.current_response() else {
+        panic!("restored copied Pole menu");
+    };
+    projector.project_current(&human, current).unwrap();
+    reference
+}
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+fn genuine_copied_pole_grant_and_original_controller_untap_survive_departure_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = copied_pole(actor);
+        let original_host = crate::state::AbilitySourceContractV4::capture(&state, host);
+        add(&mut state, actor, host, pole);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        crate::standard_cards_v1::gain_control(&mut state, pole, actor.opponent());
+        let shown = projected_source(&state, host);
+        assert_eq!(shown.card_db_id, original_host.card_def);
+        assert_eq!(shown.zone_change_count, original_host.zone_change_count);
+        assert_eq!(shown.zone, Zone::Battlefield);
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(branch.objects.get(pole).counters.bait, 1);
+        }
+        assert_eq!(state, restored);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(host, Zone::Battlefield),
+        );
+        state.objects.get_mut(host).summoning_sick = false;
+        crate::standard_cards_v1::gain_control(&mut state, pole, actor);
+        equip(&mut state, actor, pole, host);
+        engine::step(&mut state, Action::ActivateManaAbility(host)).unwrap();
+        assert!(engine::attempt_untap(&mut state, host));
+        next(&mut state);
+        let original_pole = crate::state::AbilitySourceContractV4::capture(&state, pole);
+        crate::standard_cards_v1::gain_control(&mut state, pole, actor.opponent());
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+        let shown = projected_source(&state, pole);
+        assert_eq!(shown.card_db_id, original_pole.card_def);
+        assert_eq!(shown.controller, actor.into());
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(fish(branch, actor), 1);
+            assert_eq!(fish(branch, actor.opponent()), 0);
+            assert_eq!(branch.objects.get(pole).counters.bait, 0);
+        }
+        assert_eq!(state, restored);
+    }
+}
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish Token registration"]
+fn genuine_copied_pole_leaves_before_untap_resolution_keeps_public_original_and_creates_no_fish() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = copied_pole(actor);
+        add(&mut state, actor, host, pole);
+        finish(&mut state);
+        assert!(engine::attempt_untap(&mut state, host));
+        next(&mut state);
+        let original = crate::state::AbilitySourceContractV4::capture(&state, pole);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(pole, Zone::Hand));
+        next(&mut state); // actual token SBA may cease the new incarnation
+        let shown = projected_source(&state, pole);
+        assert_eq!(shown.card_db_id, original.card_def);
+        assert_eq!(shown.zone_change_count, original.zone_change_count);
+        assert_eq!(shown.zone, Zone::Battlefield);
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(fish(branch, actor), 0);
+            lifecycle::validate_state(branch).unwrap();
+        }
+        assert_eq!(state, restored);
+    }
+}
+#[test]
+#[ignore = "requires actual future Fishing Pole, Fish and neutral sentinel registration"]
+fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for disguised in [false, true] {
+            let (mut state, host, pole) = copied_pole(actor);
+            // Explicit accepted physical face-down characteristic substrate.
+            // No FDN printed disguise/hideaway producer or synthetic journal is claimed.
+            state.objects.get_mut(host).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised,
+                lookers: 1 << actor.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            add(&mut state, actor, host, pole);
+            let item = state.stack.last().unwrap().clone();
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
+            for branch in [&state, &snapshot(&state)] {
+                let (source, mask) = lifecycle::public_stack_source(branch, &item)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(source.source, host);
+                assert_eq!(mask, Some(disguised));
+                if let Some(sentinel) = crate::card_def::card_id_by_name(if disguised {
+                    "Face-down creature"
+                } else {
+                    "Face-down card"
+                }) {
+                    assert_eq!(projected_source(branch, host).card_db_id, sentinel);
+                } else {
+                    let session =
+                        crate::rl_session::FastActorSessionV1::from_fishing_pole_v39_fixture_state(
+                            snapshot(branch),
+                        );
+                    assert!(matches!(
+                        session.current_response(),
+                        crate::rl_session::FastActorResponseV1::Terminal(_)
+                    ));
+                }
+            }
+            let before = serde_json::to_vec(&state).unwrap();
+            let mut forged = item.clone();
+            forged.controller = actor.opponent();
+            assert!(lifecycle::public_stack_source(&state, &forged).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            finish(&mut state);
+            assert_eq!(state.objects.get(pole).counters.bait, 1);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires actual future Fishing Pole and Fish registration"]
+fn private_underlying_pole_is_not_enumerated_as_a_public_current_pole_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, pole) = copied_pole(actor);
+        // Explicit physical face-down boundary, not a printed artifact disguise producer.
+        state.objects.get_mut(pole).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: false,
+            lookers: 1 << actor.index(),
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::fishing_pole_public_v39::facts_v39(&state)
+            .unwrap()
+            .poles
+            .is_empty());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        assert!(crate::fishing_pole_public_v39::facts_v39(&snapshot(&state))
+            .unwrap()
+            .poles
+            .is_empty());
+    }
+}
