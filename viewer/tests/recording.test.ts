@@ -2,11 +2,93 @@ import { describe, expect, it } from 'vitest';
 import fixture from './fixtures/actor-visible.json';
 import native from './fixtures/native-root-excerpt.json';
 import replayFixture from './fixtures/search-replay.json';
+import graphFixture from './fixtures/search-graph.json';
+import retained from './fixtures/retained-search.json';
+import rootChoicesFixture from './fixtures/root-choices.json';
+import { graphAt, graphLayout, rootChoicesAt, rootChoiceStatus } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
 import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigests } from '../src/recording';
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('retained search-controlled decisions',()=>{
+  it('accepts original Git source identities and binds the reconstruction artifact',()=>{
+    const reconstruction={kind:'recorded-actions',originalSource:'c'.repeat(40),originalRuntime:'d'.repeat(64),
+      sourceArtifactSha256:'b'.repeat(64),openingArtifactSha256:'e'.repeat(64),runtimeRules:'resolution-boundary-v1'};
+    expect(parseRecording({...retained,reconstruction}).reconstruction?.originalSource).toBe(reconstruction.originalSource);
+    expect(()=>parseRecording({...retained,reconstruction:{...reconstruction,sourceArtifactSha256:'f'.repeat(64)}})).toThrow(/different reconstruction source/);
+  });
+  it('loads a bound root table and continuation without inventing optional diagnostics',async()=>{
+    const r=parseRecording(retained);await verifySearchDigests(r);
+    expect(r.frames[0].search?.algorithm).toBe('persistent-uct');
+    expect(r.frames[1].decisionSource?.root).toBe(r.frames[0].id);
+    expect(r.frames.every(f=>f.policy===null)).toBe(true);
+    expect(r.frames[0].search?.replay).toBeUndefined();
+  });
+  it('rejects missing roots, changed tree identities and older format provenance',()=>{
+    const missing=structuredClone(retained);missing.frames[1].decisionSource!.root='absent';
+    expect(()=>parseRecording(missing)).toThrow(/binding/);
+    const mismatch=structuredClone(retained);mismatch.frames[1].decisionSource!.treeDigest='c'.repeat(64);
+    expect(()=>parseRecording(mismatch)).toThrow(/binding/);
+    const old=structuredClone(retained);old.schema='mtg-kernel-viewer-recording/v2';
+    expect(()=>parseRecording(old)).toThrow(/format v3/);
+    const episode=structuredClone(retained);episode.frames[1].key.episode++;
+    expect(()=>parseRecording(episode)).toThrow(/binding/);
+  });
+});
+describe('growing search graph',()=>{
+  it('keeps all four legal moves before search visits or evaluates them',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const event={simulation:0,phase:'select' as const,choice:0},graph=graphAt(replay,event);
+    const choices=rootChoicesAt(replay,event,graph);
+    expect(choices.map(c=>c.index)).toEqual([0,1,2,3]);
+    expect(choices.every(c=>c.visits===0&&c.evaluations===0&&c.children.length===0&&c.firstEvaluation===null)).toBe(true);
+    expect(graph.nodes.size).toBe(1);
+  });
+  it('retains evaluation-only alternatives and advances visits at backup',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    const evaluated={simulation:1,phase:'evaluate' as const,choice:0};
+    const probe=rootChoicesAt(replay,evaluated,graphAt(replay,evaluated))[1];
+    expect(probe).toMatchObject({visits:0,evaluations:1,children:[],firstEvaluation:{value:'-7786',simulation:1}});
+    expect(rootChoiceStatus(probe)).toContain('backup pending');
+    const end={simulation:4,phase:'backup' as const,choice:0},graph=graphAt(replay,end),choices=rootChoicesAt(replay,end,graph);
+    expect(choices.map(c=>c.visits)).toEqual([2,1,1,1]);
+    expect(choices[0].children).toEqual([1]);
+    expect(choices.slice(1).map(rootChoiceStatus)).toEqual(Array(3).fill('Evaluated once · not expanded'));
+    expect(graph.nodes.size).toBe(2);
+    const rewind={simulation:0,phase:'select' as const,choice:0};
+    expect(rootChoicesAt(replay,rewind,graphAt(replay,rewind)).every(c=>c.firstEvaluation===null)).toBe(true);
+  });
+  it('does not label an older expansion with missing identity as unexpanded',()=>{
+    const replay=parseRecording(rootChoicesFixture).frames[0].search!.replay!;
+    replay.schema='mtg-kernel-search-replay/v1';delete replay.simulations[4].leafNode;
+    const event={simulation:4,phase:'backup' as const,choice:0},choice=rootChoicesAt(replay,event,graphAt(replay,event))[0];
+    expect(choice.unidentifiedExpansions).toBe(1);
+    expect(rootChoiceStatus(choice)).toBe('Expansion recorded · child identity unavailable');
+  });
+  it('reveals evaluated positions at expansion and updates visits only at backup',async()=>{
+    const r=parseRecording(graphFixture);await verifySearchDigests(r);const replay=r.frames[0].search!.replay!;
+    const before=graphAt(replay,{simulation:1,phase:'select',choice:0});expect([...before.nodes.keys()]).toEqual([0]);
+    const evaluated=graphAt(replay,{simulation:1,phase:'evaluate',choice:0});expect([...evaluated.nodes.keys()]).toEqual([0,1]);
+    expect(evaluated.nodes.get(1)?.visits).toBe(0);expect(evaluated.frontier).toBe(1);
+    expect(evaluated.explored.has(1)).toBe(false);
+    const backedUp=graphAt(replay,{simulation:1,phase:'backup',choice:0});expect(backedUp.nodes.get(1)?.visits).toBe(1);
+    const branched=graphAt(replay,{simulation:2,phase:'evaluate',choice:0});expect([...branched.edges.keys()]).toEqual(['0:0:1','0:0:2']);
+    const final=graphAt(replay,{simulation:4,phase:'backup',choice:0});expect(final.nodes.size).toBe(4);expect(final.edges.size).toBe(3);
+    expect(final.nodes.get(0)).toMatchObject({visits:5,sum:11600n});expect(final.nodes.get(1)).toMatchObject({visits:2,sum:1200n});
+    expect(graphLayout(replay).get(3)?.depth).toBe(2);
+    expect(graphAt(replay,{simulation:3,phase:'evaluate',choice:1}).explored.has(1)).toBe(true);
+    expect(graphAt(replay,{simulation:0,phase:'select',choice:0}).nodes.size).toBe(1);
+  });
+  it('rejects wrong leaf identities, early node visits and unrecorded graph connections',()=>{
+    const wrong=structuredClone(graphFixture);wrong.frames[0].search!.replay!.simulations[1].leafNode=2;
+    expect(()=>parseRecording(wrong)).toThrow(/leaf identity/);
+    const early=structuredClone(graphFixture);early.frames[0].search!.replay!.simulations[0].choices[0].node=1;
+    expect(()=>parseRecording(early)).toThrow(/order/);
+    const extra=structuredClone(graphFixture);extra.frames[0].search!.replay!.nodes[2].children[0].push(3);
+    expect(()=>parseRecording(extra)).toThrow(/coverage/);
+  });
+});
 describe('recorded search replay',()=>{
   it('loads v2 and reconciles exact root statistics',async()=>{
     const r=parseRecording(replayFixture);await verifySearchDigests(r);

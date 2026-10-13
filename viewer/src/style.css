@@ -10,3 +10,9 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
 .action-pagination{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:9px;color:#9bb0b7;grid-column:1/-1;padding-top:8px}.action-pagination button{color:#b0d1c2;padding:8px 0}
+.decision-evidence { margin: 0 0 18px; padding: 16px; background: #182b28; border: 1px solid #3a645a; border-radius: 10px; display: grid; gap: 9px; }
+.decision-evidence .eyebrow { display: flex; align-items: center; gap: 7px; color: #b4dfd0; font-size: 9px; letter-spacing: 1.2px; }
+.decision-evidence strong { color: #e6f5ee; font-size: 15px; }
+.decision-evidence p { margin: 0; color: #bdcbc6; font-size: 12px; line-height: 1.65; }
+.decision-evidence small { color: #b7c6c1; font-size: 10px; line-height: 1.6; }
+.decision-evidence button { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; background: #28463f; border: 1px solid #557f70; border-radius: 6px; color: #e6f5ee; text-align: left; font-size: 12px; }
