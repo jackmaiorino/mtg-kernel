@@ -46,7 +46,15 @@ fn catalog_without_outcome_protection_keeps_state_and_loss_rules_both_seats() {
     not(feature = "standard-magezero-fixtures")
 ))]
 fn cast_herald(actor: PlayerId) -> (GameState, ObjectId) {
-    let mut state = ready_state_for(actor);
+    cast_herald_on_turn(actor, actor)
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn cast_herald_on_turn(actor: PlayerId, active_player: PlayerId) -> (GameState, ObjectId) {
+    let mut state = ready_state_for(active_player);
     let source = put(&mut state, actor, "Herald of Eternal Dawn", Zone::Hand);
     let def = &CARD_DEFS[usize::from(state.objects.get(source).card_def)];
     assert!(def.is_executable());
@@ -61,6 +69,11 @@ fn cast_herald(actor: PlayerId) -> (GameState, ObjectId) {
         engine::advance_until_decision(&mut state),
         Decision::CastSpellOrPass { .. }
     ));
+    if active_player != actor {
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor));
+    }
     engine::step(&mut state, Action::CastSpell(source)).unwrap();
     for _ in 0..12 {
         let decision = engine::advance_until_decision(&mut state);
@@ -349,6 +362,76 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
             );
             crate::trigger::sba_fixed_point(branch);
             assert!(branch.players[actor.index()].has_lost);
+        }
+        assert_eq!(state, replay);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_involuntary_employment_moves_loss_protection_to_new_controller_with_restore_both_seats() {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let thief = owner.opponent();
+        let (mut state, herald) = cast_herald_on_turn(owner, thief);
+        assert_eq!(state.active_player, thief);
+        let spell = put(&mut state, thief, "Involuntary Employment", Zone::Hand);
+        state.players[thief.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        state.players[thief.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, ref castable_spells, .. }
+            if player == thief && castable_spells.contains(&spell)));
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { ref legal_targets, .. }
+            if legal_targets.contains(&crate::state::Target::Object(herald))));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(crate::state::Target::Object(herald)),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.players[thief.index()].mana_pool, [0; 6]);
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for branch in [&mut state, &mut replay] {
+            for _ in 0..16 {
+                let decision = engine::advance_until_decision(branch);
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                if branch.stack.is_empty() && branch.engine.pending_effect.is_none() {
+                    break;
+                }
+                engine::step(branch, Action::Pass).unwrap();
+            }
+            assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(branch.objects.get(herald).owner, owner);
+            assert_eq!(branch.objects.get(herald).controller, thief);
+            assert!(branch.players[thief.index()].battlefield.contains(&herald));
+            assert!(!branch.players[owner.index()].battlefield.contains(&herald));
+            assert!(!cannot_lose(branch, owner));
+            assert!(cannot_lose(branch, thief));
+            assert!(cannot_win(branch, owner));
+            assert!(!cannot_win(branch, thief));
+            crate::event::propose_and_commit(
+                branch,
+                crate::event::ProposedEvent::life_loss(owner, 20),
+            );
+            crate::event::propose_and_commit(
+                branch,
+                crate::event::ProposedEvent::life_loss(thief, 20),
+            );
+            crate::trigger::sba_fixed_point(branch);
+            assert!(branch.players[owner.index()].has_lost);
+            assert!(!branch.players[thief.index()].has_lost);
         }
         assert_eq!(state, replay);
     }
