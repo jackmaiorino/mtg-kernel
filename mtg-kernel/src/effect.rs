@@ -1679,6 +1679,11 @@ pub enum EffectOp {
     FishingPoleUntapV39 {
         capture_history_index: u64,
     },
+    /// Definition-owned full Ajani loyalty root. Only the private paid/removal
+    /// owner may execute it; the ordinary interpreter refuses ownerless use.
+    AjaniLoyaltyV42 {
+        ability_index: u8,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -18247,6 +18252,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 state,
                 event::ProposedEvent::create_token(*token_def, controller),
             );
+        }
+        EffectOp::AjaniLoyaltyV42 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::CreateTokensDynamic {
             token_def,

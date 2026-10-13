@@ -4593,6 +4593,7 @@ pub(crate) fn evaluate_dynamic_value(
 ) -> i32 {
     let count = match value {
         DynamicValueDef::Fixed(value) => return value,
+        DynamicValueDef::ControllerLifeTotal => return state.players[controller.index()].life,
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
