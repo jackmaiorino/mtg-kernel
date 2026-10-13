@@ -1,6 +1,9 @@
 # Limited common JSONL playback, source preparation
 
-Base: 3dde78854a99bcc68121a221a5d753961b3649a0. This is a separate
+Base: 3dde78854a99bcc68121a221a5d753961b3649a0. The reviewed parent
+fe3c35635c59e555e47bc2f92e9bcae818c48b5d was subsequently merged without
+conflicts. Its actual unaccepted 437-definition candidate is preserved verbatim;
+this lane adds no card metadata, IDs or profile derivation. This is a separate
 `kernel_limited_common_jsonl` protocol, schema 1, and a separate executable
 `kernel_limited_common_env`. Frozen `kernel_limited_jsonl` schemas 1 through 4,
 RL schemas, model inputs and existing Human projectors keep their identities and
@@ -65,7 +68,10 @@ Four-card preparation is not registration or gameplay qualification.
 Prepared tests cover real two-seat London keep/mulligan/bottom/full-priority
 progression, opponent-hand privacy, actual action retries, repeated owning
 restore, stale/foreign action and catalog refusal, and private-origin corruption.
-The future four-card catalog reset group remains explicitly ignored until real
-registration; existing paid mixed-family source fixtures remain inherited.
+The four-card catalog reset group is enabled against the parent's actual staged
+records, and an actual paid Herald fixture traverses public projection and restore.
+Registered physical combat setup traverses real attacker/blocker scans and
+Foundations damage allocation with owning restore. Existing paid mixed-family
+source fixtures remain inherited and ordinary V40 state/labels retain a parity probe.
 Native execution and type/lint qualification belong to the parent lane and have
 not been run for this source.

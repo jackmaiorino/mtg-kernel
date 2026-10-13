@@ -8,6 +8,23 @@ impl FastActorSessionV1 {
             FlatActionContractModeV1::AkromaV40 | FlatActionContractModeV1::LimitedCommonV1
         )
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn from_limited_common_fixture_state(state: crate::state::GameState) -> Self {
+        let mut session = Self::from_akroma_v40_fixture_state(state);
+        session.flat_action_contract_mode = FlatActionContractModeV1::LimitedCommonV1;
+        session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            SuppressionAuditMode::Off,
+        );
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+        session
+    }
     pub(crate) fn reset_limited_common_v1(
         episode_id: u64,
         env_seed: u64,

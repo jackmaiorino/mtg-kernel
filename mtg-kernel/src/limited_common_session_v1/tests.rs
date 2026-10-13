@@ -318,7 +318,46 @@ fn restored_private_origin_and_ordered_family_binding_forgeries_refuse_before_ac
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires root registration of the four prepared printed sources"]
+fn ordinary_current_common_state_and_labels_match_the_existing_fixed_seat_projector() {
+    use crate::human_bo3_v1::{HumanAkromaProjectorV40, HumanAkromaSessionV40};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::state::Zone;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        put(&mut state, actor, "Forest", Zone::Hand);
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        let old_core = FastActorSessionV1::from_akroma_v40_fixture_state(state.clone());
+        let FastActorResponseV1::Decision(expected) = old_core.current_response() else {
+            panic!("ordinary menu");
+        };
+        let old_session = HumanAkromaSessionV40::from_session(old_core, actor.into()).unwrap();
+        let old = HumanAkromaProjectorV40::new(actor.into())
+            .project_current(&old_session, expected)
+            .unwrap();
+        let mut server = LimitedCommonJsonlServerV1 {
+            active: Some(Active {
+                core: FastActorSessionV1::from_limited_common_fixture_state(state),
+                owner: Arc::new(()),
+            }),
+            generation: 1,
+            ..Default::default()
+        };
+        let reply = server.handle_request(request("ordinary"));
+        let current = decision(&reply).2;
+        assert_eq!(current.state, old.state);
+        assert_eq!(current.actions, old.actions);
+        assert!(!serde_json::to_string(current)
+            .unwrap()
+            .contains("Lightning Bolt"));
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
 fn registered_four_printed_families_use_the_actual_catalog_and_common_reset_both_seats() {
     for name in [
         "Herald of Eternal Dawn",
@@ -338,5 +377,214 @@ fn registered_four_printed_families_use_the_actual_catalog_and_common_reset_both
             assert_eq!(decision(&opening).2.state.own_hand.len(), 7);
             assert!(!decision(&opening).2.state.extensions.families.is_empty());
         }
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn real_paid_herald_common_public_menu_restore_and_stale_binding_both_seats() {
+    for actor in [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1] {
+        let (state, source) = crate::game_outcome_protection_v1::tests::cast_herald(actor);
+        assert_eq!(
+            state.objects.get(source).zone,
+            crate::state::Zone::Battlefield
+        );
+        let mut server = LimitedCommonJsonlServerV1 {
+            active: Some(Active {
+                core: FastActorSessionV1::from_limited_common_fixture_state(state),
+                owner: Arc::new(()),
+            }),
+            generation: 1,
+            ..Default::default()
+        };
+        let opening = server.handle_request(request("paid_public"));
+        let json = serde_json::to_string(&opening).unwrap();
+        assert!(json.contains("Herald of Eternal Dawn"));
+        assert!(json.contains("cannot_lose"));
+        let save = server.handle_request(LimitedCommonRequestV1::Snapshot {
+            schema_version: 1,
+            request_id: "save_paid".into(),
+        });
+        let LimitedCommonBodyV1::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = save.body
+        else {
+            panic!("snapshot");
+        };
+        let pass = step(&opening, "pass", "Pass priority");
+        let accepted = server.handle_request(pass.clone());
+        assert!(matches!(
+            accepted.body,
+            LimitedCommonBodyV1::State {
+                receipt: Some(_),
+                ..
+            }
+        ));
+        let restored = server.handle_request(LimitedCommonRequestV1::Restore {
+            schema_version: 1,
+            request_id: "restore_paid".into(),
+            snapshot_id,
+        });
+        assert_eq!(decision(&restored).2.state, decision(&opening).2.state);
+        let before = server
+            .active
+            .as_ref()
+            .unwrap()
+            .core
+            .privileged_core_environment_hash();
+        error(&server.handle_request(pass), "stale_decision");
+        assert_eq!(
+            server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .privileged_core_environment_hash(),
+            before
+        );
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_seats() {
+    use crate::engine::{self, Decision};
+    use crate::policy_observation_v6::tests::put;
+    use crate::state::{Step, Zone};
+    for actor in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let mut server = LimitedCommonJsonlServerV1::new();
+        let mut reply = server.handle_request(reset(actor, "reset"));
+        for index in 0..2 {
+            reply = server.handle_request(step(&reply, &format!("keep{index}"), "Keep this hand"));
+        }
+        // Registered physical setup, followed by real declaration/priority/
+        // assignment actions. No substitute spell root or admission hook.
+        let mut state = server
+            .active
+            .as_ref()
+            .unwrap()
+            .core
+            .akroma_fixture_state()
+            .clone();
+        let player: crate::ids::PlayerId = actor.into();
+        let attacker = put(&mut state, player, "Spinewoods Paladin", Zone::Battlefield);
+        let blocker = put(
+            &mut state,
+            player.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        state.objects.get_mut(attacker).summoning_sick = false;
+        state.step = Step::DeclareAttackers;
+        state.priority_player = player;
+        state.engine.priority_passes = [false, false];
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::DeclareAttackers { .. }
+        ));
+        // Let the actual common incremental scan perform this declaration.
+        server.active.as_mut().unwrap().core =
+            FastActorSessionV1::from_limited_common_fixture_state(state);
+        server.pending = None;
+        reply = server.handle_request(request("attack_scan"));
+        assert!(decision(&reply)
+            .2
+            .actions
+            .iter()
+            .any(|row| row.label.starts_with("Attack with")));
+        reply = server.handle_request(step(&reply, "attack", "Attack with"));
+        let mut restored_range = false;
+        let mut saw_blocker = false;
+        let mut finished = false;
+        for index in 0..64 {
+            let menu = decision(&reply).2;
+            let is_range = menu
+                .actions
+                .iter()
+                .any(|row| row.label.starts_with("Assign "));
+            if is_range
+                && menu
+                    .actions
+                    .iter()
+                    .any(|row| row.label.contains(" damage to "))
+                && !restored_range
+            {
+                let saved = server.handle_request(LimitedCommonRequestV1::Snapshot {
+                    schema_version: 1,
+                    request_id: "combat_save".into(),
+                });
+                let LimitedCommonBodyV1::State {
+                    snapshot_id: Some(id),
+                    ..
+                } = saved.body
+                else {
+                    panic!("saved range");
+                };
+                let old = step(&reply, "old_range", "Assign ");
+                let applied = server.handle_request(old.clone());
+                assert!(matches!(
+                    applied.body,
+                    LimitedCommonBodyV1::State {
+                        receipt: Some(_),
+                        ..
+                    }
+                ));
+                reply = server.handle_request(LimitedCommonRequestV1::Restore {
+                    schema_version: 1,
+                    request_id: "combat_restore".into(),
+                    snapshot_id: id,
+                });
+                let before = server
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .privileged_core_environment_hash();
+                error(&server.handle_request(old), "stale_decision");
+                assert_eq!(
+                    server
+                        .active
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .privileged_core_environment_hash(),
+                    before
+                );
+                restored_range = true;
+            }
+            let menu = decision(&reply).2;
+            let label =
+                if let Some(row) = menu.actions.iter().find(|row| {
+                    row.label.starts_with("Assign ") && row.label.contains(" to block ")
+                }) {
+                    saw_blocker = true;
+                    row.label.clone()
+                } else if let Some(row) = menu
+                    .actions
+                    .iter()
+                    .find(|row| row.label.contains(" damage to "))
+                {
+                    row.label.clone()
+                } else {
+                    "Pass priority".into()
+                };
+            reply = server.handle_request(step(&reply, &format!("combat{index}"), &label));
+            let state = server.active.as_ref().unwrap().core.akroma_fixture_state();
+            if state.event_history.iter().any(|event| matches!(event, crate::event::CommittedEvent::Damage { source, .. } if *source == attacker)) {
+                assert!(saw_blocker && restored_range);
+                assert!(state.objects.get(blocker).damage > 0 || state.objects.get(blocker).zone == Zone::Graveyard);
+                finished = true;
+                break;
+            }
+        }
+        // Do not silently accept an unexercised range/restore path.
+        assert!(finished, "actual Foundations combat did not finish");
     }
 }
