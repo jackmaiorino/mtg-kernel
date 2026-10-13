@@ -121,7 +121,61 @@ def replay(raw, exporter, frame):
         'simulations':simulations,'firstCombo':first_combo,
         'worlds':'Approximate sampled information sets with a uniform public deck prior. Both sampled hands are hidden; only focal non-forced choices become UCT tree nodes.'}
 
-def export_capture(path, exporter, *, allow_incomplete_game=False):
+def attach_execution(frames, rows, searches, header, binding_path, primary_path):
+    """Join native legacy history keys privately, exporting only node identities."""
+    binding_bytes=binding_path.read_bytes();bindings=json.loads(binding_bytes)
+    primary_bytes=primary_path.read_bytes();primary=json.loads(primary_bytes)
+    if (bindings.get('schema')!='mtg-kernel-uct-execution-bindings/v1' or
+        bindings['primary_sha256']!=hashlib.sha256(primary_bytes).hexdigest() or
+        bindings['core_hash']!=primary['core_hash'] or primary['core_hash']!=primary['replay_core_hash'] or
+        bindings['actions']!=len(rows) or primary['actions']!=[row['selected'] for row in rows]):
+        raise ValueError('UCT execution binding primary identity differs')
+    by_key={tuple(key(b['decision']).values()):b for b in bindings['bindings']}
+    if len(by_key)!=len(bindings['bindings']):raise ValueError('Duplicate UCT execution binding key')
+    roots={i:next(f for f in frames if f['key']==key(s['record']['decision'])) for i,s in searches.items()}
+    node_keys={i:{n['key']:n for n in s['nodes']} for i,s in searches.items()}
+    previous_root=None;consumed=set()
+    for row,f in zip(rows,frames):
+        if f['key']['actor']!='p0' or len(f['actions'])<2:continue
+        e=row.get('evidence')
+        if not e:
+            if f['key']['step']>=header['search_start']:raise ValueError('Missing UCT guide execution evidence')
+            f['searchLifecycle']={'mode':'policy','reason':'before_search','root':None,'node':None,'action':None,'backups':None,'remainingBefore':None,'remainingAfter':None,'previous':None}
+            continue
+        join=tuple(f['key'].values());b=by_key.get(join)
+        raw=searches.get(e['search']);root=roots.get(e['search'])
+        if not b or not raw or b['search']!=e['search'] or b['live']!=row['selected']:
+            raise ValueError('UCT execution binding decision/action differs')
+        consumed.add(join)
+        n=node_keys[e['search']].get(b['key']);a=b['canonical_action']
+        mode={'new_root':'new-search','reused':'reuse','plain':'policy'}[e['chooser']]
+        if mode!='policy':
+            if (n is None or not n['committed'] or a>=len(n['n']) or
+                n['id']==0 and n['live_order'][a]!=row['selected'] or
+                n['n'][a]!=e['edge_backups'] or n['n'][a]<8):
+                raise ValueError('UCT actual tree node/action support differs')
+            eligible=[j for j,count in enumerate(n['n']) if count>=8]
+            best=max(eligible,key=lambda j:n['wins'][j]/n['n'][j])
+            if n['wins'][a]/n['n'][a]!=n['wins'][best]/n['n'][best]:raise ValueError('UCT executed action differs from greatest supported mean')
+        previous=None
+        reason=e.get('refreshed') or ('initial' if mode=='new-search' and previous_root is None else e['lookup'])
+        if mode=='new-search':
+            if n is None or n['id']!=0 or root['id']!=f['id']:raise ValueError('UCT new search is not its root')
+            if previous_root is not None:
+                prior=node_keys[previous_root].get(b.get('previous_key'))
+                if reason=='unsupported' and (prior is None or not prior['committed'] or any(count>=8 for count in prior['n'])):
+                    raise ValueError('UCT refresh support reason differs from prior tree')
+                if reason=='miss' and prior is not None:raise ValueError('UCT refresh miss matches a prior node')
+                previous={'root':roots[previous_root]['id'],'node':prior['id'] if prior else None,'reason':reason}
+            previous_root=e['search']
+        f['searchLifecycle']={'mode':mode,'reason':reason,'root':root['id'],
+            'node':n['id'] if n else None,'action':a if n else None,'backups':e['edge_backups'],
+            'remainingBefore':e['remaining_after']+raw['record']['transitions'] if mode=='new-search' and reason=='initial' else e['remaining_before'],
+            'remainingAfter':e['remaining_after'],'previous':previous}
+    if consumed!=set(by_key):raise ValueError('Unused UCT execution binding')
+    return {'artifactSha256':hashlib.sha256(binding_bytes).hexdigest(),'primarySha256':bindings['primary_sha256']}
+
+def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bindings=None, primary=None):
     header, footer, rows, searches = None, None, [], {}
     with path.open('rb') as stream:
         while line:=stream.readline(8*1024*1024+1):
@@ -175,4 +229,7 @@ def export_capture(path, exporter, *, allow_incomplete_game=False):
         if e and e.get('chooser')=='reused' and raw and raw['nodes']:
             root=by_step[raw['record']['step']]
             f['decisionSource']={'kind':'search-continuation','root':root['id'],'treeDigest':raw['record']['tree']['hash'],'artifactSha256':source_hash}
+    if bool(execution_bindings)!=bool(primary):raise ValueError('Execution bindings require their pinned primary output')
+    if execution_bindings:
+        header['_execution_binding']=attach_execution(frames,rows,searches,header,execution_bindings,primary)
     return header,frames,complete

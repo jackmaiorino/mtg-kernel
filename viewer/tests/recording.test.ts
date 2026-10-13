@@ -6,7 +6,8 @@ import graphFixture from './fixtures/search-graph.json';
 import retained from './fixtures/retained-search.json';
 import uctFixture from './fixtures/uct-search.json';
 import pooledUct from './fixtures/uct-pooled.json';
-import { uctEvents, uctGraphAt } from '../src/uct-playback';
+import lifecycle from './fixtures/uct-lifecycle.json';
+import { actualTreePath, uctEvents, uctGraphAt } from '../src/uct-playback';
 import rootChoicesFixture from './fixtures/root-choices.json';
 import { graphAt, graphLayout, rootChoicesAt, rootChoiceStatus } from '../src/search-graph';
 import { initialSearchPlayback, searchReducer, searchEvents, rootHistory } from '../src/search-playback';
@@ -16,6 +17,18 @@ import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
 describe('full UCT discovery traces',()=>{
+  it('binds initial search, recorded refresh reason and an actual continuation to the source tree',async()=>{
+    const r=parseRecording(lifecycle);await verifySearchDigests(r);
+    expect(r.frames[1].searchLifecycle?.previous).toEqual({root:'d15',node:1,reason:'unsupported'});
+    expect(actualTreePath(r.frames[1].search!.uctReplay!,r.frames[2].searchLifecycle!.node!)).toEqual([0,1]);
+    for(const mutate of [(r:typeof lifecycle)=>{r.frames[2].searchLifecycle.node=99;},
+      (r:typeof lifecycle)=>{r.frames[2].searchLifecycle.backups=9;},
+      (r:typeof lifecycle)=>{r.frames[1].searchLifecycle.previous!.node=0;},
+      (r:typeof lifecycle)=>{r.frames[2].searchLifecycle.root='d15';},
+      (r:typeof lifecycle)=>{r.frames[1].searchLifecycle.remainingAfter++;}]){
+      const broken=structuredClone(lifecycle);mutate(broken);expect(()=>parseRecording(broken)).toThrow(/UCT/);
+    }
+  });
   it('restores pooled snapshots losslessly and rejects broken or unused pooled states',async()=>{
     const r=parseRecording(pooledUct);await verifySearchDigests(r);
     expect(r.frames[0].search!.uctReplay!.boards[0]).toEqual(r.frames[0].board);

@@ -2,6 +2,44 @@ import type { Frame, Recording, UctReplay } from './recording';
 import { edgeKey, type SearchGraphState } from './search-graph';
 
 export type UctEvent={simulation:number;phase:'select'|'rollout'|'evaluate'|'backup';choice:number;move?:number;after?:boolean};
+export function actualTreePath(replay:UctReplay,node:number):number[]{
+  const path:number[]=[];
+  while(true){const current=replay.nodes[node];if(!current||path.includes(node))throw new Error('UCT actual path is broken');path.unshift(node);if(!current.parent)break;node=current.parent[0];}
+  return path;
+}
+export function validateExecution(r:Recording){
+  const frames=r.frames.filter(f=>f.searchLifecycle);
+  if(!frames.length){if(r.executionBinding)throw new Error('UCT execution binding has no lifecycle');return;}
+  if(r.schema!=='mtg-kernel-viewer-recording/v4'||!r.executionBinding)throw new Error('UCT lifecycle binding is missing');
+  let lastRoot:Frame|null=null;
+  for(const f of frames){
+    const e=f.searchLifecycle!;
+    if(f.key.actor!==r.perspective||f.actions.length<2)throw new Error('UCT lifecycle belongs to a different decision');
+    if(e.reason==='before_search'){
+      if(lastRoot||e.mode!=='policy'||[e.root,e.node,e.action,e.backups,e.remainingBefore,e.remainingAfter,e.previous].some(x=>x!==null))throw new Error('UCT opening lifecycle is inconsistent');
+      continue;
+    }
+    const root=r.frames.find(g=>g.id===e.root),u=root?.search?.uctReplay;
+    if(!root||!u||root.key.episode!==f.key.episode||root.key.step>f.key.step||e.remainingBefore===null||e.remainingAfter===null||e.remainingAfter>e.remainingBefore)throw new Error('UCT lifecycle source or budget differs');
+    if(e.mode!=='policy'){
+      const node=e.node===null?null:u.nodes[e.node];
+      if(!node||!node.committed||e.action===null||e.action>=node.actions.length||e.backups!==node.edgeVisits[e.action]||e.backups<8||f.decisionSource?.root!==root.id)throw new Error('UCT actual node/action support differs');
+      actualTreePath(u,node.id);
+      const mean=node.edgeWins[e.action]/e.backups;
+      if(node.edgeVisits.some((n,i)=>n>=8&&node.edgeWins[i]/n>mean))throw new Error('UCT actual action differs from supported selection');
+    }
+    if(e.mode==='new-search'){
+      if(f.id!==root.id||e.node!==0||e.remainingBefore-e.remainingAfter!==root.search!.transitions)throw new Error('UCT new search lifecycle differs');
+      if(lastRoot){
+        const previous=e.previous,old=lastRoot.search!.uctReplay!;
+        if(!previous||previous.root!==lastRoot.id||previous.reason!==e.reason)throw new Error('UCT refresh reason binding differs');
+        const prior=previous.node===null?null:old.nodes[previous.node];
+        if(previous.node!==null&&!prior||e.reason==='unsupported'&&(!prior||!prior.committed||prior.edgeVisits.some(n=>n>=8))||e.reason==='miss'&&prior)throw new Error('UCT refresh support reason differs');
+      }else if(e.reason!=='initial'||e.previous)throw new Error('UCT initial search lifecycle differs');
+      lastRoot=root;
+    }else if(root.id!==lastRoot?.id||e.previous||e.mode==='reuse'&&(e.reason!=='supported'||e.remainingBefore!==e.remainingAfter))throw new Error('UCT continuation lifecycle differs');
+  }
+}
 export function uctEvents(r:UctReplay):UctEvent[]{
   return r.simulations.flatMap((s,simulation)=>{
     const events:UctEvent[]=[];let cursor=0;

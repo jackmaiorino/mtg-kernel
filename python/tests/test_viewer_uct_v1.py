@@ -4,9 +4,10 @@ import json
 import struct
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from viewer_uct_export_v1 import replay
+from viewer_uct_export_v1 import replay, attach_execution
 from viewer_reconstruction_export_v1 import export_root
 
 def fixture():
@@ -36,6 +37,25 @@ class VisibleExporter:
         return {'turn':8,'phase':'main1','active':'p0','priority':'p0','players':[copy.deepcopy(p),copy.deepcopy(p)],'exile':[],'stack':[],'combat':[]}
 
 class UctTests(unittest.TestCase):
+    def test_execution_binding_uses_full_key_and_native_support_without_exporting_private_keys(self):
+        raw,f=fixture();f['id']='d15';raw['nodes'][0].update(n=[8,0],wins=[8,0],visits=8)
+        evidence={'search':0,'chooser':'new_root','lookup':'supported','refreshed':None,'edge_backups':8,'remaining_before':384000,'remaining_after':384000}
+        rows=[{'selected':1,'evidence':evidence}]
+        primary={'actions':[1],'core_hash':42,'replay_core_hash':42}
+        with tempfile.TemporaryDirectory() as folder:
+            p=Path(folder)/'primary.json';p.write_text(json.dumps(primary))
+            bindings={'schema':'mtg-kernel-uct-execution-bindings/v1','primary_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'core_hash':42,'actions':1,
+                'bindings':[{'decision':raw['record']['decision'],'search':0,'key':raw['nodes'][0]['key'],'canonical_action':0,'live':1,'previous_key':None}]}
+            b=Path(folder)/'bindings.json';b.write_text(json.dumps(bindings))
+            frames=[copy.deepcopy(f)];identity=attach_execution(frames,rows,{0:raw},{'search_start':15},b,p)
+            self.assertEqual(frames[0]['searchLifecycle']['node'],0)
+            self.assertEqual(frames[0]['searchLifecycle']['reason'],'initial')
+            self.assertNotIn(raw['nodes'][0]['key'],json.dumps(frames))
+            self.assertEqual(identity['primarySha256'],bindings['primary_sha256'])
+            for mutate in [lambda x:x['bindings'][0]['decision'].update(substep_index=1),lambda x:x['bindings'][0].update(live=0),lambda x:x.update(core_hash=43)]:
+                broken=copy.deepcopy(bindings);mutate(broken);b.write_text(json.dumps(broken))
+                with self.assertRaises(ValueError):attach_execution([copy.deepcopy(f)],rows,{0:raw},{'search_start':15},b,p)
+
     def test_full_attempts_reconcile_and_private_cards_are_removed_before_metadata(self):
         raw,f=fixture();result=replay(raw,VisibleExporter(),f)
         self.assertEqual(result['firstCombo'],0)

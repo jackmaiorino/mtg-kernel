@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateUct, verifyUctDigest } from './uct-playback';
+import { validateUct, validateExecution, verifyUctDigest } from './uct-playback';
 
 export const SCHEMA = 'mtg-kernel-viewer-recording/v1';
 export const MAX_BYTES = 64 * 1024 * 1024;
@@ -96,6 +96,13 @@ const searchSchema = z.object({
   uctReplay:uctSchema.optional(),
   algorithm: z.literal('persistent-uct').optional(), digestOrigin: z.literal('exported-table').optional(),
 }).strict();
+const refreshReason=z.enum(['initial','supported','unsupported','miss','depth_limit','before_search']);
+const lifecycleSchema=z.object({
+  mode:z.enum(['new-search','reuse','policy']),reason:refreshReason,
+  root:text.nullable(),node:u32.nullable(),action:u32.nullable(),backups:u32.nullable(),
+  remainingBefore:u32.nullable(),remainingAfter:u32.nullable(),
+  previous:z.object({root:text,node:u32.nullable(),reason:refreshReason}).strict().nullable(),
+}).strict();
 const frameSchema = z.object({
   id: text, key: keySchema, board: boardSchema, after: boardSchema,
   actions: z.array(actionSchema).min(1).max(65536), executed: integer,
@@ -103,6 +110,7 @@ const frameSchema = z.object({
   terminal: z.object({ kind: text, winner: seat.nullable() }).strict().nullable(),
   decisionSource: z.object({ kind: z.enum(['search-root','search-continuation']), root: text,
     treeDigest: hash, artifactSha256: hash }).strict().optional(),
+  searchLifecycle:lifecycleSchema.optional(),
 }).strict();
 const recordingSchema = z.object({
   schema: z.enum([SCHEMA,'mtg-kernel-viewer-recording/v2','mtg-kernel-viewer-recording/v3','mtg-kernel-viewer-recording/v4']), id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,95}$/), title: text,
@@ -113,6 +121,7 @@ const recordingSchema = z.object({
   bookmarks: z.array(z.object({ frame: text, title: text, situation: text, alternatives: text, consequence: text }).strict()).max(30),
   reconstruction: z.object({ kind: z.literal('recorded-actions'), originalSource: commit, originalRuntime: hash,
     sourceArtifactSha256: hash, openingArtifactSha256: hash, runtimeRules: text }).strict().optional(),
+  executionBinding:z.object({artifactSha256:hash,primarySha256:hash}).strict().optional(),
 }).strict();
 export type Recording = z.infer<typeof recordingSchema>;
 export type Frame = Recording['frames'][number];
@@ -192,6 +201,7 @@ export function parseRecording(raw: unknown): Recording {
         (source.kind==='search-root') !== (f.id===root.id) || (source.kind==='search-continuation' && f.search)) throw new Error('Recorded search continuation has a broken root or source binding');
   }
   if (r.bookmarks.some(b => !ids.has(b.frame))) throw new Error('Bookmark points to a missing decision');
+  validateExecution(r);
   if (r.complete && !r.frames.at(-1)?.terminal) throw new Error('Complete game has no recorded terminal state');
   return r;
 }

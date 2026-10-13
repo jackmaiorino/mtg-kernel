@@ -7,6 +7,7 @@ import rootChoices from '../fixtures/root-choices.json' with {type:'json'};
 import retained from '../fixtures/retained-search.json' with {type:'json'};
 import uct from '../fixtures/uct-search.json' with {type:'json'};
 import pooledUct from '../fixtures/uct-pooled.json' with {type:'json'};
+import lifecycle from '../fixtures/uct-lifecycle.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -15,6 +16,26 @@ async function openFixture(page: import('@playwright/test').Page) {
   await page.locator('input[type=file]').setInputFiles({name:'recording.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture))});
   await expect(page.getByRole('region', { name:'Game replay' })).toBeVisible();
 }
+
+test('actual guide lifecycle distinguishes refresh from reuse and locates the game without changing its decision',async({page})=>{
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'lifecycle.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(lifecycle))});
+  const status=page.getByRole('region',{name:'Actual game search lifecycle'});
+  await expect(status.getByRole('heading',{name:'Starts a new search'})).toBeVisible();
+  await page.getByRole('button',{name:'Next decision',exact:true}).click();
+  await expect(status.locator('.lifecycle-refresh')).toContainText('no move had the eight completed rollouts');
+  await expect(status.locator('.lifecycle-refresh')).toContainText('node 1');
+  await page.getByRole('button',{name:'Next decision',exact:true}).click();
+  await expect(status.getByRole('heading',{name:'Follows the existing tree'})).toBeVisible();
+  await expect(page.locator('[data-actual-node="1"]')).toBeVisible();
+  await expect(page).toHaveURL(/decision=d17/);
+  await page.getByRole('button',{name:'Return to search discovery'}).click();
+  await expect(page.locator('[data-actual-node="1"]')).toHaveCount(0);
+  await page.getByRole('button',{name:'Locate actual game in tree'}).click();
+  await expect(page.locator('[data-actual-node="1"]')).toBeVisible();await expect(page).toHaveURL(/decision=d17/);
+  await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await status.screenshot({path:'test-results/search-lifecycle-320.png'});
+});
 
 test('full UCT tree exposes discovery, rollout moves and discarded attempts',async({page})=>{
   await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'uct.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(pooledUct))});
