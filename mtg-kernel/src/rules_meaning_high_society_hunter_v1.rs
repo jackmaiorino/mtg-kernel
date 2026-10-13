@@ -45,6 +45,7 @@ pub fn producer_sha256() -> String {
         SCHEMA,
         include_str!("rules_meaning_high_society_hunter_v1.rs"),
         include_str!("high_society_hunter_v1.rs"),
+        include_str!("high_society_hunter_custody_v45.rs"),
         include_str!("creature_death_capture_v1.rs"),
         include_str!("effect/standard_selection_v1.rs"),
         include_str!("trigger.rs"),

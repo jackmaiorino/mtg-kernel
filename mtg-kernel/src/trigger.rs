@@ -3919,6 +3919,9 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if let Some((_, attack)) = crate::high_society_hunter_custody_v45::binding(effect) {
+        return *template == crate::high_society_hunter_custody_v45::recipe(attack);
+    }
     if template == effect {
         return true;
     }
@@ -4125,6 +4128,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::high_society_hunter_custody_v45::binding(effect).is_some() {
+        return crate::high_society_hunter_v1::owns_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if crate::high_society_hunter_v1::owns_definition(card_def)
         && (*effect == crate::high_society_hunter_v1::attack_program()
             || *effect == crate::high_society_hunter_v1::death_program())

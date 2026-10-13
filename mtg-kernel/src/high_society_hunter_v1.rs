@@ -147,7 +147,7 @@ pub(crate) fn collect_attacks(
             pending.push(PendingTrigger {
                 controller: source.controller,
                 source: source.source,
-                effect: attack_program(),
+                effect: crate::high_society_hunter_custody_v45::bound(index as u64, true),
                 is_madness_offer: false,
                 kicked: false,
                 target_spec: crate::card_def::TargetSpec::None,
@@ -202,7 +202,31 @@ pub(crate) fn pay_selection(
     state: &mut GameState,
     pending: &EffectContinuation,
     selected: &[EffectObjectBinding],
+    owner: &crate::high_society_hunter_custody_v45::OwnerV45,
 ) -> Result<(), String> {
+    preflight_payment(state, pending, selected, owner)?;
+    let Some(chosen) = selected.first() else {
+        return Ok(());
+    };
+    let source = pending
+        .ctx
+        .ability_source_contract
+        .ok_or("Hunter payment lost original source")?;
+    crate::event::commit_sacrifice_death_group_v1(state, &[chosen.object]);
+    if state.objects.get(chosen.object).zone == Zone::Battlefield
+        && state.objects.get(chosen.object).zone_change_count == chosen.expected_zone_change_count
+    {
+        return Ok(());
+    }
+    counter_exact_source(state, source)
+}
+pub(crate) fn preflight_payment(
+    state: &GameState,
+    pending: &EffectContinuation,
+    selected: &[EffectObjectBinding],
+    owner: &crate::high_society_hunter_custody_v45::OwnerV45,
+) -> Result<(), String> {
+    crate::high_society_hunter_custody_v45::authorize_cost(owner, pending)?;
     let source = pending
         .ctx
         .ability_source_contract
@@ -211,7 +235,12 @@ pub(crate) fn pay_selection(
     if pending.ctx.controller != source.controller
         || pending.resolving_item.kind != crate::state::StackItemKind::TriggeredAbility
         || pending.resolving_item.v4.granted_by.is_some()
-        || pending.resolving_item.inline_effect.as_ref() != Some(&attack_program())
+        || pending
+            .resolving_item
+            .inline_effect
+            .as_ref()
+            .and_then(crate::high_society_hunter_custody_v45::binding)
+            .is_none_or(|(_, attack)| !attack)
         || selected.len() > 1
     {
         return Err("Hunter consequence lost its exact printed attack root".into());
@@ -242,13 +271,7 @@ pub(crate) fn pay_selection(
             .checked_add(1)
             .ok_or("Hunter +1/+1 counter overflow")?;
     }
-    crate::event::commit_sacrifice_death_group_v1(state, &[chosen.object]);
-    if state.objects.get(chosen.object).zone == Zone::Battlefield
-        && state.objects.get(chosen.object).zone_change_count == chosen.expected_zone_change_count
-    {
-        return Ok(());
-    }
-    counter_exact_source(state, source)
+    Ok(())
 }
 fn counter_exact_source(
     state: &mut GameState,

@@ -177,7 +177,11 @@ pub(crate) fn pending(
     {
         return Err(invalid());
     }
-    let effect = (ability.effect)();
+    let effect = if ability.condition == TriggerCondition::OtherNontokenCreatureDies {
+        crate::high_society_hunter_custody_v45::bound(history_index as u64, false)
+    } else {
+        (ability.effect)()
+    };
     let target_spec =
         crate::trigger::target_spec_for_trigger(source.card_def, &effect).ok_or_else(invalid)?;
     Ok(Some((
