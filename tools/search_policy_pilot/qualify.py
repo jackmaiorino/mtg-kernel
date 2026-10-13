@@ -65,7 +65,7 @@ def run_job(plan: dict, item: dict, pre: bool) -> None:
                 item["own"], *common)
         else:
             run(HERE / "schedule.py", "config", "--lineage", lineage, "--arm", item["arm"], "--phase",
-                item["phase"], *common)
+                item["phase"], *common, *(["--source", item["source"]] if item.get("source") else []))
         paths = json.loads(run(HERE / "drive.py", "requests", "--tag", tag, "--config", config, "--runtime",
                                plan["runtime"], "--root", base, "--workers", item["workers"], "--cores",
                                item["cores"], "--host", plan["host"],

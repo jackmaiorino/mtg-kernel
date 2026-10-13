@@ -17,11 +17,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "python" / "tools"))
 import nine_deck_public_panel_v1 as npp  # noqa: E402
 
+# Qualification folders (fresh after failed attempts, which stay in place).
+QUAL = {"T1": "qual-T1-b", "H": "qual-H-c"}
+
 
 def main() -> None:
     root, evaluator, ids = Path(sys.argv[1]), sys.argv[2], sys.argv[3:]
     for ref in ("T1", "H"):
-        qual = root / "eval" / f"qual-{ref}-b"
+        qual = root / "eval" / QUAL[ref]
         receipt = qual / "receipt.json"
         if not receipt.exists():
             trials = npp.qualify(root / "eval" / f"{ids[0]}-vs-{ref}" / "plan.json", 16, [1, 2, 4, 8], qual,
@@ -37,7 +40,7 @@ def main() -> None:
             if out.exists():
                 continue
             t0 = time.time()
-            result = npp.run(plan, root / "eval" / f"qual-{ref}-b" / "receipt.json", evaluator)
+            result = npp.run(plan, root / "eval" / QUAL[ref] / "receipt.json", evaluator)
             rows = npp.rows(plan)
             out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
             with (root / "eval" / "index.jsonl").open("a") as f:
