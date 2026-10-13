@@ -635,6 +635,7 @@ pub mod faebloom_trick_v43;
 pub mod fishing_pole_observation_v39;
 pub mod fishing_pole_public_v39;
 pub(crate) mod fishing_pole_v39;
+pub mod rules_meaning_faebloom_v43;
 pub mod rules_meaning_fishing_pole_v39;
 
 pub mod akroma_early_public_v40;
