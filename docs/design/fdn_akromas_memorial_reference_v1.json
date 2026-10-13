@@ -1,0 +1,37 @@
+{
+  "status": "prepared_unregistered_native_unrun",
+  "name": "Akroma's Memorial",
+  "card_id": null,
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_path": "Mage.Sets/src/mage/cards/a/AkromasMemorial.java",
+  "mage_blob": "7070b36a8569f04afb15d710339a01f9b6260324",
+  "mana_cost": "{7}",
+  "supertypes": [
+    "Legendary"
+  ],
+  "types": [
+    "Artifact"
+  ],
+  "colors": [],
+  "subtypes": [],
+  "power": null,
+  "toughness": null,
+  "text": "Creatures you control have flying, first strike, vigilance, trample, haste, and protection from black and from red.",
+  "recipe": {
+    "target": "None",
+    "resolution": "ordinary permanent battlefield entry",
+    "static": "current controlled effective creatures; live printed source; layer 6 timestamps",
+    "keywords": [
+      "Flying",
+      "FirstStrike",
+      "Vigilance",
+      "Trample",
+      "Haste"
+    ],
+    "protection_colors": [
+      "Black",
+      "Red"
+    ]
+  },
+  "admission": "No registration, catalog/profile derivation, model, consumer successor or runtime qualification is included."
+}

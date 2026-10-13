@@ -20,12 +20,15 @@ fn enabled() -> bool {
     *ENABLED.get_or_init(|| {
         CARD_DEFS
             .iter()
-            .any(|d| d.controlled_creature_grant.is_some())
+            .any(|d| d.is_executable() && d.controlled_creature_grant.is_some())
     })
 }
 fn active(state: &GameState, source: ObjectId) -> bool {
     state.objects.try_get(source).is_some_and(|live| {
         live.zone == Zone::Battlefield
+            && state.players[live.controller.index()]
+                .battlefield
+                .contains(&source)
             && live.v4.face_index == 0
             && CARD_DEFS
                 .get(usize::from(live.card_def))
@@ -39,6 +42,9 @@ fn applies(state: &GameState, source: ObjectId, recipient: ObjectId) -> bool {
     };
     state.objects.try_get(recipient).is_some_and(|live| {
         live.zone == Zone::Battlefield
+            && state.players[live.controller.index()]
+                .battlefield
+                .contains(&recipient)
             && active(state, source)
             && source_object.controller == live.controller
             && crate::engine::object_has_type(state, recipient, CardType::Creature)
@@ -84,10 +90,16 @@ pub(crate) fn protects_from_colors(
 }
 /// Old transports have no precise color-protection/static-source row.
 pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(), String> {
+    validate_color_history(state)?;
     if !enabled() {
         return Ok(());
     }
-    if state.objects.iter().any(|(source, live)| {
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+        )
+    }) || state.objects.iter().any(|(source, live)| {
         active(state, source)
             && CARD_DEFS
                 .get(usize::from(live.card_def))
@@ -113,6 +125,11 @@ pub(crate) fn detach_protected_nonauras(state: &mut GameState) -> bool {
             let link = live.v4.attached_to?;
             (live.zone == Zone::Battlefield
                 && (definition.equipment.is_some() || definition.bestow.is_some())
+                && state.objects.try_get(link.object).is_some_and(|host| {
+                    host.zone == Zone::Battlefield
+                        && host.zone_change_count == link.zone_change_count
+                        && host.attachments.contains(&id)
+                })
                 && protects_from_colors(
                     state,
                     link.object,
@@ -141,3 +158,152 @@ pub(crate) fn detach_protected_nonauras(state: &mut GameState) -> bool {
     }
     !detach.is_empty()
 }
+
+/// Color LKI is an opt-in core dependency of the new protection descriptor.
+/// The actual departure follows this independent snapshot immediately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct DepartureColorV1 {
+    pub source: crate::state::AbilitySourceContractV4,
+    pub color_mask: u8,
+}
+pub(crate) fn capture_departure_color(
+    state: &GameState,
+    event: &crate::event::ProposedEvent,
+) -> Option<DepartureColorV1> {
+    if !enabled() {
+        return None;
+    }
+    let crate::event::ProposedEvent::ZoneChange(change) = event else {
+        return None;
+    };
+    let live = state.objects.try_get(change.object)?;
+    if live.zone != Zone::Battlefield || change.to_zone == Zone::Battlefield {
+        return None;
+    }
+    Some(DepartureColorV1 {
+        source: crate::state::AbilitySourceContractV4::capture(state, change.object),
+        color_mask: crate::engine::object_color_mask(state, change.object),
+    })
+}
+pub(crate) fn log_departure_color(state: &mut GameState, snapshot: DepartureColorV1) {
+    let event = crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 {
+        snapshot,
+        departure_history_index: u64::try_from(state.engine.event_history.len())
+            .expect("history index")
+            + 1,
+    };
+    state.engine.event_log.push(event.clone());
+    state.engine.event_history.push(event);
+}
+pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
+    use crate::event::CommittedEvent;
+    if !enabled() {
+        if state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, CommittedEvent::ProtectionSourceColorDepartureV1 { .. }))
+        {
+            return Err("color departure history requires its selected source catalog".into());
+        }
+        return Ok(());
+    }
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        if let CommittedEvent::ProtectionSourceColorDepartureV1 {
+            snapshot,
+            departure_history_index,
+        } = event
+        {
+            let index =
+                usize::try_from(*departure_history_index).map_err(|_| "color departure index")?;
+            if index != at + 1
+                || snapshot.source.zone != Zone::Battlefield
+                || snapshot.color_mask & !0x1f != 0
+                || !matches!(state.engine.event_history.get(index),
+                    Some(CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before })
+                    if *object == snapshot.source.source && *to != Zone::Battlefield
+                        && *controller_before == snapshot.source.controller)
+            {
+                return Err("color snapshot lacks exact committed battlefield departure".into());
+            }
+            let live = state
+                .objects
+                .try_get(snapshot.source.source)
+                .ok_or("color source disappeared")?;
+            if snapshot.source.owner != live.owner
+                || live.zone_change_count <= snapshot.source.zone_change_count
+                || (live.card_def != snapshot.source.card_def
+                    && !crate::standard_cards_v1::had_card_def(
+                        state,
+                        snapshot.source.source,
+                        snapshot.source.zone_change_count,
+                        snapshot.source.card_def,
+                    ))
+            {
+                return Err("color departure changed original definition/owner/incarnation".into());
+            }
+        }
+        if let CommittedEvent::ZoneChange {
+            object,
+            from: Zone::Battlefield,
+            to,
+            ..
+        } = event
+        {
+            if *to != Zone::Battlefield
+                && !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
+                Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
+                    if snapshot.source.source == *object && usize::try_from(*departure_history_index).ok() == Some(at))
+            {
+                return Err(
+                    "battlefield departure lost its independent source color snapshot".into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+/// Current characteristics win for the original live incarnation. A departed
+/// incarnation uses its exact committed prebatch snapshot, never the new object.
+pub(crate) fn targeting_source_colors(
+    state: &GameState,
+    object: ObjectId,
+    card_def: u16,
+    zone: Zone,
+    generation: u32,
+) -> Result<u8, String> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.zone == zone && live.zone_change_count == generation)
+    {
+        return Ok(crate::engine::object_color_mask(state, object));
+    }
+    if !enabled() || zone != Zone::Battlefield {
+        return Ok(crate::card_def::mana_colors_mask(
+            CARD_DEFS[usize::from(card_def)].colors,
+        ));
+    }
+    validate_color_history(state)?;
+    let mut snapshots = state.engine.event_history.iter().filter_map(|event| {
+        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
+        else {
+            return None;
+        };
+        (snapshot.source.source == object
+            && snapshot.source.zone_change_count == generation
+            && (snapshot.source.card_def == card_def
+                || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
+        .then_some(snapshot.color_mask)
+    });
+    let colors = snapshots
+        .next()
+        .ok_or("departed targeting source lost exact color LKI")?;
+    if snapshots.next().is_some() {
+        return Err("duplicate departed source color LKI".into());
+    }
+    Ok(colors)
+}
+
+#[cfg(test)]
+mod tests;

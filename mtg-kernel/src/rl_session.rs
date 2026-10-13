@@ -1924,6 +1924,9 @@ fn flat_validate_origin_decision_v1(
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state).is_err() {
+        return Err(invalid());
+    }
     match &current.origin_decision {
         PolicyDecisionV5::AttackerInclusion {
             player,
@@ -3363,6 +3366,11 @@ fn flat_validate_current_binding_header_v2(
         return flat_validate_current_binding_header_v1(session, current);
     }
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&session.state)
+        .is_err()
+    {
+        return Err(invalid());
+    }
     let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state)
         .map_err(|_| invalid())?;
     let original = FastActorCurrentDecisionV1 {
@@ -5439,6 +5447,19 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+            .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+            ));
+            return;
+        }
         if crate::inspiration_observation_v1::requires_successor(&self.state) {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7224,6 +7245,19 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+            .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+            ));
+            return;
+        }
         if (crate::inspiration_observation_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37)
             || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37

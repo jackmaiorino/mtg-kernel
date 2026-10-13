@@ -1837,6 +1837,8 @@ pub fn card_name(card_id: u16) -> String {
 }
 
 fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state)
+        .map_err(RlContractError)?;
     if state.objects.iter().any(|(id, object)| {
         object.zone == Zone::Battlefield
             && engine::has_effective_keyword(state, id, Keywords::SHROUD)

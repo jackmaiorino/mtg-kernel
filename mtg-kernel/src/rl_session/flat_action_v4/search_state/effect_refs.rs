@@ -1001,6 +1001,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
@@ -1296,6 +1297,7 @@ pub(super) fn conflicts(
             | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
             | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
             | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
             | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }

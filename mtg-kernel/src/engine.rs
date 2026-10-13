@@ -3905,16 +3905,15 @@ fn legal_targets_for_controller_from_source(
         });
     }
     if let Some(source) = source {
-        let colors = state
-            .objects
-            .try_get(source.object)
-            .filter(|live| {
-                live.zone == source.zone && live.zone_change_count == source.zone_change_count
-            })
-            .map_or_else(
-                || card_def::mana_colors_mask(card_def::CARD_DEFS[source.card_def as usize].colors),
-                |_| object_color_mask(state, source.object),
-            );
+        let Ok(colors) = crate::controlled_creature_grants_v1::targeting_source_colors(
+            state,
+            source.object,
+            source.card_def,
+            source.zone,
+            source.zone_change_count,
+        ) else {
+            return Vec::new();
+        };
         targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
@@ -9155,6 +9154,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::heraldic_banner_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -17767,6 +17772,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::krenko_v1::validate_state(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
@@ -17777,6 +17783,7 @@ pub(crate) fn step_without_linked_aura_v1(
     state: &mut GameState,
     action: Action,
 ) -> Result<(), String> {
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     // A restored continuation must be valid before any action can mutate
