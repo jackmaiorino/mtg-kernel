@@ -127,20 +127,29 @@ def main():
                 export_capture(path,Exporter({},'p0',None,path.parent/'unused-assets',False),allow_incomplete_game=True)
         acquisition=case_root/'acquisition.json'
         if acquisition.exists():raise ValueError('Preserve existing acquisition and interrupted attempts')
+        budget_path=args.root/'acquisition-budget.json'
+        budget=json.loads(budget_path.read_text()) if budget_path.exists() else {'games_started':0,'seconds_used':0.,'active':None}
+        if budget['active']:raise ValueError('Reconcile the retained active acquisition before any new game')
+        previous_seconds=budget['seconds_used']
         started=time.monotonic();results=[];report={'state':'started','pins':pinned,'max_games':3,'max_seconds':5400,'raw_cap':RAW_CAP,'qualification_sha256':sha(qualification),'results':results,
             'allocation':'One sequential fresh execution minimizes latency to one traced combo; independent two-worker work was qualified. Reused development setup, new frozen-policy gameplay, no saved actions.'}
         acquisition.write_text(json.dumps(report,indent=2))
         for i in range(3):
-            require_guard(args.root,'spy-full-search-trace-239');remaining=int(5400-(time.monotonic()-started))
+            require_guard(args.root,'spy-full-search-trace-239');remaining=int(5400-previous_seconds-(time.monotonic()-started))
             # Each native recording caps itself at 512 MiB. Reserve that entire next output.
             allowance=512*1024**2+8192
-            if remaining<=0 or size(args.root,True)+allowance>RAW_CAP or size(args.root)+allowance>WORKING_CAP:break
+            if budget['games_started']>=3 or remaining<=0 or size(args.root,True)+allowance>RAW_CAP or size(args.root)+allowance>WORKING_CAP:break
+            budget['games_started']+=1;budget['active']={'folder':str(case_root/f'game-{i+1}'),'timeout_seconds':remaining,'started_unix':time.time()}
+            budget_path.write_text(json.dumps(budget,indent=2))
             result=invoke(args.binary,args.template,case_root,f'game-{i+1}',True,100000,remaining);results.append(result)
+            budget.update(active=None,seconds_used=previous_seconds+time.monotonic()-started)
+            budget_path.write_text(json.dumps(budget,indent=2))
             try:result['receipt']=capture_receipt(result)
             except ValueError as e:result['capture_error']=str(e)
             report['raw_bytes']=size(args.root,True);report['elapsed_seconds']=time.monotonic()-started
             acquisition.write_text(json.dumps(report,indent=2))
             if result.get('receipt',{}).get('complete') and result['receipt']['winning_combo_rollout'] and result['receipt']['actual_search_combo_win']:break
+            if result['complete']:break  # Repeating this completed deterministic case adds no new coverage.
         success=any(r.get('receipt',{}).get('complete') and r['receipt']['winning_combo_rollout'] and r['receipt']['actual_search_combo_win'] for r in results)
         report['state']='complete' if success else 'insufficient-demo-coverage';acquisition.write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)
         if not success:raise SystemExit(1)
