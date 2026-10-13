@@ -380,6 +380,50 @@ fn linked_cost_checkpoint(
     crate::linked_aura_operation_v1::validate(state)?;
     Ok(true)
 }
+/// A public linked-return checkpoint can precede the final cost operation.
+/// Its owning replay authenticates this interval before any facts are exported.
+pub(crate) fn linked_paid_incarnation(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<Option<crate::effect::EffectObjectBinding>, String> {
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::HighSocietyHunterJournalV45 { journal } = event else {
+            continue;
+        };
+        let JournalV45::CostInput {
+            pending: original, ..
+        } = journal.as_ref()
+        else {
+            continue;
+        };
+        if original != pending || !linked_cost_checkpoint(state, at as u64, original)? {
+            continue;
+        }
+        let [crate::effect::EffectFrame::ApplySelectedObjectsV1 { selected, .. }] =
+            original.frames.as_slice()
+        else {
+            return Err("Hunter intermediate accepted consequence absent".into());
+        };
+        let Some(chosen) = selected.first() else {
+            return Ok(None);
+        };
+        let interval = &state.engine.event_history[at + 1..];
+        let sacrificed = interval.iter().position(|event| {
+            matches!(event,
+            CommittedEvent::Sacrificed { object, controller_before, .. }
+            if *object == chosen.object && *controller_before == pending.ctx.controller)
+        });
+        let moved = interval.iter().position(|event| {
+            matches!(event,
+            CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
+            if *object == chosen.object && *to != Zone::Battlefield)
+        });
+        if matches!((sacrificed, moved), (Some(s), Some(m)) if s < m) {
+            return Ok(Some(chosen.clone()));
+        }
+    }
+    Ok(None)
+}
 fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
     if state
         .engine

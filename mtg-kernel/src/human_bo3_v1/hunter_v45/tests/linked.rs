@@ -81,6 +81,15 @@ fn genuine_hunter_sacrifice_and_foreign_aura_owner_prompt_use_distinct_sources_a
         let e = expected(&session);
         let public = session.public_observation(e).unwrap();
         assert!(public.hunter.menu.is_none());
+        assert!(public.hunter.occurrences[0].sacrifice_paid);
+        assert_eq!(
+            public.hunter.occurrences[0]
+                .sacrificed
+                .as_ref()
+                .unwrap()
+                .object,
+            banishing.0
+        );
         let row = public
             .projection
             .surface
@@ -91,6 +100,8 @@ fn genuine_hunter_sacrifice_and_foreign_aura_owner_prompt_use_distinct_sources_a
         assert_eq!(row.source.as_ref().unwrap().arena_id, aura.0);
         assert_eq!(public.hunter.occurrences[0].source.arena_id, hunter.0);
         let menu = projector.project_current(&session, e).unwrap();
+        assert!(menu.hunter.occurrences[0].sacrifice_paid);
+        assert!(menu.hunter.occurrences[0].sacrificed.is_some());
         assert!(menu
             .actions
             .iter()

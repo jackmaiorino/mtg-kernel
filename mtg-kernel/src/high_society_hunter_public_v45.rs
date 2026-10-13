@@ -335,6 +335,15 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
                     } else {
                         PhaseV45::AcceptedSacrifice
                     };
+                    if let Some(paid) =
+                        custody::linked_paid_incarnation(state, pending).map_err(RlContractError)?
+                    {
+                        row.sacrifice_paid = true;
+                        row.sacrificed = Some(IncarnationV45 {
+                            object: paid.object.0,
+                            generation: paid.expected_zone_change_count,
+                        });
+                    }
                     if let Some(PendingEffectChoice::SelectTargets {
                         player,
                         legal,
