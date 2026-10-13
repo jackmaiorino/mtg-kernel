@@ -211,7 +211,7 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
             let active_player = caster.opponent();
             let mut state = ready_state_for(active_player);
             let herald = put(&mut state, caster, "Herald of Eternal Dawn", Zone::Hand);
-            let offer = put(&mut state, active_player, "Essence Scatter", Zone::Hand);
+            let counterspell = put(&mut state, active_player, "Essence Scatter", Zone::Hand);
             state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 4;
             state.players[caster.index()].mana_pool[ManaColor::W.pool_index()] = 2;
             assert!(matches!(engine::advance_until_decision(&mut state),
@@ -242,8 +242,8 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
                 state.players[active_player.index()].mana_pool[ManaColor::U.pool_index()] = 1;
                 assert!(matches!(engine::advance_until_decision(&mut state),
                     Decision::CastSpellOrPass { player, ref castable_spells, .. }
-                    if player == active_player && castable_spells.contains(&offer)));
-                engine::step(&mut state, Action::CastSpell(offer)).unwrap();
+                    if player == active_player && castable_spells.contains(&counterspell)));
+                engine::step(&mut state, Action::CastSpell(counterspell)).unwrap();
                 assert!(matches!(engine::advance_until_decision(&mut state),
                     Decision::ChooseTargets { ref legal_targets, .. }
                     if legal_targets == &[crate::state::Target::Object(herald)]));
@@ -292,7 +292,7 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
                                 == "Treasure Token"
                         })
                         .count();
-                    assert_eq!(branch.objects.get(offer).zone, Zone::Graveyard);
+                    assert_eq!(branch.objects.get(counterspell).zone, Zone::Graveyard);
                     assert_eq!(treasures, 0);
                 }
             }
