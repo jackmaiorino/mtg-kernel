@@ -475,6 +475,98 @@ struct Config {
     #[serde(default)]
     record: bool,
     max_steps: u64,
+    // Offline binding of an already executed action stream, without inference.
+    #[serde(default)]
+    bind_actions: Option<Input>,
+}
+
+fn bind_execution(
+    config: &Config,
+    spec: &super::bank::BankSpec,
+    src: &super::bank::SourceSpec,
+) -> Result<(), String> {
+    use super::{
+        bank,
+        canon2::{KeyMode, KeyStats, Keyer},
+        play,
+    };
+    let input = config
+        .bind_actions
+        .as_ref()
+        .ok_or("Missing binding actions")?;
+    let primary: Value = serde_json::from_slice(&read(input)?).map_err(|e| e.to_string())?;
+    let actions = primary["actions"]
+        .as_array()
+        .ok_or("Missing recorded actions")?;
+    if actions.len() > 100000 {
+        return Err("Binding action bound".into());
+    }
+    let roots = primary["searches"]
+        .as_array()
+        .ok_or("Missing recorded searches")?;
+    let mut s = bank::source_session(spec, src)?;
+    let mut keyer: Option<Keyer<KeyStats>> = None;
+    let mut current_search = None;
+    let mut bindings = Vec::new();
+    let mut meter = play::Meter::new(u64::MAX);
+    let defs = labels::spy_defs();
+    for (step, action) in actions.iter().enumerate() {
+        let d = play::decision(&s).ok_or("Recorded action after terminal")?;
+        let live = u32::try_from(action.as_u64().ok_or("Invalid recorded action")?)
+            .map_err(|e| e.to_string())?;
+        if d.step != step as u64 || live >= d.legal_action_count {
+            return Err("Binding decision/action differs".into());
+        }
+        if play::acting(&d) == PlayerId::P0 && d.legal_action_count >= 2 {
+            let root = roots.iter().find(|r| r["step"].as_u64() == Some(d.step));
+            let previous_key = if root.is_some() {
+                keyer
+                    .as_mut()
+                    .map(|k| k.step(&s, d).map(|st| k.storage(&st).0))
+                    .transpose()
+                    .map_err(bank::err)?
+            } else {
+                None
+            };
+            if let Some(root) = root {
+                current_search = Some(root["index"].as_u64().ok_or("Missing search index")?);
+                keyer = Some(Keyer::new(KeyMode::Legacy, KeyStats::default()));
+            }
+            if let Some(k) = keyer.as_mut() {
+                let st = k.step(&s, d).map_err(bank::err)?;
+                let (key, _, _, canon) = k.storage(&st);
+                let canonical = canon
+                    .edges
+                    .iter()
+                    .position(|e| e == &canon.menu[live as usize])
+                    .ok_or("Binding canonical move missing")?;
+                let hex = |key: Key| key.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                bindings.push(json!({"decision":{"episode_id":d.episode_id,"step":d.step,"physical_decision_id":d.physical_decision_id,"substep_index":d.substep_index,"acting_player":d.acting_player},"search":current_search,"key":hex(key),"previous_key":previous_key.map(hex),"canonical_action":canonical,"live":live}));
+                k.advance(st, live);
+            }
+        }
+        play::apply(&mut s, &d, live, &mut meter, PlayerId::P0, None, &defs).map_err(bank::err)?;
+    }
+    let core = s.privileged_core_environment_hash();
+    if primary["core_hash"].as_u64() != Some(core)
+        || primary["replay_core_hash"].as_u64() != Some(core)
+        || play::decision(&s).is_some()
+    {
+        return Err("Binding final core/terminal differs from recorded execution".into());
+    }
+    let result = json!({"schema":"mtg-kernel-uct-execution-bindings/v1","primary_sha256":input.sha256,"runtime":crate::gameplay_trace_v1::runtime_identity()?,"core_hash":core,"actions":actions.len(),"bindings":bindings});
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&config.output)
+        .map_err(|e| e.to_string())?;
+    serde_json::to_writer(&mut output, &result).map_err(|e| e.to_string())?;
+    output.write_all(b"\n").map_err(|e| e.to_string())?;
+    println!(
+        "Bound {} actual decisions without policy or search",
+        bindings.len()
+    );
+    Ok(())
 }
 fn read(input: &Input) -> Result<Vec<u8>, String> {
     if !input.path.is_absolute() {
@@ -508,6 +600,9 @@ pub(crate) fn run(path: &Path) -> Result<(), String> {
         .clone();
     if src.seat != 0 || src.opp != "T1" {
         return Err("Spy presentation expects the selected seat0/T1 setup".into());
+    }
+    if config.bind_actions.is_some() {
+        return bind_execution(&config, &spec, &src);
     }
     let focal_config: Value =
         serde_json::from_slice(&read(&config.focal)?).map_err(|e| e.to_string())?;
