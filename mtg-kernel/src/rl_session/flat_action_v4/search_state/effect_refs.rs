@@ -961,6 +961,9 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if !state.engine.twinflame_combat_v38.is_empty() {
+        return true;
+    }
     // This sampler has no qualified migration for the independently retained
     // payment, removal and completion ownership of a Librarian activation.
     if state.engine.event_history.iter().any(|event| {
@@ -1012,6 +1015,9 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
                 | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
                 | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
@@ -1352,7 +1358,7 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
-            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..}
+            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } => true,
         }

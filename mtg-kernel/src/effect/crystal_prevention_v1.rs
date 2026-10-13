@@ -226,7 +226,7 @@ pub(crate) fn shield_operation(
     replacement: &ActiveReplacement,
     amount: i32,
 ) -> Result<(), String> {
-    if !boundaries(state).any(|b| b.pending.as_deref().and_then(|p| p.choice.as_ref())
+    if !crate::twinflame_tyrant_v1::combat::shield_is_owned(state, replacement) && !boundaries(state).any(|b| b.pending.as_deref().and_then(|p| p.choice.as_ref())
         .is_some_and(|c| matches!(c, PendingEffectChoice::ChooseOption {
             purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice }, ..
         } if choice.options.iter().any(|o| matches!(o, PreventionV1::Replacement(r) if r.id == replacement.id))))) {
@@ -285,6 +285,27 @@ fn validate_shields(state: &GameState) -> Result<(), String> {
                             }
                         } else {
                             expected.insert(r.id, Some(r.clone()));
+                        }
+                    }
+                }
+            }
+            CommittedEvent::TwinflameCombatPublishedV38 { publication } => {
+                for packet in &publication.packets {
+                    for option in &packet.options {
+                        if let PreventionV1::Replacement(r) = option {
+                            if !matches!(r.kind, ReplacementEffectKind::PreventNextDamage { .. }) {
+                                continue;
+                            }
+                            if let Some(current) = expected.get(&r.id) {
+                                if current.as_ref() != Some(r) {
+                                    return Err(
+                                        "combat shield capture changed prior actual consumption"
+                                            .into(),
+                                    );
+                                }
+                            } else {
+                                expected.insert(r.id, Some(r.clone()));
+                            }
                         }
                     }
                 }
@@ -1086,6 +1107,7 @@ fn record(state: &mut GameState, owner: &OwnerV1, answer: Option<AnswerV1>) -> R
     Ok(())
 }
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    crate::twinflame_tyrant_v1::combat::validate(state)?;
     validate_with_owner(state, None)
 }
 fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(), String> {
@@ -4012,13 +4034,15 @@ fn applicable_after(
         return Vec::new();
     }
     let mut options = Vec::new();
-    if !cannot_prevent(state) && !damage.is_combat {
+    if !cannot_prevent(state) {
         if let Target::Object(target) = damage.target {
-            options.extend(
-                crate::crystal_barricade_v1::sources_protecting(state, target)
-                    .into_iter()
-                    .map(PreventionV1::Barricade),
-            );
+            if !damage.is_combat {
+                options.extend(
+                    crate::crystal_barricade_v1::sources_protecting(state, target)
+                        .into_iter()
+                        .map(PreventionV1::Barricade),
+                );
+            }
             let protected = match damage.historical_source {
                 Some(id) => {
                     crate::source_power_activation_v1::damage_source(state, damage.source, id)
@@ -4044,6 +4068,7 @@ fn applicable_after(
         // Old Crystal only handled permanent packets. Player prevention is
         // admitted only when the new multiplier actually creates an order.
         if matches!(damage.target, Target::Object(_))
+            || crate::twinflame_tyrant_v1::has_active_source(state)
             || !crate::twinflame_tyrant_v1::sources(state, damage)
                 .unwrap_or_default()
                 .is_empty()

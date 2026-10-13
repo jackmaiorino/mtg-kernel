@@ -20,6 +20,29 @@ fn registered_absence_preserves_proposal_and_state_both_seats() {
 }
 
 #[test]
+fn absent_combat_successor_does_not_publish_or_mutate_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let before = serde_json::to_vec(&state).unwrap();
+        let hash = state.state_hash();
+        assert!(!combat::begin(
+            &mut state,
+            &[ProposedEvent::damage(
+                ObjectId(0),
+                Target::Player(actor.opponent()),
+                3
+            )],
+            false
+        )
+        .unwrap());
+        combat::validate(&state).unwrap();
+        assert!(combat::decision(&state).unwrap().is_none());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        assert_eq!(state.state_hash(), hash);
+    }
+}
+
+#[test]
 fn absent_applied_multiplier_wrapper_contributes_no_hash_bytes() {
     use std::hash::{Hash, Hasher};
     #[derive(Default)]
@@ -35,6 +58,7 @@ fn absent_applied_multiplier_wrapper_contributes_no_hash_bytes() {
     let mut h = Bytes::default();
     ordering::AppliedMultipliersV38::default().hash(&mut h);
     ordering::PreparedBatchOptionsV38::default().hash(&mut h);
+    combat::StateV38::default().hash(&mut h);
     assert!(h.0.is_empty());
 }
 
@@ -476,6 +500,163 @@ mod future_printed {
                     assert!(engine::step(&mut malformed, Action::Pass).is_err());
                     assert_eq!(serde_json::to_vec(&malformed).unwrap(), bytes);
                 }
+            }
+        }
+    }
+    #[test]
+    #[ignore = "true Twinflame printing remains unregistered"]
+    fn actual_combat_shared_player_shield_orders_packets_before_simultaneous_damage_both_seats() {
+        use crate::effect::crystal_prevention_v1::PreventionV1;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for double_first in [false, true] {
+                let mut state = ready(actor);
+                let tyrant = cast(&mut state, actor);
+                let dragon = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+                // Labeled physical maturity and keyword-counter operands before actual declaration.
+                for source in [tyrant, dragon] {
+                    state.objects.get_mut(source).summoning_sick = false;
+                    state.objects.get_mut(source).v4.lifelink_keyword_counters = 1;
+                }
+                state
+                    .engine
+                    .active_replacements
+                    .push(event::ActiveReplacement {
+                        id: 90_050,
+                        source: dragon,
+                        kind: event::ReplacementEffectKind::PreventNextDamage {
+                            target: Target::Player(actor.opponent()),
+                            remaining: 3,
+                        },
+                    });
+                for _ in 0..24 {
+                    let decision = engine::advance_until_decision(&mut state);
+                    if matches!(decision, Decision::DeclareAttackers { .. }) {
+                        break;
+                    }
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { .. }),
+                        "{decision:?}"
+                    );
+                    engine::step(&mut state, Action::Pass).unwrap();
+                }
+                engine::step(&mut state, Action::DeclareAttackers(vec![tyrant, dragon])).unwrap();
+                let mut blocked = false;
+                for _ in 0..24 {
+                    let decision = engine::advance_until_decision(&mut state);
+                    if combat::has_pending(&state) {
+                        break;
+                    }
+                    if matches!(decision, Decision::DeclareBlockers { .. }) {
+                        assert!(!blocked);
+                        blocked = true;
+                        engine::step(&mut state, Action::DeclareBlockers(Vec::new())).unwrap();
+                    } else {
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "{decision:?}"
+                        );
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                }
+                assert!(blocked);
+                assert!(
+                    matches!(combat::decision(&state).unwrap(),Some(Decision::ChooseEffectOption {player,option_count:2,..}) if player==actor.opponent())
+                );
+                assert!(state.engine.pending_effect.is_none());
+                assert!(state.stack.is_empty());
+                let original = serde_json::to_vec(&state).unwrap();
+                let saved_pending = state.engine.twinflame_combat_v38.clone();
+                let lives = state.players.each_ref().map(|p| p.life);
+                let mut replay: GameState = serde_json::from_slice(&original).unwrap();
+                for branch in [&mut state, &mut replay] {
+                    // Allocation first selects the genuine three-power Tyrant packet.
+                    engine::step(branch, Action::ChooseEffectOption(0)).unwrap();
+                    let pending = branch.engine.twinflame_combat_v38.0.as_ref().unwrap();
+                    let packet = &pending.packets[pending.selected.unwrap()];
+                    assert_eq!(packet.source, tyrant);
+                    assert_eq!(packet.original_amount, 3);
+                    assert_eq!(branch.players.each_ref().map(|p| p.life), lives);
+                    let index = packet
+                        .options
+                        .iter()
+                        .position(|option| {
+                            if double_first {
+                                matches!(option, PreventionV1::Multiplier(_))
+                            } else {
+                                matches!(option, PreventionV1::Replacement(_))
+                            }
+                        })
+                        .unwrap();
+                    engine::step(branch, Action::ChooseEffectOption(index as u16)).unwrap();
+                    // Remaining single replacements execute under the same private wave owner.
+                    assert!(!combat::has_pending(branch));
+                    combat::validate(branch).unwrap();
+                    let total = if double_first { 13 } else { 10 };
+                    assert_eq!(
+                        branch.players[actor.opponent().index()].life,
+                        lives[actor.opponent().index()] - total
+                    );
+                    assert_eq!(
+                        branch.players[actor.index()].life,
+                        lives[actor.index()] + total
+                    );
+                    assert!(branch
+                        .engine
+                        .active_replacements
+                        .iter()
+                        .all(|r| r.id != 90_050));
+                    assert_eq!(branch.step, crate::state::Step::CombatDamage);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                for mutation in 0..4 {
+                    let mut bad: GameState =
+                        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    if mutation == 0 {
+                        bad.engine.twinflame_combat_v38 = saved_pending.clone();
+                    } else {
+                        let at = bad
+                            .engine
+                            .event_history
+                            .iter()
+                            .position(|event| match mutation {
+                                1 => matches!(
+                                    event,
+                                    CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                                ),
+                                2 => {
+                                    matches!(event, CommittedEvent::TwinflameCombatInputV38 { .. })
+                                }
+                                _ => matches!(
+                                    event,
+                                    CommittedEvent::TwinflameCombatOperationV38 { .. }
+                                ),
+                            })
+                            .unwrap();
+                        bad.engine.event_history[at] = CommittedEvent::LifeGain {
+                            player: actor,
+                            amount: 0,
+                        };
+                    }
+                    let bytes = serde_json::to_vec(&bad).unwrap();
+                    assert!(engine::step(&mut bad, Action::Pass).is_err());
+                    assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+                }
+                let mut bad: GameState = serde_json::from_slice(&original).unwrap();
+                bad.engine
+                    .active_replacements
+                    .iter_mut()
+                    .find(|r| r.id == 90_050)
+                    .unwrap()
+                    .kind = event::ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Player(actor.opponent()),
+                    remaining: 99,
+                };
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(engine::step(&mut bad, Action::ChooseEffectOption(0)).is_err());
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
             }
         }
     }

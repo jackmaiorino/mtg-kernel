@@ -83,7 +83,10 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || state.engine.event_history.iter().any(|e| {
             matches!(
                 e,
-                crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
                     | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
                     | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
             )
@@ -217,6 +220,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
     let producer = [
         include_str!("twinflame_tyrant_v1.rs"),
         include_str!("twinflame_tyrant_v1/ordering.rs"),
+        include_str!("twinflame_tyrant_v1/combat.rs"),
         include_str!("card_def.rs"),
         include_str!("event.rs"),
         include_str!("source_power_activation_v1.rs"),
@@ -257,4 +261,5 @@ impl PrintedMeaningV1 {
 #[cfg(test)]
 mod tests;
 
+pub mod combat;
 pub mod ordering;

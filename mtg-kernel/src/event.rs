@@ -1289,6 +1289,15 @@ pub enum CommittedEvent {
     TwinflameDamagePreparationV38 {
         preparation: Box<crate::twinflame_tyrant_v1::ordering::PreparationV38>,
     },
+    TwinflameCombatPublishedV38 {
+        publication: Box<crate::twinflame_tyrant_v1::combat::PublicationV38>,
+    },
+    TwinflameCombatInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::combat::InputV38>,
+    },
+    TwinflameCombatOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::combat::OperationV38>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3078,6 +3087,27 @@ pub(crate) fn commit_crystal_prepared_batch(
         raid_history_start: state.engine.event_history.len(),
     };
     commit_batch_survivors(state, survivors, authority_batch, context);
+}
+pub(crate) fn commit_twinflame_prepared_combat(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    owner: &crate::twinflame_tyrant_v1::combat::OwnerV38,
+) -> Result<(), String> {
+    if !owner.permits(state, &survivors) {
+        return Err("combat prepared commit lost private actual wave owner".into());
+    }
+    let authority = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    let context = EntryBatchCommitContextV1 {
+        garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
+        attachments: Vec::new(),
+        raid_history_start: state.engine.event_history.len(),
+    };
+    commit_batch_survivors(state, survivors, authority, context);
+    if state.engine.halted.is_some() {
+        return Err("actual combat prepared commit halted".into());
+    }
+    Ok(())
 }
 struct EntryBatchCommitContextV1 {
     garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
