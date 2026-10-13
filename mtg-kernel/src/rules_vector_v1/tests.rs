@@ -1398,3 +1398,35 @@ fn every_card_name_branch_in_the_rules_engine_is_accounted_for() {
         "unclassified card-name branches: {unaccounted:?}"
     );
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn full_ajani_keeps_each_native_program_opaque_in_frozen_v1() {
+    let actual = rules("Ajani, Caller of the Pride");
+    let abilities: Vec<_> = actual
+        .abilities
+        .iter()
+        .filter(|ability| ability.atoms.contains(&Atom::Opaque))
+        .collect();
+    assert_eq!(abilities.len(), 3);
+    let id = card_id("Ajani, Caller of the Pride");
+    for root in [
+        crate::rules_meaning_ajani_v42::RootV42::PlusOneCounter,
+        crate::rules_meaning_ajani_v42::RootV42::MinusThreeKeywords,
+        crate::rules_meaning_ajani_v42::RootV42::MinusEightCats,
+    ] {
+        let selector = crate::rules_meaning_ajani_v42::live_selector().unwrap();
+        assert_eq!(
+            crate::rules_meaning_ajani_v42::meaning_for_representation(
+                crate::rules_meaning_ajani_v42::RepresentationV42::FrozenRulesVectorV1,
+                &selector,
+                id,
+                root,
+            ),
+            Err(crate::rules_meaning_ajani_v42::ErrorV42::UnsupportedRepresentation)
+        );
+    }
+}
