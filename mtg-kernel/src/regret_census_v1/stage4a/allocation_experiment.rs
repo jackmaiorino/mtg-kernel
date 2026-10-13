@@ -210,6 +210,7 @@ pub(super) fn profile_case(
     ctx.interchange = config.interchange;
     let mut roles = bank_roles(policy, &sh.opponents)?;
     let setup_cpu = super::process_cpu::seconds()? - cpu0;
+    let mut selection_return_process_cpu = None;
     let (selection, teacher, primary_hash, work, search_tree, search_tree_hash) =
         if let Some(path) = &config.eval_only {
             let rows: Vec<Value> = std::fs::read_to_string(path)
@@ -261,6 +262,8 @@ pub(super) fn profile_case(
             let mut diag = SearchDiag::default();
             let (sel, tree) =
                 roles.select_e_options(&ctx, None, 1, None, None, Some(&mut diag), &options);
+            // Stop-loop timestamp precedes teacher construction and full-tree hashing.
+            selection_return_process_cpu = Some(super::process_cpu::seconds()?);
             let teacher = root_choice(
                 &root,
                 mode,
@@ -366,6 +369,8 @@ pub(super) fn profile_case(
         "work_attempts":work,"cpu_budget_seconds":config.options.cpu_seconds,"work_limit":config.options.work_limit,
         "evaluation_source":config.eval_only,"setup_cpu_seconds":setup_cpu,"search_cpu_seconds":search_cpu,
         "process_cpu_before_case_seconds":cpu0,"search_process_cpu_seconds":search_process_cpu,
+        "selection_return_process_cpu_seconds":selection_return_process_cpu,
+        "search_finalization_cpu_seconds":selection_return_process_cpu.map(|t| search_process_cpu-t),
         "cpu_overhead_reserve_seconds":config.finishing_reserve,
         "search_wall_seconds":search_wall,"evaluation":evaluation,"evaluation_sha256":evaluation_hash,
         "execution_prep_cpu_seconds":execution_prep_cpu,
