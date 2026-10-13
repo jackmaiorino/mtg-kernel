@@ -2805,12 +2805,11 @@ fn commit_with_entry_batch_and_source_color(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
-    if let Some(snapshot) = source_color {
-        if matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
+    if let Some(snapshot) = source_color.filter(|snapshot| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
             if *object == snapshot.source.source && *to != Zone::Battlefield)
-        {
-            crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
-        }
+    }) {
+        crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
     }
     state.engine.event_log.push(committed.clone());
     let committed_death = matches!(
@@ -3070,12 +3069,14 @@ fn commit_batch_survivors(
             lifelink_gains.push((damage.source, player, amount));
         }
     }
-    let source_colors = survivors
-        .iter()
-        .filter_map(|event| {
-            crate::controlled_creature_grants_v1::capture_departure_color(state, event)
-        })
-        .collect::<Vec<_>>();
+    let source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        survivors
+            .iter()
+            .filter_map(|event| {
+                crate::controlled_creature_grants_v1::capture_departure_color(state, event)
+            })
+            .collect::<Vec<_>>()
+    });
     let mut death_captures = crate::creature_death_capture_v1::enabled().then(|| {
         survivors
             .iter()
@@ -3101,8 +3102,8 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            let frozen_color = source_colors.iter().copied().find(|snapshot|
-                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source));
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().copied().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
@@ -3118,8 +3119,8 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            let frozen_color = source_colors.iter().copied().find(|snapshot|
-                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source));
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().copied().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
@@ -3188,15 +3189,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
-    let source_colors = chosen
-        .iter()
-        .map(|id| {
-            crate::controlled_creature_grants_v1::capture_departure_color(
-                state,
-                &ProposedEvent::zone_change(*id, Zone::Graveyard),
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        chosen
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     let captures = chosen
         .iter()
         .map(|id| {
@@ -3206,7 +3210,8 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             )
         })
         .collect::<Vec<_>>();
-    for ((&id, captures), frozen_color) in chosen.iter().zip(captures).zip(source_colors) {
+    for (&id, captures) in chosen.iter().zip(captures) {
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         log_sacrifice(state, id);
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
@@ -3242,17 +3247,21 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
-    let source_colors = dying
-        .iter()
-        .map(|id| {
-            crate::controlled_creature_grants_v1::capture_departure_color(
-                state,
-                &ProposedEvent::zone_change(*id, Zone::Graveyard),
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        dying
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     if !crate::creature_death_capture_v1::enabled() {
-        for (id, frozen_color) in dying.into_iter().zip(source_colors) {
+        for id in dying {
+            let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
             if frozen_color.is_some() {
                 commit_with_entry_batch_and_source_color(
                     state,
@@ -3278,7 +3287,8 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .iter()
         .map(|event| crate::creature_death_capture_v1::capture(state, event))
         .collect::<Vec<_>>();
-    for ((event, captures), frozen_color) in events.into_iter().zip(captures).zip(source_colors) {
+    for (event, captures) in events.into_iter().zip(captures) {
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         commit_with_entry_batch_and_source_color(
             state,
             event,

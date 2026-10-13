@@ -1,6 +1,6 @@
 # Akroma's Memorial source preparation
 
-The original checkpoint fbedef521c7c7337c1a350b337d9cd532cf7dc3c is preserved. This lane composes root 9e42e225222bfef662df01f235221ec4715fe802 (merge 40e538856f1a620cc504d2931308475123ce39d4); later repairs are composed before final review.
+The original checkpoint fbedef521c7c7337c1a350b337d9cd532cf7dc3c is preserved. This lane composes root 9e42e225222bfef662df01f235221ec4715fe802 (merge 40e538856f1a620cc504d2931308475123ce39d4); latest root d57accc8cd5259cdb4ded8818ccc1d65dbd3e8ed is composed at 3eece793f3e316ad3655c98a47f45c4b6ae7da88 before final review.
 
 Primary authority is pinned Mage a5c90fe180021e70e2a644ade00eeab07f857a40, Mage.Sets/src/mage/cards/a/AkromasMemorial.java, blob 7070b36a8569f04afb15d710339a01f9b6260324. The exact prepared metadata is in fdn_akromas_memorial_reference_v1.json. {7}, legendary Artifact, colorless, no subtypes or power/toughness; creatures its current controller controls have flying, first strike, vigilance, trample, haste and protection from black and red. GainAbilityControlledEffect lasts while its source is on the battlefield. No card ID or registration is assigned.
 

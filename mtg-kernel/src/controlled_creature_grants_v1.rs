@@ -15,7 +15,7 @@ pub const MEMORIAL: ControlledCreatureGrantDef = ControlledCreatureGrantDef {
     protection_color_mask: (1 << 2) | (1 << 3),
 };
 
-fn enabled() -> bool {
+pub(crate) fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
         CARD_DEFS
@@ -243,22 +243,22 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                 return Err("color departure changed original definition/owner/incarnation".into());
             }
         }
-        if let CommittedEvent::ZoneChange {
-            object,
-            from: Zone::Battlefield,
-            to,
-            ..
-        } = event
-        {
-            if *to != Zone::Battlefield
-                && !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
-                Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
-                    if snapshot.source.source == *object && usize::try_from(*departure_history_index).ok() == Some(at))
-            {
-                return Err(
-                    "battlefield departure lost its independent source color snapshot".into(),
-                );
+        let missing_snapshot = match event {
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to,
+                ..
+            } if *to != Zone::Battlefield => {
+                !matches!(at.checked_sub(1).and_then(|p| state.engine.event_history.get(p)),
+                        Some(CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, departure_history_index })
+                            if snapshot.source.source == *object
+                                && usize::try_from(*departure_history_index).ok() == Some(at))
             }
+            _ => false,
+        };
+        if missing_snapshot {
+            return Err("battlefield departure lost its independent source color snapshot".into());
         }
     }
     Ok(())
