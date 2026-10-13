@@ -181,10 +181,20 @@ fn skeleton_activation_does_not_follow_a_returned_graveyard_incarnation() {
 #[test]
 fn skeleton_can_activate_at_opponents_end_step() {
     let mut state = ready(PlayerId::P1);
-    state.priority_player = PlayerId::P0;
     let source = put(&mut state, PlayerId::P0, Zone::Graveyard);
     state.step = Step::End;
+    state.players[0].mana_pool[ManaColor::B.pool_index()] = 1;
+    state.players[0].mana_pool[ManaColor::C.pool_index()] = 1;
+    let opponent_mana = state.players[1].mana_pool;
+    assert_eq!(state.priority_player, PlayerId::P1);
+    engine::step(&mut state, Action::Pass).unwrap();
+    assert_eq!(state.active_player, PlayerId::P1);
+    assert_eq!(state.step, Step::End);
+    assert_eq!(state.priority_player, PlayerId::P0);
     activate(&mut state, source);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    assert_eq!(state.players[1].mana_pool, opponent_mana);
     settle(&mut state);
     assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+    assert!(state.objects.get(source).tapped);
 }
