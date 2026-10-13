@@ -427,6 +427,20 @@ fn actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_wi
         put(&mut private_forest, actor.opponent(), "Forest", Zone::Hand);
         assert_eq!(capture(&private_herald, &selector).unwrap(), record);
         assert_eq!(capture(&private_forest, &selector).unwrap(), record);
+        // Named face-down battlefield primitive, not a printed hide producer.
+        // Its concealed definition must not change rows or aggregate status.
+        for name in ["Herald of Eternal Dawn", "Llanowar Elves"] {
+            let mut hidden = state.clone();
+            let concealed = put(&mut hidden, actor.opponent(), name, Zone::Battlefield);
+            hidden.objects.get_mut(concealed).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: false,
+                lookers: 1 << actor.opponent().index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            assert_eq!(capture(&hidden, &selector).unwrap(), record);
+            assert!(!active(&hidden, concealed));
+        }
     }
 }
 
