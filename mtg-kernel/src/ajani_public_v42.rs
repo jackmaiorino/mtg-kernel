@@ -227,6 +227,15 @@ pub fn facts(state: &GameState) -> Result<FactsV42, RlContractError> {
             keyword_grant_expired: expired,
         });
     }
+    let meanings = meanings()?;
+    Ok(FactsV42 {
+        permanents,
+        activations,
+        meanings,
+    })
+}
+
+pub(crate) fn meanings() -> Result<Vec<MeaningV42>, RlContractError> {
     let mut meanings = Vec::new();
     for (id, _) in crate::card_def::CARD_DEFS
         .iter()
@@ -251,11 +260,7 @@ pub fn facts(state: &GameState) -> Result<FactsV42, RlContractError> {
             );
         }
     }
-    Ok(FactsV42 {
-        permanents,
-        activations,
-        meanings,
-    })
+    Ok(meanings)
 }
 
 #[cfg(test)]

@@ -405,7 +405,9 @@ pub(crate) fn record_removed(
             paid: o.paid,
             item: Box::new(o.item.clone()),
             countered,
-            life: (!countered && i == 2).then_some(state.players[o.item.controller.index()].life),
+            life: (!countered && i == 2).then(|| {
+                crate::engine::evaluate_dynamic_value(state, super::LIFE_COUNT, o.item.controller)
+            }),
             target,
             before,
         },
@@ -637,6 +639,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Ajani original removal changed".into());
                 }
+                if let Some(t) = target {
+                    if t.expected_zone != Zone::Battlefield
+                        || !matches!(item.v4.target_contracts.first(),Some(StackTargetContractV4::Object{object,zone:Zone::Battlefield,zone_change_count,..}) if *object==t.object && *zone_change_count==t.expected_zone_change_count)
+                    {
+                        return Err(
+                            "Ajani removed target differs from original paid incarnation".into(),
+                        );
+                    }
+                }
                 if rows(state)
                     .filter(|(_, j)| matches!(j,JournalV42::Operation{input,..} if *input==i))
                     .count()
@@ -679,7 +690,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 } else if ability == 0 {
                     if boost.is_some()
                         || events.len() != 1
-                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded{object,player,count,..}) if Some(*object)==target.map(|t|t.object) && *player==item.controller && *count==1)
+                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count}) if Some(*object)==target.map(|t|t.object) && Some(*zone_change_count)==target.map(|t|t.expected_zone_change_count) && *player==item.controller && *count==1)
                     {
                         return Err("Ajani actual counter occurrence lost".into());
                     }
@@ -688,7 +699,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         return Err("Ajani keywords operation erased".into());
                     };
                     if !events.is_empty()
-                        || !matches!(b,UntilEndOfTurnEffect::ResolvedObjectKeywordEffect{object_id,object_zone_change_count,keywords,..} if Some(*object_id)==target.map(|t|t.object) && Some(*object_zone_change_count)==target.map(|t|t.expected_zone_change_count) && *keywords==(Keywords::FLYING|Keywords::DOUBLE_STRIKE))
+                        || !matches!(b,UntilEndOfTurnEffect::ResolvedObjectKeywordEffect{object_id,object_zone_change_count,layer,duration,keywords,..} if *layer==crate::engine::Layers::ABILITY_ADDING && *duration==crate::engine::EffectDuration::EndOfTurn && Some(*object_id)==target.map(|t|t.object) && Some(*object_zone_change_count)==target.map(|t|t.expected_zone_change_count) && *keywords==(Keywords::FLYING|Keywords::DOUBLE_STRIKE))
                     {
                         return Err("Ajani exact keyword recipient changed".into());
                     }
@@ -760,4 +771,34 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .iter()
         .any(|(_, o)| o.zone == Zone::Battlefield && super::selected_definition(o.card_def))
         || rows(state).any(|(_, j)| !matches!(j, JournalV42::Turn { .. }))
+}
+pub(crate) fn historical_source(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<crate::rl::CardStableRefV1>, String> {
+    if !tracked(state, item) {
+        return Ok(None);
+    }
+    validate_item(state, item)?;
+    if state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>()
+        != [item]
+    {
+        return Err("Ajani historical source lacks unique complete live row".into());
+    }
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or("Ajani historical source absent")?;
+    Ok(Some(crate::rl::CardStableRefV1 {
+        arena_id: source.source.0,
+        card_db_id: source.card_def,
+        owner: source.owner.into(),
+        controller: source.controller.into(),
+        zone: source.zone,
+        zone_change_count: source.zone_change_count,
+    }))
 }

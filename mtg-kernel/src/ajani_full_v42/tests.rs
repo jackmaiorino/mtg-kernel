@@ -261,6 +261,11 @@ mod future {
                     &mut state,
                     ProposedEvent::zone_change(source, Zone::Hand),
                 );
+                if !stale {
+                    // Accepted physical control producer after genuine payment;
+                    // this is not a claim that Employment targets planeswalkers.
+                    crate::standard_cards_v1::gain_control(&mut state, elf, actor.opponent());
+                }
                 if stale {
                     crate::event::propose_and_commit(
                         &mut state,
@@ -313,8 +318,11 @@ mod future {
             // Accepted physical loyalty-counter boundary, not a printed support claim.
             crate::planeswalker_v1::change_loyalty(&mut state, source, 4);
             activate(&mut state, source, 2, None);
-            state.players[actor.index()].life = 3;
-            state.players[actor.opponent().index()].life = 17;
+            crate::event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor, 17));
+            crate::event::propose_and_commit(
+                &mut state,
+                ProposedEvent::life_loss(actor.opponent(), 3),
+            );
             assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
             let mut replay = restored(&state);
             finish(&mut state);

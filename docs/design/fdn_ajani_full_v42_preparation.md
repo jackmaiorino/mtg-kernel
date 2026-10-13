@@ -38,3 +38,43 @@ precise four-root reconstruction, and wider printed response/copy fixtures are
 still active implementation work. The prepared future core groups are ignored
 until actual Full Ajani promotion and its distinct 2/2 Cat blueprint. No native
 compiler, strict lint, game, profile, sampler or model qualification has run.
+
+
+## V42 mixed transport checkpoint
+
+The new Ajani observation, owning backend, and fixed-seat Human session have
+separate identities. Existing family public parts share their actual producer
+bodies under an explicit private projection scope. All old wrappers select
+ExistingV40, retaining all fifteen static bits, Fishing/Akroma acceptance and
+the reviewed LimitedCommon mode. Only V42 selects FullAjaniV42 and validates
+the actual full recipe and complete loyalty ledger. No Partial record is
+relabeled and no frozen V40 observation is manufactured. V42 still carries
+all prior common families, including Herald/GameOutcome and Twinflame.
+
+Public paid facts bind original loyalty/source/controller and outcome. A
+historical target contains only its original incarnation; its current masked
+public reference appears only for the same live battlefield incarnation.
+Human facts use canonical safe card handles and anonymous historical target
+relations, preserving all six Standard fields and Ward facts. Labels state
+printed spell cost and each exact loyalty effect. Original unknown opponent
+hand contents remain outside the Human DTO; a host callback acts for that
+seat using its own genuine observation.
+
+The owning backend derives the actual engine origin and ordered candidate
+vector, normalizes real captured sources, and binds the entire new observation
+and private family parts. Submission rederives all of them. Restore validates
+the original header/state, rebases current and session revision together,
+rebuilds privately, and publishes once. The Human owner uses a distinct Arc
+and monotonic restoration generation, preserving stale/foreign menu and
+identical-retry rules. The reviewed current parent39e3 common mode is retained
+before the appended AjaniV42 mode.
+
+This is uncompiled source preparation. Universal ordinary/restore/privacy/Ward
+and ignored actual Full-Ajani Human casting/zero-target/restore tests are
+prepared. Mixed gameplay matrices involving copies, planeswalker damage,
+Twinflame combat and Herald outcomes still need actual serial qualification.
+Existing numeric format refusals remain, including oversized counters; this
+source does not admit model weights, frozen feature tensors, search sampling,
+a catalog/profile hash, or Full support. The actual Partial-to-Full registry
+promotion and internal 2/2 Cat at the reserved next position remain parent
+work after source review and qualification.

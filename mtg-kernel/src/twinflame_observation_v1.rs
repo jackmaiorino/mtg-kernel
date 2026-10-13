@@ -423,6 +423,27 @@ pub(crate) fn parts_for_akroma_v40(
     parts.projection_sha256.clear();
     Ok(parts)
 }
+pub(crate) fn parts_for_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let mut parts =
+        observe_inner_ajani_v42(state, surface, actor, step, physical, substep, (true, true))?;
+    if !owns_family_menu(state) {
+        parts.prevention_menu = None;
+        parts.optional_discard_menu = None;
+        parts.optional_fight_menu = None;
+        parts.combat_allocation = None;
+    }
+    parts.schema.clear();
+    parts.producer_sha256.clear();
+    parts.projection_sha256.clear();
+    Ok(parts)
+}
 fn observe_inner(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -432,6 +453,26 @@ fn observe_inner(
     substep: (u32, u32),
     accepted_union: bool,
 ) -> Result<TwinflameObservationV1, RlContractError> {
+    observe_inner_ajani_v42(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        (accepted_union, false),
+    )
+}
+fn observe_inner_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    accepted_scope: (bool, bool),
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let (accepted_union, accept_ajani) = accepted_scope;
     let (substep_index, substep_count) = substep;
     validate_projection_authority(state)?;
     // The union gives each real pending menu to its actual typed family. Do not
@@ -481,8 +522,15 @@ fn observe_inner(
         }
     }
     let base = if accepted_union {
-        crate::rl::akroma_family_observation_storage_v40(
-            state,
+        crate::rl::common_family_observation_storage_scoped(
+            (
+                if accept_ajani {
+                    crate::rl::CommonProjectionScopeV42::FullAjaniV42
+                } else {
+                    crate::rl::CommonProjectionScopeV42::ExistingV40
+                },
+                state,
+            ),
             surface,
             actor,
             step_index,

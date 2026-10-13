@@ -648,3 +648,5 @@ pub mod twinflame_tyrant_v1;
 pub mod rules_meaning_ajani_v42;
 
 pub mod ajani_public_v42;
+
+pub mod ajani_observation_v42;

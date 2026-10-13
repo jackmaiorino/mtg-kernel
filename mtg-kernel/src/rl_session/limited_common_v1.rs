@@ -5,7 +5,9 @@ impl FastActorSessionV1 {
     pub(super) fn is_common_v40(&self) -> bool {
         matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::AkromaV40 | FlatActionContractModeV1::LimitedCommonV1
+            FlatActionContractModeV1::AkromaV40
+                | FlatActionContractModeV1::LimitedCommonV1
+                | FlatActionContractModeV1::AjaniV42
         )
     }
     #[cfg(all(
