@@ -21,7 +21,7 @@ import nine_deck_public_panel_v1 as npp  # noqa: E402
 def main() -> None:
     root, evaluator, ids = Path(sys.argv[1]), sys.argv[2], sys.argv[3:]
     for ref in ("T1", "H"):
-        qual = root / "eval" / f"qual-{ref}"
+        qual = root / "eval" / f"qual-{ref}-b"
         receipt = qual / "receipt.json"
         if not receipt.exists():
             trials = npp.qualify(root / "eval" / f"{ids[0]}-vs-{ref}" / "plan.json", 16, [1, 2, 4, 8], qual,
@@ -37,7 +37,7 @@ def main() -> None:
             if out.exists():
                 continue
             t0 = time.time()
-            result = npp.run(plan, root / "eval" / f"qual-{ref}" / "receipt.json", evaluator)
+            result = npp.run(plan, root / "eval" / f"qual-{ref}-b" / "receipt.json", evaluator)
             rows = npp.rows(plan)
             out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
             with (root / "eval" / "index.jsonl").open("a") as f:
