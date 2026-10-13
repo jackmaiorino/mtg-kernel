@@ -488,6 +488,25 @@ impl Node {
     /// with no natural terminal backup scores `u`, every other action its
     /// UCB score, and the maximum wins, ties to the seeded order.
     pub(crate) fn select_with(&self, urgency: Option<f64>) -> usize {
+        self.select_receipt(urgency, None)
+    }
+
+    #[cfg(feature = "viewer-recording-v1")]
+    pub(crate) fn select_with_scores(
+        &self,
+        urgency: Option<f64>,
+        scores: &mut Vec<Option<f64>>,
+    ) -> usize {
+        scores.clear();
+        scores.resize(self.n.len(), None);
+        self.select_receipt(urgency, Some(scores))
+    }
+
+    fn select_receipt(
+        &self,
+        urgency: Option<f64>,
+        mut scores: Option<&mut Vec<Option<f64>>>,
+    ) -> usize {
         if let Some(u) = urgency {
             let ln = (self.visits.max(2) as f64).ln();
             let mut best = self.perm[0];
@@ -499,6 +518,9 @@ impl Node {
                     let n = self.n[a] as f64;
                     self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt()
                 };
+                if let Some(out) = scores.as_deref_mut() {
+                    out[a] = Some(v);
+                }
                 if v > best_v {
                     best_v = v;
                     best = a;
@@ -515,6 +537,9 @@ impl Node {
         for &a in &self.perm {
             let n = self.n[a] as f64;
             let v = self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt();
+            if let Some(out) = scores.as_deref_mut() {
+                out[a] = Some(v);
+            }
             if v > best_v {
                 best_v = v;
                 best = a;

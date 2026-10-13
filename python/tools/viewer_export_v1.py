@@ -247,14 +247,18 @@ def export_legacy(path: Path, exporter: Exporter) -> tuple[dict, list[dict], boo
             "search":None,"terminal":terminal(nxt) if nxt["kind"] == "terminal" else None})
     return header, frames, bool(frames and frames[-1]["terminal"])
 
-def build_recording(path: Path, identifier: str, title: str, exporter: Exporter, bookmarks: list[dict]) -> dict:
+def build_recording(path: Path, identifier: str, title: str, exporter: Exporter, bookmarks: list[dict], *, execution_bindings: Path | None = None, primary: Path | None = None) -> dict:
     if path.stat().st_size > 512 * 1024 * 1024:
         raise ValueError("Input exceeds exporter bound")
     with path.open("rb") as stream:
         first = json.loads(stream.readline(8 * 1024 * 1024))
     native = first.get("schema") == CAPTURE_SCHEMA
     reconstructed = first.get('schema') == 'mtg-kernel-viewer-reconstruction/v1'
-    if reconstructed:
+    uct = first.get('schema') == 'mtg-kernel-uct-viewer-capture/v1'
+    if uct:
+        from viewer_uct_export_v1 import export_capture as export_uct
+        header, frames, complete = export_uct(path, exporter, execution_bindings=execution_bindings, primary=primary)
+    elif reconstructed:
         from viewer_reconstruction_export_v1 import export_reconstruction
         header, frames, complete = export_reconstruction(path, exporter)
     else:
@@ -263,18 +267,20 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
         raise ValueError("No decisions for the requested perspective")
     runtime = header.get("runtime", header.get("identity", {}).get("runtime", {}))
     identity = header.get("identity", {})
-    checkpoint = (f"r1 {header['focal_checkpoint']} vs T1 {header['opponent_checkpoint']}" if reconstructed else
+    checkpoint = (f"r1 {header['focal_checkpoint']} vs T1 {header['opponent_checkpoint']}" if reconstructed or uct else
         identity.get("checkpoint_sha256") or identity.get("actual_model", {}).get("parameter_values_sha256", "historical-recorded-model"))
     decks = header.get("decks", ["Recorded deck", "Recorded deck"])
-    version = 'mtg-kernel-viewer-recording/v3' if reconstructed else 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
+    version = 'mtg-kernel-viewer-recording/v4' if uct else 'mtg-kernel-viewer-recording/v3' if reconstructed else 'mtg-kernel-viewer-recording/v2' if any(f['search'] and f['search'].get('replay') for f in frames) else SCHEMA
     recording = {"schema":version,"id":identifier,"title":title,
-        "description":("A selected qualification game: r1 Spy versus T1 Wildfire. A plain-policy opening leads to a persistent-search guide from turn 8. Search selected the self-mill and Giant reanimation choices. Reconstructed from recorded real actions; root tables and chooser identities were retained, individual simulations and policy distributions were not. This example is not representative of the refresh pilot or a playing-strength benchmark." if reconstructed else "Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording."),
-        "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native or reconstructed else "decision-snapshots",
+        "description":("A fresh frozen-policy execution of the known r1 Spy versus T1 Wildfire development setup. Policies generate the opening; persistent UCT begins at scheduled decision 181. Actual search attempts, selected tree paths, rollout moves, natural results and backups were captured. No saved actions or scripted combo choices. This illustrative example is not a playing-strength benchmark." if uct else "A selected qualification game: r1 Spy versus T1 Wildfire. A plain-policy opening leads to a persistent-search guide from turn 8. Search selected the self-mill and Giant reanimation choices. Reconstructed from recorded real actions; root tables and chooser identities were retained, individual simulations and policy distributions were not. This example is not representative of the refresh pilot or a playing-strength benchmark." if reconstructed else "Illustrative self-play with a frozen model. Recorded behavior is not a playing-strength benchmark." if native else "Historical actor-visible diagnostic recording."),
+        "perspective":exporter.perspective,"complete":complete,"coverage":"every-step" if native or reconstructed or uct else "decision-snapshots",
         "identity":{"source":runtime.get("engine_commit", "unknown"),"runtime":runtime.get("executable_sha256", "unknown"),
             "checkpoint":checkpoint,"cardDatabase":str(identity.get("model", {}).get("card_db_hash", "recorded registry")),
             "sourceSha256":hashlib.sha256(path.read_bytes()).hexdigest()},
-        "seats":[{"name":"r1 / Search guide" if reconstructed else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed else "Kernel / Agent 02","deck":decks[1]}],
+        "seats":[{"name":"r1 / Search guide" if reconstructed or uct else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed or uct else "Kernel / Agent 02","deck":decks[1]}],
         "cards":exporter.cards,"frames":frames,"bookmarks":bookmarks}
+    if header.get('_execution_binding'):
+        recording['executionBinding']=header['_execution_binding']
     if reconstructed:
         recording['reconstruction'] = {'kind':'recorded-actions','originalSource':header['original_source'],
             'originalRuntime':header['original_runtime'],'sourceArtifactSha256':header['witness_sha256'],
@@ -292,11 +298,15 @@ def main():
     ap.add_argument("--bookmarks", type=Path)
     ap.add_argument("--art", action="store_true")
     ap.add_argument("--cache", type=Path)
+    ap.add_argument("--execution-bindings", type=Path, help="Native offline actual-tree bindings for UCT captures")
+    ap.add_argument("--primary", type=Path, help="Original primary output pinned by the execution bindings")
     args = ap.parse_args()
     names = json.loads(args.cards.read_text(encoding="utf-8")) if args.cards else {}
     bookmarks = json.loads(args.bookmarks.read_text(encoding="utf-8")) if args.bookmarks else []
     exporter = Exporter(names, args.perspective, args.cache, args.output.parent / "assets", args.art)
-    recording = build_recording(args.source, args.id, args.title, exporter, bookmarks)
+    if bool(args.execution_bindings)!=bool(args.primary) or args.execution_bindings and not args.source.exists():
+        ap.error('Execution bindings require their original primary output')
+    recording = build_recording(args.source, args.id, args.title, exporter, bookmarks, execution_bindings=args.execution_bindings, primary=args.primary)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(recording, ensure_ascii=False, separators=(",",":")) + "\n", encoding="utf-8")
     print(json.dumps({"frames":len(recording["frames"]),"complete":recording["complete"],"sha256":hashlib.sha256(args.output.read_bytes()).hexdigest()}))
