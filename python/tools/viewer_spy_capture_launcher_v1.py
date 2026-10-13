@@ -113,7 +113,8 @@ def main():
         for i in range(3):
             require_guard(args.root,'spy-full-search-trace-239');remaining=int(5400-(time.monotonic()-started))
             # Each native recording caps itself at 512 MiB. Reserve that entire next output.
-            if remaining<=0 or size(args.root,True)+512*1024**2>RAW_CAP or size(args.root)>WORKING_CAP:break
+            allowance=512*1024**2+8192
+            if remaining<=0 or size(args.root,True)+allowance>RAW_CAP or size(args.root)+allowance>WORKING_CAP:break
             result=invoke(args.binary,args.template,args.root,f'game-{i+1}',True,100000,remaining);results.append(result)
             try:result['receipt']=capture_receipt(result)
             except ValueError as e:result['capture_error']=str(e)
