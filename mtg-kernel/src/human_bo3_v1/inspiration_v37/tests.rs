@@ -342,3 +342,9 @@ fn genuine_unknown_mill_and_return_human_privacy_restore_retry_and_binding_both_
         assert_eq!(prompts[0], prompts[1]);
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod integration_v1;
