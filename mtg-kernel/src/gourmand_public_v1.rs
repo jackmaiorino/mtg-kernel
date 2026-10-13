@@ -486,9 +486,7 @@ mod tests {
     #[test]
     fn actual_common_v8_projection_and_hidden_hand_substitution_match_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             put(&mut state, actor, "Forest", Zone::Hand);
             let hidden = put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
             let surface = PolicySurfaceV5::new();

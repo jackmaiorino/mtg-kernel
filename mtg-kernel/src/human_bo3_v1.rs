@@ -278,6 +278,8 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod inspiration_v37;
+pub use inspiration_v37::*;
 mod banner_v36;
 mod fiery_v33;
 mod zul_ashur_v35;

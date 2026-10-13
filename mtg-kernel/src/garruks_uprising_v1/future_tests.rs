@@ -4,12 +4,10 @@ use super::*;
 use crate::engine::{self, Action, Decision};
 use crate::ids::PlayerId;
 use crate::mana::ManaColor;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 
 pub(super) fn ready(actor: PlayerId) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     state.step = crate::state::Step::Main1;
     // Real printed draw attempts need real cards. ready_state intentionally
     // starts with empty libraries; it never deals an opening hand.

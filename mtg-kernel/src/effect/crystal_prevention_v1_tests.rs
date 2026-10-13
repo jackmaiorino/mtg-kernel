@@ -68,9 +68,7 @@ fn nondamage_classifier_requires_every_branch_and_never_guesses_unknown_leaves()
 fn payment_comparison_never_accepts_an_unpublished_crystal_marker_on_registered_item() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
         engine::advance_until_decision(&mut state);
@@ -130,9 +128,7 @@ fn absent_crystal_real_incinerating_keeps_legacy_optional_cost_and_replay() {
     use crate::mana::ManaColor;
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay in [false, true] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             let target = put(
                 &mut state,
                 actor.opponent(),

@@ -1271,6 +1271,15 @@ pub enum CommittedEvent {
     InspirationResolutionBoundaryV1 {
         receipt: crate::effect::InspirationResolutionReceiptV1,
     },
+    InspirationResolutionInputV1 {
+        input: Box<crate::effect::InspirationInputV1>,
+    },
+    InspirationResolutionOperationV1 {
+        operation: Box<crate::effect::InspirationOperationV1>,
+    },
+    InspirationEngineDepartureV1 {
+        departure: Box<crate::effect::InspirationDepartureV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2304,7 +2313,23 @@ fn commit_with_ability_lki_and_entry_batch(
     let entry_color_proposal = event.clone();
     let (entering_characteristics, defer_raid_entry) = entry_context;
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
-    let mut event = event;
+    // Direct commits are also used for simultaneous state-based deaths. Apply
+    // an installed Fiery shield before any zone bookkeeping or frozen death
+    // capture is published. Unrelated direct commits retain their old path.
+    let fiery_death = state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        ) && replacement_applies(replacement, &event, state)
+    });
+    let mut event = if fiery_death {
+        let Some(rewritten) = apply_replacements(state, event) else {
+            return;
+        };
+        rewritten
+    } else {
+        event
+    };
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
             && state.objects.try_get(change.object).is_some_and(|o| {
@@ -4321,16 +4346,14 @@ mod tests {
 ))]
 mod authority_visibility_tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn original_entry_visibility_rejects_coherent_public_mask_rewrite_live_and_departed_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for disguised in [false, true] {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
                 put(
                     &mut state,
                     actor,
@@ -4463,22 +4486,20 @@ mod authority_visibility_tests {
     }
 }
 
+#[cfg(test)]
 #[cfg(all(
-    test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
 mod garruk_entry_tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn event_time_power_precedes_sba_and_distinguishes_plain_from_face_down_entry() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for face_down in [false, true] {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
                 state.step = crate::state::Step::Main1;
                 let source = put(&mut state, actor, "Garruk's Uprising", Zone::Hand);
                 let entrant = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
@@ -4593,8 +4614,8 @@ mod garruk_entry_tests {
     }
 }
 
+#[cfg(test)]
 #[cfg(all(
-    test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]

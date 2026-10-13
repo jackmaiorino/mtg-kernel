@@ -91,7 +91,6 @@ pub(crate) fn pending_returns(
 }
 
 #[test]
-#[ignore = "requires genuine Garruk and Banishing registration; source-only composition"]
 fn actual_apnap_return_batch_applies_all_attachments_before_power_and_ferocious_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for suppress in [false, true] {

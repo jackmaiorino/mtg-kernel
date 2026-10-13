@@ -157,10 +157,18 @@ pub(crate) mod tests {
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
     pub(crate) fn ready_state() -> GameState {
-        let mut state = GameState::new_from_libraries(&[], &[], card_name, 60_001);
+        ready_state_for(PlayerId::P0)
+    }
+
+    pub(crate) fn ready_state_for(actor: PlayerId) -> GameState {
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[],
+            &[],
+            card_name,
+            60_001,
+            actor,
+        );
         state.step = Step::Main1;
-        state.active_player = PlayerId::P0;
-        state.priority_player = PlayerId::P0;
         state
     }
 

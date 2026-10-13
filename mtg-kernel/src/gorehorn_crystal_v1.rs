@@ -334,9 +334,7 @@ mod tests {
     #[test]
     fn absent_bridge_after_registered_mana_activation_keeps_bytes_hash_and_journal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = crate::policy_observation_v6::tests::ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             let elves = crate::policy_observation_v6::tests::put(
                 &mut state,
                 actor,
@@ -359,8 +357,11 @@ mod tests {
                 crate::engine::advance_until_decision(&mut state),
                 crate::engine::Decision::CastSpellOrPass { .. }
             ));
-            crate::engine::step(&mut state, crate::engine::Action::ActivateAbility(elves, 0))
-                .unwrap();
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ActivateManaAbility(elves),
+            )
+            .unwrap();
             assert!(state.objects.get(elves).tapped);
             let bytes = serde_json::to_vec(&state).unwrap();
             let hash = state.state_hash();

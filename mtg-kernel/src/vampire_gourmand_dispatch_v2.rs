@@ -573,13 +573,11 @@ mod future_counter_primitive {
     use super::*;
     use crate::engine::{self, Action, Decision};
     use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     #[test]
     fn actual_declaration_publication_counter_removal_and_restore_reject_replay() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             state.step = crate::state::Step::DeclareAttackers;
             // Physical true-definition setup; this primitive does not claim a cast fixture.
             let source = put(&mut state, actor, "Vampire Gourmand", Zone::Battlefield);

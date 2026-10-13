@@ -1506,6 +1506,25 @@ pub struct StackStateV4 {
     pub fixed_damage_paid_v3: FixedDamagePaidV3,
     #[serde(default, skip_serializing_if = "EquipmentDamagePublishedV4::is_empty")]
     pub equipment_damage_published_v4: EquipmentDamagePublishedV4,
+    /// Intrinsic started custody; absence preserves predecessor bytes and Hash input.
+    #[serde(default, skip_serializing_if = "InspirationStartedV1::is_empty")]
+    pub inspiration_started_v1: InspirationStartedV1,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InspirationStartedV1(pub Option<u32>);
+impl InspirationStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for InspirationStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "inspiration-started/v1".hash(state);
+            index.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

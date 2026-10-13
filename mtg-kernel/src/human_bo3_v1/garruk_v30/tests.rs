@@ -145,13 +145,11 @@ fn genuine_later_apnap_aura_owner_has_v30_public_choices_restore_and_retry_both_
     }
 }
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 
 fn basic(actor: PlayerId, hidden: &str) -> crate::state::GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state

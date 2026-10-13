@@ -1,6 +1,6 @@
 //! Genuine registered operands verify the evasion substrate, not Gourmand admission.
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::AbilitySourceContractV4;
 use crate::vampire_gourmand_v1;
 
@@ -31,9 +31,7 @@ fn predecessor_unstarted_stack_guard_is_absent_from_serialization_and_hash_input
 #[test]
 fn registered_incarnation_evasion_uses_real_blocker_validator_restore_and_reentry() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
         let attacker = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let blocker = put(
             &mut state,
@@ -83,9 +81,7 @@ fn registered_incarnation_evasion_uses_real_blocker_validator_restore_and_reentr
 #[test]
 fn registered_cleanup_priority_evasion_expires_before_player_flip_and_clears_pools() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
         let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let capture = AbilitySourceContractV4::capture(&state, source);
         state.step = Step::Cleanup;

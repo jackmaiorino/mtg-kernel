@@ -208,7 +208,7 @@ mod tests {
     use super::*;
     use crate::card_def::Keywords;
     use crate::engine::{self, Action, Decision, EffectDuration, Layers, UntilEndOfTurnEffect};
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     fn assert_predecessor_observation_refuses(state: &GameState, actor: PlayerId) {
         let before = serde_json::to_vec(state).unwrap();
@@ -223,7 +223,7 @@ mod tests {
         );
         assert_eq!(
             result.unwrap_err().0,
-            "Fiery Annihilation requires its selected V33 public/Human successor"
+            "Fiery requires selected V33 transport"
         );
         assert_eq!(serde_json::to_vec(state).unwrap(), before);
     }
@@ -233,9 +233,7 @@ mod tests {
         optional: bool,
         survives: bool,
     ) -> (GameState, ObjectId, ObjectId, ExecCtx) {
-        let mut state = ready_state();
-        state.active_player = caster;
-        state.priority_player = caster;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
         let source = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
         let creature = put(
             &mut state,
@@ -324,6 +322,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fiery_sba_simultaneous_deaths_replace_only_exact_shielded_incarnation_both_seats() {
+        for caster in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, shielded, _, ctx) = fixture(caster, false, false);
+            let ordinary = put(
+                &mut state,
+                caster.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            execute(&ctx, &mut state);
+            state.objects.get_mut(ordinary).damage = 5;
+            let before = state.engine.event_history.len();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for current in [&mut state, &mut restored] {
+                crate::trigger::sba_fixed_point(current);
+                assert_eq!(current.objects.get(shielded).zone, Zone::Exile);
+                assert_eq!(current.objects.get(ordinary).zone, Zone::Graveyard);
+                for (id, destination) in [(shielded, Zone::Exile), (ordinary, Zone::Graveyard)] {
+                    assert_eq!(
+                        current.engine.event_history[before..]
+                            .iter()
+                            .filter(|event| matches!(event, event::CommittedEvent::ZoneChange {
+                            object, from: Zone::Battlefield, to, ..
+                        } if *object == id && *to == destination))
+                            .count(),
+                        1
+                    );
+                }
+                assert!(!current.engine.event_history[before..].iter().any(|event|
+                    matches!(event, event::CommittedEvent::ControlledCreatureDeathCaptureV1 {
+                        died, ..
+                    } if died.object == shielded)));
+                event::validate_exile_if_dies_replacements(current).unwrap();
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
     #[test]
     fn fiery_primitive_prevention_does_not_cancel_shield_source_departure_or_control_changes() {
         for caster in [PlayerId::P0, PlayerId::P1] {

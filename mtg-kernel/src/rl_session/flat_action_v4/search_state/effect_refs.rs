@@ -1008,6 +1008,10 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
+                | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
         )
     }) {
         return true;
@@ -1345,6 +1349,8 @@ pub(super) fn conflicts(
             // This receipt is history-only. Active snapshot references are
             // already visited through the owning pending continuation above.
             | InspirationResolutionBoundaryV1 { .. } => false,
+            InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
+                | InspirationEngineDepartureV1 { .. } => true,
         }
     })
 }
