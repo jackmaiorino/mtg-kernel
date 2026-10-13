@@ -137,6 +137,7 @@ fn absent_crystal_real_incinerating_keeps_legacy_optional_cost_and_replay() {
             );
             let card = put(&mut state, actor, "Forest", Zone::Hand);
             put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor, "Forest", Zone::Library);
             let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
             state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
             state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
