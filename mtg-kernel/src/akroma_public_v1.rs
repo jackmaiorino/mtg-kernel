@@ -78,6 +78,7 @@ pub fn producer_sha256_v1() -> String {
             SCHEMA,
             include_str!("akroma_public_v1.rs"),
             include_str!("akroma_family_public_v40.rs"),
+            include_str!("policy_surface_v5.rs"),
             include_str!("sower_public_v1.rs"),
             include_str!("human_bo3_v1/sower_v14.rs"),
             include_str!("frenzied_public_v1.rs"),

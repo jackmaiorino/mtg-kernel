@@ -95,13 +95,35 @@ impl FastActorSessionV1 {
         if restored.flat_action_contract_mode != FlatActionContractModeV1::TwinflameV38
             || restored.episode_id != self.episode_id
         {
-            return Err(RlContractError("wrong Twinflame snapshot".into()));
+            return Err(RlContractError("wrong Twinflame snapshot owner".into()));
         }
         crate::twinflame_observation_v1::validate_projection_authority(&restored.state)?;
+        let next_revision = self
+            .environment_revision
+            .max(restored.environment_revision)
+            .checked_add(1)
+            .ok_or_else(|| RlContractError("Twinflame mixed restore revision exhausted".into()))?;
         if let Some(mut current) = restored.current.take() {
+            // Authenticate the original snapshot relation before rebinding its owner.
             prepare_current(&restored, &mut current)
-                .map_err(|_| RlContractError("invalid restored Twinflame menu".into()))?;
+                .map_err(|_| RlContractError("invalid original Twinflame restored menu".into()))?;
+            restored
+                .surface
+                .rebind_owned_revision_after_restore_v1(
+                    &restored.state,
+                    restored.environment_revision,
+                    next_revision,
+                )
+                .map_err(|_| {
+                    RlContractError("invalid original restored combat scan owner".into())
+                })?;
+            restored.environment_revision = next_revision;
+            current.environment_revision = next_revision;
+            prepare_current(&restored, &mut current)
+                .map_err(|_| RlContractError("invalid rebound Twinflame restored menu".into()))?;
             restored.current = Some(current);
+        } else {
+            restored.environment_revision = next_revision;
         }
         *self = restored;
         Ok(())
@@ -238,6 +260,99 @@ impl FastActorSessionV1 {
 mod tests {
     use super::*;
     use crate::policy_observation_v6::tests::{put, ready_state_for};
+    #[test]
+    fn repeated_owning_restore_never_revives_previous_private_twinflame_binding_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let mut session = FastActorSessionV1::from_twinflame_v38_fixture_state(state);
+            let snapshot = session.snapshot_v1();
+            for _ in 0..3 {
+                let FastActorResponseV1::Decision(old) = session.current_response() else {
+                    panic!("ordinary Twinflame menu");
+                };
+                let (_, _, binding) = session
+                    .twinflame_current_decision_input_v38(old, actor.into())
+                    .unwrap();
+                session.twinflame_restore_v38(&snapshot).unwrap();
+                let before = session.privileged_core_environment_hash();
+                assert!(session
+                    .twinflame_validate_bound_decision_v38(old, actor.into(), &binding)
+                    .is_err());
+                assert_eq!(session.privileged_core_environment_hash(), before);
+                let FastActorResponseV1::Decision(current) = session.current_response() else {
+                    panic!("restored Twinflame menu");
+                };
+                let (_, _, valid) = session
+                    .twinflame_current_decision_input_v38(current, actor.into())
+                    .unwrap();
+                session
+                    .twinflame_validate_bound_decision_v38(current, actor.into(), &valid)
+                    .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn genuine_attacker_scan_restore_rebinds_derived_owner_and_accepts_next_action_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+            let elf = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(elf).summoning_sick = false;
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                put(&mut state, seat, "Forest", Zone::Battlefield);
+                put(&mut state, seat, "Forest", Zone::Library);
+            }
+            state.step = crate::state::Step::DeclareAttackers;
+            let mut session = FastActorSessionV1::from_twinflame_v38_fixture_state(state);
+            let FastActorResponseV1::Decision(old) = session.current_response() else {
+                panic!("actual attacker scan");
+            };
+            assert_eq!(
+                old.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let snapshot = session.snapshot_v1();
+            let before = session.privileged_core_environment_hash();
+            let mut corrupt = snapshot.clone();
+            corrupt.0.current.as_mut().unwrap().environment_revision += 1;
+            assert!(session.twinflame_restore_v38(&corrupt).is_err());
+            assert_eq!(session.privileged_core_environment_hash(), before);
+            assert_eq!(
+                session.current_response(),
+                FastActorResponseV1::Decision(old)
+            );
+            session.twinflame_restore_v38(&snapshot).unwrap();
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("restored attacker scan");
+            };
+            assert_ne!(old.environment_revision, current.environment_revision);
+            assert_eq!(
+                current.decision_kind,
+                FastActorDecisionKindV1::AttackerInclusion
+            );
+            let candidate = session
+                .current
+                .as_ref()
+                .unwrap()
+                .candidates
+                .iter()
+                .position(|c| {
+                    matches!(
+                        c.semantic,
+                        ActionSemanticV1::ChooseAttackerInclusion { include: true, .. }
+                    )
+                })
+                .unwrap();
+            session
+                .step(current.episode_id, current.step, candidate as u32)
+                .unwrap();
+            assert!(session.state.engine.combat.attackers.contains(&elf));
+        }
+    }
     #[test]
     fn actual_full_ordered_public_binding_and_fixed_seat_are_readonly_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
