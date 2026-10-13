@@ -1,0 +1,13 @@
+# Herald of Eternal Dawn source
+
+This unregistered source checkpoint implements the printed prohibition on the controller losing and opponents winning. It does not establish catalog, gameplay, consumer, model or Limited acceptance.
+
+Pinned reference: `Mage.Sets/src/mage/cards/h/HeraldOfEternalDawn.java`, Mage commit `a5c90fe180021e70e2a644ade00eeab07f857a40`, SHA-256 `f6086533520d1ffb80cef40701a873ce23a6c01d3ef1117815e8f456d0190e96`. Printed card: `{4}{W}{W}{W}`, white Angel creature, 6/6, Flash, Flying, "You can't lose the game and your opponents can't win the game." No legendary supertype or token dependencies.
+
+The immutable `GameOutcomeProtectionDefV1` descriptor is separate from creature keywords. It is selected only for this actual FDN name under the pure Limited feature. Absent descriptors add no catalog canonical hash input and no mutable or serialized state. Other catalogs retain `None`; the live query uses an allocation-free immutable-catalog cache and current battlefield incarnation, controller, face and printed-ability activity. The frozen vector extractor refuses this new rule rather than encoding ordinary creature meaning.
+
+State-based actions snapshot protection before simultaneous departures, then repeat to a fixed point. Life and poison are persistent conditions. A prevented empty-library draw is consumed at its SBA boundary; it must not cause a later loss after the source leaves. Legend-rule preparation excludes protected losses while retaining the original exact prepared-pass validation. The supported engine derives wins from opponent losses; direct alternate-win effects and concession are not added by this checkpoint. Their eventual entry points must use the same printed prohibition and the ordinary concession exception.
+
+One absence fixture exercises state/hash purity and actual legacy loss. Two ignored future groups require genuine registration: actual seven-mana cast, life/poison/real empty draw, source departure and full restore; named physical control setup with consistent battlefield indexes and lethal source departure. They are not runtime evidence. Still required: genuine opponent-turn Flash/counter interaction, ability suppression and copied-source cases, exact legend/simultaneous-departure matrix, actual printed control-change effects, precise meaning/public/owning consumer support, profile derivation, native checks and default delivery. Existing V38/Twinflame, V39/Fishing and V40/Akroma reservations remain separate; Herald will require its own successor before any consumer claim.
+
+Source verification: pinned Rust 1.94.1 formatting and diff checks pass. No native build, training, GPU, paid execution, registry append or profile publication was performed.

@@ -444,6 +444,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         starting_loyalty,
         enters_with_plus_one_counters,
         controlled_counter_keyword,
+        game_outcome_protection_v1,
         is_land,
         produces_mana,
         colors,
@@ -500,6 +501,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     } = def;
 
     let mut printed = Vec::new();
+    assert!(
+        game_outcome_protection_v1.is_none(),
+        "game-outcome prohibition requires its precise successor"
+    );
     assert!(
         as_enters_color_choice_v1.is_none() && chosen_color_creature_boost_v1.is_none(),
         "as-enters color and chosen-color anthem require their precise successor"

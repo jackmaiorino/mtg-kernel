@@ -4618,6 +4618,17 @@ fn controlled_counter_keyword_for(name: &str) -> &'static str {
     }
 }
 
+fn game_outcome_protection_for(name: &str) -> &'static str {
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some()
+        && !standard_magezero_fixtures()
+        && name == "Herald of Eternal Dawn"
+    {
+        "Some(GameOutcomeProtectionDefV1::ControllerCannotLoseAndOpponentsCannotWin)"
+    } else {
+        "None"
+    }
+}
+
 /// `Some` alternative cost source text (`CardDef::alt_cost`), verified
 /// against Java. Fireblast and Land Grant's alternative costs are always
 /// offerable (`AltCostCondition::Always`); Snuff Out is the first consumer
@@ -9929,6 +9940,12 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
+        writeln!(
+            out,
+            "        game_outcome_protection_v1: {},",
+            game_outcome_protection_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
         writeln!(out, "        alt_cost: {},", alt_cost_for(&c.name)).unwrap();
@@ -10281,6 +10298,10 @@ fn codegen(cards: &[CardJson]) -> String {
         let counter_keyword = controlled_counter_keyword_for(&c.name);
         if counter_keyword != "None" {
             canon.push_str(&format!(";controlled_counter_keyword={counter_keyword}"));
+        }
+        let outcome_protection = game_outcome_protection_for(&c.name);
+        if outcome_protection != "None" {
+            canon.push_str(&format!(";game_outcome_protection_v1={outcome_protection}"));
         }
         canon.push('|');
         canon.push_str(if c.is_land { "L" } else { "-" });

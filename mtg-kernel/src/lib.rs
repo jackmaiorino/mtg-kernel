@@ -51,6 +51,7 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod game_outcome_protection_v1;
 pub mod heraldic_banner_v1;
 pub mod inspiration_observation_v1;
 pub(crate) mod krenko_v1;

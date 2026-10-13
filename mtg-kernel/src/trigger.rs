@@ -4376,6 +4376,12 @@ fn sba_fixed_point_with_protected_triggers(
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_cards_v1::refresh_aegis_copies(state);
+        let protected_players = crate::game_outcome_protection_v1::protected_players(state);
+        let protected_draws_consumed =
+            crate::game_outcome_protection_v1::consume_protected_empty_draws(
+                state,
+                protected_players,
+            );
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }
@@ -4384,7 +4390,7 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::start_your_engines(state);
             crate::standard_keywords_v1::sync_day_night(state);
         }
-        let mut changed = false;
+        let mut changed = protected_draws_consumed;
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -4561,7 +4567,10 @@ fn sba_fixed_point_with_protected_triggers(
         // with ten or more poison counters loses.
         for p in [PlayerId::P0, PlayerId::P1] {
             let ps = &mut state.players[p.index()];
-            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10) {
+            if !protected_players[p.index()]
+                && !ps.has_lost
+                && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10)
+            {
                 ps.has_lost = true;
                 changed = true;
             }

@@ -169,7 +169,9 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
             .into_iter()
             .filter(|player| {
                 let ps = &state.players[player.index()];
-                !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty)
+                !ps.has_lost
+                    && !crate::game_outcome_protection_v1::cannot_lose(state, *player)
+                    && (ps.life <= 0 || ps.drew_from_empty)
             })
             .collect(),
         ceasing,

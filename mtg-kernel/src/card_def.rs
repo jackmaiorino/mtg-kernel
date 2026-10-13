@@ -2024,6 +2024,11 @@ pub struct ChosenColorCreatureBoostDefV1 {
     pub toughness: i16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameOutcomeProtectionDefV1 {
+    ControllerCannotLoseAndOpponentsCannotWin,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2059,6 +2064,8 @@ pub struct CardDef {
     pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
     /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
     pub controlled_counter_keyword: Option<Keywords>,
+    /// Printed prohibition on game outcomes, independent of creature keywords.
+    pub game_outcome_protection_v1: Option<GameOutcomeProtectionDefV1>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
