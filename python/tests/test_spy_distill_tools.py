@@ -299,7 +299,9 @@ def readout(cid, g1=(0.1, 0.1), gap=4.0, agree=0.95, kl=0.01, share=(0.4, 1.0), 
             self_offered=0.05, offers=150, offer_p=0.02, state="s"):
     groups = {"self_chosen": {"rows": 5, "mean_deployed_probability": g1[0]},
               "giant_chosen": {"rows": 5, "mean_deployed_probability": g1[1]},
-              "self_offered": {"rows": 12, "mean_deployed_self_probability": self_offered}}
+              "self_offered": {"rows": 12, "mean_deployed_self_probability": self_offered},
+              "all": {"rows": 5700, "mean_deployed_probability": 0.6},
+              "line_offered": {"rows": 30, "mean_deployed_probability": 0.4}}
     return {"id": cid, "state_sha256": state,
             "archive": {"training": {"groups": groups, "discrimination": {"self": discrimination, "giant": None},
                                      "tree_chosen_share": {"self": share[0], "giant": share[1]},
@@ -359,6 +361,11 @@ class FitCheck(Temp):
         self.assertEqual(result["unread_checkpoints"], [5728])
         self.assertEqual(result["reading"], "passes the fit check")
         self.assertEqual(result["explanations"], [])
+
+    def test_each_arm_reports_fit_on_its_own_training_rows(self):
+        result = self.fit({"r1": {"U": ([{}] * 6, {}), "L": ([{}] * 6, {})}})["fits"]["r1"]
+        self.assertEqual({r["training_rows"]["rows"] for r in result["U"]["read"]}, {5700})
+        self.assertEqual({r["training_rows"]["rows"] for r in result["L"]["read"]}, {30})
 
     def test_fit_readings_follow_the_first_matching_row(self):
         held = [{}] * 6

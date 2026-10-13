@@ -393,11 +393,13 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
     assert_eq!(plan.steps.len(), 96);
     let mut orders = BTreeSet::new();
     for epoch in plan.steps.chunks(3) {
+        // 70 rows in three batches as equal as possible, each step's archive
+        // term the mean over its own batch.
         assert_eq!(
             epoch.iter().map(|s| s.archive.len()).collect::<Vec<_>>(),
-            vec![32, 32, 6]
+            vec![23, 23, 24]
         );
-        assert!(epoch.iter().all(|s| s.denominator == ARCHIVE_BATCH));
+        assert!(epoch.iter().all(|s| s.denominator == s.archive.len()));
         let order: Vec<usize> = epoch.iter().flat_map(|s| s.archive.clone()).collect();
         assert_eq!(sorted(order.clone()), selected);
         orders.insert(order);
@@ -435,17 +437,32 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
     .unwrap();
     assert_ne!(plan.steps[0].archive, other.steps[0].archive);
     // Exposure at each checkpoint: every row drawn once per epoch, and the
-    // line rows' summed archive-term weight.
+    // line rows' summed archive-term weight, one draw per epoch at the
+    // weight of the batch it fell in.
     let exposure = exposure_v1(&plan, &rows, &selected, anchor.len());
     let exposure = exposure.as_array().unwrap();
     assert_eq!(exposure.len(), 6);
+    let weight = |members: &[usize], steps: usize| -> f64 {
+        plan.steps[..steps]
+            .iter()
+            .map(|s| {
+                s.archive.iter().filter(|i| members.contains(i)).count() as f64
+                    / s.denominator as f64
+            })
+            .sum()
+    };
     for (entry, epochs) in exposure.iter().zip([1u64, 2, 4, 8, 16, 32]) {
         assert_eq!(entry["draws_per_row_min"], json!(epochs));
         assert_eq!(entry["draws_per_row_max"], json!(epochs));
         let chosen = entry["line_chosen_weight"].as_f64().unwrap();
         let offered = entry["line_offered_weight"].as_f64().unwrap();
-        assert!((chosen - 2.0 * epochs as f64 / 32.0).abs() < 1e-12);
-        assert!((offered - 3.0 * epochs as f64 / 32.0).abs() < 1e-12);
+        let steps = 3 * epochs as usize;
+        assert!((chosen - weight(&[5, 40], steps)).abs() < 1e-12);
+        assert!((offered - weight(&[5, 40, 41], steps)).abs() < 1e-12);
+        for (value, rows) in [(chosen, 2.0), (offered, 3.0)] {
+            let per_epoch = value / epochs as f64;
+            assert!(rows / 24.0 - 1e-12 <= per_epoch && per_epoch <= rows / 23.0 + 1e-12);
+        }
     }
     let last = &exposure[5];
     let anchor_draws = 96 * ANCHOR_BATCH / anchor.len();
@@ -476,26 +493,30 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         .steps
         .iter()
         .all(|s| s.archive == selected && s.denominator == 3));
-    // More line rows than one batch: U's epochs, still 1,024 steps.
-    let many: Vec<usize> = (0..40).collect();
-    let plan = plan_v1(
-        &rows,
-        &many,
-        &anchor,
-        "r1",
-        ArchiveDistillationArmV1::LineDecisions,
-    )
-    .unwrap();
-    assert_eq!(plan.epoch_steps, 2);
-    assert_eq!(plan.steps.len(), 1024);
-    assert_eq!(
-        plan.steps[..2]
-            .iter()
-            .map(|s| s.archive.len())
-            .collect::<Vec<_>>(),
-        vec![32, 8]
-    );
-    assert!(plan.steps.iter().all(|s| s.denominator == ARCHIVE_BATCH));
+    // More line rows than one batch: U's epochs, still 1,024 steps. One row
+    // past a batch splits evenly instead of leaving a one-row step, so the
+    // archive term keeps coefficient 1 at every step.
+    for (count, sizes) in [(40, vec![20, 20]), (33, vec![16, 17]), (64, vec![32, 32])] {
+        let many: Vec<usize> = (0..count).collect();
+        let plan = plan_v1(
+            &rows,
+            &many,
+            &anchor,
+            "r1",
+            ArchiveDistillationArmV1::LineDecisions,
+        )
+        .unwrap();
+        assert_eq!(plan.epoch_steps, 2);
+        assert_eq!(plan.steps.len(), 1024);
+        assert_eq!(
+            plan.steps[..2]
+                .iter()
+                .map(|s| s.archive.len())
+                .collect::<Vec<_>>(),
+            sizes
+        );
+        assert!(plan.steps.iter().all(|s| s.denominator == s.archive.len()));
+    }
     // No rows, or an anchor smaller than one batch, refuse.
     assert!(plan_v1(&rows, &[], &anchor, "r1", ArchiveDistillationArmV1::Uniform).is_err());
     assert!(plan_v1(
@@ -1261,7 +1282,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
     let full = run(ArchiveDistillationArmV1::Uniform, None, "phase1-u").unwrap();
     let steps = full["steps"].as_u64().unwrap();
     eprintln!(
-        "timing note: uniform phase 1, {steps} steps of {} archive and {ANCHOR_BATCH} anchor rows, {:.1} s",
+        "timing note: uniform phase 1, {steps} steps of up to {} archive and {ANCHOR_BATCH} anchor rows, {:.1} s",
         ARCHIVE_BATCH,
         started.elapsed().as_secs_f64()
     );

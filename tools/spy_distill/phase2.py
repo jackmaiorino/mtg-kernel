@@ -25,8 +25,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from distill_common import (O_FINAL_CHECKPOINT_SHA256, PARENT_ID, check_parent, pilot, read_json,  # noqa: E402
-                    require, write_json)
+from distill_common import (O_FINAL_CHECKPOINT_SHA256, PARENT_ID, absolute, check_parent, pilot,  # noqa: E402
+                    read_json, require, write_json)
 
 INITIAL = {"kind": "initial"}
 NAMED_PARENT = {"kind": "fixed", "id": PARENT_ID}
@@ -72,7 +72,7 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
         value["initial_source"] = source
     value["collection_workers"] = workers
     value["preparation_workers"] = workers
-    value["output_directory"] = str(output_directory).replace("\\", "/")
+    value["output_directory"] = absolute(output_directory)
     return value
 
 

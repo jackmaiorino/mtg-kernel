@@ -58,6 +58,10 @@ SPLIT_MOVEMENT = 0.5
 MIN_OFFERS = 100
 MIN_COMPLETION_LINE_ROWS = 3
 CHECKPOINTS = 6
+# The probe group holding each arm's own training rows, for the design's
+# "all training rows" fit metric: every bank row for U, and for L the rows
+# whose menu offers a line choice.
+TRAINING_GROUP = {"U": "all", "L": "line_offered"}
 
 
 def number(value) -> bool:
@@ -132,6 +136,7 @@ def arm_fit(lineage: str, arm: str, probe: dict, full: dict, rerun: dict) -> dic
         row = {"step": c["step"], "epochs": c["epochs"], "candidate": f"{arm}-step-{c['step']}",
                "source": c["source"], "state_sha256": c["state_sha256"], "G1": first, "G2": second,
                "G3": {"finite": finite, "reproduced": repro, "pass": finite and repro},
+               "training_rows": training["groups"].get(TRAINING_GROUP[arm]),
                "discrimination": training["discrimination"],
                "tree_chosen_share": training["tree_chosen_share"],
                "self_offered_mean_deployed_self_probability":

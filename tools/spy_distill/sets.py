@@ -36,8 +36,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from distill_common import (ANCHOR_NS, DECKS, NON_NATURAL_FRACTION, OFFERS_NS, SPY, check_lineage,  # noqa: E402
-                    check_parent, collection_opponent, episode, pilot, read_json, require, write_json)
+from distill_common import (ANCHOR_NS, DECKS, NON_NATURAL_FRACTION, OFFERS_NS, SPY, absolute,  # noqa: E402
+                    check_lineage, check_parent, collection_opponent, episode, pilot, read_json, require,
+                    write_json)
 
 SETS = ("anchor-training", "anchor-held-out", "offers")
 ANCHOR_UNITS, ANCHOR_TRAINING_UNITS = 4, 3
@@ -91,7 +92,7 @@ def collect_command(lineage: str, name: str, decks: list[dict], parent: dict, a4
     if workers > 1:
         command["workers"] = workers
     command["max_non_natural_episode_fraction"] = NON_NATURAL_FRACTION
-    command["output_directory"] = str(output_directory).replace("\\", "/")
+    command["output_directory"] = absolute(output_directory)
     return command
 
 

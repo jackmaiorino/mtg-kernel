@@ -1763,6 +1763,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_named_opponent_holding_the_initial_source_keeps_playing_it_from_another_start() {
+        // Spy archive distillation phase 2 (collab DESIGN.md section 2): O's
+        // `Initial` units become a fixed "parent" entry holding O's initial
+        // source, and the run starts from a phase-1 checkpoint. Those units
+        // must still play the parent, which `Initial` would no longer do.
+        let mut config = schedule();
+        config.iterations[0].episodes[0].opponent = ExpandedOpponentAssignmentV1::Initial;
+        config.validate_v1().unwrap();
+        let parent = config.initial_source.clone();
+        let as_o = resolve_episodes(&config, 0, &parent, &[]).unwrap();
+        let mut distilled = parent.clone();
+        distilled.checkpoint = Some(PinnedFileV1 {
+            path: std::env::temp_dir().join("phase1-step-1024.json"),
+            sha256: "d".repeat(64),
+        });
+        config.initial_source = distilled.clone();
+        let unnamed = resolve_episodes(&config, 0, &distilled, &[]).unwrap();
+        assert_eq!(
+            value(unnamed[0].opponent.as_ref().unwrap()).unwrap(),
+            value(&distilled).unwrap()
+        );
+        config.opponents.push(NamedExpandedOpponentV1 {
+            id: "parent".into(),
+            source: parent.clone(),
+        });
+        config.iterations[0].episodes[0].opponent = ExpandedOpponentAssignmentV1::Fixed {
+            id: "parent".into(),
+        };
+        config.validate_v1().unwrap();
+        let named = resolve_episodes(&config, 0, &distilled, &[]).unwrap();
+        let opponent = value(named[0].opponent.as_ref().unwrap()).unwrap();
+        assert_eq!(opponent, value(as_o[0].opponent.as_ref().unwrap()).unwrap());
+        assert_eq!(opponent, value(&parent).unwrap());
+    }
+
     // --- Follow-up: the run harness must carry `loss_selection`, or arm g
     // cannot launch. Mirrors `update_backend_is_explicit_in_run_identity_and_legacy_cpu_is_unchanged`'s
     // structural style, plus a real end-to-end run for the forwarding proof.

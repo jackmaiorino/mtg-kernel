@@ -60,6 +60,13 @@ def pin(path) -> dict:
     return {"path": str(path).replace("\\", "/"), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+def absolute(path) -> str:
+    """An output directory as an absolute path: the engine writes the paths
+    of what it produces under it, and a later run accepts only absolute
+    model-source pins."""
+    return str(Path(path).resolve()).replace("\\", "/")
+
+
 def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 

@@ -25,7 +25,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from distill_common import ARM_LETTERS, ARMS, check_parent, pilot, pin, read_json, require, write_json  # noqa: E402
+from distill_common import (ARM_LETTERS, ARMS, absolute, check_parent, pilot, pin, read_json,  # noqa: E402
+                            require, write_json)
 
 REPRODUCTION_STEP = 32
 PHASE1_SCHEMA = "mtg-kernel-archive-distillation-phase1/v1"
@@ -43,7 +44,7 @@ def phase1_command(lineage: str, arm: str, parent: dict, games: Path, bank: Path
         command["stop_after_steps"] = REPRODUCTION_STEP
     if dry_run:
         command["dry_run"] = True
-    command["output_directory"] = str(output_directory).replace("\\", "/")
+    command["output_directory"] = absolute(output_directory)
     return command
 
 
@@ -82,7 +83,7 @@ def probe_command(lineage: str, parent: dict, o_final: dict, games: Path, bank: 
                       "bank": pin(Path(completion[1]).resolve())})
     return {"mode": "archive_distillation_probe", "parent": parent, "lineage": lineage, "candidates": candidates,
             "banks": banks, "anchor": anchor, "offers": offers,
-            "output_directory": str(output_directory).replace("\\", "/")}
+            "output_directory": absolute(output_directory)}
 
 
 def main(argv=None) -> int:

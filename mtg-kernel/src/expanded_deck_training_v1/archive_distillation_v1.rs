@@ -1006,11 +1006,14 @@ fn archive_order_v1(
 }
 
 /// The frozen schedule. U: epochs of `ceil(n / 32)` steps, rows without
-/// replacement in a per-epoch hash order, each row weighted `1 / 32` per
-/// draw; checkpoints after 1, 2, 4, 8, 16 and 32 epochs. L: every row each
-/// step when it has 32 or fewer (weight `1 / n`), otherwise U's epochs;
-/// checkpoints after 32 to 1,024 steps. The anchor takes the next 256
-/// training rows of a per-pass hash order every step, shared by both arms.
+/// replacement in a per-epoch hash order cut into that many consecutive
+/// batches whose sizes differ by at most one (none above 32); checkpoints
+/// after 1, 2, 4, 8, 16 and 32 epochs. L: every row each step when it has 32
+/// or fewer, otherwise U's epochs; checkpoints after 32 to 1,024 steps. Each
+/// step's archive term is the mean over its own batch, so it keeps
+/// coefficient 1 at every step and no row's weight depends on where an epoch
+/// ends. The anchor takes the next 256 training rows of a per-pass hash order
+/// every step, shared by both arms.
 fn plan_v1(
     rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
     selected: &[usize],
@@ -1040,11 +1043,15 @@ fn plan_v1(
             archive.push((selected.to_vec(), n));
             continue;
         }
-        for chunk in archive_order_v1(rows, selected, lineage, arm, epoch).chunks(ARCHIVE_BATCH) {
+        let order = archive_order_v1(rows, selected, lineage, arm, epoch);
+        let batches = n.div_ceil(ARCHIVE_BATCH);
+        for b in 0..batches {
             if archive.len() as u64 == total {
                 break;
             }
-            archive.push((chunk.to_vec(), ARCHIVE_BATCH));
+            let batch = order[b * n / batches..(b + 1) * n / batches].to_vec();
+            let denominator = batch.len();
+            archive.push((batch, denominator));
         }
         epoch += 1;
     }
@@ -1647,6 +1654,7 @@ pub(super) fn probe_v1(
                 };
                 groups.entry("all").or_default().push(reading);
                 for (name, member) in [
+                    ("line_offered", line.line_offered()),
                     ("self_chosen", line.self_chosen),
                     ("self_declined", line.self_offered && !line.self_chosen),
                     ("self_offered", line.self_offered),

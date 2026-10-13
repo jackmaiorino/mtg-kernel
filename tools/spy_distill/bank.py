@@ -29,7 +29,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from distill_common import SPY, check_parent, episode, pilot, pin, read_json, read_jsonl, require, write_json  # noqa: E402
+from distill_common import (SPY, absolute, check_parent, episode, pilot, pin, read_json, read_jsonl,  # noqa: E402
+                            require, write_json)
 
 V1_ARCHIVE_SHA256 = "5bbb5a3425d398a32b4f3653c1d9084d602b2b379d01e2ad37e9147868adbefa"
 START_FIELDS = ("step", "physical_decision_id", "k", "obs_hash", "menu_hash", "state_hash")
@@ -113,7 +114,7 @@ def build(lineage: str, archive: Path, rows_frozen: Path, parent: dict, out_dir:
     sources = [pin(archive)] + [pin(p) for p in sorted(used)]
     command = {"mode": "archive_distillation_bank", "parent": parent, "lineage": lineage,
                "games": pin(games_path), "sources": sources,
-               "output_directory": str(output_directory).replace("\\", "/")}
+               "output_directory": absolute(output_directory)}
     cmd = write_json(out_dir / f"bank-{lineage}.command.json", command)
     return {"command": cmd, "games": command["games"], "usable_games": len(lines), "sources": len(sources)}
 
