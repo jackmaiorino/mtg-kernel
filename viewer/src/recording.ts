@@ -73,14 +73,18 @@ const uctWireSchema=z.discriminatedUnion('storage',[
 ]);
 const uctSchema=uctWireSchema.transform((value,context)=>{
   if(value.storage!=='object-pool/v1')return value;
-  const used=new Set<number>();let references=0,broken=false;
-  const expand=(ids:number[])=>ids.map(id=>{
-    references++;used.add(id);
-    if(id>=value.objects.length){broken=true;return value.objects[0];}
-    return value.objects[id];
-  });
+  const used=new Set<number>();let references=0;
+  const reject=()=>{context.addIssue({code:'custom',message:'UCT pooled snapshot references are broken, unused, or exceed the decoded bound'});return z.NEVER;};
+  for(const board of value.boards){
+    for(const ids of [board.exile,...board.players.flatMap(p=>[p.battlefield,p.graveyard,p.hand])]){
+      references+=ids.length;
+      if(references>1000000)return reject();
+      for(const id of ids){if(id>=value.objects.length)return reject();used.add(id);}
+    }
+  }
+  if(used.size!==value.objects.length)return reject();
+  const expand=(ids:number[])=>ids.map(id=>value.objects[id]);
   const boards=value.boards.map(b=>({...b,exile:expand(b.exile),players:b.players.map(p=>({...p,battlefield:expand(p.battlefield),graveyard:expand(p.graveyard),hand:expand(p.hand)})) as z.infer<typeof boardSchema>['players']}));
-  if(broken||used.size!==value.objects.length||references>1000000){context.addIssue({code:'custom',message:'UCT pooled snapshot references are broken, unused, or exceed the decoded bound'});return z.NEVER;}
   const {storage:_storage,objects:_objects,...rest}=value;
   return {...rest,boards};
 });

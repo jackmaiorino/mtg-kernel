@@ -24,6 +24,14 @@ describe('full UCT discovery traces',()=>{
     const unused=structuredClone(pooledUct);unused.frames[0].search.uctReplay.objects.push(unused.frames[0].search.uctReplay.objects[0]);
     expect(()=>parseRecording(unused)).toThrow(/pooled snapshot/);
   });
+  it('rejects repeated pooled references above the total decoded bound',()=>{
+    const oversized=structuredClone(pooledUct);
+    const replay=oversized.frames[0].search.uctReplay;
+    const board=structuredClone(replay.boards[0]);
+    board.players[0].battlefield=Array.from({length:500001},()=>0);
+    replay.boards=[board,structuredClone(board)];
+    expect(()=>parseRecording(oversized)).toThrow(/exceed the decoded bound/);
+  });
   it('reconciles natural wins, draws and discarded proposals, revealing branches before backup',async()=>{
     const r=parseRecording(uctFixture);await verifySearchDigests(r);const u=r.frames[0].search!.uctReplay!;
     expect(u.firstCombo).toBe(0);expect(uctEvents(u).filter(e=>e.phase==='rollout')).toHaveLength(8);
