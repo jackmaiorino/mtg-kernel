@@ -449,6 +449,46 @@ mod future {
         assert_eq!(restored.ajani, public.ajani);
         assert_eq!(restored.families, public.families);
         assert_eq!(restored.projection, public.projection);
+        // The same genuine mixed input must also pass the fixed-seat safe
+        // Human producer and invalidate a retained request across owning restore.
+        use crate::human_bo3_v1::{
+            HumanActionRequestV1, HumanAjaniProjectorV42, HumanAjaniSessionV42,
+            HumanDecisionErrorV1,
+        };
+        let mut human = HumanAjaniSessionV42::from_session(session, actor.into()).unwrap();
+        let mut projector = HumanAjaniProjectorV42::new(actor.into());
+        let menu = projector.project_current(&human, current).unwrap();
+        assert_eq!(
+            menu.state.extensions.ajani.activations.len(),
+            public.ajani.activations.len()
+        );
+        let json = serde_json::to_string(&menu).unwrap();
+        for private in [
+            "arena_id",
+            "event_history",
+            "source_contract",
+            "root_sha256",
+        ] {
+            assert!(!json.contains(private));
+        }
+        let saved = human.snapshot_v42();
+        let request = HumanActionRequestV1 {
+            prompt_seq: menu.prompt_seq,
+            action_index: 0,
+        };
+        human.restore_v42(&saved).unwrap();
+        let before = human.current_response();
+        assert_eq!(
+            projector.submit(&mut human, request),
+            Err(HumanDecisionErrorV1::StaleDecision)
+        );
+        assert_eq!(human.current_response(), before);
+        let FastActorResponseV1::Decision(current) = human.current_response() else {
+            panic!("mixed Human restored prompt");
+        };
+        let next = projector.project_current(&human, current).unwrap();
+        assert_eq!(next.state, menu.state);
+        assert_eq!(next.actions, menu.actions);
         public
     }
     #[test]
