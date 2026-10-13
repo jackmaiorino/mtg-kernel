@@ -453,6 +453,86 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         options,
     }))
 }
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CrystalObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    validate_state(state).map_err(RlContractError)?;
+    let optional_discard_menu = discard_menu(state, actor)?;
+    let optional_fight_menu = if crate::effect::crystal_prevention_v1::is_program_choice(state) {
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
+        Some(ProgramMenuV3 {
+            chooser: pending.ctx.controller.into(),
+            source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+            decline_index: 0,
+            fight_index: 1,
+            requires_original_source_creature: true,
+        })
+    } else {
+        None
+    };
+    let mut static_sources = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if crate::crystal_barricade_v1::is_active_source(state, id) {
+            static_sources.push(StaticSourceV1 {
+                source: public_ref(state, id)?,
+                controller: o.controller.into(),
+            });
+        }
+    }
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let o = CrystalObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        static_sources,
+        prevention_menu: menu(state)?,
+        optional_discard_menu,
+        optional_fight_menu,
+        equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)
+            .map_err(RlContractError)?,
+        projection_sha256: String::new(),
+    };
+    Ok(o)
+}
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(
     state: &GameState,

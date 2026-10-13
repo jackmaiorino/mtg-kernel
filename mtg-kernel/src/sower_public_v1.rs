@@ -142,6 +142,79 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
         root_sha256: meaning.root_sha256,
     }])
 }
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<SowerObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    let captures = crate::sower_restriction_capture_v1::active(state)?;
+    let mut restrictions: Vec<_> = captures
+        .into_iter()
+        .map(|capture| {
+            let id = ObjectId(capture.recipient.arena_id);
+            let current = state
+                .objects
+                .try_get(id)
+                .filter(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.zone_change_count == capture.recipient.zone_change_count
+                })
+                .map(|object| crate::sower_restriction_capture_v1::masked_ref(id, object))
+                .transpose()?;
+            Ok(RestrictionV1 {
+                recipient: capture.recipient.clone(),
+                timestamp: capture.timestamp,
+                effective: current.is_some(),
+                current_recipient: current,
+                duration: "until_next_cleanup_including_repeated_cleanup".into(),
+            })
+        })
+        .collect::<Result<Vec<_>, RlContractError>>()?;
+    restrictions.sort_by_key(|row| row.timestamp);
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let observation = SowerObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        restrictions,
+        roots: roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
+}
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(
     state: &GameState,

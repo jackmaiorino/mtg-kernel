@@ -59,6 +59,7 @@ pub struct AkromaObservationV1 {
     pub extensions: PolicyObservationExtensionsV8,
     pub attacked_this_turn: [bool; 2],
     pub grants: Vec<ActiveGrantV1>,
+    pub families: Vec<crate::akroma_family_public_v40::FamilyFactsV40>,
     pub color_departures: Vec<ColorDepartureV1>,
     pub roots: Vec<RootV1>,
     pub projection_sha256: String,
@@ -70,35 +71,92 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut h = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("akroma_public_v1.rs"),
-        include_str!("rules_meaning_akroma_v1.rs"),
-        include_str!("controlled_creature_grants_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/akroma_v40.rs"),
-        include_str!("human_bo3_v1/akroma_v40.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("trigger.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        h.update([0]);
-        h.update(source.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("akroma_public_v1.rs"),
+            include_str!("akroma_family_public_v40.rs"),
+            include_str!("sower_public_v1.rs"),
+            include_str!("human_bo3_v1/sower_v14.rs"),
+            include_str!("frenzied_public_v1.rs"),
+            include_str!("human_bo3_v1/frenzied_v15.rs"),
+            include_str!("wildwood_public_v1.rs"),
+            include_str!("human_bo3_v1/wildwood_v16.rs"),
+            include_str!("authority_public_v1.rs"),
+            include_str!("human_bo3_v1/authority_v17.rs"),
+            include_str!("employment_public_v1.rs"),
+            include_str!("human_bo3_v1/employment_v18.rs"),
+            include_str!("cerberus_public_v1.rs"),
+            include_str!("human_bo3_v1/cerberus_v19.rs"),
+            include_str!("librarian_public_v1.rs"),
+            include_str!("human_bo3_v1/librarian_v20.rs"),
+            include_str!("extra_turn_public_v1.rs"),
+            include_str!("human_bo3_v1/extra_turn_v23.rs"),
+            include_str!("juggernaut_public_v1.rs"),
+            include_str!("human_bo3_v1/juggernaut_v25.rs"),
+            include_str!("ashroot_public_v1.rs"),
+            include_str!("human_bo3_v1/ashroot_v27.rs"),
+            include_str!("banishing_public_v1.rs"),
+            include_str!("human_bo3_v1/banishing_v26.rs"),
+            include_str!("stromkirk_public_v1.rs"),
+            include_str!("human_bo3_v1/stromkirk_v28.rs"),
+            include_str!("gourmand_public_v1.rs"),
+            include_str!("human_bo3_v1/gourmand_v29.rs"),
+            include_str!("garruk_public_v1.rs"),
+            include_str!("human_bo3_v1/garruk_v30.rs"),
+            include_str!("crystal_public_v1.rs"),
+            include_str!("human_bo3_v1/crystal_v22.rs"),
+            include_str!("arahbo_public_v1.rs"),
+            include_str!("human_bo3_v1/arahbo_v31.rs"),
+            include_str!("strongbox_public_v1.rs"),
+            include_str!("human_bo3_v1/strongbox_v32.rs"),
+            include_str!("fiery_observation_v1.rs"),
+            include_str!("human_bo3_v1/fiery_v33.rs"),
+            include_str!("krenko_observation_v1.rs"),
+            include_str!("human_bo3_v1/krenko_v34.rs"),
+            include_str!("zul_ashur_observation_v1.rs"),
+            include_str!("human_bo3_v1/zul_ashur_v35.rs"),
+            include_str!("banner_observation_v1.rs"),
+            include_str!("human_bo3_v1/banner_v36.rs"),
+            include_str!("inspiration_observation_v1.rs"),
+            include_str!("human_bo3_v1/inspiration_v37.rs"),
+            include_str!("akroma_early_public_v40.rs"),
+            include_str!("heartfire_public_v1.rs"),
+            include_str!("raid_entry_public_v1.rs"),
+            include_str!("rl_session/soul_shackled_zombie_v13.rs"),
+            include_str!("bloom_tender_public_v1.rs"),
+            include_str!("bloom_tender_mana_v1.rs"),
+            include_str!("human_bo3_v1/akroma_early_v40.rs"),
+            include_str!("human_bo3_v1/akroma_families_v40.rs"),
+            include_str!("rules_meaning_akroma_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("rl.rs"),
+            include_str!("rl_session.rs"),
+            include_str!("rl_session/akroma_v40.rs"),
+            include_str!("human_bo3_v1/akroma_v40.rs"),
+            include_str!("human_bo3_v1/visible.rs"),
+            include_str!("human_bo3_v1/labels.rs"),
+            include_str!("human_bo3_v1/life_ward_v8.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+            include_str!("policy_observation_v8.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("trigger.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("../build.rs"),
+        ] {
+            h.update([0]);
+            h.update(source.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn commitment(observation: &AkromaObservationV1) -> Result<String, RlContractError> {
     let mut value =
@@ -132,6 +190,7 @@ impl AkromaObservationV1 {
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     roots().map_err(|error| error.0)?;
+    crate::akroma_family_public_v40::validate_state(state)?;
     Ok(())
 }
 pub(crate) fn roots() -> Result<Vec<RootV1>, RlContractError> {
@@ -231,10 +290,25 @@ pub fn observe_v1(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<AkromaObservationV1, RlContractError> {
+    observe_parts_v40(state, surface, actor, step, physical, substep)
+        .map(|(observation, _)| observation)
+}
+type AkromaPublicPartsV40 = (
+    AkromaObservationV1,
+    Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
+);
+pub(crate) fn observe_parts_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<AkromaPublicPartsV40, RlContractError> {
     let (substep_index, substep_count) = substep;
     let roots = roots()?;
     let (grants, color_departures) = facts(state)?;
-    let base = crate::rl::akroma_observation_storage_v1(
+    let base = crate::rl::akroma_family_observation_storage_v40(
         state,
         surface,
         actor,
@@ -243,7 +317,10 @@ pub fn observe_v1(
         (substep_index, substep_count),
     )?;
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
-    let base = storage.base;
+    let mut base = storage.base;
+    let mut parts =
+        crate::akroma_family_public_v40::build(state, surface, actor, step, physical, substep)?;
+    base.projection = crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)?;
     let mut observation = AkromaObservationV1 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256_v1(),
@@ -267,12 +344,16 @@ pub fn observe_v1(
             state.player_attacked_this_turn_v1(PlayerId::P1),
         ],
         grants,
+        families: parts.iter().map(|part| part.facts()).collect(),
         color_departures,
         roots,
         projection_sha256: String::new(),
     };
     observation.projection_sha256 = commitment(&observation)?;
-    Ok(observation)
+    for part in &mut parts {
+        part.set_projection(&observation.projection);
+    }
+    Ok((observation, parts))
 }
 
 #[cfg(test)]

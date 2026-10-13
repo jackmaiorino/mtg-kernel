@@ -407,6 +407,102 @@ pub(crate) fn facts(
     Ok((entry_occurrences, active_sources))
 }
 
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<ArahboObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    crate::arahbo_v1::validate_state(state).map_err(RlContractError)?;
+    let (triggers, links, attachment_choice, confirmed_attachments) =
+        crate::banishing_public_v1::facts(state)?;
+    let linked_exile = LinkedExileFactsV1 {
+        triggers,
+        links,
+        attachment_choice,
+        confirmed_attachments,
+        roots: crate::banishing_public_v1::roots()?,
+    };
+    let (entry_occurrences, active_sources) = facts(state)?;
+    let (garruk_occurrences, garruk_active_sources) = crate::garruk_public_v1::facts(state)?;
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let mut base = storage.base;
+    if linked_exile.attachment_choice.is_some() {
+        base.projection.surface.engine_context.current_stage =
+            crate::rl::EngineDecisionStageV2::PendingEffect;
+    }
+    for row in &entry_occurrences {
+        if let Some(position) = row.pending_order_index {
+            let pending = base
+                .projection
+                .surface
+                .engine_context
+                .pending_triggers
+                .get_mut(position as usize)
+                .ok_or_else(|| {
+                    RlContractError("Arahbo original pending position missing".into())
+                })?;
+            pending.source = Some(row.observer_at_entry.clone());
+        }
+    }
+    for row in &garruk_occurrences {
+        if let Some(position) = row.pending_order_index {
+            let pending = base
+                .projection
+                .surface
+                .engine_context
+                .pending_triggers
+                .get_mut(position as usize)
+                .ok_or_else(|| RlContractError("Arahbo/Garruk pending position missing".into()))?;
+            pending.source = Some(row.observer_at_entry.clone());
+        }
+    }
+    let observation = ArahboObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        entry_occurrences,
+        active_sources,
+        roots: roots()?,
+        linked_exile,
+        garruk_occurrences,
+        garruk_active_sources,
+        garruk_roots: crate::garruk_public_v1::roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
+}
 pub fn observe_v1(
     state: &GameState,
     surface: &PolicySurfaceV5,

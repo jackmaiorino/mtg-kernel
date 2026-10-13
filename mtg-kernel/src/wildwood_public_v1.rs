@@ -150,6 +150,125 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
         root_sha256: meaning.counter_trigger.trigger_root_sha256,
     }])
 }
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<WildwoodObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    let active = crate::wildwood_capture_v1::active(state).map_err(RlContractError)?;
+    let mut counter_occurrences = Vec::new();
+    let mut last_capture = None;
+    let mut event_order = 0_u64;
+    for (index, observer_index, capture) in active {
+        if last_capture.is_some_and(|previous| previous != index) {
+            event_order += 1;
+        }
+        last_capture = Some(index);
+        let crate::state::StackTargetContractV4::Object {
+            object,
+            card_def,
+            owner,
+            controller,
+            zone,
+            zone_change_count,
+            ..
+        } = capture.recipient
+        else {
+            return Err(RlContractError("invalid captured recipient".into()));
+        };
+        let public_definition = if capture.recipient_face_down {
+            crate::card_def::card_id_by_name(if capture.recipient_disguised {
+                "Face-down creature"
+            } else {
+                "Face-down card"
+            })
+            .ok_or_else(|| RlContractError("public face-down sentinel missing".into()))?
+        } else {
+            card_def
+        };
+        let observer = capture.observers[observer_index];
+        let crate::event::CommittedEvent::PlusOneCountersAdded { player, count, .. } =
+            capture.event.as_ref()
+        else {
+            return Err(RlContractError("invalid captured counter".into()));
+        };
+        counter_occurrences.push(CounterOccurrenceV1 {
+            recipient_at_event: CardStableRefV1 {
+                arena_id: object.0,
+                card_db_id: public_definition,
+                owner: owner.into(),
+                controller: controller.into(),
+                zone,
+                zone_change_count,
+            },
+            observer_at_event: CardStableRefV1 {
+                arena_id: observer.source.0,
+                card_db_id: observer.card_def,
+                owner: observer.owner.into(),
+                controller: observer.controller.into(),
+                zone: observer.zone,
+                zone_change_count: observer.zone_change_count,
+            },
+            placing_player: (*player).into(),
+            amount: *count,
+            event_order,
+            recipient_was_creature: capture.recipient_is_creature,
+            recipient_was_hydra: capture.recipient_is_hydra,
+            captured_controller: observer.controller.into(),
+            original_source_present: state
+                .objects
+                .try_get(observer.source)
+                .is_some_and(|object| {
+                    object.owner == observer.owner
+                        && object.zone == Zone::Battlefield
+                        && object.zone_change_count == observer.zone_change_count
+                }),
+        });
+    }
+    let base = crate::rl::akroma_family_observation_storage_v40(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let observation = WildwoodObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        counter_occurrences,
+        roots: roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
+}
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(
     state: &GameState,

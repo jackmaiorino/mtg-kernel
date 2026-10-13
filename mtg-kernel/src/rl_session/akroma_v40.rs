@@ -12,8 +12,85 @@ pub(crate) struct AkromaDecisionBindingV40 {
     expected: FastActorDecisionV1,
     candidates: Vec<CorePolicyActionCandidateV1>,
     observation: AkromaObservationV1,
+    pub(crate) families: Vec<crate::akroma_family_public_v40::FamilyProjectionV40>,
 }
 
+fn visible_semantic(
+    state: &crate::state::GameState,
+    projection: &crate::rl::PublicObservationProjectionV5,
+    semantic: ActionSemanticV1,
+) -> Result<ActionSemanticV1, FlatActionDecisionSliceErrorV1> {
+    use ActionSemanticV1 as A;
+    let mut semantic = super::flat_action_v4::frozen_pending_trigger_semantic_v4(state, semantic);
+    let pending_source = |position: usize,
+                          source: &CardStableRefV1,
+                          actor: PlayerSeatV1|
+     -> Result<CardStableRefV1, FlatActionDecisionSliceErrorV1> {
+        let Some(row) = projection
+            .surface
+            .engine_context
+            .pending_triggers
+            .get(position)
+        else {
+            return Ok(source.clone());
+        };
+        let Some(captured) = &row.source else {
+            return Ok(source.clone());
+        };
+        if captured.arena_id != source.arena_id || row.controller != actor {
+            return Ok(source.clone());
+        }
+        Ok(captured.clone())
+    };
+    match &mut semantic {
+        A::OrderTriggers {
+            actor,
+            pending_sources,
+            ..
+        } => {
+            for (position, source) in pending_sources.iter_mut().enumerate() {
+                *source = pending_source(position, source, *actor)?;
+            }
+        }
+        A::ChooseTarget { actor, source, .. } | A::FinishTargetSelection { actor, source, .. } => {
+            *source = pending_source(0, source, *actor)?;
+        }
+        A::ChooseEffectOption { source, .. }
+        | A::ChooseEffectTarget { source, .. }
+        | A::FinishEffectSelection { source, .. }
+        | A::ChooseEffectColor { source, .. }
+        | A::ChooseEffectNumber { source, .. }
+        | A::ChooseEffectBoolean { source, .. } => {
+            if let Some(captured) = projection
+                .surface
+                .engine_context
+                .pending_effect
+                .as_ref()
+                .and_then(|row| row.source.as_ref())
+                .filter(|captured| captured.arena_id == source.arena_id)
+            {
+                *source = captured.clone();
+            }
+        }
+        _ => {}
+    }
+    Ok(semantic)
+}
+pub(super) fn actual_candidates(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    if matches!(
+        origin,
+        PolicyDecisionV5::Surface(crate::surface::SurfaceDecision::Decision(
+            crate::engine::Decision::ChooseEntryColorV36 { .. }
+        ))
+    ) {
+        super::banner_v36::actual_candidates(origin, state)
+    } else {
+        super::inspiration_v37::actual_candidates(origin, state)
+    }
+}
 pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
@@ -25,10 +102,9 @@ pub(super) fn normalized_origin(
     original.flat_action_cache_error = None;
     original.flat_action_cache_v2 = None;
     original.flat_action_cache_error_v2 = None;
-    original.candidates =
-        core_policy_action_candidates_v5(&current.origin_decision, &session.state)
-            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
-    flat_validate_current_binding_header_v1(session, &original)?;
+    original.candidates = actual_candidates(&current.origin_decision, &session.state)
+        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
     flat_validate_origin_decision_akroma_inner(&original, &session.state, true)?;
     let common =
         crate::rl::policy_observation_extensions_common_for_human_v8(&session.state, current.actor)
@@ -157,7 +233,7 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_expected_decision_v1(self, current, expected)?;
+        flat_validate_expected_decision_akroma_inner(self, current, expected, true)?;
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch);
         }
@@ -165,7 +241,7 @@ impl FastActorSessionV1 {
         if candidates != current.candidates {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        let observation = crate::akroma_public_v1::observe_v1(
+        let (observation, families) = crate::akroma_public_v1::observe_parts_v40(
             &self.state,
             &self.surface,
             current.actor,
@@ -177,16 +253,18 @@ impl FastActorSessionV1 {
         let actions = candidates
             .iter()
             .map(|candidate| {
-                super::flat_action_v4::frozen_pending_trigger_semantic_v4(
+                visible_semantic(
                     &self.state,
+                    &observation.projection,
                     candidate.semantic.clone(),
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let binding = AkromaDecisionBindingV40 {
             expected,
             candidates,
             observation: observation.clone(),
+            families,
         };
         Ok((observation, actions, binding))
     }
@@ -206,6 +284,13 @@ impl FastActorSessionV1 {
         Ok(())
     }
 }
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "akroma_v40_mixed_tests.rs"]
+mod mixed_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

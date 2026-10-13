@@ -131,6 +131,7 @@ pub struct HumanDecisionAkromaV40 {
 pub struct HumanAkromaExtensionsV40 {
     pub predecessor: HumanExtensionsV9,
     pub grants: Vec<HumanAkromaGrantV40>,
+    pub families: Vec<super::akroma_families_v40::HumanFamilyV40>,
     pub color_departures: Vec<HumanColorDepartureV40>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -163,6 +164,7 @@ fn state(
     observation: &AkromaObservationV1,
     handles: &mut Handles,
     human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<HumanVisibleStateV1<HumanAkromaExtensionsV40>, Error> {
     let old = super::life_ward_v8::project_state_parts(&parts(observation), handles)?;
     let seat = if human == PlayerSeatV1::P0 { 0 } else { 1 };
@@ -211,6 +213,7 @@ fn state(
                 opponent_attacked_this_turn: observation.attacked_this_turn[1 - seat],
             },
             grants,
+            families: super::akroma_families_v40::states(families, handles, human)?,
             color_departures,
         },
         policy_context: old.policy_context,
@@ -222,11 +225,43 @@ fn state(
         restricted_mana: old.restricted_mana,
     })
 }
+
+fn action_source_id(action: &ActionSemanticV1) -> Option<u16> {
+    use ActionSemanticV1::*;
+    match action {
+        PlayLand { source, .. }
+        | CastSpell { source, .. }
+        | ActivateManaAbility { source, .. }
+        | ActivateAbility { source, .. }
+        | PlotSpell { source, .. }
+        | ChooseTarget { source, .. }
+        | ChooseCostTarget { source, .. }
+        | ChooseCastMode { source, .. }
+        | ChooseKicker { source, .. }
+        | ChooseSpellMode { source, .. }
+        | ChooseEffectOption { source, .. }
+        | ChooseEffectTarget { source, .. }
+        | FinishEffectSelection { source, .. }
+        | ChooseEffectColor { source, .. }
+        | ChooseEffectNumber { source, .. }
+        | ChooseEffectBoolean { source, .. }
+        | FinishTargetSelection { source, .. }
+        | ChooseSpellCopyPayment { source, .. }
+        | ChooseSpellCopyRetarget { source, .. }
+        | ChooseCombatDamageRange { source, .. }
+        | TurnFaceUp { source, .. } => Some(source.card_db_id),
+        #[cfg(feature = "limited-fdn-fixtures")]
+        ChooseTriggerOrderNext { source, .. } => Some(source.card_db_id),
+        _ => None,
+    }
+}
+
 fn label(
     action: &ActionSemanticV1,
     observation: &AkromaObservationV1,
     handles: &Handles,
     human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<String, Error> {
     if let ActionSemanticV1::CastSpell { source, actor, .. } = action {
         if crate::card_def::CARD_DEFS
@@ -247,6 +282,15 @@ fn label(
             return Ok(format!("Begin casting {} (printed cost {{7}}): your creatures have flying, first strike, vigilance, trample, haste and protection from black and red",handles.name(source)?));
         }
     }
+    if let Some(label) = super::akroma_families_v40::label(
+        action_source_id(action),
+        action,
+        families,
+        handles,
+        human,
+    )? {
+        return Ok(label);
+    }
     super::labels::label_parts_v8(action, &parts(observation), handles, human)
 }
 
@@ -260,6 +304,7 @@ fn project_base(
     observation: &AkromaObservationV1,
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectedAkromaV40, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -292,7 +337,8 @@ fn project_base(
     for row in &observation.color_departures {
         handles.insert(&row.source_at_departure)?;
     }
-    let initial = state(observation, &mut handles, human)?;
+    super::akroma_families_v40::register(families, &mut handles)?;
+    let initial = state(observation, &mut handles, human, families)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
     for row in &initial
         .extensions
@@ -326,17 +372,19 @@ fn project_base(
             .or_default()
             .push(visible::without_handles(row)?);
     }
+    super::akroma_families_v40::unary(&initial.extensions.families, &mut unary)?;
     for rows in unary.values_mut() {
         rows.sort();
+        rows.dedup();
     }
     handles.canonicalize_parts(&initial, unary)?;
-    let state = state(observation, &mut handles, human)?;
+    let state = state(observation, &mut handles, human, families)?;
     let mut choices = actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                label(action, observation, &handles, human)?,
+                label(action, observation, &handles, human, families)?,
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,
             ))
         })
@@ -409,7 +457,7 @@ impl HumanAkromaProjectorV40 {
             .checked_add(1)
             .ok_or(Error::PromptSequenceExhausted)?;
         let (state, actions, engine_indexes) =
-            project_base(&observation, &actions, self.human_seat)?;
+            project_base(&observation, &actions, self.human_seat, &binding.families)?;
         let visible = HumanDecisionAkromaV40 {
             schema: "mtg-kernel-human-akroma-decision/v40".into(),
             human_seat: self.human_seat,
@@ -480,6 +528,13 @@ impl HumanAkromaProjectorV40 {
     }
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "akroma_v40_mixed_tests.rs"]
+mod mixed_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

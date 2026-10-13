@@ -295,7 +295,11 @@ pub use strongbox_v32::*;
 mod banishing_v26;
 pub use banishing_v26::*;
 
+mod akroma_early_v40;
+mod akroma_families_v40;
+pub use akroma_early_v40::{HumanEarlyV40, HumanZombieContextV40};
 mod akroma_v40;
+pub use akroma_families_v40::HumanFamilyV40;
 pub use akroma_v40::{
     HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
     HumanAkromaSnapshotV40, HumanColorDepartureV40, HumanDecisionAkromaV40,

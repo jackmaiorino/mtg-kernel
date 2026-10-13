@@ -3143,7 +3143,7 @@ pub(crate) fn fiery_observation_storage_v1(
         ),
     )
 }
-pub(crate) fn akroma_observation_storage_v1(
+pub(crate) fn akroma_family_observation_storage_v40(
     state: &GameState,
     surface: &PolicySurfaceV5,
     actor: PlayerId,
@@ -3152,7 +3152,7 @@ pub(crate) fn akroma_observation_storage_v1(
     substep: (u32, u32),
 ) -> Result<PolicyObservationStorageV6> {
     crate::controlled_creature_grants_v1::validate_color_history(state).map_err(RlContractError)?;
-    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    crate::akroma_family_public_v40::validate_state(state).map_err(RlContractError)?;
     build_policy_observation_storage_akroma_inner(
         (
             PolicyObservationBuildV5 {
@@ -3168,13 +3168,12 @@ pub(crate) fn akroma_observation_storage_v1(
             true,
         ),
         true,
-        false,
-        false,
-        false,
-        false,
+        true,
+        true,
+        true,
+        true,
         (
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false,
+            true, true, true, true, true, true, true, true, true, true, true, true, true, true,
         ),
     )
 }
