@@ -91,7 +91,7 @@ def probe_set(arm, seed=12345):
     return probes
 
 
-def readout(w, probes):
+def readout(w, probes, preferred=PREFERRED):
     by = {c: {"p_preferred_pi": [], "p_preferred_mu": [], "p_preferred_q": []} for c in range(3)}
     tv_pi, tv_mu = [], []
     for c, remaining, s, rep in probes:
@@ -104,7 +104,7 @@ def readout(w, probes):
         mu_c = (1 - A.EPSILON) * pi_c + A.EPSILON * q_c
         tv_pi.append(0.5 * float(np.abs(pi_c - q_c).sum()))
         tv_mu.append(0.5 * float(np.abs(mu_c - q_c).sum()))
-        idx = next(i for i, (_, m) in enumerate(cs) if PREFERRED[c] in m)
+        idx = next(i for i, (_, m) in enumerate(cs) if preferred[c] in m)
         by[c]["p_preferred_pi"].append(float(pi_c[idx]))
         by[c]["p_preferred_mu"].append(float(mu_c[idx]))
         by[c]["p_preferred_q"].append(float(q_c[idx]))

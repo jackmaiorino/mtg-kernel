@@ -36,6 +36,8 @@ use super::tree::{live_index, Found, Tree, MAX_DEPTH};
 use crate::ids::PlayerId;
 use crate::rl_session::FastActorSessionV1;
 use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
+use crate::state::SplitMix64;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Instant;
 
@@ -242,6 +244,77 @@ pub(super) trait Consult {
     fn probe(&self) -> Option<ProbeSpec> {
         None
     }
+    fn credit(&self) -> Option<CreditSpec> {
+        None
+    }
+    fn fork(&self) -> Result<Box<dyn Consult>, String> {
+        Err("scheduler does not support paired continuation".into())
+    }
+}
+
+/// Uniform reservoir of consultations, independent of actual-play randomness.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CreditSpec {
+    pub(super) max_roots: usize,
+    pub(super) sample_seed: u64,
+    // Exercise the production snapshot/resume path without changing its action.
+    #[cfg(test)]
+    #[serde(skip)]
+    replay_factual: bool,
+}
+
+/// Draw a uniform slot without modulo bias. None leaves the reservoir unchanged.
+fn reservoir_slot(rng: &mut SplitMix64, seen: u64, capacity: usize) -> Option<usize> {
+    if seen <= capacity as u64 {
+        return Some((seen - 1) as usize);
+    }
+    let threshold = seen.wrapping_neg() % seen;
+    loop {
+        let draw = rng.next_u64();
+        if draw >= threshold {
+            let slot = draw % seen;
+            return (slot < capacity as u64).then_some(slot as usize);
+        }
+    }
+}
+
+/// Event-keyed sampling keeps extra searches from consuming live-policy draws.
+pub(super) fn credit_seed(seed: u64, domain: &str, step: u64) -> u64 {
+    use sha2::{Digest, Sha256};
+    let key = serde_json::to_vec(&("allocator-paired-v1", seed, domain, step)).unwrap();
+    u64::from_le_bytes(Sha256::digest(key)[..8].try_into().unwrap())
+}
+
+struct Resume {
+    session: FastActorSessionV1,
+    cursor: Cursor,
+    lookup: Lookup,
+    hit: Option<Hit>,
+    root_record: Value,
+    cursor_keys: KeyStats,
+    suffix: Option<super::labels::Suffix>,
+    meter: Meter,
+    counters: Counters,
+    actions: Vec<u32>,
+    decisions: Vec<Value>,
+    nonforced: u64,
+    last_search_at: Option<u64>,
+    physical: u64,
+    last_phys: Option<u64>,
+    last_search_phys: Option<u64>,
+    search_used: u64,
+    search_records: Vec<Value>,
+    search_keys: KeyStats,
+    natural: u64,
+    last_natural: u64,
+}
+
+struct CreditSample {
+    resume: Resume,
+    scheduler: Box<dyn Consult>,
+    focal: FrozenPlayPolicyV1,
+    opponent: FrozenPlayPolicyV1,
 }
 
 /// How a guide starts and which keys it uses.
@@ -282,6 +355,7 @@ pub(super) fn rule(
 
 /// The current tree and where the actual history stands in it; keys use the
 /// same version and mapping as the search that built the tree.
+#[derive(Clone)]
 struct Cursor {
     tree: Tree,
     summary: TreeSummary,
@@ -295,6 +369,7 @@ struct Cursor {
 
 /// A looked-up decision: the keyed step and, on a hit, the supported edge's
 /// prior natural backups.
+#[derive(Clone)]
 struct Hit {
     step: KeyStep,
     backups: Option<u64>,
@@ -385,6 +460,7 @@ struct Searches<'a> {
     last_natural: u64,
     /// Record per-search discovery counters (allocator v2 rows).
     extended: bool,
+    paired: bool,
 }
 
 impl Searches<'_> {
@@ -400,7 +476,9 @@ impl Searches<'_> {
         let k = self.records.len();
         let seeds = RootSeeds {
             model: self.lineage.clone(),
-            root: if reason == PROBE_REFRESH {
+            root: if self.paired {
+                format!("{}/paired-step{at_step}", self.root)
+            } else if reason == PROBE_REFRESH {
                 // A probe's search has its own seed root.
                 format!("{}/probe{k}", self.root)
             } else if k == 0 {
@@ -460,11 +538,50 @@ pub(super) fn guide(
     allocation: Allocation,
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
+    scheduler: Option<&mut dyn Consult>,
+) -> Result<(Value, Option<Tree>), String> {
+    guide_from(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        opp,
+        allocation,
+        anchor_tree,
+        run,
+        scheduler,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit roles and continuation state"
+)]
+fn guide_from(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    opp: usize,
+    allocation: Allocation,
+    anchor_tree: Option<(Tree, Value)>,
+    run: GuideRun,
     mut scheduler: Option<&mut dyn Consult>,
+    resume: Option<Resume>,
 ) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
+    let credit = scheduler.as_deref().and_then(|sc| sc.credit());
+    let collect_credit = credit.is_some_and(|c| c.max_roots > 0) && resume.is_none();
+    let mut sample_rng = SplitMix64::seed(credit.map_or(0, |c| c.sample_seed));
+    let mut eligible = 0u64;
+    let mut samples: Vec<CreditSample> = Vec::new();
     let mut searches = Searches {
         roles,
         sh,
@@ -479,6 +596,7 @@ pub(super) fn guide(
         natural: 0,
         last_natural: 0,
         extended: run.extended,
+        paired: credit.is_some(),
     };
     let extended = searches.extended;
     let probe = scheduler.as_deref().and_then(|sc| sc.probe());
@@ -511,8 +629,10 @@ pub(super) fn guide(
     let mut cursor = Cursor::new(first, 0, run.mode, searches.natural);
     let mut cursor_keys = KeyStats::default();
     let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
-    live_focal.reset_sampling_v1(src.guide_policy_seeds);
-    live_opp.reset_sampling_v1(src.guide_policy_seeds);
+    if resume.is_none() {
+        live_focal.reset_sampling_v1(src.guide_policy_seeds);
+        live_opp.reset_sampling_v1(src.guide_policy_seeds);
+    }
     let mut s = anchor.clone();
     let mut meter = Meter::new(u64::MAX);
     let mut c = Counters::default();
@@ -524,16 +644,60 @@ pub(super) fn guide(
     let (mut physical, mut last_phys, mut last_search_phys) = (0u64, None::<u64>, None::<u64>);
     // A probe freezes search from its decision on.
     let mut probe_frozen = false;
+    let mut resume_hit = None;
+    let mut resume_record = None;
+    if let Some(saved) = resume {
+        s = saved.session;
+        cursor = saved.cursor;
+        resume_hit = Some((saved.lookup, saved.hit));
+        resume_record = Some(saved.root_record);
+        cursor_keys = saved.cursor_keys;
+        suffix = saved.suffix;
+        meter = saved.meter;
+        c = saved.counters;
+        actions = saved.actions;
+        decisions = saved.decisions;
+        nonforced = saved.nonforced;
+        last_search_at = saved.last_search_at;
+        physical = saved.physical;
+        last_phys = saved.last_phys;
+        last_search_phys = saved.last_search_phys;
+        searches.used = saved.search_used;
+        searches.records = saved.search_records;
+        searches.keys = saved.search_keys;
+        searches.natural = saved.natural;
+        searches.last_natural = saved.last_natural;
+    }
     while let Some(d) = decision(&s) {
+        if credit.is_some() {
+            let seeds = src
+                .guide_policy_seeds
+                .map(|seed| credit_seed(seed, "live", d.step));
+            live_focal.reseed_sampling_v1(seeds);
+            live_opp.reseed_sampling_v1(seeds);
+        }
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
             let remaining_before = allocation.total.saturating_sub(searches.used);
             let new_phys = last_phys != Some(d.physical_decision_id);
             let phys_index = if new_phys { physical } else { physical - 1 };
-            let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
+            let (mut lookup, mut hit) = match resume_hit.take() {
+                Some(hit) => hit,
+                None => cursor.lookup(&s, d)?,
+            };
             let mut refreshed = None;
             let mut scheduled = None;
             let probe_here = probe.filter(|p| p.at == nonforced);
-            let step = if let Some(p) = probe_here {
+            let step = if let Some(record) = resume_record.take() {
+                // Scheduler was already sampled at the root before the snapshot.
+                // Only replace this request. Future consultations remain enabled.
+                let amount = record["amount"].as_u64().ok_or("invalid resumed request")?;
+                scheduled = Some(record);
+                if amount == 0 {
+                    Step::Plain
+                } else {
+                    Step::Refresh(amount)
+                }
+            } else if let Some(p) = probe_here {
                 let Lookup::Supported(e) = lookup else {
                     invalid = Some(format!("probe root at step {} is not supported", d.step));
                     break;
@@ -590,6 +754,47 @@ pub(super) fn guide(
                             counts,
                             context,
                         })?;
+                        if collect_credit {
+                            eligible += 1;
+                            let spec = credit.unwrap();
+                            if let Some(slot) =
+                                reservoir_slot(&mut sample_rng, eligible, spec.max_roots)
+                            {
+                                let sample = CreditSample {
+                                    resume: Resume {
+                                        session: s.clone(),
+                                        cursor: cursor.clone(),
+                                        lookup,
+                                        hit: hit.clone(),
+                                        root_record: record.clone(),
+                                        cursor_keys: cursor_keys.clone(),
+                                        suffix: suffix.clone(),
+                                        meter,
+                                        counters: c,
+                                        actions: actions.clone(),
+                                        decisions: decisions.clone(),
+                                        nonforced,
+                                        last_search_at,
+                                        physical,
+                                        last_phys,
+                                        last_search_phys,
+                                        search_used: searches.used,
+                                        search_records: searches.records.clone(),
+                                        search_keys: searches.keys.clone(),
+                                        natural: searches.natural,
+                                        last_natural: searches.last_natural,
+                                    },
+                                    scheduler: sc.fork()?,
+                                    focal: live_focal.fork_for_continuation_v1()?,
+                                    opponent: live_opp.fork_for_continuation_v1()?,
+                                };
+                                if slot == samples.len() {
+                                    samples.push(sample);
+                                } else {
+                                    samples[slot] = sample;
+                                }
+                            }
+                        }
                         scheduled = Some(record);
                         if amount > 0 {
                             Step::Refresh(amount)
@@ -724,15 +929,63 @@ pub(super) fn guide(
         (Vec::new(), Vec::new())
     };
     let valid = invalid.is_none() && end.is_some_and(|e| e != "nonnatural");
-    Ok((
-        json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
+    let mut result = json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
             "searches":searches.records,"transitions_used":searches.used,
             "key_mode":run.mode.label(),"search_keys":searches.keys.json(),"execution_keys":cursor_keys.json(),
             "sequence":suffix.as_ref().map(|x| x.json()),"real_transitions":meter.spent,
-            "wall":started.elapsed().as_secs_f64()}),
-        kept,
-    ))
+            "wall":started.elapsed().as_secs_f64()});
+    if collect_credit {
+        let spec = credit.unwrap();
+        let inclusion = samples.len() as f64 / eligible.max(1) as f64;
+        samples.sort_by_key(|s| s.resume.root_record["index"].as_u64().unwrap());
+        let mut rows = Vec::new();
+        for mut sample in samples {
+            let root = sample.resume.root_record.clone();
+            let search_before = sample.resume.search_used;
+            let real_before = sample.resume.meter.spent;
+            let intervene = true;
+            #[cfg(test)]
+            let intervene = intervene && !spec.replay_factual;
+            let baseline = if !valid {
+                json!({"valid":false,"end":null,"invalid_reason":"factual game nonterminal"})
+            } else if root["amount"] == 0 && intervene {
+                // Identical intervention: reuse the factual terminal outcome exactly.
+                json!({"valid":true,"end":end,"reused_factual":true,
+                    "transitions_used":search_before,"real_transitions":real_before})
+            } else {
+                if intervene {
+                    sample.resume.root_record["chosen"] = json!(0);
+                    sample.resume.root_record["amount"] = json!(0);
+                    sample.resume.root_record["counterfactual_skip"] = json!(true);
+                }
+                guide_from(
+                    sh,
+                    searches.roles,
+                    &mut sample.focal,
+                    &mut sample.opponent,
+                    anchor,
+                    src,
+                    opp,
+                    allocation,
+                    None,
+                    run,
+                    Some(sample.scheduler.as_mut()),
+                    Some(sample.resume),
+                )?
+                .0
+            };
+            rows.push(json!({"index":root["index"],"amount":root["amount"],
+                "inclusion_probability":inclusion,
+                "extra_search_transitions":baseline["transitions_used"].as_u64().map(|n| n - search_before),
+                "extra_real_transitions":baseline["real_transitions"].as_u64().map(|n| n - real_before),
+                "baseline":baseline}));
+        }
+        result["paired_credit"] = json!({"schema":"allocator-paired-v1", "coupling":"event-step-v1",
+            "max_roots":spec.max_roots,"sample_seed":spec.sample_seed,"eligible":eligible,"samples":rows});
+        result["wall"] = json!(started.elapsed().as_secs_f64());
+    }
+    Ok((result, kept))
 }
 
 /// One total-budget arm-game from an ordinary opening (collab
@@ -1041,6 +1294,142 @@ mod tests {
 
     fn roles(policy: &FrozenPlayPolicyV1) -> Roles {
         bank_roles(policy, std::slice::from_ref(policy)).unwrap()
+    }
+
+    #[derive(Clone)]
+    struct ReplayScheduler {
+        credit: CreditSpec,
+        index: u64,
+    }
+
+    impl Consult for ReplayScheduler {
+        fn cap(&self) -> u64 {
+            256
+        }
+        fn credit(&self) -> Option<CreditSpec> {
+            Some(self.credit)
+        }
+        fn fork(&self) -> Result<Box<dyn Consult>, String> {
+            Ok(Box::new(self.clone()))
+        }
+        fn consult(&mut self, c: &ConsultCtx<'_>) -> Result<(u64, Value), String> {
+            let amount = 64.min(c.counts.remaining);
+            let record = json!({"index":self.index,"chosen":1,"amount":amount});
+            self.index += 1;
+            Ok((amount, record))
+        }
+    }
+
+    fn without_wall(mut v: Value) -> Value {
+        match &mut v {
+            Value::Object(m) => {
+                m.remove("wall");
+                for child in m.values_mut() {
+                    *child = without_wall(child.take());
+                }
+            }
+            Value::Array(a) => {
+                for child in a {
+                    *child = without_wall(child.take());
+                }
+            }
+            _ => (),
+        }
+        v
+    }
+
+    /// Real engine, private live policies, search trees and scheduler snapshots.
+    /// Resuming an unchanged request must reproduce every deterministic field,
+    /// including prefix counters, retained knowledge and subsequent requests.
+    #[test]
+    #[ignore = "native correctness: one small-search game and three terminal replays"]
+    fn paired_snapshot_replays_unchanged_request_exactly() {
+        use super::super::bank::{BankSpec, SPEC_SCHEMA};
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let anchor = game(11);
+        let src: SourceSpec = serde_json::from_value(json!({
+            "id":"paired-replay", "own":4, "other":5, "seat":0, "opp":"fixture",
+            "seed":11,"starting_player":0,"source_policy_seeds":[1,2],"anchor_draw":0,
+            "guide_policy_seeds":[71,93],"search_root":"paired-replay"
+        }))
+        .unwrap();
+        let sh = BankShared {
+            spec: BankSpec {
+                schema: SPEC_SCHEMA.into(),
+                namespace: "spy-reset-pilot-v1".into(),
+                lineage: "fixture".into(),
+                runtime_rules: "resolution-boundary-v1".into(),
+                select_rule: "fpu-1.5".into(),
+                max_physical_decisions: 100_000,
+                max_policy_steps: 200_000,
+                decks: vec![],
+                sources: vec![],
+            },
+            labels: vec!["fixture".into()],
+            opponents: vec![],
+            prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
+            limits: Limits::FORMAL,
+        };
+        let execute = |max_roots| {
+            let mut scheduler = ReplayScheduler {
+                credit: CreditSpec {
+                    max_roots,
+                    sample_seed: 19,
+                    replay_factual: true,
+                },
+                index: 0,
+            };
+            guide(
+                &sh,
+                &mut roles(&policy),
+                &mut policy.fork_for_collection_v3().unwrap(),
+                &mut policy.fork_for_collection_v3().unwrap(),
+                &anchor,
+                &src,
+                0,
+                Allocation {
+                    anchor: 0,
+                    refresh: 0,
+                    total: 256,
+                },
+                None,
+                GuideRun {
+                    opening: true,
+                    mode: KeyMode::Repaired,
+                    extended: true,
+                },
+                Some(&mut scheduler),
+            )
+            .unwrap()
+            .0
+        };
+        let reference = without_wall(execute(0));
+        assert_eq!(reference["valid"], true, "{reference}");
+        let mut replay = without_wall(execute(3));
+        let pairs = replay
+            .as_object_mut()
+            .unwrap()
+            .remove("paired_credit")
+            .unwrap();
+        assert_eq!(
+            replay, reference,
+            "collecting snapshots changed the factual game"
+        );
+        let samples = pairs["samples"].as_array().unwrap();
+        assert_eq!(samples.len(), 3);
+        assert!(samples.iter().any(|s| s["index"].as_u64().unwrap() > 0));
+        for sample in samples {
+            assert_eq!(
+                sample["baseline"], reference,
+                "resume at {} changed the game",
+                sample["index"]
+            );
+        }
+        use sha2::{Digest, Sha256};
+        println!(
+            "unchanged-request primary SHA-256: {:x}",
+            Sha256::digest(serde_json::to_vec(&reference).unwrap())
+        );
     }
 
     /// Live plain and opponent policies are separate from the search roles:

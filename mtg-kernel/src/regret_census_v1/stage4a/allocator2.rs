@@ -28,7 +28,7 @@ use super::arms::softmax;
 use super::bank::{bank_roles, source_session, BankShared, SourceSpec};
 use super::canon2::KeyMode;
 use super::refresh::{
-    guide, Allocation, Consult, ConsultCtx, GuideContext, GuideRun, Lookup, ProbeSpec,
+    guide, Allocation, Consult, ConsultCtx, CreditSpec, GuideContext, GuideRun, Lookup, ProbeSpec,
     ANCHOR_BUDGET, REFRESH_BUDGET,
 };
 use crate::native_policy_value_net_v1::{PooledRepresentationV1, POOLING_SCHEMA_V1};
@@ -551,9 +551,11 @@ pub(super) struct Scheduler {
     arm: Arm,
     controller: Option<Controller>,
     rng: SplitMix64,
+    controller_seed: u64,
     scorer: FrozenPlayPolicyV1,
     cap: u64,
     probe: Option<ProbeSpec>,
+    credit: Option<CreditSpec>,
     pub(super) seconds: f64,
     pub(super) decisions: u64,
     pub(super) requested: u64,
@@ -577,9 +579,11 @@ impl Scheduler {
             arm,
             controller,
             rng: SplitMix64::seed(controller_seed),
+            controller_seed,
             scorer: policy.fork_for_collection_v3()?,
             cap,
             probe,
+            credit: None,
             seconds: 0.0,
             decisions: 0,
             requested: 0,
@@ -594,6 +598,26 @@ impl Consult for Scheduler {
 
     fn probe(&self) -> Option<ProbeSpec> {
         self.probe
+    }
+
+    fn credit(&self) -> Option<CreditSpec> {
+        self.credit
+    }
+
+    fn fork(&self) -> Result<Box<dyn Consult>, String> {
+        Ok(Box::new(Self {
+            arm: self.arm,
+            controller: self.controller.clone(),
+            rng: self.rng,
+            controller_seed: self.controller_seed,
+            scorer: self.scorer.fork_for_collection_v3()?,
+            cap: self.cap,
+            probe: self.probe,
+            credit: self.credit,
+            seconds: self.seconds,
+            decisions: self.decisions,
+            requested: self.requested,
+        }))
     }
 
     fn consult(&mut self, c: &ConsultCtx<'_>) -> Result<(u64, Value), String> {
@@ -646,7 +670,18 @@ impl Consult for Scheduler {
         let (i, u) = if cs.len() < 2 {
             (0, None)
         } else {
-            let u = uniform(&mut self.rng);
+            let u = if self.credit.is_some() {
+                let step = super::play::decision(c.s)
+                    .ok_or("terminal consultation")?
+                    .step;
+                uniform(&mut SplitMix64::seed(super::refresh::credit_seed(
+                    self.controller_seed,
+                    "controller",
+                    step,
+                )))
+            } else {
+                uniform(&mut self.rng)
+            };
             (pick(&mu_c, u), Some(u))
         };
         let amount = cs[i].amount;
@@ -694,6 +729,8 @@ pub(super) struct AllocCase {
     pub(super) case: SourceSpec,
     #[serde(default)]
     pub(super) probe: Option<ProbeCase>,
+    #[serde(default)]
+    pub(super) credit: Option<CreditSpec>,
 }
 
 /// One arm-game from the case's ordinary opening.
@@ -711,6 +748,14 @@ pub(super) fn allocator_case(
     let started = Instant::now();
     let src = &case.case;
     let arm = Arm::parse(&case.arm)?;
+    if let Some(credit) = case.credit {
+        if credit.max_roots > 3 || case.probe.is_some() || arm == Arm::Current {
+            return Err(
+                "paired mode requires 0..=3 roots, a scheduler arm and no supported-node probe"
+                    .into(),
+            );
+        }
+    }
     let deck = sh.spec.decks.get(src.own).map(|d| d.label.as_str());
     if deck.and_then(|l| l.split('/').next()) != Some(super::SPY_DECK) {
         return Err(format!("{}: allocator v2 plays Spy only", case.id));
@@ -773,6 +818,9 @@ pub(super) fn allocator_case(
             )
         }
     };
+    if let Some(scheduler) = scheduler.as_mut() {
+        scheduler.credit = case.credit;
+    }
     let (rec, _) = guide(
         sh,
         &mut roles,
@@ -797,6 +845,7 @@ pub(super) fn allocator_case(
         "opp":src.opp,"seed":src.seed,"starting_player":src.starting_player,
         "live_policy_seeds":src.guide_policy_seeds,"search_root":src.search_root,
         "controller_seed":case.controller_seed,"bank_binding_sha256":binding,
+        "credit_config":case.credit.map(|c| json!({"max_roots":c.max_roots,"sample_seed":c.sample_seed})),
         "cap":total,"allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
         "controller":{"feature_schema":FEATURE_SCHEMA,"features":S_FEATURES.to_vec(),"actions":ACTION_LABELS,
             "pooling_schema":POOLING_SCHEMA_V1,"positive_at_full":POSITIVE_AT_FULL,

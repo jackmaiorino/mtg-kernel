@@ -32,6 +32,14 @@ KL(mu_b || mu_theta) stops further epochs when above 0.02. Arithmetic is numpy f
 without BLAS (elementwise products and pairwise sums in a fixed order): replaying the same
 ordered rows reproduces the weights and Adam state byte for byte.
 
+Paired collection (plan credit_roots=1..3) replaces those advantages with the terminal
+factual-minus-skip difference divided by uniform-reservoir inclusion probability. All
+other factual decisions receive zero advantage; the critic is frozen and an all-zero
+gradient does not advance Adam. Both continuations keep their own remaining budget and
+the same frozen controller. credit_roots=0 in a queue uses the same event-keyed sampler
+without collecting forks, for q/S/H evaluation. Omission preserves legacy sampling.
+Formal paired collection requires workload/K-specific completed-work qualification.
+
 CLI (JSON summaries on stdout):
   schedule --out DIR [--exclude-seeds FILE ...]
   freeze-norm --rows FILE ... --lineage L --arm S|H --out NORM.json
@@ -520,8 +528,67 @@ def game_terms(row: dict, w: dict, weights_sha: str, tol: float = 1e-9):
         if abs(value - s["critic"]) > tol:
             raise ValueError(f"{row['id']}: logged critic differs at decision {s['index']}")
         decisions.append({"x": x, "q": q, "cs": cs, "chosen": s["chosen"],
-                          "mu_b": np.array(s["mu"], dtype=float), "critic_b": float(s["critic"])})
+                          "mu_b": np.array(s["mu"], dtype=float), "critic_b": float(s["critic"]),
+                          "index": s["index"], "amount": s["amount"]})
     return REWARD[g["end"]], decisions
+
+
+def reservoir_indices(seed_value: int, count: int, capacity: int) -> list[int]:
+    """The native uniform reservoir, including its rejection-sampled integer draw."""
+    mask = (1 << 64) - 1
+    state = seed_value
+    selected = []
+    for seen in range(1, count + 1):
+        if seen <= capacity:
+            selected.append(seen - 1)
+            continue
+        threshold = ((-seen) & mask) % seen
+        while True:
+            state = (state + 0x9E3779B97F4A7C15) & mask
+            z = state
+            z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & mask
+            z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & mask
+            z ^= z >> 31
+            if z >= threshold:
+                slot = z % seen
+                break
+        if slot < capacity:
+            selected[slot] = seen - 1
+    return sorted(selected)
+
+
+def paired_advantages(row: dict, decisions: list, reward: int) -> None:
+    """Skip is an action-independent terminal baseline at collection weights.
+
+    Reservoir inverse-inclusion weights recover the sum over actual consultations.
+    Counterfactual suffixes never become actor trajectories. Disable the unused critic:
+    its shared-trunk gradient would otherwise move the actor on zero-signal returns.
+    """
+    p = row["game"]["paired_credit"]
+    count = len(decisions)
+    capacity = p["max_roots"]
+    if (p.get("schema") != "allocator-paired-v1" or p.get("coupling") != "event-step-v1"
+            or type(capacity) is not int or not 1 <= capacity <= 3
+            or p["eligible"] != count or [d["index"] for d in decisions] != list(range(count))):
+        raise ValueError("paired credit schema, capacity or consultation count differs")
+    expected = reservoir_indices(p["sample_seed"], count, capacity)
+    if [s["index"] for s in p["samples"]] != expected:
+        raise ValueError("paired samples differ from the uniform reservoir")
+    for d in decisions:
+        d["adv"] = 0.0
+        d["critic_coef"] = 0.0
+    inclusion = min(capacity, count) / count if count else 1.0
+    for sample in p["samples"]:
+        d = decisions[sample["index"]]
+        baseline = sample["baseline"]
+        if sample["amount"] != d["amount"] or sample["inclusion_probability"] != inclusion:
+            raise ValueError("paired action or inclusion probability differs")
+        if not baseline.get("valid") or baseline.get("end") not in REWARD:
+            raise TechnicalNonterminal("paired continuation has no natural terminal outcome")
+        delta = reward - REWARD[baseline["end"]]
+        if d["amount"] == 0 and delta != 0:
+            raise ValueError("skip/skip must have identical terminal outcomes")
+        d["adv"] = delta / inclusion
 
 
 def minibatch_grad(params: dict, norm: dict, games: list):
@@ -557,8 +624,10 @@ def minibatch_grad(params: dict, norm: dict, games: list):
             if use:
                 dl_dmu = -(adv / mu_b) / gsize
                 dz = dl_dmu * (1 - EPSILON) * pi * (inside - pi_e)
-            dv = CRITIC_COEF * 2.0 * (value - g["reward"]) / (t * gsize)
-            critic_loss += (value - g["reward"]) ** 2 / (t * gsize)
+            critic_coef = d.get("critic_coef", CRITIC_COEF)
+            dv = critic_coef * 2.0 * (value - g["reward"]) / (t * gsize)
+            if critic_coef:
+                critic_loss += (value - g["reward"]) ** 2 / (t * gsize)
             grad["wa"] += dz[:, None] * hid[None, :]
             grad["ba"] += dz
             grad["wv"] += dv * hid
@@ -575,9 +644,11 @@ def global_norm(grad: dict) -> float:
     return math.sqrt(sum(float((grad[k] * grad[k]).sum()) for k in PARAMS))
 
 
-def adam_step(params, grad, m, v, t, lr=LR):
+def adam_step(params, grad, m, v, t, lr=LR, frozen=()):
     b1, b2 = BETAS
     for k in PARAMS:
+        if k in frozen:
+            continue
         m[k] = b1 * m[k] + (1 - b1) * grad[k]
         v[k] = b2 * v[k] + (1 - b2) * grad[k] * grad[k]
         mhat = m[k] / (1 - b1 ** t)
@@ -617,8 +688,12 @@ def ppo(params: dict, norm: dict, games: list, lineage: str, update: int, m: dic
             scale = GRAD_CAP / gn if gn > GRAD_CAP else 1.0
             if scale != 1.0:
                 grad = {k: grad[k] * scale for k in PARAMS}
-            t += 1
-            adam_step(params, grad, m, v, t, lr)
+            # An uninformative paired minibatch must not drift on Adam momentum.
+            no_information = gn == 0.0 and all(g.get("paired", False) for g in mb)
+            if not no_information:
+                t += 1
+                frozen = ("wv", "bv") if all(g.get("paired", False) for g in mb) else ()
+                adam_step(params, grad, m, v, t, lr, frozen=frozen)
             steps.append(dict(st, grad_norm=gn, capped=gn > GRAD_CAP,
                               actor_grad_norm=math.sqrt(float((grad["wa"] ** 2).sum() + (grad["ba"] ** 2).sum())),
                               games=[order[i] for i in range(start, min(start + minibatch, len(order)))]))
@@ -651,11 +726,17 @@ def update(weights: bytes, adam: bytes | None, rows: list, index: int, lineage: 
     if len(rows) != games_per_parent:
         raise ValueError(f"a parent's batch has {games_per_parent} games, not {len(rows)}")
     games = []
+    paired = [r is not None and "paired_credit" in r.get("game", {}) for r in rows]
+    if any(paired) and not all(paired):
+        raise ValueError("cannot mix paired and legacy credit in one update")
     for r in rows:
         reward, decisions = game_terms(r, w, wsha)
-        for d in decisions:
-            d["adv"] = reward - d["critic_b"]
-        games.append({"reward": reward, "decisions": decisions})
+        if all(paired):
+            paired_advantages(r, decisions, reward)
+        else:
+            for d in decisions:
+                d["adv"] = reward - d["critic_b"]
+        games.append({"reward": reward, "decisions": decisions, "paired": all(paired)})
     params = {k: w["params"][k].copy() for k in PARAMS}
     m, v, t = read_adam(adam, params, wsha)
     tv_before = tv_from_q(params, w["norm"], games)
@@ -672,6 +753,8 @@ def update(weights: bytes, adam: bytes | None, rows: list, index: int, lineage: 
               "epochs_run": len(epochs), "kl_stopped": len(epochs) < EPOCHS, "epochs": epochs,
               "tv_from_q_before": tv_before, "tv_from_q_after": tv_from_q(params, w["norm"], games),
               "rows": [{"id": r["id"], "primary_sha256": primary_sha(r)} for r in rows]}
+    if all(paired):
+        record["credit"] = "allocator-paired-v1"
     return out, adam_out, record
 
 
@@ -765,8 +848,10 @@ def admit(plan: dict) -> Path:
         raise SystemExit("binary hash differs from the plan")
     if plan.get("formal"):
         ev = json.loads(Path(plan["throughput_evidence"]).read_text())
-        if not (ev.get("workload") == WORKLOAD and ev.get("host") == plan["host"]
+        workload = "allocator-paired-v1/s4a-allocator-v2" if plan.get("credit_roots") is not None else WORKLOAD
+        if not (ev.get("workload") == workload and ev.get("host") == plan["host"]
                 and ev.get("binary_sha256") == plan["binary_sha256"]
+                and ev.get("credit_roots") == plan.get("credit_roots")
                 and int(ev.get("qualified_parallel_slots", 0)) >= int(plan.get("slots", 1))):
             raise SystemExit("no matching throughput evidence for this host, binary and slot count")
     return binary
@@ -774,6 +859,29 @@ def admit(plan: dict) -> Path:
 
 def case_line(c: dict, arm: str) -> dict:
     return {"id": f"{c['id']}-{arm}", "arm": arm, "controller_seed": c["controller_seed"], "case": c["case"]}
+
+
+def configured_case(c: dict, arm: str, plan: dict) -> dict:
+    line = case_line(c, arm)
+    roots = plan.get("credit_roots")
+    if roots is not None:
+        if type(roots) is not int or not 0 <= roots <= 3 or arm == "current":
+            raise ValueError("paired queue requires 0..3 roots and q/S/H arms")
+        line["credit"] = {"max_roots": roots, "sample_seed": seed(NS, "paired-reservoir", c["id"])}
+    return line
+
+
+def matches_case(row, line, lineage, total, weights_sha):
+    """Reuse only the requested case, sampler, budget and frozen controller."""
+    if row is None or row.get("kind") != "allocator2_game":
+        return False
+    src = line["case"]
+    expected = {k: src[k] for k in ("own", "other", "seat", "opp", "seed", "starting_player", "search_root")}
+    expected.update(id=line["id"], arm=line["arm"], lineage=lineage, cap=total,
+                    live_policy_seeds=src["guide_policy_seeds"], controller_seed=line["controller_seed"],
+                    credit_config=line.get("credit"), probe=line.get("probe"))
+    return (all(row.get(k) == v for k, v in expected.items())
+            and row.get("controller", {}).get("weights_sha256") == weights_sha)
 
 
 def launch(plan: dict, binary: Path, job: dict, out: Path):
@@ -828,17 +936,27 @@ def load_cases(schedule: Path, domain: str) -> list:
 
 
 def write_state(path: Path, state: dict) -> None:
-    path.write_text(json.dumps(state, indent=1) + "\n")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w") as stream:
+        stream.write(json.dumps(state, indent=1) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
 
 def train(plan: dict) -> int:
     """Synchronous controller training of one arm. PLAN: {root, binary, binary_sha256, host,
     arm (S|H), schedule, domain (a training domain), cycles (1 or 2), out_dir, slots,
     init {r1: W0, r2: W0}, max_attempts (default 2), formal, throughput_evidence, [total],
-    [lr (default LR; recorded per update)]}.
+    [lr (default LR; recorded per update)], [init_adam {r1: A, r2: A}]}.
+    A later training domain can start from endpoint weights only with their matching
+    Adam files; update indices continue from those weights. Both parents must agree.
     Batch b plays its 36 games at the frozen weights of both parents, then one PPO update per
     parent. Resumes from out_dir/STATE.json; a technical nonterminal pauses (never a loss)."""
     binary = admit(plan)
+    credit_roots = plan.get("credit_roots")
+    if credit_roots is not None and (type(credit_roots) is not int or not 1 <= credit_roots <= 3):
+        raise ValueError("credit_roots must be 1..3")
     arm = plan["arm"]
     if arm not in LEARNED:
         raise SystemExit("train needs arm S or H")
@@ -850,20 +968,45 @@ def train(plan: dict) -> int:
     cases = load_cases(schedule, plan["domain"])
     batches = json.loads((schedule / f"batches-{plan['domain']}.json").read_text())
     n_updates = BATCHES_PER_CYCLE * int(plan.get("cycles", 1))
+    if n_updates > len(batches):
+        raise ValueError("requested cycles exceed this domain; continue on the next training domain")
+    config = h("train-plan", arm, plan["domain"], cases, batches, plan.get("total", CAP),
+               credit_roots, plan.get("lr", LR), plan["binary_sha256"])
     if state_path.exists():
         state = json.loads(state_path.read_text())
+        if state.get("config") != config:
+            raise ValueError("resumed training case/budget/controller configuration differs")
+        if state.get("credit_roots") != credit_roots:
+            raise ValueError("resuming with a different credit estimator is not supported")
     else:
-        state = {"next_update": 0, "attempts": {}, "status": "running", "lineages": {}}
+        state = {"next_update": 0, "attempts": {}, "status": "running", "lineages": {}, "config": config}
+        if credit_roots is not None:
+            state["credit_roots"] = credit_roots
+        initial_updates = set()
         for lin in LINEAGES:
             data = Path(plan["init"][lin]).read_bytes()
             w = read_weights(data)
-            if w["arm"] != arm or w["parent"]["lineage"] != lin or w["doc"]["update"] != 0:
-                raise SystemExit(f"init weights for {lin} are not an update-0 {arm} controller of {lin}")
-            name = f"w00-{lin}.json"
+            if w["arm"] != arm or w["parent"]["lineage"] != lin:
+                raise SystemExit(f"init weights for {lin} are not an {arm} controller of {lin}")
+            initial_updates.add(w["doc"]["update"])
+            adam_path = plan.get("init_adam", {}).get(lin)
+            if w["doc"]["update"] > 0 and not adam_path:
+                raise ValueError("continuation requires matching init_adam for each parent")
+            adam_data = Path(adam_path).read_bytes() if adam_path else None
+            read_adam(adam_data, w["params"], sha(data))
+            name = f"w{w['doc']['update']:02d}-{lin}.json"
             (out / name).write_bytes(data)
-            state["lineages"][lin] = {"weights": name, "weights_sha256": sha(data), "adam": None, "adam_sha256": None}
+            aname = f"adam{w['doc']['update']:02d}-{lin}.json" if adam_data else None
+            if adam_data:
+                (out / aname).write_bytes(adam_data)
+            state["lineages"][lin] = {"weights": name, "weights_sha256": sha(data), "adam": aname,
+                                      "adam_sha256": sha(adam_data) if adam_data else None}
+        if len(initial_updates) != 1:
+            raise ValueError("parent continuation update indices differ")
+        state["base_update"] = initial_updates.pop()
     while state["next_update"] < min(n_updates, len(batches)):
         k = state["next_update"]
+        update_index = state["base_update"] + k
         frozen = {}
         for lin in LINEAGES:
             st = state["lineages"][lin]
@@ -875,10 +1018,14 @@ def train(plan: dict) -> int:
         for lin in LINEAGES:
             for i, index in enumerate(batches[k]["games"][lin]):
                 label = f"t{k:02d}-{lin}-{i:02d}"
+                line = configured_case(cases[index], arm, plan)
                 row = read_row(out / f"{label}.jsonl")
-                done = (row is not None and row.get("kind") == "allocator2_game"
-                        and row["controller"]["weights_sha256"] == state["lineages"][lin]["weights_sha256"]
+                done = (matches_case(row, line, lin, plan.get("total", CAP), state["lineages"][lin]["weights_sha256"])
                         and row["game"].get("valid") and row["game"].get("end") in REWARD)
+                if done and credit_roots is not None:
+                    p = row["game"].get("paired_credit", {})
+                    done = (p.get("max_roots") == credit_roots
+                            and all(s["baseline"].get("valid") for s in p.get("samples", [])))
                 if done:
                     continue
                 n = state["attempts"].get(label, 0)
@@ -890,7 +1037,7 @@ def train(plan: dict) -> int:
                 if (out / f"{label}.jsonl").exists():
                     (out / f"{label}.jsonl").rename(out / f"{label}.failed{n}.jsonl")
                 state["attempts"][label] = n + 1
-                jobs.append({"label": label, "lineage": lin, "line": case_line(cases[index], arm),
+                jobs.append({"label": label, "lineage": lin, "line": line,
                              "weights": str(frozen[lin][0]), "out": str(out / f"{label}.jsonl")})
         write_state(state_path, state)
         run_jobs(plan, binary, jobs, int(plan.get("slots", 1)), ledger, "training")
@@ -900,7 +1047,9 @@ def train(plan: dict) -> int:
                 st = state["lineages"][lin]
                 files = [out / f"t{k:02d}-{lin}-{i:02d}.jsonl" for i in range(len(batches[k]["games"][lin]))]
                 adam = (out / st["adam"]).read_bytes() if st["adam"] else None
-                new, adam_new, rec = update(frozen[lin][1], adam, [read_row(p) for p in files], k, lin,
+                if (sha(adam) if adam is not None else None) != st["adam_sha256"]:
+                    raise ValueError("saved Adam state changed")
+                new, adam_new, rec = update(frozen[lin][1], adam, [read_row(p) for p in files], update_index, lin,
                                             lr=float(plan.get("lr", LR)))
                 results[lin] = (files, new, adam_new, rec)
         except TechnicalNonterminal as e:
@@ -910,7 +1059,7 @@ def train(plan: dict) -> int:
             return 3
         for lin, (files, new, adam_new, rec) in results.items():
             st = state["lineages"][lin]
-            wname, aname = f"w{k + 1:02d}-{lin}.json", f"adam{k + 1:02d}-{lin}.json"
+            wname, aname = f"w{update_index + 1:02d}-{lin}.json", f"adam{update_index + 1:02d}-{lin}.json"
             (out / wname).write_bytes(new)
             (out / aname).write_bytes(adam_new)
             rec.update(kind="update", row_files=[str(p) for p in files], weights_in=str(out / st["weights"]),
@@ -942,23 +1091,35 @@ def queue(plan: dict) -> int:
     jobs, cache = [], {}
     for j in plan.get("jobs", []):
         row = read_row(out / f"{j['label']}.jsonl")
-        if row is not None and row.get("kind") == "allocator2_game":
-            continue
         if j["domain"] not in cache:
             cache[j["domain"]] = load_cases(schedule, j["domain"])
         c = cache[j["domain"]][j["index"]]
+        line = configured_case(c, j["arm"], plan)
+        weights_sha = sha(Path(j["weights"]).read_bytes()) if j.get("weights") else None
+        if row is not None and row.get("kind") == "allocator2_game":
+            if not matches_case(row, line, c["lineage"], plan.get("total", CAP), weights_sha):
+                raise ValueError("saved queue row used a different case/controller/credit/budget; use a new output directory")
+            continue
         if (j["arm"] in LEARNED) != bool(j.get("weights")):
             raise SystemExit(f"{j['label']}: learned arms need weights, controls none")
-        jobs.append({"label": j["label"], "lineage": c["lineage"], "line": case_line(c, j["arm"]),
+        jobs.append({"label": j["label"], "lineage": c["lineage"], "line": line,
                      "weights": j.get("weights"), "out": str(out / f"{j['label']}.jsonl")})
     if plan.get("probe_cases"):
+        if plan.get("credit_roots") is not None:
+            raise ValueError("supported-node probes cannot use paired credit")
         for line in [json.loads(ln) for ln in Path(plan["probe_cases"]).read_text().splitlines() if ln.strip()]:
+            if "credit" in line or "probe" not in line:
+                raise ValueError("probe_cases requires supported-node probes without paired credit")
             label = line["id"]
-            if (row := read_row(out / f"{label}.jsonl")) is not None and row.get("kind") == "allocator2_game":
-                continue
             lin = line["lineage"]
+            native_line = {k: v for k, v in line.items() if k not in ("lineage", "weights")}
+            weights_sha = sha(Path(line["weights"]).read_bytes()) if line.get("weights") else None
+            if (row := read_row(out / f"{label}.jsonl")) is not None and row.get("kind") == "allocator2_game":
+                if not matches_case(row, native_line, lin, plan.get("total", CAP), weights_sha):
+                    raise ValueError("saved probe row differs from requested case/controller")
+                continue
             jobs.append({"label": label, "lineage": lin,
-                         "line": {k: v for k, v in line.items() if k not in ("lineage", "weights")},
+                         "line": native_line,
                          "weights": line.get("weights") if line["arm"] in LEARNED else None,
                          "out": str(out / f"{label}.jsonl")})
     print(json.dumps({"pending": len(jobs), "host": plan["host"], "slots": plan["slots"]}), flush=True)

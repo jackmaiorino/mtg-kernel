@@ -543,6 +543,7 @@ impl KeyStats {
 }
 
 /// One keyed focal frame.
+#[derive(Clone)]
 pub(crate) struct Step {
     pub(crate) legacy_key: Key,
     pub(crate) legacy: Canon,
@@ -556,6 +557,7 @@ pub(crate) struct Step {
 
 /// Keys along one path from the root; selection and frozen execution use it
 /// identically.
+#[derive(Clone)]
 pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
     pub(crate) mode: KeyMode,
     legacy: (Key, Vec<u8>),
