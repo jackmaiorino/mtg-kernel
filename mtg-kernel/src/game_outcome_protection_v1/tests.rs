@@ -211,12 +211,7 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
             let active_player = caster.opponent();
             let mut state = ready_state_for(active_player);
             let herald = put(&mut state, caster, "Herald of Eternal Dawn", Zone::Hand);
-            let offer = put(
-                &mut state,
-                active_player,
-                "An Offer You Can't Refuse",
-                Zone::Hand,
-            );
+            let offer = put(&mut state, active_player, "Essence Scatter", Zone::Hand);
             state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 4;
             state.players[caster.index()].mana_pool[ManaColor::W.pool_index()] = 2;
             assert!(matches!(engine::advance_until_decision(&mut state),
@@ -243,6 +238,7 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
             assert!(!cannot_lose(&state, caster));
             engine::step(&mut state, Action::Pass).unwrap();
             if counter {
+                state.players[active_player.index()].mana_pool[ManaColor::C.pool_index()] = 1;
                 state.players[active_player.index()].mana_pool[ManaColor::U.pool_index()] = 1;
                 assert!(matches!(engine::advance_until_decision(&mut state),
                     Decision::CastSpellOrPass { player, ref castable_spells, .. }
@@ -296,7 +292,8 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
                                 == "Treasure Token"
                         })
                         .count();
-                    assert_eq!(treasures, 2);
+                    assert_eq!(branch.objects.get(offer).zone, Zone::Graveyard);
+                    assert_eq!(treasures, 0);
                 }
             }
             assert_eq!(state, replay);
