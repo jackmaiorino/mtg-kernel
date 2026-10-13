@@ -27,6 +27,14 @@ never changes what it means. It keeps its own records beside it, under
   `topology` lists the logical CPUs with each core's efficiency class:
   hybrid Intel P cores rank above E cores.
 
+Background jobs (`run --background` or Windows `adopt --background`) yield
+to both timed reservations and ordinary claims. Ordinary admission waits
+for complete suspension before using borrowed CPUs. Background tickets
+come after every ordinary ticket. OS --priority is independent of this
+allocation class; CI uses --background --priority idle. `adopt` watches a
+verified existing worker and all descendants until its job object empties.
+Idle CI listeners do not need a claim.
+
 Optional per-host config, <root>/<HOST>.slots/config.json:
   {"cores": "23-0", "keep_free": 0, "priority": "below_normal"}
 "cores" lists the cores untimed work may use, in order of preference. The
@@ -337,6 +345,39 @@ else:
         return sorted(os.sched_getaffinity(0))
 
 
+if os.name == "nt":
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("pid", wintypes.DWORD), ("heap", ctypes.c_size_t), ("module", wintypes.DWORD),
+                    ("threads", wintypes.DWORD), ("parent", wintypes.DWORD),
+                    ("priority", wintypes.LONG), ("flags", wintypes.DWORD), ("name", wintypes.WCHAR * 260)]
+
+
+def process_table() -> dict:
+    if os.name != "nt":
+        raise Refused("process ancestry requires Windows")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateToolhelp32Snapshot(2, 0)
+    if handle == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "cannot read process ancestry")
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        rows = {}
+        present = kernel.Process32FirstW(handle, ctypes.byref(entry))
+        while present:
+            rows[int(entry.pid)] = (int(entry.parent), entry.name.lower())
+            present = kernel.Process32NextW(handle, ctypes.byref(entry))
+        return rows
+    finally:
+        kernel.CloseHandle(handle)
+
+
 # ---------------------------------------------------------------- records
 
 
@@ -527,13 +568,14 @@ def live_tickets() -> list[dict]:
     return _live("queue-*.json")
 
 
-def available(config: dict, timed: dict, claims: list[dict]) -> list[int]:
+def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True) -> list[int]:
     """Cores a new claim may take now, in preference order."""
     if timed["held"] and timed["cores"] is None:
         return []
     blocked = set(timed["cores"]) if timed["held"] else set()
     allowed = config["cores"]
-    used = {core for claim in claims for core in claim["cores"]}
+    used = {core for claim in claims if background or not claim.get("background", False)
+            for core in claim["cores"]}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
     free = [core for core in allowed if core not in blocked and core not in used]
     return free[:max(0, room)]
@@ -545,13 +587,26 @@ def conflicts(cores) -> bool:
     return timed["held"] and (timed["cores"] is None or bool(set(timed["cores"]) & set(cores)))
 
 
+def claim_conflicts(cores, background: bool) -> bool:
+    """Called under the admission mutex. Background work also yields to ordinary claims."""
+    return conflicts(cores) or (background and any(
+        not claim.get("background", False) and set(claim["cores"]) & set(cores)
+        for claim in live_claims()))
+
+
+def background_busy(cores, claim_id: str) -> bool:
+    return any(claim["id"] != claim_id and claim.get("background", False)
+               and set(claim["cores"]) & set(cores) and claim.get("state") != "suspended"
+               for claim in live_claims())
+
+
 # ---------------------------------------------------------------- containment
 
 
 class Tree:
     """The pinned process tree of one claim or declaration."""
 
-    def __init__(self, cores, priority: str | None):
+    def __init__(self, cores, priority: str | None, *, contain_self: bool = True):
         self.cores = sorted(cores)
         self.priority = priority
         self.job = None
@@ -575,12 +630,14 @@ class Tree:
                 err = ctypes.get_last_error()
                 _CloseHandle(job)
                 raise OSError(err, "SetInformationJobObject failed")
-            if not _AssignProcessToJobObject(job, _GetCurrentProcess()):
+            if contain_self and not _AssignProcessToJobObject(job, _GetCurrentProcess()):
                 err = ctypes.get_last_error()
                 _CloseHandle(job)
                 raise OSError(err, "AssignProcessToJobObject failed")
             self.job = job
         else:
+            if not contain_self:
+                raise Refused("adopting an existing worker requires Windows")
             os.sched_setaffinity(0, self.cores)
             if priority is not None:
                 floor = {"normal": 0, "below_normal": 10, "idle": 19}[priority]
@@ -591,6 +648,96 @@ class Tree:
     def start(self, command: list[str], cwd: str | None, env: dict) -> subprocess.Popen:
         self.child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=os.name != "nt")
         return self.child
+
+    def adopt(self, pid: int, creation: int, *, suspend: bool = False) -> None:
+        """Bind a verified existing process using the same handle for identity and assignment."""
+        if os.name != "nt":
+            raise Refused("adopting an existing worker requires Windows")
+        handle = _OpenProcess(0x0100 | 0x0001 | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+                              | PROCESS_SUSPEND_RESUME, False, pid)
+        if not handle:
+            raise Refused(f"cannot open worker {pid} for containment")
+        bound = frozen = False
+        try:
+            if _creation_of(handle) != creation or _WaitForSingleObject(handle, 0) != WAIT_TIMEOUT:
+                raise Refused(f"worker {pid} no longer has the declared identity")
+            if suspend:
+                if _NtSuspendProcess(handle) < 0:
+                    raise Refused(f"cannot suspend worker {pid} for adoption")
+                frozen = True
+            if not _AssignProcessToJobObject(self.job, handle):
+                raise OSError(ctypes.get_last_error(), f"cannot contain worker {pid}")
+            bound = True
+            if frozen:
+                self.suspended.add(pid)
+            actual, system = ctypes.c_size_t(0), ctypes.c_size_t(0)
+            if not _GetProcessAffinityMask(handle, ctypes.byref(actual), ctypes.byref(system)):
+                raise Refused(f"cannot verify worker {pid} affinity after containment")
+            if actual.value != sum(1 << core for core in self.cores):
+                raise Refused(f"worker {pid} inherited an incompatible outer job affinity")
+        finally:
+            if frozen and not bound:
+                _NtResumeProcess(handle)
+            _CloseHandle(handle)
+
+    def adopt_worker_tree(self, pid: int, creation: int) -> None:
+        """Freeze Worker first, then freeze/contain existing descendants until none escape."""
+        # Keep handles across snapshots: an exited parent's PID cannot be reused,
+        # and its surviving children retain a verified path to the original Worker.
+        root_handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if not root_handle:
+            raise Refused("cannot retain the worker identity during adoption")
+        known = {pid: (root_handle, creation)}
+        try:
+            if _creation_of(root_handle) != creation:
+                raise Refused("worker identity changed before adoption")
+            self.adopt(pid, creation, suspend=True)
+            while True:
+                if _WaitForSingleObject(root_handle, 0) != WAIT_TIMEOUT:
+                    raise Refused("worker exited during descendant adoption")
+                snapshot_start = time.time_ns() // 100 + 116444736000000000
+                rows = process_table()
+                found = set(known)
+                while True:
+                    children = {child for child, (parent, _) in rows.items()
+                                if parent in found and child != os.getpid()}
+                    if children <= found:
+                        break
+                    found |= children
+                candidates = found - set(known)
+                for child in candidates:
+                    handle = _OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, child)
+                    if not handle:
+                        raise Refused("cannot bind an existing worker descendant")
+                    stamp = _creation_of(handle)
+                    if stamp is None or stamp > snapshot_start:
+                        _CloseHandle(handle)
+                        raise Refused("a descendant identity changed during the process snapshot")
+                    known[child] = (handle, stamp)
+                for child in candidates:
+                    parent = rows[child][0]
+                    # A reused parent PID points to a process born after its child.
+                    if parent not in known or known[parent][1] > known[child][1]:
+                        raise Refused("descendant ancestry contains a reused or unverified parent")
+                for child in candidates:
+                    handle, stamp = known[child]
+                    if _WaitForSingleObject(root_handle, 0) != WAIT_TIMEOUT:
+                        raise Refused("worker exited during descendant adoption")
+                    if _WaitForSingleObject(handle, 0) == WAIT_OBJECT_0:
+                        continue
+                    try:
+                        self.adopt(child, stamp, suspend=True)
+                    except Refused:
+                        if _WaitForSingleObject(handle, 0) != WAIT_OBJECT_0:
+                            raise
+                if not candidates:
+                    if process_state(pid, creation) != "alive" or not self.set_suspended(True):
+                        raise Refused("worker tree could not be fully suspended during adoption")
+                    return
+        finally:
+            for handle, _ in known.values():
+                if handle:
+                    _CloseHandle(handle)
 
     def members(self) -> list[int]:
         """Live processes of the tree other than this runner."""
@@ -645,7 +792,7 @@ class Tree:
 
 def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait: bool = False,
         wait_timeout: float | None = None, priority: str | None = None, claim_id: str | None = None,
-        cwd: str | None = None, on_claim=None) -> int:
+        cwd: str | None = None, on_claim=None, background: bool = False, adopted: dict | None = None) -> int:
     """Claim cores (queueing with wait), run command pinned to them, free them when its tree ends."""
     if not (lane and work_id and command):
         raise ValueError("lane, work_id and a command are required")
@@ -660,7 +807,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     if not re.fullmatch(r"[0-9a-f]{32}", claim_id):
         raise ValueError("claim id must be 32 lowercase hex digits")
     pid, creation = self_identity()
-    base = {"schema": SCHEMA, "id": claim_id, "lane": lane, "work_id": work_id, "pid": pid, "creation_time": creation}
+    base = {"schema": SCHEMA, "id": claim_id, "lane": lane, "work_id": work_id, "pid": pid,
+            "creation_time": creation, "background": background}
     ticket = slots_dir() / f"queue-{time.time_ns():020d}-{claim_id}.json"
     claim = slots_dir() / f"claim-{claim_id}.json"
     deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
@@ -670,8 +818,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
         while True:
             with Mutex():
                 tickets = live_tickets()
+                tickets.sort(key=lambda ticket: bool(ticket.get("background", False)))
                 if tickets and tickets[0]["id"] == claim_id:
-                    room = available(config, timed_state(), live_claims())
+                    room = available(config, timed_state(), live_claims(), background=background)
                     if len(room) >= cores_wanted:
                         cores = sorted(room[:cores_wanted])
                         write_json(claim, {**base, "cores": cores, "priority": priority, "state": "running",
@@ -680,6 +829,8 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                         break
             if not wait:
                 raise NoRoom(f"{host()} has no {cores_wanted} free cores for {lane}/{work_id} now")
+            if adopted and process_state(adopted["pid"], adopted["creation"]) == "absent":
+                raise Refused("worker exited while waiting for CPU slots")
             if deadline is not None and time.monotonic() > deadline:
                 raise NoRoom(f"{host()} had no {cores_wanted} free cores within {wait_timeout} s")
             time.sleep(poll_seconds())
@@ -693,7 +844,9 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     try:
         if on_claim is not None:
             on_claim({"id": claim_id, "cores": cores})
-        return _run_claimed(claim, cores, priority, command, cwd, claim_id)
+        if adopted is not None:
+            return _run_adopted(claim, cores, priority, claim_id, background, adopted)
+        return _run_claimed(claim, cores, priority, command, cwd, claim_id, background=background)
     finally:
         with Mutex():
             try:
@@ -710,7 +863,7 @@ def _set_state_locked(claim: Path, state: str) -> None:
 
 
 def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str], cwd: str | None,
-                 claim_id: str) -> int:
+                 claim_id: str, *, background: bool = False) -> int:
     tree = Tree(cores, priority)
     env = dict(os.environ, **{CLAIM_ENV: claim_id, CORES_ENV: format_cores(cores)})
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
@@ -722,14 +875,20 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
     for sig in previous:
         signal.signal(sig, stop)
     try:
+        deadline = time.monotonic() + TIMED_VACATE_SECONDS
         while True:
             with Mutex():
-                if not conflicts(cores):
+                conflict = claim_conflicts(cores, background)
+                if not conflict and not background_busy(cores, claim_id):
                     _set_state_locked(claim, "running")
                     child = tree.start(command, cwd, env)
                     break
                 # No child exists yet, so these cores are already vacated.
                 _set_state_locked(claim, "suspended")
+            if not conflict and time.monotonic() > deadline:
+                raise Refused("background work did not vacate the requested CPUs")
+            if conflict:
+                deadline = time.monotonic() + TIMED_VACATE_SECONDS
             time.sleep(poll_seconds())
         code = None
         while True:
@@ -743,7 +902,7 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
             if code is not None:
                 time.sleep(poll_seconds())
             with Mutex():
-                conflict = conflicts(cores)
+                conflict = claim_conflicts(cores, background)
                 complete = tree.set_suspended(conflict)
                 # A partial suspension leaves the claim busy. Retry incomplete
                 # transitions on later polls without acknowledging vacated cores.
@@ -756,6 +915,38 @@ def _run_claimed(claim: Path, cores: list[int], priority: str, command: list[str
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+def _run_adopted(claim: Path, cores: list[int], priority: str, claim_id: str,
+                 background: bool, adopted: dict) -> int:
+    """A CI worker first joins an empty job; its controller stays outside the worker job."""
+    tree = Tree(cores, priority, contain_self=False)
+    pid, creation = adopted["pid"], adopted["creation"]
+    ready = Path(adopted["ready"])
+    try:
+        with Mutex():
+            tree.adopt_worker_tree(pid, creation)
+            _set_state_locked(claim, "suspended")
+            # The contained hook cannot return while suspended. Publish readiness
+            # now so a long legitimate preemption cannot become an admission timeout.
+            write_json(ready, {"id": claim_id, "pid": os.getpid(), "creation_time": self_identity()[1],
+                               "cores": cores, "worker_pid": pid, "worker_creation": creation})
+        while tree.members():
+            with Mutex():
+                conflict = claim_conflicts(cores, background)
+                complete = tree.set_suspended(conflict)
+                _set_state_locked(claim, "suspended" if conflict and complete else "running")
+            time.sleep(poll_seconds())
+        return 0
+    except BaseException:
+        tree.kill()
+        while tree.members():
+            time.sleep(0.1)
+        raise
+    finally:
+        ready.unlink(missing_ok=True)
+        if tree.job is not None:
+            _CloseHandle(tree.job)
 
 
 def timed(cores: list[int], command: list[str], cwd: str | None = None,
@@ -828,14 +1019,15 @@ def status() -> dict:
     slots_dir().mkdir(parents=True, exist_ok=True)
     with Mutex():
         claims, tickets = live_claims(), live_tickets()
-    keep = ("id", "lane", "work_id", "pid", "cores", "priority", "state", "acquired_at")
+    keep = ("id", "lane", "work_id", "pid", "cores", "priority", "state", "acquired_at", "background")
     return {
         "host": host(), "root": str(root_dir()), "logical_cpus": cpu_total(),
         "config": {**config, "cores": format_cores(config["cores"])},
         "timed": {k: v for k, v in timed.items() if k != "token_sha256"},
         "claims": [{k: c.get(k) for k in keep} for c in claims],
-        "queue": [{k: t.get(k) for k in ("id", "lane", "work_id", "pid", "cores_wanted", "enqueued_at")} for t in tickets],
+        "queue": [{k: t.get(k) for k in ("id", "lane", "work_id", "pid", "cores_wanted", "enqueued_at", "background")} for t in tickets],
         "free": format_cores(available(config, timed, claims)) or "",
+        "foreground_available": format_cores(available(config, timed, claims, background=False)) or "",
     }
 
 
@@ -890,7 +1082,7 @@ def main(argv: list[str] | None = None) -> int:
         argv, command = argv[:split], argv[split + 1:]
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="op", required=True)
-    for op in ("run", "submit"):
+    for op in ("run", "submit", "adopt"):
         p = sub.add_parser(op)
         p.add_argument("--lane", required=True)
         p.add_argument("--work-id", required=True)
@@ -898,11 +1090,15 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--priority", choices=PRIORITIES)
         p.add_argument("--wait-timeout", type=float)
         p.add_argument("--cwd")
+        p.add_argument("--background", action="store_true")
         if op == "run":
             p.add_argument("--wait", action="store_true")
             p.add_argument("--id")
-        else:
+        elif op == "submit":
             p.add_argument("--log", required=True)
+        else:
+            p.add_argument("--worker", required=True, help="JSON file with verified worker and existing descendants")
+            p.add_argument("--ready", required=True)
     p = sub.add_parser("timed")
     p.add_argument("--cores", required=True)
     p.add_argument("--cwd")
@@ -916,17 +1112,32 @@ def main(argv: list[str] | None = None) -> int:
             def announce(claimed):
                 print(json.dumps({"claimed": claimed["id"], "cores": format_cores(claimed["cores"])}), flush=True)
             code = run(args.lane, args.work_id, args.cores, command, wait=args.wait, wait_timeout=args.wait_timeout,
-                       priority=args.priority, claim_id=args.id, cwd=args.cwd, on_claim=announce)
+                       priority=args.priority, claim_id=args.id, cwd=args.cwd, on_claim=announce,
+                       background=args.background)
             print(json.dumps({"exit_code": code}), flush=True)
             return code
         if args.op == "submit":
             options = ["--lane", args.lane, "--work-id", args.work_id, "--cores", str(args.cores)]
+            if args.background:
+                options.append("--background")
             for flag, value in (("--priority", args.priority), ("--wait-timeout", args.wait_timeout),
                                 ("--cwd", args.cwd)):
                 if value is not None:
                     options += [flag, str(value)]
             print(json.dumps(submit(options, command, args.log)))
             return EXIT_OK
+        if args.op == "adopt":
+            if os.name != "nt":
+                raise Refused("adopting an existing worker requires Windows")
+            if not args.background:
+                raise Refused("existing CI worker adoption requires --background")
+            worker = read_json(Path(args.worker))
+            if not worker or not isinstance(worker.get("pid"), int) or not isinstance(worker.get("creation"), int):
+                raise Refused("worker file has no process identity")
+            worker["ready"] = args.ready
+            return run(args.lane, args.work_id, args.cores, ["adopt"], wait=True,
+                       wait_timeout=args.wait_timeout, priority=args.priority, background=args.background,
+                       adopted=worker)
         if args.op == "timed":
             return timed(parse_cores(args.cores), command, cwd=args.cwd)
         if args.op == "status":
