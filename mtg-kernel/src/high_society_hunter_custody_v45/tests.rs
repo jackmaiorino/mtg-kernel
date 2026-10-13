@@ -304,3 +304,133 @@ fn completed_actual_payment_and_draw_inputs_cannot_omit_real_outputs_or_fake_sou
         readonly_refusal(&duplicate, Action::Pass);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "unregistered actual Hunter; parent owns registration and native"]
+fn genuine_sacrifice_of_typed_copied_banishing_source_keeps_linked_attachment_owner_until_completion(
+) {
+    use crate::effect::ExecCtx;
+    use crate::state::ObjectLinkV4;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, banishing, aura, host) =
+            crate::banishing_light_v1::tests::linked_aura(actor);
+        // Genuine typed Aegis copy setup, with physical registered operands.
+        // This is not a claim of a printed mixed-catalog Longbow copy spell.
+        let attachment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+        let donor = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(donor, Zone::Exile),
+        );
+        let generation = state.objects.get(banishing).zone_change_count;
+        state
+            .attach_object_exact(attachment, 0, banishing, generation)
+            .unwrap();
+        let attachment_source = AbilitySourceContractV4::capture(&state, attachment);
+        state.objects.get_mut(donor).v4.exiled_by = Some(ObjectLinkV4 {
+            object: attachment,
+            zone_change_count: attachment_source.zone_change_count,
+        });
+        let mut copy_ctx = ExecCtx::no_targets(attachment, actor);
+        copy_ctx.ability_source_contract = Some(attachment_source);
+        let host_binding = ObjectLinkV4 {
+            object: banishing,
+            zone_change_count: generation,
+        };
+        let timestamp = state.objects.get(attachment).v4.layer_timestamp.unwrap();
+        let chosen = EffectObjectBinding {
+            object: donor,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: state.objects.get(donor).zone_change_count,
+        };
+        assert!(crate::standard_cards_v1::aegis_copy_candidates(
+            &state,
+            &copy_ctx,
+            host_binding,
+            timestamp
+        )
+        .contains(&chosen));
+        crate::standard_cards_v1::apply_aegis_copy(
+            &mut state,
+            &copy_ctx,
+            host_binding,
+            timestamp,
+            chosen,
+        );
+        assert!(crate::engine::object_has_type(
+            &state,
+            banishing,
+            crate::card_def::CardType::Creature
+        ));
+        assert!(crate::standard_cards_v1::had_card_def(
+            &state,
+            banishing,
+            generation,
+            crate::card_def::card_id_by_name("Banishing Light").unwrap()
+        ));
+        let hunter = put(&mut state, actor, "High-Society Hunter", Zone::Battlefield);
+        put(&mut state, actor, "Forest", Zone::Hand);
+        state.step = crate::state::Step::DeclareAttackers;
+        engine::step(&mut state, Action::DeclareAttackers(vec![hunter])).unwrap();
+        menu(&mut state);
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(crate::state::Target::Object(banishing)),
+        )
+        .unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::ChooseEffectTargets{player,source,ref legal_targets,..}if player==actor.opponent() && source==aura && legal_targets.contains(&crate::state::Target::Object(host)))
+        );
+        validate(&state).unwrap();
+        assert!(crate::linked_aura_operation_v1::has_pending(&state));
+        assert!(state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::CostInput{..}))));
+        assert!(!state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::CostOperation{..}))));
+        let checkpoint = serde_json::to_vec(&state).unwrap();
+        let mut bad: GameState = serde_json::from_slice(&checkpoint).unwrap();
+        bad.engine.linked_aura_operation_v1 = Default::default();
+        readonly_refusal(
+            &bad,
+            Action::ChooseEffectTarget(crate::state::Target::Object(host)),
+        );
+        let mut replay: GameState = serde_json::from_slice(&checkpoint).unwrap();
+        for current in [&mut state, &mut replay] {
+            engine::step(
+                current,
+                Action::ChooseEffectTarget(crate::state::Target::Object(host)),
+            )
+            .unwrap();
+            for _ in 0..30 {
+                let decision = engine::advance_until_decision(current);
+                validate(current).unwrap();
+                if current.stack.is_empty() && current.engine.pending_triggers.is_empty() {
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(current, Action::Pass).unwrap();
+            }
+            assert_eq!(current.objects.get(banishing).zone, Zone::Graveyard);
+            assert_eq!(current.objects.get(aura).zone, Zone::Battlefield);
+            assert_eq!(
+                current.objects.get(aura).v4.attached_to,
+                Some(ObjectLinkV4 {
+                    object: host,
+                    zone_change_count: current.objects.get(host).zone_change_count
+                })
+            );
+            assert_eq!(current.objects.get(hunter).counters.plus1_plus1, 1);
+            assert!(!crate::linked_aura_operation_v1::has_pending(current));
+            assert!(current.stack.is_empty());
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+}

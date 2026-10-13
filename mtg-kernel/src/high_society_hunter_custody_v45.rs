@@ -78,7 +78,10 @@ pub(crate) fn recipe(attack: bool) -> EffectOp {
         crate::high_society_hunter_v1::death_program()
     }
 }
-fn source_at(state: &GameState, capture: u64) -> Result<(AbilitySourceContractV4, bool), String> {
+pub(crate) fn source_at(
+    state: &GameState,
+    capture: u64,
+) -> Result<(AbilitySourceContractV4, bool), String> {
     let at = usize::try_from(capture).map_err(|_| "Hunter capture exceeds usize")?;
     let (source, attack) = match state.engine.event_history.get(at) {
         Some(CommittedEvent::HighSocietyHunterAttackCaptureV1 { source, .. }) => {
@@ -145,7 +148,7 @@ fn append(state: &mut GameState, j: JournalV45) -> Result<u64, String> {
         });
     Ok(at)
 }
-fn captures(state: &GameState) -> Vec<u64> {
+pub(crate) fn captures(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
@@ -328,6 +331,54 @@ pub(crate) fn acquire(
 
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     validate_inner(state, None)
+}
+/// Only the existing owning linked operation can publish this intermediate
+/// cost stage. Its full deterministic replay proves the same original item,
+/// accepted answer and actual departure, and discards speculative completion.
+fn linked_cost_checkpoint(
+    state: &GameState,
+    at: u64,
+    pending: &EffectContinuation,
+) -> Result<bool, String> {
+    if !crate::linked_aura_operation_v1::has_pending(state) {
+        return Ok(false);
+    }
+    let owned = &state.engine.linked_aura_operation_v1;
+    let original = if let Some(checkpoint) = owned.pending.as_ref() {
+        checkpoint.original.as_ref()
+    } else if let Some(checkpoint) = owned.pending_general_v36.as_ref() {
+        checkpoint.original.as_ref()
+    } else {
+        return Ok(false);
+    };
+    if original.engine.event_history.len() as u64 > at
+        || original.engine.pending_effect.as_ref() != Some(pending)
+        || state.engine.pending_effect.as_ref() != Some(pending)
+        || original
+            .stack
+            .iter()
+            .filter(|item| **item == pending.resolving_item)
+            .count()
+            != 1
+        || state
+            .stack
+            .iter()
+            .filter(|item| **item == pending.resolving_item)
+            .count()
+            != 1
+        || pending.choice.is_some()
+        || pending
+            .resolving_item
+            .v4
+            .high_society_hunter_started_v45
+            .is_empty()
+    {
+        return Err(
+            "Hunter intermediate cost lost original linked operation/answer/full row".into(),
+        );
+    }
+    crate::linked_aura_operation_v1::validate(state)?;
+    Ok(true)
 }
 fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
     if state
@@ -691,11 +742,21 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 }
             })
             .count();
+        let owned_in_progress = if uses == 0 {
+            if let JournalV45::CostInput { pending, .. } = j.as_ref() {
+                linked_cost_checkpoint(state, at, pending)?
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         if uses > 1
             || matches!(
                 j.as_ref(),
                 JournalV45::CostInput { .. } | JournalV45::DrawInput { .. }
             ) && uses != 1
+                && !owned_in_progress
         {
             return Err("Hunter committed phase duplicated or lost its exact consumer".into());
         }
@@ -760,6 +821,8 @@ fn validate_operation(
             || *input >= operation
             || *selection >= *input
             || *menu >= *selection
+            || *menu <= removal
+            || capture >= removal
             || pending.resolving_item != **item
             || source_before.owner != source.owner
         {
@@ -916,6 +979,7 @@ fn validate_operation(
         };
         if actual != &removal
             || *input <= removal
+            || capture >= removal
             || *draw <= *input
             || *draw >= operation
             || !matches!(state.engine.event_history.get(*draw as usize),Some(CommittedEvent::Draw{player,object})if *player==source.controller && *object==original_library.first().map(|b|b.object))
