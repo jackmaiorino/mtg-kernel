@@ -881,6 +881,12 @@ impl ExpandedEpisodeV1 {
         })
     }
 
+    /// The episode's checked deck configurations (analysis replays use the
+    /// same constructor inputs as collection).
+    pub(crate) fn configurations_v1(&self) -> Result<[DeckConfigurationV1; 2], String> {
+        self.configurations()
+    }
+
     fn configurations(&self) -> Result<[DeckConfigurationV1; 2], String> {
         ensure(
             self.opponent_search.is_none(),
@@ -1653,7 +1659,7 @@ impl From<CollectEpisodeErrorV1> for String {
 
 /// The collection session for `episode`. The line (b) root replay builds its
 /// game through this same call.
-fn episode_session_v1(
+pub(crate) fn episode_session_v1(
     episode: &ExpandedEpisodeV1,
     configs: &[DeckConfigurationV1; 2],
 ) -> Result<FastActorSessionV1, String> {
