@@ -88,6 +88,19 @@ pub(crate) mod future_printed {
         let source = put(state, actor, "Temporal Manipulation", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 2;
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        // A resolved prior spell may leave real opponent priority. Return it
+        // through ordinary passes without changing the physical actor ledger.
+        for _ in 0..2 {
+            let decision = next(state);
+            if matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor) {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor.opponent()),
+                "actual Temporal priority {decision:?}"
+            );
+            engine::step(state, Action::Pass).unwrap();
+        }
         assert!(
             matches!(next(state), Decision::CastSpellOrPass { player, castable_spells, .. }
             if player == actor && castable_spells.contains(&source))
