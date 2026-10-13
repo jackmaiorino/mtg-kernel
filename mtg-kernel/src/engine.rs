@@ -8440,6 +8440,11 @@ fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u1
 /// abilities only if none of that permanent's loyalty abilities has been
 /// activated this turn.
 fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> bool {
+    if crate::ajani_full_v42::selected_definition(state.objects.get(source).card_def)
+        && crate::ajani_full_v42::lifecycle::used(state, source)
+    {
+        return true;
+    }
     let object = state.objects.get(source);
     let abilities = card_def::CARD_DEFS[object.card_def as usize].activated_abilities;
     object.v4.ability_uses_this_turn.iter().any(|entry| {
@@ -9209,6 +9214,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || effect::crystal_prevention_v1::validate(state).is_err()
         || effect::validate_vampire_gourmand_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
         || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
@@ -9298,6 +9304,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::garruks_uprising_v1::validate_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
         || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
@@ -9324,6 +9331,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         };
     }
     if crate::librarian_activation_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
         || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
@@ -13823,6 +13831,7 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
     validated_stack_item_target_metadata(item, state)
@@ -14344,6 +14353,7 @@ pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
+    crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     if stack_item_id == StackItemId::default() {
@@ -14385,6 +14395,7 @@ pub(crate) fn counter_stack_item_by_id(
     let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
+    let ajani_counter_owner = crate::ajani_full_v42::lifecycle::acquire(state, &item)?;
     let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
     let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
@@ -14400,6 +14411,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::ajani_full_v42::lifecycle::record_removed(state, ajani_counter_owner.as_ref(), true)?;
     crate::krenko_v1::record_input(
         state,
         krenko_counter_owner.as_ref(),
@@ -14458,6 +14470,9 @@ pub(crate) fn counter_stack_item_by_id(
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
     crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
+    if let Some(owner) = ajani_counter_owner {
+        crate::ajani_full_v42::lifecycle::complete(state, owner, None)?;
+    }
     crate::krenko_v1::countered(state, krenko_counter_owner)?;
     crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_counter_owner.as_ref(), true)?;
     if let Some(owner) = fishing_counter_owner {
@@ -14913,6 +14928,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let ajani_owner = match crate::ajani_full_v42::lifecycle::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let krenko_owner = match crate::krenko_v1::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -14948,6 +14973,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    if crate::ajani_full_v42::lifecycle::record_removed(state, ajani_owner.as_ref(), false).is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     if crate::krenko_v1::record_input(
         state,
         krenko_owner.as_ref(),
@@ -15014,6 +15047,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(owner) = fishing_owner {
         if crate::fishing_pole_v39::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = ajani_owner {
+        if crate::ajani_full_v42::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -15694,6 +15735,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
             crate::life_loss_turn_v1::reset_at_untap(state);
+            crate::ajani_full_v42::lifecycle::begin_turn(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
@@ -15912,6 +15954,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             if effect::expire_vampire_gourmand_restrictions(state).is_err()
                 || crate::ashroot_dispatch_v2::expire(state).is_err()
             {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
+            if crate::ajani_full_v42::lifecycle::cleanup(state).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
@@ -17922,6 +17969,7 @@ fn action_matches_pending_activation_stage(
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
+    crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::twinflame_tyrant_v1::combat::validate(state)?;
@@ -21163,6 +21211,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let ajani_payment_owner = match crate::ajani_full_v42::lifecycle::acquire_payment(state) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                staged.source,
+            ));
+            return;
+        }
+    };
     let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
         Ok(owner) => owner,
         Err(_) => {
@@ -21186,6 +21244,7 @@ fn finalize_activation(state: &mut GameState) {
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let mut frozen = freeze_activation_source(state, &pending, ability);
+    frozen.ajani_payment_owner = ajani_payment_owner;
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -21297,6 +21356,7 @@ struct FrozenActivationSource {
     fixed_departure: Option<u32>,
     payment_history_start: usize,
     fishing_ability_index: u8,
+    ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
 }
 
 fn freeze_activation_source(
@@ -21333,6 +21393,7 @@ fn freeze_activation_source(
         fixed_departure: None,
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
+        ajani_payment_owner: None,
     }
 }
 
@@ -21488,6 +21549,20 @@ fn push_paid_activation(
             .get_mut(pending.source)
             .v4
             .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+    }
+
+    if crate::ajani_full_v42::lifecycle::record_paid(
+        state,
+        stack_item_id,
+        frozen.ajani_payment_owner,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
     }
 
     // No ability in this increment's pool triggers off another ability

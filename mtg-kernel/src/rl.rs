@@ -2111,6 +2111,11 @@ fn build_observation_common_v2_fishing_v39(
             "Banner requires selected V36 entry/color transport".into(),
         ));
     }
+    if crate::ajani_full_v42::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
+        ));
+    }
     if !accept_krenko && crate::krenko_v1::requires_successor(state) {
         return Err(RlContractError(
             "Krenko requires selected V34 transport".into(),
@@ -2561,6 +2566,11 @@ fn build_policy_observation_parts_common_fishing_v39(
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
+        ));
+    }
+    if crate::ajani_full_v42::lifecycle::requires_successor(state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
         ));
     }
     if !accept_krenko && crate::krenko_v1::requires_successor(state) {
@@ -3653,6 +3663,11 @@ fn build_policy_observation_storage_common_fishing_v39(
     if !accept_banner && crate::heraldic_banner_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Banner requires selected V36 entry/color transport".into(),
+        ));
+    }
+    if crate::ajani_full_v42::lifecycle::requires_successor(request.state) {
+        return Err(RlContractError(
+            "full Ajani requires distinct V42 transport".into(),
         ));
     }
     if !accept_krenko && crate::krenko_v1::requires_successor(request.state) {

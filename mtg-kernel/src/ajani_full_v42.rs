@@ -34,6 +34,10 @@ pub(crate) fn validate_definition(id: u16) -> Result<(), String> {
     if !selected_definition(id)
         || d.cost.generic != 1
         || d.cost.x_count != 0
+        || d.mana_value != 3
+        || d.changeling
+        || d.transform_face.is_some()
+        || d.animation.is_some()
         || d.cost.pips != [Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::W)]
         || d.colors != [ManaColor::W]
         || d.types != [CardType::Planeswalker]
@@ -109,6 +113,8 @@ pub(crate) fn token_definition() -> Result<u16, String> {
     }
     Ok(id)
 }
+
+pub mod lifecycle;
 
 #[cfg(test)]
 mod tests;

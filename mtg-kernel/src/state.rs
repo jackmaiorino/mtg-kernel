@@ -2567,6 +2567,7 @@ impl GameState {
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
+        crate::ajani_full_v42::lifecycle::begin_turn(&mut state);
         state
     }
 

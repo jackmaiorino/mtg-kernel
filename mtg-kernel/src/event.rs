@@ -1314,6 +1314,9 @@ pub enum CommittedEvent {
     TwinflameFieryFinishedV38 {
         operation: Box<crate::twinflame_tyrant_v1::fiery::FinishV38>,
     },
+    AjaniJournalV42 {
+        journal: Box<crate::ajani_full_v42::lifecycle::JournalV42>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2882,6 +2885,10 @@ fn commit_with_entry_batch_and_source_color(
                 );
             state.objects.get_mut(object).tapped = enters_tapped;
             initialize_entry_counters(state, object, false);
+            if crate::ajani_full_v42::selected_definition(t.token_def) {
+                crate::planeswalker_v1::after_zone_change(state, object);
+                crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
+            }
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
@@ -3974,6 +3981,9 @@ fn commit_zone_change(
         }
     }
     crate::planeswalker_v1::after_zone_change(state, id);
+    if to_zone == Zone::Battlefield {
+        crate::ajani_full_v42::lifecycle::initialize_entry(state, id);
+    }
     if to_zone == Zone::Library {
         let position = state.players[owner.index()]
             .library
