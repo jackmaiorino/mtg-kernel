@@ -185,3 +185,108 @@ fn actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_
         assert_eq!(state, replay);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_seats() {
+    for caster in [PlayerId::P0, PlayerId::P1] {
+        for counter in [false, true] {
+            let active_player = caster.opponent();
+            let mut state = ready_state_for(active_player);
+            let herald = put(&mut state, caster, "Herald of Eternal Dawn", Zone::Hand);
+            let offer = put(
+                &mut state,
+                active_player,
+                "An Offer You Can't Refuse",
+                Zone::Hand,
+            );
+            state.players[caster.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            state.players[caster.index()].mana_pool[ManaColor::W.pool_index()] = 2;
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, .. } if player == active_player));
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, ref castable_spells, .. }
+                if player == caster && !castable_spells.contains(&herald)));
+            let before = state.clone();
+            assert!(engine::step(&mut state, Action::CastSpell(herald)).is_err());
+            assert_eq!(state, before);
+            state.players[caster.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, ref castable_spells, .. }
+                if player == caster && castable_spells.contains(&herald)));
+            engine::step(&mut state, Action::CastSpell(herald)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(state.active_player, active_player);
+            assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+            assert_eq!(state.objects.get(herald).zone, Zone::Stack);
+            assert!(!cannot_lose(&state, caster));
+            engine::step(&mut state, Action::Pass).unwrap();
+            if counter {
+                state.players[active_player.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+                assert!(matches!(engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { player, ref castable_spells, .. }
+                    if player == active_player && castable_spells.contains(&offer)));
+                engine::step(&mut state, Action::CastSpell(offer)).unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut state),
+                    Decision::ChooseTargets { ref legal_targets, .. }
+                    if legal_targets == &[crate::state::Target::Object(herald)]));
+                engine::step(
+                    &mut state,
+                    Action::ChooseTarget(crate::state::Target::Object(herald)),
+                )
+                .unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                assert_eq!(state.players[active_player.index()].mana_pool, [0; 6]);
+            }
+            let mut replay: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut replay] {
+                for _ in 0..16 {
+                    let decision = engine::advance_until_decision(branch);
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { .. }),
+                        "{decision:?}"
+                    );
+                    if branch.stack.is_empty() && branch.engine.pending_cast.is_none() {
+                        break;
+                    }
+                    engine::step(branch, Action::Pass).unwrap();
+                }
+                assert!(branch.stack.is_empty());
+                assert_eq!(
+                    branch.objects.get(herald).zone,
+                    if counter {
+                        Zone::Graveyard
+                    } else {
+                        Zone::Battlefield
+                    }
+                );
+                assert_eq!(cannot_lose(branch, caster), !counter);
+                assert_eq!(cannot_win(branch, active_player), !counter);
+                if counter {
+                    let treasures = branch.players[caster.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|id| {
+                            CARD_DEFS[usize::from(branch.objects.get(**id).card_def)].name
+                                == "Treasure Token"
+                        })
+                        .count();
+                    assert_eq!(treasures, 2);
+                }
+            }
+            assert_eq!(state, replay);
+        }
+    }
+}
