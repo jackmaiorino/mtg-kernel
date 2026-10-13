@@ -338,7 +338,6 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     #[test]
-    #[ignore = "requires genuine Arahbo registration; no fabricated ID or selector"]
     fn actual_two_roots_reconstruct_and_refuse_complete_fact_metadata_forgeries() {
         let id = crate::card_def::card_id_by_name("Arahbo, the First Fang").unwrap();
         let selector = live_selector_v1().unwrap();
