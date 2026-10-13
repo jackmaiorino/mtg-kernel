@@ -2225,7 +2225,23 @@ fn commit_with_ability_lki_and_entry_batch(
 ) {
     let (entering_characteristics, defer_raid_entry) = entry_context;
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
-    let mut event = event;
+    // Direct commits are also used for simultaneous state-based deaths. Apply
+    // an installed Fiery shield before any zone bookkeeping or frozen death
+    // capture is published. Unrelated direct commits retain their old path.
+    let fiery_death = state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        ) && replacement_applies(replacement, &event, state)
+    });
+    let mut event = if fiery_death {
+        let Some(rewritten) = apply_replacements(state, event) else {
+            return;
+        };
+        rewritten
+    } else {
+        event
+    };
     if let ProposedEvent::ZoneChange(change) = &mut event {
         if change.to_zone == Zone::Graveyard
             && state.objects.try_get(change.object).is_some_and(|o| {
