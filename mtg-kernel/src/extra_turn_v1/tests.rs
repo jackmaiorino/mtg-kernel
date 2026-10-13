@@ -79,9 +79,15 @@ pub(crate) mod future_printed {
         }
         object
     }
+    #[track_caller]
     fn next(state: &mut GameState) -> Decision {
         let decision = engine::advance_until_decision(state);
-        assert!(!matches!(decision, Decision::Halted { .. }));
+        assert!(
+            !matches!(decision, Decision::Halted { .. }),
+            "actual Temporal traversal {decision:?}, step {:?}, turn key {}",
+            state.step,
+            state.turn_key_v1()
+        );
         decision
     }
     pub(crate) fn cast(state: &mut GameState, actor: PlayerId) -> StackItem {
