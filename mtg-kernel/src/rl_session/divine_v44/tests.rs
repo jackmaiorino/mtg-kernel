@@ -125,6 +125,15 @@ fn actual_normal_one_and_kicked_zero_two_three_have_exact_costs_targets_and_rest
                     .any(|a| matches!(a, ActionSemanticV1::FinishDivineTargetsV44 { .. })),
                 kicked
             );
+            if !kicked {
+                let before = serde_json::to_vec(&session.state).unwrap();
+                assert!(crate::engine::step(
+                    &mut session.state,
+                    crate::engine::Action::FinishEffectSelection
+                )
+                .is_err());
+                assert_eq!(serde_json::to_vec(&session.state).unwrap(), before);
+            }
             for id in &targets {
                 target(&mut session, *id)
             }

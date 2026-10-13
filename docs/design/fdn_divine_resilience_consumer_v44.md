@@ -57,6 +57,10 @@ DTO. Current face-down targets use the existing masked sentinel. Departed
 target visibility comes from the independently committed, validated original
 battlefield departure snapshot. It is not reconstructed from a newer hidden
 incarnation. The private original target contract remains in backend authority.
+The actual shared stack producer has a separate Divine acceptance bit, false
+for every earlier scope. V44 derives its public stack target rows directly
+from those authenticated original visibility facts, as well as its supplement.
+It does not mask a previously published frozen artifact after construction.
 The full source catalog contains the existing departure-capture descriptor;
 missing or duplicate original visibility evidence is refused.
 

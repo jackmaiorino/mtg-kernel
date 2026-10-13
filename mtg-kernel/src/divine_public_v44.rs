@@ -221,6 +221,21 @@ fn quote(state: &GameState, kicked: bool) -> Result<Option<QuoteV44>, RlContract
         })
         .transpose()
 }
+pub(crate) fn finalized_target_refs_v44(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Vec<crate::rl::TargetRefV1>, RlContractError> {
+    validate_state(state).map_err(RlContractError)?;
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    item.v4
+        .target_contracts
+        .iter()
+        .copied()
+        .map(|contract| {
+            target_ref_v44(state, contract).map(|object| crate::rl::TargetRefV1::Object { object })
+        })
+        .collect()
+}
 fn finalized(
     state: &GameState,
     item: &StackItem,

@@ -364,6 +364,32 @@ fn actual_own_hidden_recipient_uses_safe_mask_and_departed_visibility_not_new_hi
             reference.card_db_id,
             crate::card_def::card_id_by_name("Face-down creature").unwrap()
         );
+        let visible = HumanDivineSessionV44::from_session(
+            FastActorSessionV1::from_divine_v44_fixture_state(state.clone()),
+            actor.into(),
+        )
+        .unwrap();
+        let observation = visible.public_observation(expected(&visible)).unwrap();
+        let stack = observation
+            .projection
+            .surface
+            .stack
+            .iter()
+            .find(|row| row.source.arena_id == item.source.0)
+            .unwrap();
+        assert_eq!(
+            stack.targets,
+            vec![crate::rl::TargetRefV1::Object {
+                object: reference.clone()
+            }]
+        );
+        let safe = HumanDivineProjectorV44::new(actor.into())
+            .project_current(&visible, expected(&visible))
+            .unwrap();
+        assert_eq!(
+            safe.state.extensions.divine.finalized[0].targets[0].name,
+            "Face-down creature"
+        );
         let mut replay: crate::state::GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(
