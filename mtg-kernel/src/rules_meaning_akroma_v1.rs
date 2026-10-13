@@ -107,6 +107,25 @@ pub fn meaning(selector: &SelectorV1, card_id: u16, root: RootV1) -> Result<Mean
         || d.supertypes != [Supertype::Legendary]
         || !d.colors.is_empty()
         || !d.subtypes.is_empty()
+        || d.is_land
+        || d.is_token
+        || d.ward_cost.is_some()
+        || d.equipment.is_some()
+        || d.starting_loyalty.is_some()
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.as_enters_color_choice_v1.is_some()
+        || d.chosen_color_creature_boost_v1.is_some()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
+        || !d.produces_mana.is_empty()
+        || d.generic_cost_reduction.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.optional_additional_cost.is_some()
+        || d.bestow.is_some()
+        || d.saga.is_some()
+        || d.transform_face.is_some()
+        || d.animation.is_some()
         || d.cost.generic != 7
         || !d.cost.pips.is_empty()
         || d.cost.x_count != 0
