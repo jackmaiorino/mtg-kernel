@@ -17,9 +17,9 @@ and, descriptively, combo_resolved, nine_deck, seven_deck, cawgates, and the sel
 and Dread-Return-to-Giant choice rates per game that offered them.
 
 Contrasts per lineage: D1U-parent, D1L-parent, D2U-O and D2L-O (the screen), D2U-D1U and
-D2L-D1L (the direct comparison between the two checkpoints), and D2U and D2L against P and S
-(descriptive), per opponent and pooled (the mean of the two opponents' values on the same
-draw). Cluster bootstrap: the seat pairs of a repeat are resampled
+D2L-D1L (the direct comparison between the two checkpoints), and, descriptively, D2U and D2L
+against P and S and O against the parent (the drift ordinary training produces from the
+parent), per opponent and pooled (the mean of the two opponents' values on the same draw). Cluster bootstrap: the seat pairs of a repeat are resampled
 together within each ordered deck pair, one draw shared by every opponent, checkpoint and
 lineage, 10,000 draws, seed 2026101320; bounds are the 2.5% and 97.5% quantiles. Missing
 cases (technical terminations) take their bound's value within each draw: least favorable
@@ -28,11 +28,13 @@ to D (D's missing cases 0, the control's 1) and most favorable (the reverse).
 Screening rule and readings: DESIGN.md section 7 as amended before execution (Jack,
 2026-10-13), evaluated under each bound. A positive J result is behavioral transfer,
 reported as established at D1, at D2 or at both; a behavioral loss or acquisition between
-D1 and D2 is claimed only from their direct contrast. Win-rate effects (Spy, eight-deck and
-nine-deck scores) are reported separately from J, per lineage and across lineages, since more
-winning Spy sequences can mean that existing wins took a different route. A positive reading must hold under the bound
-least favorable to D, harm is declared only under the bound most favorable to D, and when
-the two bounds give different readings the reading is "inconclusive: missing cases decide".
+D1 and D2 is claimed only from their direct contrast in both lineages, and is reported with
+the direct combo_resolved and Spy-score intervals. Win-rate effects (Spy, eight-deck and
+nine-deck scores) are reported separately from J, per lineage and across lineages, since
+more winning Spy sequences can mean that existing wins took a different route. A positive
+reading must hold under the bound least favorable to D, harm is declared only under the
+bound most favorable to D, and when the two bounds give different readings the reading is
+"inconclusive: missing cases decide".
 
 CLI:
   analyze  --index INDEX.json [--fit FIT.json] --out RESULT.json
@@ -62,7 +64,11 @@ RETENTION, OFFER_FLOOR = 0.02, 0.05
 SCREEN = (("D1U-parent", "D1U", "parent"), ("D1L-parent", "D1L", "parent"),
           ("D2U-O", "D2U", "O"), ("D2L-O", "D2L", "O"))
 DIRECT = (("D2U-D1U", "D2U", "D1U"), ("D2L-D1L", "D2L", "D1L"))
-DESCRIPTIVE = (("D2U-P", "D2U", "P"), ("D2U-S", "D2U", "S"), ("D2L-P", "D2L", "P"), ("D2L-S", "D2L", "S"))
+DESCRIPTIVE = (("D2U-P", "D2U", "P"), ("D2U-S", "D2U", "S"), ("D2L-P", "D2L", "P"), ("D2L-S", "D2L", "S"),
+               ("O-parent", "O", "parent"))
+# Shown with each direct J reading: whether the line resolved at all, and the
+# Spy score, since J also needs a win.
+DIRECT_CONTEXT = ("J", "combo_resolved", "spy_score")
 METRICS = ("J", "spy_score", "eight_deck")
 EXTRA_METRICS = ("combo_resolved", "nine_deck", "seven_deck", "cawgates")
 SPY_METRICS = ("J", "combo_resolved")
@@ -332,6 +338,8 @@ def direct_reading(ci, arm: str, bound: str) -> str:
         return "behavioral loss between D1 and D2"
     if all(low > 0 for low, _ in j):
         return "behavioral acquisition between D1 and D2"
+    if any(high < 0 or low > 0 for low, high in j):
+        return "lineage-dependent change between D1 and D2; no loss or acquisition claimed"
     return "no change between D1 and D2 established"
 
 
@@ -345,27 +353,29 @@ def effect_reading(interval) -> str:
 
 
 def across(per: dict) -> str:
-    """One reading across lineages: an effect holds only when every lineage
-    reads it, as for J."""
-    values = set(per.values())
+    """One bound's reading across lineages: an effect holds only when every
+    lineage reads it, as for J."""
     if len(per) < len(LINEAGES):
         return "descriptive only: one lineage"
-    if INCONCLUSIVE in values:
-        return INCONCLUSIVE
+    values = set(per.values())
     return values.pop() if len(values) == 1 else "lineage-dependent"
 
 
 def win_rates(ci, names) -> dict:
     """Playing-strength effects, apart from J: the pooled Spy, eight-deck and
-    nine-deck score contrasts of every endpoint, read under both bounds, per
-    lineage and across lineages."""
+    nine-deck score contrasts of every endpoint, per lineage and across
+    lineages, each read under both bounds."""
     out = {}
     for name in names:
         for metric in WIN_RATE_METRICS:
-            per = {lin: agree({b: effect_reading(ci[(lin, name, metric, "pooled", b)]) for b in BOUNDS})
-                   for lin in LINEAGES if (lin, name, metric, "pooled", "worst") in ci}
-            if per:
-                out[f"{name}/{metric}"] = {"reading": across(per), "per_lineage": per}
+            lineages = [lin for lin in LINEAGES if (lin, name, metric, "pooled", "worst") in ci]
+            if not lineages:
+                continue
+            by_bound = {b: {lin: effect_reading(ci[(lin, name, metric, "pooled", b)]) for lin in lineages}
+                        for b in BOUNDS}
+            out[f"{name}/{metric}"] = {
+                "reading": agree({b: across(per) for b, per in by_bound.items()}),
+                "per_lineage": {lin: agree({b: by_bound[b][lin] for b in BOUNDS}) for lin in lineages}}
     return out
 
 
@@ -401,7 +411,7 @@ def screen(ci: dict, fit: dict | None) -> dict:
                                 else "not run: the arm passed the fit check in neither lineage")
             out[arm] = entry
             continue
-        for kind, name in (("transfer_at_D1", d1), ("transfer_at_D2", d2)):
+        for kind, name in (("screen_at_D1", d1), ("screen_at_D2", d2)):
             holds = {b: all(j_above(ci, lin, name, b) and guards_hold(ci, lin, name, b) for lin in LINEAGES)
                      for b in BOUNDS}
             entry[kind] = (True if holds["worst"] else INCONCLUSIVE if holds["best"] else False)
@@ -409,6 +419,9 @@ def screen(ci: dict, fit: dict | None) -> dict:
         entry["offer_probability"] = p
         entry["reading"] = agree({b: line_reading(ci, arm, b, p) for b in BOUNDS})
         entry["direct"] = agree({b: direct_reading(ci, arm, b) for b in BOUNDS})
+        entry["direct_intervals"] = {
+            lin: {metric: {b: ci[(lin, f"D2{arm}-D1{arm}", metric, "pooled", b)] for b in BOUNDS}
+                  for metric in DIRECT_CONTEXT} for lin in LINEAGES}
         out[arm] = entry
     return out
 

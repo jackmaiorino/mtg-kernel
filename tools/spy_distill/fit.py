@@ -18,7 +18,9 @@ with no selection gets the first matching fit reading, as amended before
 execution (Jack, 2026-10-13): each reading describes the fit result at this
 dose, optimizer, targets and anchor, and lists its competing explanations,
 because the fit gates alone cannot say which component failed:
-  engineering        G3 failed (not a table row: the run is not evidence);
+  engineering        G3 failed before any checkpoint passed all three gates (not a
+                     table row: the run is not evidence; a later G3 failure stops
+                     the run like any stop, and selection stands);
   mixed choices      self-target G1 fails at every read checkpoint with G2
                      holding, the tree declined self-target at >= 1/3 of its
                      in-sample supported offers, discrimination stays < 0.25 at
@@ -168,9 +170,10 @@ def arm_fit(lineage: str, arm: str, probe: dict, full: dict, rerun: dict) -> dic
 # explanations it leaves open. None identifies the failing component.
 ENGINEERING = "engineering: G3 failed, so the run is not evidence"
 READINGS = {
-    "mixed": ("required fit not reached: the tree's choices at supported self-target offers are mixed, "
-              "and the student's discrimination between chosen and declined offers stays low",
-              ["the tree's choices may conflict across offers the student encodes alike",
+    "mixed": ("required fit not reached at this dose, optimizer, targets and anchor: the tree's choices at "
+              "supported self-target offers are mixed, and the student's discrimination between chosen and "
+              "declined offers stays low",
+              ["the tree's choices may themselves be inconsistent at similar offers (near-ties or search noise)",
                "the student's input may not separate offers that the tree's search separates",
                "the dose, optimizer, one-hot targets or anchor may not suffice"]),
     "fit_with_collapse": ("required fit reached only together with collapse at this dose, optimizer, targets "

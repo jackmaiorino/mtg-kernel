@@ -171,6 +171,33 @@ class Contrasts(Fixture):
         self.assertEqual(ci[("r2", "D2L-O", "J", "T1", "worst")], [1.0, 1.0])
         self.assertEqual(analyze.missing(data[("r1-D2L", "T1")])["count"], 9)
 
+    def test_the_direct_contrast_pairs_d2_with_its_own_d1_on_the_same_draws(self):
+        # Identical D1U and D2U panels: every draw's D2U-D1U value is exactly 0.
+        cells = {(lin, role, opp): (lambda o, t, k, s: 1 if o == SPY else 0.5, lambda o, t, k, s: k % 3 == 0)
+                 for lin in ("r1", "r2") for role in ("D1U", "D2U") for opp in ("T1", "H")}
+        data = self.build(cells)
+        todo = analyze.plan(data, analyze.DIRECT)
+        self.assertEqual(todo, [(lin, "D2U-D1U", "D2U", "D1U") for lin in ("r1", "r2")])
+        ci = analyze.bootstrap(data, todo, analyze.METRICS + analyze.EXTRA_METRICS)
+        for lin in ("r1", "r2"):
+            for bound in analyze.BOUNDS:
+                for metric in ("J", "combo_resolved", "spy_score", "eight_deck"):
+                    self.assertEqual(ci[(lin, "D2U-D1U", metric, "pooled", bound)], [0.0, 0.0])
+        # D2 takes D's place: its missing Spy cases score 0 with no J under the
+        # bound least favorable to it, and 1 with J under the other, where D1
+        # has J too (repeat 0), so swapped roles would read the reverse.
+        gone = {(SPY, t, 0, 0) for t in range(DECKS)}
+        self.root = self.root / "with-missing-cases"
+        self.root.mkdir()
+        data = self.build(cells, {("r1", "D2U", "T1"): gone})
+        todo = analyze.plan(data, analyze.DIRECT)
+        point = analyze.points(data, todo, analyze.METRICS)
+        d1 = analyze.summary(data[("r1-D1U", "T1")])["J"]
+        d2_worst = analyze.summary(data[("r1-D2U", "T1")], 0.0)["J"]
+        self.assertEqual(point[("r1", "D2U-D1U", "J", "T1", "worst")], d2_worst - d1)
+        self.assertLess(point[("r1", "D2U-D1U", "J", "T1", "worst")], 0)
+        self.assertEqual(point[("r1", "D2U-D1U", "J", "T1", "best")], 0.0)
+
     def test_end_to_end_reads_transfer_at_both_checkpoints_and_a_direct_loss_apart_from_win_rates(self):
         # Every checkpoint wins every Spy game and draws the rest, so no win
         # rate moves. D1U wins every Spy game through the line, D2U half of
@@ -183,8 +210,12 @@ class Contrasts(Fixture):
                    for (lin, role, opp), (score, combo) in cells.items()]
         result = analyze.analyze({"panels": entries}, None)
         self.assertEqual(result["contrasts"]["r1/D2U-D1U/J/pooled/worst"]["point"], -0.5)
+        # O against the parent, the drift of ordinary training, is descriptive.
+        self.assertEqual(result["contrasts"]["r2/O-parent/spy_score/pooled/worst"]["point"], 0.0)
+        self.assertEqual(result["screen"]["U"]["direct_intervals"]["r1"]["combo_resolved"]["worst"],
+                         result["contrasts"]["r1/D2U-D1U/combo_resolved/pooled/worst"]["ci95"])
         u = result["screen"]["U"]
-        self.assertEqual((u["transfer_at_D1"], u["transfer_at_D2"]), (True, True))
+        self.assertEqual((u["screen_at_D1"], u["screen_at_D2"]), (True, True))
         self.assertEqual(u["reading"], "behavioral transfer established at D1 and D2")
         self.assertEqual(u["direct"], "behavioral loss between D1 and D2")
         self.assertEqual(result["screen"]["L"]["reading"], "not run: the arm passed the fit check in neither lineage")
@@ -203,7 +234,8 @@ class Readings(unittest.TestCase):
             for arm in arms:
                 for name in (f"D1{arm}-parent", f"D2{arm}-O", f"D2{arm}-D1{arm}"):
                     for bound in analyze.BOUNDS:
-                        values = {"J": j, "spy_score": spy, "eight_deck": eight, "nine_deck": nine}
+                        values = {"J": j, "combo_resolved": j, "spy_score": spy, "eight_deck": eight,
+                                  "nine_deck": nine}
                         if name.startswith("D2") and name.endswith("-O") and d2_j is not None:
                             values["J"] = d2_j
                         if name == f"D2{arm}-D1{arm}":
@@ -214,14 +246,41 @@ class Readings(unittest.TestCase):
                             out[(lin, name, metric, "pooled", bound)] = list(v)
         return out
 
-    def test_behavioral_transfer_at_both_checkpoints_needs_j_and_both_guards_in_both_lineages(self):
+    def test_the_screen_needs_j_and_both_guards_in_both_lineages(self):
         result = analyze.screen(self.ci(), None)
-        self.assertEqual(result["U"]["transfer_at_D1"], True)
-        self.assertEqual(result["U"]["transfer_at_D2"], True)
+        self.assertEqual(result["U"]["screen_at_D1"], True)
+        self.assertEqual(result["U"]["screen_at_D2"], True)
         self.assertEqual(result["U"]["reading"], "behavioral transfer established at D1 and D2")
         self.assertEqual(result["U"]["direct"], "no change between D1 and D2 established")
         self.assertEqual(set(result["U"]["guards"].values()), {"guards hold"})
         self.assertEqual(result["L"]["reading"], "not run: the arm passed the fit check in neither lineage")
+        # J at D2 fails in r2 only: the D2 screen fails, the D1 screen stands.
+        ci = self.ci()
+        for bound in analyze.BOUNDS:
+            ci[("r2", "D2U-O", "J", "pooled", bound)] = [-0.01, 0.1]
+        result = analyze.screen(ci, None)
+        self.assertEqual((result["U"]["screen_at_D1"], result["U"]["screen_at_D2"]), (True, False))
+        self.assertEqual(result["U"]["reading"], "behavioral transfer established only at D1")
+        # A retention failure in r2 only fails both screens, while the line
+        # reading, on J alone, still reads transfer.
+        ci = self.ci()
+        for name in ("D1U-parent", "D2U-O"):
+            for bound in analyze.BOUNDS:
+                ci[("r2", name, "eight_deck", "pooled", bound)] = [-0.03, 0.01]
+        result = analyze.screen(ci, None)
+        self.assertEqual((result["U"]["screen_at_D1"], result["U"]["screen_at_D2"]), (False, False))
+        self.assertEqual(result["U"]["reading"], "behavioral transfer established at D1 and D2")
+        self.assertEqual(result["U"]["guards"]["r2/D1U-parent"], "retention not shown (inconclusive)")
+        self.assertEqual(result["U"]["guards"]["r1/D1U-parent"], "guards hold")
+
+    def test_j_in_one_lineage_only_is_lineage_dependent(self):
+        ci = self.ci(j=(-0.01, 0.1))
+        for name in ("D1U-parent", "D2U-O"):
+            for bound in analyze.BOUNDS:
+                ci[("r1", name, "J", "pooled", bound)] = [0.05, 0.2]
+        result = analyze.screen(ci, None)
+        self.assertEqual(result["U"]["reading"], "lineage-dependent; the screen cannot read positive")
+        self.assertEqual((result["U"]["screen_at_D1"], result["U"]["screen_at_D2"]), (False, False))
 
     def test_a_result_at_one_checkpoint_claims_no_loss_or_emergence(self):
         # J established at D1 but not at D2: no forgetting is read from the
@@ -237,11 +296,21 @@ class Readings(unittest.TestCase):
         self.assertEqual(result["U"]["direct"], "no change between D1 and D2 established")
         result = analyze.screen(self.ci(j=(-0.01, 0.1), d2_j=(0.05, 0.2), direct=(0.02, 0.2)), None)
         self.assertEqual(result["U"]["direct"], "behavioral acquisition between D1 and D2")
-        # A direct change in one lineage only is no claim.
-        ci = self.ci(direct=(0.02, 0.2))
+        # A direct change in one lineage only, or opposite changes, is no
+        # claim, and it does not read as no change either.
+        dependent = "lineage-dependent change between D1 and D2; no loss or acquisition claimed"
+        for r2 in ([-0.01, 0.1], [-0.2, -0.05]):
+            ci = self.ci(direct=(0.02, 0.2))
+            for bound in analyze.BOUNDS:
+                ci[("r2", "D2U-D1U", "J", "pooled", bound)] = r2
+            self.assertEqual(analyze.screen(ci, None)["U"]["direct"], dependent)
+        ci = self.ci(d2_j=(-0.01, 0.2), direct=(-0.2, -0.05))
         for bound in analyze.BOUNDS:
-            ci[("r2", "D2U-D1U", "J", "pooled", bound)] = [-0.01, 0.1]
-        self.assertEqual(analyze.screen(ci, None)["U"]["direct"], "no change between D1 and D2 established")
+            ci[("r2", "D2U-D1U", "J", "pooled", bound)] = [-0.1, 0.05]
+        result = analyze.screen(ci, None)["U"]
+        self.assertEqual((result["reading"], result["direct"]),
+                         ("behavioral transfer established only at D1", dependent))
+        self.assertEqual(result["direct_intervals"]["r2"]["J"]["worst"], [-0.1, 0.05])
 
     def test_win_rates_are_reported_apart_from_j(self):
         # Behavioral transfer while the Spy win rate shows no change: J is not
@@ -265,6 +334,16 @@ class Readings(unittest.TestCase):
         rates = analyze.win_rates(ci, names)["D2U-O/spy_score"]
         self.assertEqual(rates["per_lineage"], {"r1": analyze.INCONCLUSIVE, "r2": "higher established"})
         self.assertEqual(rates["reading"], analyze.INCONCLUSIVE)
+        # Whichever way r1's missing cases fall, an opposite established
+        # effect in r2 makes the effect lineage-dependent.
+        ci = self.ci(spy=(0.01, 0.05))
+        for key in [k for k in ci if k[0] == "r1" and k[2] == "spy_score" and k[4] == "worst"]:
+            ci[key] = [-0.01, 0.04]
+        for key in [k for k in ci if k[0] == "r2" and k[2] == "spy_score"]:
+            ci[key] = [-0.08, -0.01]
+        rates = analyze.win_rates(ci, names)["D2U-O/spy_score"]
+        self.assertEqual(rates["per_lineage"], {"r1": analyze.INCONCLUSIVE, "r2": "lower established"})
+        self.assertEqual(rates["reading"], "lineage-dependent")
         # An effect in one lineage only is no claim.
         ci = self.ci(spy=(0.01, 0.05))
         for key in [k for k in ci if k[0] == "r2" and k[2] == "spy_score"]:
@@ -276,14 +355,14 @@ class Readings(unittest.TestCase):
 
     def test_a_retention_failure_blocks_a_positive_screen(self):
         result = analyze.screen(self.ci(eight=(-0.03, 0.01)), None)
-        self.assertEqual(result["U"]["transfer_at_D1"], False)
+        self.assertEqual(result["U"]["screen_at_D1"], False)
         self.assertEqual(set(result["U"]["guards"].values()), {"retention not shown (inconclusive)"})
         result = analyze.screen(self.ci(spy=(-0.08, -0.01)), None)
         self.assertEqual(set(result["U"]["guards"].values()), {"interference (detected harm)"})
 
     def test_bounds_that_disagree_read_inconclusive(self):
         result = analyze.screen(self.ci(worst={"J": (0.0, 0.2)}), None)
-        self.assertEqual(result["U"]["transfer_at_D1"], analyze.INCONCLUSIVE)
+        self.assertEqual(result["U"]["screen_at_D1"], analyze.INCONCLUSIVE)
         self.assertEqual(result["U"]["reading"], analyze.INCONCLUSIVE)
 
     def test_no_transfer_reads_by_held_out_offer_probability(self):
@@ -302,7 +381,7 @@ class Readings(unittest.TestCase):
         ci = {k: v for k, v in self.ci().items() if k[0] == "r1"}
         result = analyze.screen(ci, None)
         self.assertEqual(result["U"]["reading"], "descriptive only: one lineage passed the fit check")
-        self.assertNotIn("transfer_at_D1", result["U"])
+        self.assertNotIn("screen_at_D1", result["U"])
         self.assertNotIn("direct", result["U"])
 
 
