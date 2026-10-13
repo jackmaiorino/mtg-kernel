@@ -631,6 +631,7 @@ pub mod krenko_observation_v1;
 pub mod krenko_public_v1;
 pub mod rules_meaning_krenko_v1;
 
+pub mod faebloom_public_v43;
 pub mod faebloom_trick_v43;
 pub mod fishing_pole_observation_v39;
 pub mod fishing_pole_public_v39;

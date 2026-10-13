@@ -12966,9 +12966,12 @@ pub(crate) fn validate_pending_trigger(
         .try_get(pending.source)
         .ok_or("pending targeted trigger source is missing")?;
     let expected = trigger::target_spec_for_trigger(
-        pending
-            .source_contract
-            .map_or(source.card_def, |contract| contract.card_def),
+        match &pending.effect {
+            EffectOp::FaebloomTapFromCaptureV43 { source, .. } => source.card_def,
+            _ => pending
+                .source_contract
+                .map_or(source.card_def, |contract| contract.card_def),
+        },
         &pending.effect,
     )
     .ok_or("pending targeted trigger has no matching definition-owned ability")?;
@@ -14083,6 +14086,11 @@ fn validated_stack_item_target_metadata(
             crate::self_reflection_v1::normalize_historical_target(state, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
+            || item
+                .inline_effect
+                .as_ref()
+                .and_then(crate::faebloom_trick_v43::capture_of)
+                .is_some()
         {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
@@ -14201,6 +14209,11 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
             crate::self_reflection_v1::target_matches_live(state, target, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
+            || item
+                .inline_effect
+                .as_ref()
+                .and_then(crate::faebloom_trick_v43::capture_of)
+                .is_some()
         {
             target_contract_matches_live(
                 state,
@@ -14210,96 +14223,99 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
         } else {
             target_contract_matches_live(state, target, contract)
         };
-        let legal_now = match item.kind {
-            StackItemKind::ActivatedAbility => {
-                let ability_index = item
-                    .v4
-                    .activated_ability_index
-                    .ok_or("activated stack item lost its definition-owned ability index")?;
-                let source_contract = validated_ability_source_contract(state, item)?;
-                let ability = resolved_stack_activated_ability(
-                    state,
-                    source_contract,
-                    ability_index,
-                    item.v4.granted_by,
-                    item.v4.cauldron_grant,
-                )?;
-                let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
-                    live.zone_change_count != source_contract.zone_change_count
-                        || live.zone != source_contract.zone
-                });
-                if crate::fixed_source_damage_v3::tracked(state, item) {
-                    crate::fixed_source_damage_v3::legal_targets(
+        let legal_now =
+            match item.kind {
+                StackItemKind::ActivatedAbility => {
+                    let ability_index = item
+                        .v4
+                        .activated_ability_index
+                        .ok_or("activated stack item lost its definition-owned ability index")?;
+                    let source_contract = validated_ability_source_contract(state, item)?;
+                    let ability = resolved_stack_activated_ability(
                         state,
-                        crate::fixed_source_damage_v3::damage_source(
+                        source_contract,
+                        ability_index,
+                        item.v4.granted_by,
+                        item.v4.cauldron_grant,
+                    )?;
+                    let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
+                        live.zone_change_count != source_contract.zone_change_count
+                            || live.zone != source_contract.zone
+                    });
+                    if crate::fixed_source_damage_v3::tracked(state, item) {
+                        crate::fixed_source_damage_v3::legal_targets(
                             state,
-                            item.source,
-                            item.v4.stack_item_id,
-                        )?,
-                    )
-                    .contains(&target)
-                } else if matches!(
-                    item.inline_effect.as_ref(),
-                    Some(EffectOp::StandardV1(
-                        crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
-                    ))
-                ) {
-                    crate::source_power_activation_v1::legal_targets(
-                        state,
-                        crate::source_power_activation_v1::damage_source(
-                            state,
-                            item.source,
-                            item.v4.stack_item_id,
-                        )?,
-                    )
-                    .contains(&target)
-                } else {
-                    activation_legal_targets_with_source_lki(
-                        item.source,
-                        &ability,
-                        &chosen,
-                        source_departed,
-                        state,
-                    )
-                    .contains(&target)
-                }
-            }
-            _ => legal_targets_for_controller_from_source(
-                spec,
-                &chosen,
-                item.controller,
-                match item.kind {
-                    StackItemKind::Spell => Some(TargetingSource {
-                        object: item.source,
-                        card_def: state.objects.get(item.source).card_def,
-                        zone: state.objects.get(item.source).zone,
-                        zone_change_count: state.objects.get(item.source).zone_change_count,
-                        other_than: None,
-                        original_source_incarnation_only: false,
-                    }),
-                    StackItemKind::TriggeredAbility => {
-                        let source_contract = item
-                            .v4
-                            .ability_source_contract
-                            .ok_or("triggered stack item lost its source incarnation")?;
-                        let effect = item
-                            .inline_effect
-                            .as_ref()
-                            .ok_or("triggered stack item lost its effect program")?;
-                        triggered_ability_targeting_source(
-                            item.source,
-                            Some(source_contract),
-                            effect,
+                            crate::fixed_source_damage_v3::damage_source(
+                                state,
+                                item.source,
+                                item.v4.stack_item_id,
+                            )?,
                         )
+                        .contains(&target)
+                    } else if matches!(
+                        item.inline_effect.as_ref(),
+                        Some(EffectOp::StandardV1(
+                            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+                        ))
+                    ) {
+                        crate::source_power_activation_v1::legal_targets(
+                            state,
+                            crate::source_power_activation_v1::damage_source(
+                                state,
+                                item.source,
+                                item.v4.stack_item_id,
+                            )?,
+                        )
+                        .contains(&target)
+                    } else {
+                        activation_legal_targets_with_source_lki(
+                            item.source,
+                            &ability,
+                            &chosen,
+                            source_departed,
+                            state,
+                        )
+                        .contains(&target)
                     }
-                    StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
-                        unreachable!("handled or untargeted")
-                    }
-                },
-                state,
-            )
-            .contains(&target),
-        };
+                }
+                _ => legal_targets_for_controller_from_source(
+                    spec,
+                    &chosen,
+                    item.controller,
+                    match item.kind {
+                        StackItemKind::Spell => Some(TargetingSource {
+                            object: item.source,
+                            card_def: state.objects.get(item.source).card_def,
+                            zone: state.objects.get(item.source).zone,
+                            zone_change_count: state.objects.get(item.source).zone_change_count,
+                            other_than: None,
+                            original_source_incarnation_only: false,
+                        }),
+                        StackItemKind::TriggeredAbility => {
+                            let effect = item
+                                .inline_effect
+                                .as_ref()
+                                .ok_or("triggered stack item lost its effect program")?;
+                            let source_contract =
+                                if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+                                    // This reflexive retains its genuine spell source contract.
+                                    // Full metadata and capture authority were authenticated above.
+                                    None
+                                } else {
+                                    Some(item.v4.ability_source_contract.ok_or(
+                                        "triggered stack item lost its source incarnation",
+                                    )?)
+                                };
+                            triggered_ability_targeting_source(item.source, source_contract, effect)
+                        }
+                        StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
+                            unreachable!("handled or untargeted")
+                        }
+                    },
+                    state,
+                )
+                .contains(&target),
+            };
         any_legal |= same_incarnation && legal_now;
         chosen.push(target);
     }
