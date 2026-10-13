@@ -181,14 +181,12 @@ impl FastActorSessionV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn complete_ordered_binding_observation_identity_seat_and_menu_changes_refuse_readonly() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             put(&mut state, actor, "Forest", Zone::Hand);
             put(&mut state, actor, "Mountain", Zone::Hand);
             let mut session = FastActorSessionV1::from_strongbox_v32_fixture_state(state);

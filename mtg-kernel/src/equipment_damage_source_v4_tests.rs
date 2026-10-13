@@ -63,9 +63,7 @@ fn registered_rod_and_elves_actual_cast_equip_and_departed_grant_resolve_without
         .into_iter()
         .flat_map(|actor| ["Llanowar Elves", "Strongbox Raider"].map(|host| (actor, host)))
     {
-        let mut state = crate::policy_observation_v6::tests::ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
         state.step = crate::state::Step::Main1;
         let host = crate::policy_observation_v6::tests::put(
             &mut state,

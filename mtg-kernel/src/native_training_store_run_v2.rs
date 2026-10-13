@@ -9020,6 +9020,7 @@ mod tests {
     /// Both default and feature builds pin concrete profiles independently
     /// of the classifier used to construct the fixture.
     #[test]
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn default_fixture_decodes_clean_and_classifies_as_the_live_profile() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         // Pin the concrete profile independently of the classifier.
@@ -9042,6 +9043,18 @@ mod tests {
         assert_eq!(
             validated.record().environment.runtime_catalog_sha256,
             live_runtime_catalog_sha256
+        );
+    }
+
+    // Standard has no admitted native training profile in this reader. Keep
+    // this genuine live fixture as a rejection check instead of treating its
+    // catalog as the separately admitted FDN profile.
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn standard_fixture_refuses_unadmitted_training_profile() {
+        assert_eq!(
+            decode_train_run_v2(&fixture_bytes()).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
         );
     }
 

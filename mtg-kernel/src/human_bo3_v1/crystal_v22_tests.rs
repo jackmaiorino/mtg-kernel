@@ -1,12 +1,10 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 
 fn basic(actor: PlayerId, hidden: &str) -> crate::state::GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
@@ -153,9 +151,7 @@ fn ward_state(actor: PlayerId) -> crate::state::GameState {
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
     let terror = put(
         &mut state,
         actor.opponent(),
@@ -231,9 +227,7 @@ fn future_printed_bolt_mixed_menu_public_human_submit_and_owning_restore_both_se
     use crate::state::Target;
     for actor in [PlayerId::P0, PlayerId::P1] {
         let caster = actor.opponent();
-        let mut state = ready_state();
-        state.active_player = caster;
-        state.priority_player = caster;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
         // Physical static setup. Root ownership is still the real registered Bolt.
         let wall = put(&mut state, actor, "Crystal Barricade", Zone::Battlefield);
         let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
@@ -346,9 +340,7 @@ fn future_incinerating_private_human_discard_decline_and_owning_restore_both_sea
     use crate::state::Target;
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay in [false, true] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
             let wall = put(
                 &mut state,
                 actor.opponent(),
@@ -510,9 +502,7 @@ fn future_bite_human_binds_resolving_spell_separately_from_actual_damage_source(
     use crate::state::Target;
     for caster in [PlayerId::P0, PlayerId::P1] {
         let actor = caster.opponent();
-        let mut state = ready_state();
-        state.active_player = caster;
-        state.priority_player = caster;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
         let wall = put(&mut state, actor, "Crystal Barricade", Zone::Battlefield);
         let dealer = put(&mut state, caster, "Llanowar Elves", Zone::Battlefield);
         let recipient = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
@@ -691,9 +681,7 @@ fn future_firebrand_fixed_history_human_menu_retry_rollback_and_safe_capture_bot
     use crate::state::Target;
     for caster in [PlayerId::P0, PlayerId::P1] {
         let chooser = caster.opponent();
-        let mut core = ready_state();
-        core.active_player = caster;
-        core.priority_player = caster;
+        let mut core = crate::policy_observation_v6::tests::ready_state_for(caster);
         // Physical setup of real registered definitions, then a genuine printed activation.
         let wall = put(&mut core, chooser, "Crystal Barricade", Zone::Battlefield);
         let target = put(&mut core, chooser, "Llanowar Elves", Zone::Battlefield);
@@ -797,9 +785,7 @@ fn future_printed_gorehorn_menu_public_human_safe_facts_and_owning_rollback_both
     use crate::state::{Step, Target};
     for caster in [PlayerId::P0, PlayerId::P1] {
         let chooser = caster.opponent();
-        let mut state = ready_state();
-        state.active_player = caster;
-        state.priority_player = caster;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
         let wall = put(&mut state, chooser, "Crystal Barricade", Zone::Battlefield);
         let target = put(&mut state, chooser, "Shivan Dragon", Zone::Battlefield);
         let attacker = put(&mut state, caster, "Llanowar Elves", Zone::Battlefield);

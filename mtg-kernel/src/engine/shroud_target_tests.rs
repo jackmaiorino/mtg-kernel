@@ -7,9 +7,7 @@ use crate::policy_observation_v6::tests::{put, ready_state};
 #[test]
 fn shroud_excludes_both_players_and_rechecks_real_announced_spell_readonly() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;

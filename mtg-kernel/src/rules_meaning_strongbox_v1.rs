@@ -119,7 +119,8 @@ pub fn meaning(
         || trigger_index != 0
         || abilities.len() != 1
         || !crate::raid_entry_v1::owns_definition(card_id)
-        || abilities[0].condition != crate::trigger::TriggerCondition::Etb
+        || abilities[0].condition
+            != crate::trigger::TriggerCondition::EtbAfterControllerAttackedThisTurn
         || abilities[0].home_zone != Zone::Battlefield
         || abilities[0].face_index != 0
         || (abilities[0].effect)() != root
@@ -142,7 +143,7 @@ pub fn meaning(
                 def.power,
                 def.toughness,
                 def.keywords,
-                "Etb",
+                "EtbAfterControllerAttackedThisTurn",
                 abilities[0].home_zone,
                 abilities[0].face_index,
                 &root,

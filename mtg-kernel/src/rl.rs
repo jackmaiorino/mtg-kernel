@@ -10842,16 +10842,14 @@ mod crystal_resolving_source_ref_native84_tests {
     use super::*;
     use crate::engine::{self, Action, Decision};
     use crate::event::{ActiveReplacement, ReplacementEffectKind};
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     #[test]
     fn actual_bolt_owned_menu_ref_uses_captured_contract_and_refuses_missing_or_foreign_owner_readonly_both_seats(
     ) {
         for receiver in [PlayerId::P0, PlayerId::P1] {
             let caster = receiver.opponent();
-            let mut state = ready_state();
-            state.active_player = caster;
-            state.priority_player = caster;
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
             state.step = crate::state::Step::Main1;
             let wall = put(&mut state, receiver, "Crystal Barricade", Zone::Battlefield);
             let target = put(&mut state, receiver, "Llanowar Elves", Zone::Battlefield);
