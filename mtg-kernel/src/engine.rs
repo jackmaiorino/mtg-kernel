@@ -13635,6 +13635,15 @@ fn triggered_stack_item_expected_target_spec(
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
 
     crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    if crate::high_society_hunter_v1::owns_definition(source_card_def)
+        && item.v4.granted_by.is_none()
+        && *inline_effect == crate::high_society_hunter_v1::attack_program()
+    {
+        crate::high_society_hunter_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("Hunter trigger lost its original source")?,
+        )?;
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -20264,6 +20273,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             let declaration = state.engine.event_history.len() - 1;
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
+            crate::high_society_hunter_v1::capture_attack(state, declaration);
         }
     }
     if !state.engine.combat.attackers.is_empty() {

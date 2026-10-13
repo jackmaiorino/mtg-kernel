@@ -121,6 +121,7 @@ pub mod gourmand_public_v1;
 
 mod fiery_annihilation_v1;
 pub mod fiery_public_v1;
+pub(crate) mod high_society_hunter_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
@@ -128,6 +129,7 @@ mod raid_entry_v1;
 pub mod rules_meaning_crystal_ordering_v1;
 pub mod rules_meaning_fiery_v1;
 pub mod rules_meaning_gourmand_v1;
+pub mod rules_meaning_high_society_hunter_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;

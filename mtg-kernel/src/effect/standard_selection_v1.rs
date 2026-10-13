@@ -16,6 +16,7 @@ pub enum ObjectSelectionActionV1 {
     TapFiveThenTransformSource,
     CountersAndKeyword { counters: u8, keyword: Keywords },
     SacrificeThenDrawAndMakeCapturedSourceUnblockableV1,
+    SacrificeThenCounterCapturedSourceV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ObjectSelectionRuleV1 {
@@ -126,6 +127,15 @@ fn validate_origin(
     path: &[u16],
 ) -> Result<(), String> {
     let root = validated_definition_owned_root_effect(state, pending)?;
+    if rule.action == ObjectSelectionActionV1::SacrificeThenCounterCapturedSourceV1 {
+        crate::high_society_hunter_v1::validate_source(
+            state,
+            pending
+                .ctx
+                .ability_source_contract
+                .ok_or("Hunter selection lost original source")?,
+        )?;
+    }
     if !matches!(effect_op_at_structural_path(&root, path), Some(EffectOp::SelectObjectsV1 { rule: original }) if *original == rule)
     {
         return Err("object selection lost its definition-owned operation".into());
@@ -245,6 +255,9 @@ pub(super) fn apply_selection(
     match rule.action {
         ObjectSelectionActionV1::SacrificeThenDrawAndMakeCapturedSourceUnblockableV1 => {
             return Err("Gourmand cost requires the private removed-item owner".into());
+        }
+        ObjectSelectionActionV1::SacrificeThenCounterCapturedSourceV1 => {
+            crate::high_society_hunter_v1::pay_selection(state, pending, selected)?;
         }
         ObjectSelectionActionV1::TapFiveThenTransformSource => {
             if !selected.is_empty() {
