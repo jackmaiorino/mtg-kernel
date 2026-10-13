@@ -113,7 +113,7 @@ class AnalysisTests(unittest.TestCase):
             result = analyze.analyze([path], [{"id": "root", "position": "middle"}], ["seed"], [16000, 64000],
                                      worlds=2, repetitions=100)
             self.assertEqual(result["contrasts"]["B-A"]["mean_difference"], 1)
-            self.assertTrue(result["contrasts"]["B-A"]["advances_quality"])
+            self.assertFalse(result["contrasts"]["B-A"]["advances_quality"], "missing final process costs refuse advancement")
 
     def test_unknown_never_advances(self):
         with tempfile.TemporaryDirectory() as directory:

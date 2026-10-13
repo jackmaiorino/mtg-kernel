@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import random
 import statistics
+import math
 
 from launch import digest, publish, require
 
@@ -50,17 +51,27 @@ def paired(a, b, worlds):
             "unresolved_bounds": [(difference - unresolved) / worlds, (difference + unresolved) / worlds]}
 
 
-def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstrap_seed=2026101301):
+def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstrap_seed=2026101301,
+            completions=(), cpu_tolerance=.05):
     expected = {(r["id"], r["position"], seed, budget, arm)
                 for r in panel for seed in seeds for budget in budgets for arm in "ABC"}
+    require(repetitions > 0 and 0 <= cpu_tolerance <= .05, "invalid bootstrap count or CPU comparability envelope")
     indexed = {}
+    costs = {}
+    for path in completions:
+        batch = json.loads(Path(path).read_text())
+        for result in batch["results"]:
+            if result and result.get("output_sha256"):
+                costs[result["output_sha256"]] = result
+    technical = []
     for path in paths:
+        actual_cost = costs.get(digest(path))
         for line in Path(path).read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             row = json.loads(line)
             require(row.get("kind") == "search_allocation_experiment", "unexpected native result kind")
-            key = (row["id"], row["position"], row["seed"], row["budget"], row["arm"])
+            key = (row["id"], row["position"], row["seed"], row.get("anchor", row["budget"]), row["arm"])
             require(key in expected, f"result outside frozen panel: {key}")
             if key in indexed:
                 # Eval-only receipts may re-publish a selection; exact evaluation
@@ -70,10 +81,39 @@ def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstr
                         f"conflicting duplicate result: {key}")
                 continue
             indexed[key] = row
+            issues = []
+            if row.get("safety_cap_reached") is not False:
+                issues.append("safety-cap status missing or bound")
+            if row.get("technical_incomplete") is not False or row.get("selection", {}).get("faults"):
+                issues.append("technical search failure or status missing")
+            if not actual_cost or not math.isfinite(actual_cost["cpu_seconds"]) or actual_cost["cpu_seconds"] <= 0:
+                issues.append("final full process CPU missing")
+            else:
+                row["actual_full_cpu_seconds"] = actual_cost["cpu_seconds"]
+                row["actual_wall_seconds"] = actual_cost["wall_seconds"]
+                for field in ("pure_evaluation_cpu_seconds", "execution_prep_cpu_seconds"):
+                    if not isinstance(row.get(field), (float, int)) or not math.isfinite(row[field]) or row[field] < 0:
+                        issues.append(f"missing/invalid cost: {field}")
+                if not issues:
+                    used = actual_cost["cpu_seconds"] - row["pure_evaluation_cpu_seconds"]
+                    row["actual_search_execution_cpu_seconds"] = used
+                    target = row.get("cpu_budget_seconds")
+                    if not isinstance(target, (float, int)) or not math.isfinite(target) or target <= 0:
+                        issues.append("equal CPU target missing")
+                    elif abs(used - target) > cpu_tolerance * target:
+                        issues.append("actual search/execution CPU outside declared envelope")
+            if issues:
+                technical.append({"key": key, "issues": issues})
     missing = sorted(expected - indexed.keys())
     report = {"schema": "search-sharing-allocation-analysis/v1", "complete_panel": not missing,
               "missing": missing, "root_count": len(panel), "expected_rows": len(expected),
               "observed_rows": len(indexed), "evaluation_worlds": worlds,
+              "technical_failures": technical, "cpu_envelope_relative": cpu_tolerance,
+              "costs": [{"key": key, "full_process_cpu_seconds": row.get("actual_full_cpu_seconds"),
+                         "search_execution_cpu_seconds": row.get("actual_search_execution_cpu_seconds"),
+                         "wall_seconds": row.get("actual_wall_seconds"), "target": row.get("cpu_budget_seconds"),
+                         "selection_transitions": row.get("selection", {}).get("transitions")}
+                        for key, row in indexed.items()],
               "bootstrap": {"unit": "root", "replicates": repetitions, "seed": bootstrap_seed,
                             "interval_percent": 97.5, "primary_anchor": 64000,
                             "primary_contrasts": ["B-A", "C-A"], "secondary_anchor": 16000},
@@ -97,13 +137,22 @@ def analyze(paths, panel, seeds, budgets, worlds=128, repetitions=20000, bootstr
                     for field in ("root_obs_sha256", "root_menu_sha256", "bank_binding_sha256", "key_mode", "interchange"):
                         require(a[field] == b[field], f"cross-arm root/policy binding differs: {field}")
                     row = paired(a, b, worlds)
+                    cpu_a, cpu_b = a.get("actual_search_execution_cpu_seconds"), b.get("actual_search_execution_cpu_seconds")
+                    target = a.get("cpu_budget_seconds")
+                    comparable = (cpu_a is not None and cpu_b is not None and isinstance(target, (float, int))
+                                  and target > 0 and target == b.get("cpu_budget_seconds")
+                                  and abs(cpu_a - cpu_b) <= cpu_tolerance * target)
+                    row["cpu_pair_comparable"] = comparable
                     pairs.append({"root": root["id"], "position": root["position"], "seed": seed, "budget": budget, **row})
                     if budget == 64000:
                         unresolved += row["unresolved_pairs"]
                         values.append(row["difference_per_scheduled_world"])
             if len(values) == len(seeds):
                 root_values[root["id"]] = statistics.mean(values)
-        ready = (not missing and unresolved == 0
+        primary_technical = [issue for issue in technical if issue["key"][3] == 64000 and issue["key"][4] in ("A", arm)]
+        primary_pairs = [pair for pair in pairs if pair["budget"] == 64000]
+        ready = (not missing and unresolved == 0 and not primary_technical
+                 and all(pair["cpu_pair_comparable"] for pair in primary_pairs)
                  and len(root_values) == len(panel))
         contrast = {"paired_comparisons": len(pairs), "unresolved_pairs": unresolved, "pairs": pairs,
                     "root_means": root_values, "quality_resolved": ready, "advances_quality": False}
@@ -129,9 +178,11 @@ if __name__ == "__main__":
     parser.add_argument("--seeds", required=True, help="comma-separated exact PROFILE_SEED strings")
     parser.add_argument("--budgets", default="16000,64000")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--completion", action="append", required=True, help="ordered runtime completion records with final OS CPU")
+    parser.add_argument("--cpu-tolerance", type=float, default=.05)
     args = parser.parse_args()
     result = analyze(args.input, json.loads(Path(args.panel).read_text()), args.seeds.split(","),
-                     [int(n) for n in args.budgets.split(",")])
+                     [int(n) for n in args.budgets.split(",")], completions=args.completion, cpu_tolerance=args.cpu_tolerance)
     publish(args.out, result)
     print(json.dumps({"verdict": result["verdict"], "complete_panel": result["complete_panel"],
                       "advances": {k: v["advances_quality"] for k, v in result["contrasts"].items()}}))

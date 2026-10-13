@@ -17,9 +17,12 @@ def prepare(args):
     budgets = [int(n) for n in args.budgets.split(",")]
     selected = set(int(n) for n in args.decks.split(","))
     qualification = args.phase == "qualify"
+    require(not args.calibrate or qualification, "cost calibration is a bounded qualification phase")
     if not qualification:
         require(calibration, "measurement queue needs cost-only calibration")
         require(args.qualification, "measurement queue needs throughput receipt")
+        require(len(seeds) == 3 and len(set(seeds)) == 3 and all("qualification" not in seed and "calibration" not in seed for seed in seeds),
+                "measurement needs three fresh repetition seeds")
     jobs = []
     for repetition, seed in enumerate(seeds):
         for budget in budgets:
@@ -30,20 +33,22 @@ def prepare(args):
                 group = f"d{deck}-{budget}-r{repetition}"
                 shift = (deck + repetition) % 3
                 arms = "ABC"[shift:] + "ABC"[:shift]
-                for arm in arms:
+                for arm in ("A" if args.calibrate else arms):
                     env = {"PROFILE_EXPERIMENT": "1", "PROFILE_ARM": arm, "PROFILE_SEED": seed,
                            "PROFILE_CASES": (inputs / f"case-{deck}-{lineage}.jsonl").as_posix(),
                            "PROFILE_POSITIONS": f"{entry['position']}={entry['fraction']}",
                            "PROFILE_INTERCHANGE": "0", "S4A_KEY_MEMO": "0", "BUDGET_KEY_MODE": "repaired",
-                           "BUDGET_TOTAL": str(budget), "BANK_SPEC": (inputs / f"bank-spec-{lineage}.json").as_posix(),
-                           "S4A_MODEL": lineage, "PROFILE_EVALUATE": "1", "PROFILE_EVAL_WORLDS": "128",
+                           "BUDGET_TOTAL": str(budget if args.calibrate else args.safety_cap), "PROFILE_ANCHOR": str(budget),
+                           "BANK_SPEC": (inputs / f"bank-spec-{lineage}.json").as_posix(),
+                           "S4A_MODEL": lineage, "PROFILE_EVALUATE": "0" if args.calibrate else "1", "PROFILE_EVAL_WORLDS": "128",
                            "PROFILE_EVAL_CAP": "65536",
                            "OPPONENTS": f"T1={(inputs / 't1-source.json').as_posix()},A48={(inputs / 'a48-source.json').as_posix()}"}
-                    if qualification:
+                    if qualification and not args.calibrate:
                         env["PROFILE_WORK_LIMIT"] = str(args.work_limit)
-                    else:
+                    elif not qualification:
                         target = calibration["roots"][entry["id"]][str(budget)]
                         env["PROFILE_CPU_SECONDS"] = str(target["native_cpu_seconds"])
+                        env["PROFILE_CPU_OVERHEAD_RESERVE_SECONDS"] = str(target["overhead_reserve_seconds"])
                     jobs.append({"id": f"{group}-{arm}", "group": group, "arm": arm, "root": entry["id"],
                                  "seed": seed, "anchor": budget, "env": env, "expected_rows": 1,
                                  "argv": [f"source={(inputs / (lineage + '-source.json')).as_posix()}",
@@ -64,7 +69,8 @@ def prepare(args):
             "workload": {"mode": "s4a-search-profile", "experiment": "search-sharing-allocation-20261013",
                          "arms": "ABC", "root_panel_sha256": digest(inputs / "ROOTS.json"),
                          "common_flags": {"key_mode": "repaired", "interchange": False, "key_memo": False},
-                         "evaluation": {"continuation": "frozen-search-tree", "worlds": 128, "cap": 65536},
+                         "evaluation": {"enabled": not args.calibrate, "continuation": "frozen-search-tree", "worlds": 128, "cap": 65536},
+                         "selection_safety_cap": args.safety_cap,
                          "budget_anchors": budgets, "qualification_work_limit": args.work_limit},
             "seeds": seeds, "jobs": jobs}
     if calibration:
@@ -99,5 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--wait-timeout", type=float, default=43200)
     parser.add_argument("--calibration")
     parser.add_argument("--qualification")
+    parser.add_argument("--calibrate", action="store_true", help="cost-only A at actual baseline transition anchors, no fresh quality evaluation")
+    parser.add_argument("--safety-cap", type=int, default=16000000)
     args = parser.parse_args()
     print(json.dumps(prepare(args)))
