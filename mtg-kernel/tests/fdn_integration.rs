@@ -206,3 +206,10 @@ mod fdn_strongbox_raider_v1;
 
 #[path = "fdn/fdn_vampire_gourmand_v1.rs"]
 mod fdn_vampire_gourmand_v1;
+
+#[path = "fdn/fdn_inspiration_from_beyond_v1.rs"]
+mod fdn_inspiration_from_beyond_v1;
+#[path = "fdn/fdn_krenko_v1.rs"]
+mod fdn_krenko_v1;
+#[path = "fdn/fdn_soulstone_kellan_v1.rs"]
+mod fdn_soulstone_kellan_v1;
