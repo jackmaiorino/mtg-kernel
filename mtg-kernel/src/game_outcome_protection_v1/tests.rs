@@ -290,3 +290,66 @@ fn actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_sea
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires genuine Herald registration and native qualification"]
+fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_loss_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, herald) = cast_herald(actor);
+        let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { ref castable_spells, .. } if castable_spells.contains(&witness)));
+        engine::step(&mut state, Action::CastSpell(witness)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { ref legal_targets, .. }
+            if legal_targets.contains(&crate::state::Target::Object(herald))));
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(crate::state::Target::Object(herald)),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for branch in [&mut state, &mut replay] {
+            for _ in 0..16 {
+                let decision = engine::advance_until_decision(branch);
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                if branch.objects.get(witness).zone == Zone::Battlefield {
+                    break;
+                }
+                engine::step(branch, Action::Pass).unwrap();
+            }
+            assert_eq!(branch.objects.get(witness).zone, Zone::Battlefield);
+            assert_eq!(
+                branch.objects.get(witness).v4.attached_to.unwrap().object,
+                herald
+            );
+            assert!(
+                !crate::continuous_characteristics_v1::printed_abilities_active(branch, herald)
+            );
+            assert!(!active(branch, herald));
+            assert!(!cannot_lose(branch, actor));
+            assert!(!cannot_win(branch, actor.opponent()));
+            crate::event::propose_and_commit(
+                branch,
+                crate::event::ProposedEvent::life_loss(actor, 20),
+            );
+            crate::trigger::sba_fixed_point(branch);
+            assert!(branch.players[actor.index()].has_lost);
+        }
+        assert_eq!(state, replay);
+    }
+}
