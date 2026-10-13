@@ -401,7 +401,7 @@ mod future {
         actor: PlayerId,
         name: &str,
         color: ManaColor,
-        amount: u16,
+        amount: u8,
     ) -> ObjectId {
         let source = put(state, actor, name, Zone::Hand);
         assert!(CARD_DEFS[usize::from(state.objects.get(source).card_def)].has_full_support());
