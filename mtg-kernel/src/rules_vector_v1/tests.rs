@@ -759,6 +759,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Arahbo, the First Fang",
+    "Banishing Light",
+    "Strongbox Raider",
     "Garruk's Uprising",
     "Searslicer Goblin",
     "Goblin Token",
@@ -990,6 +992,16 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Arahbo, the First Fang",
+        "read via engine::static_controlled_subtype_boost_for; its owned entry trigger remains opaque",
+    ),
+    (
+        "effect.rs",
+        "Banishing Light",
+        "linked exile/return atoms are read via ExileTargetLinkedToSource and ReturnObjectsExiledBySource; exact definition-owned duration/custody requires its precise successor",
+    ),
     ("engine.rs", "Self-Reflection", "spell copy-source selection; represented by its typed copy root and selected successor"),
     (
         "fdn_raid_v1.rs",

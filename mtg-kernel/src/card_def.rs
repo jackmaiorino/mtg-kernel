@@ -2570,7 +2570,7 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
         // Preserve the ordered lists from ddff546a, with Elder appended to
-        // Foundations by v68, Ooze149, then Scout and Devil in this candidate.
+        // Foundations by v68, Ooze149, then Scout, Devil and Noble in this candidate.
         // These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
@@ -2584,7 +2584,11 @@ mod tests {
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
                 100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109, 149,
             ]);
-            expected.extend_from_slice(&[Subtype::Scout.stable_id(), Subtype::Devil.stable_id()]);
+            expected.extend_from_slice(&[
+                Subtype::Scout.stable_id(),
+                Subtype::Devil.stable_id(),
+                Subtype::Noble.stable_id(),
+            ]);
         }
         assert_eq!(
             Subtype::CREATURE_TYPES
