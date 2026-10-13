@@ -354,6 +354,11 @@ mod future_printed {
         survives: bool,
     ) -> (GameState, ObjectId, ObjectId) {
         let mut state = ready(caster);
+        // Keep genuine mana actions available after resolution so the surface
+        // exposes priority before Cleanup expires shields and clears damage.
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Forest", Zone::Battlefield);
+        }
         let creature = put(&mut state, owner, "Llanowar Elves", Zone::Hand);
         event::propose_and_commit(
             &mut state,
@@ -712,6 +717,7 @@ mod future_printed {
             let (mut state, target, _) = equipped(actor, actor, true);
             announce(&mut state, actor, target, None);
             settle(&mut state);
+            assert!(shield_count(&state) > 0);
             let mut session = owned(state);
             let e = expected(&session);
             let mut projector = HumanFieryProjectorV33::new(e.acting_player);
