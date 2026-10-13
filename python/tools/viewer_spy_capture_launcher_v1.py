@@ -8,11 +8,17 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from viewer_capture_launcher_v1 import require_guard, sha
+from viewer_capture_launcher_v1 import require_guard, sha, RESERVE
 from viewer_export_v1 import terminal, Exporter
 
 RAW_CAP = 2 * 1024**3
 WORKING_CAP = 8 * 1024**3
+
+def reserve_output(root, count):
+    require_guard(root,'spy-full-search-trace-239')
+    allowance=(512*1024**2+8192)*count
+    if size(root,True)+allowance>RAW_CAP or size(root)+allowance>WORKING_CAP or shutil.disk_usage(root).free<RESERVE+allowance:
+        raise ValueError('Cumulative retained capture or working-storage allowance exhausted')
 
 def pins(binary, template):
     config=json.loads(template.read_text())
@@ -98,11 +104,18 @@ def main():
     qualification=case_root/'qualification.json'
     if args.mode=='qualify':
         if qualification.exists():raise ValueError('Preserve existing qualification')
-        results=[invoke(args.binary,args.template,case_root,name,record,185,600,failed) for name,record,failed in
-            [('parity-off',False,False),('parity-on',True,False),('parity-recorder-failed',True,True)]]
+        results=[]
+        for name,record,failed in [('parity-off',False,False),('parity-on',True,False),('parity-recorder-failed',True,True)]:
+            reserve_output(args.root,int(record and not failed))
+            results.append(invoke(args.binary,args.template,case_root,name,record,185,600,failed))
         if any(r['exit_code']!=0 or r['actions']!=185 for r in results) or len({r['primary_sha256'] for r in results})!=1:raise ValueError('Off/on/failed recorder primary parity differs')
         capture_receipt(results[1],185)
-        started=time.perf_counter();serial=[invoke(args.binary,args.template,case_root,f'serial-{i}',True,185,600) for i in range(2)];serial_seconds=time.perf_counter()-started
+        started=time.perf_counter();serial=[]
+        for i in range(2):
+            reserve_output(args.root,1)
+            serial.append(invoke(args.binary,args.template,case_root,f'serial-{i}',True,185,600))
+        serial_seconds=time.perf_counter()-started
+        reserve_output(args.root,2)
         started=time.perf_counter()
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
             jobs=[pool.submit(invoke,args.binary,args.template,case_root,f'parallel-{i}',True,185,600) for i in range(2)]
@@ -148,10 +161,14 @@ def main():
             except ValueError as e:result['capture_error']=str(e)
             report['raw_bytes']=size(args.root,True);report['elapsed_seconds']=time.monotonic()-started
             acquisition.write_text(json.dumps(report,indent=2))
+            budget['seconds_used']=previous_seconds+time.monotonic()-started
+            budget_path.write_text(json.dumps(budget,indent=2))
             if result.get('receipt',{}).get('complete') and result['receipt']['winning_combo_rollout'] and result['receipt']['actual_search_combo_win']:break
             if result['complete']:break  # Repeating this completed deterministic case adds no new coverage.
         success=any(r.get('receipt',{}).get('complete') and r['receipt']['winning_combo_rollout'] and r['receipt']['actual_search_combo_win'] for r in results)
         report['state']='complete' if success else 'insufficient-demo-coverage';acquisition.write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)
+        budget['seconds_used']=previous_seconds+time.monotonic()-started
+        budget_path.write_text(json.dumps(budget,indent=2))
         if not success:raise SystemExit(1)
 
 if __name__=='__main__':main()
