@@ -381,6 +381,7 @@ fn future_incinerating_private_human_discard_decline_and_owning_restore_both_sea
                 Zone::Battlefield,
             );
             let card = put(&mut state, actor, "Forest", Zone::Hand);
+            put(&mut state, actor, "Forest", Zone::Library);
             put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
             let spell = put(&mut state, actor, "Incinerating Blast", Zone::Hand);
             state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
