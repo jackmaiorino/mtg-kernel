@@ -9155,6 +9155,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || crate::zul_ashur_v1::validate_state(state).is_err()
         || effect::validate_inspiration_resolution(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
+        || effect::validate_vampire_gourmand_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
     {
@@ -9173,6 +9174,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
         || crate::zul_ashur_v1::validate_state(state).is_err()
         || effect::validate_inspiration_resolution(state).is_err()
+        || effect::validate_vampire_gourmand_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
