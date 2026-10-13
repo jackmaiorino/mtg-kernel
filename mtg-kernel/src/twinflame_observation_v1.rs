@@ -734,7 +734,7 @@ pub(crate) mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    #[ignore = "requires actual Twinflame registration"]
+
     fn genuine_scalar_public_player_permanent_bound_options_and_old_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for player_target in [false, true] {

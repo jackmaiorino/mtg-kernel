@@ -1809,16 +1809,29 @@ fn real_incinerating_empty_hand_skips_optional_cost_and_empty_library_records_ac
                         matches!(e,mtg_kernel::event::CommittedEvent::Draw {player,object:None} if *player==actor)));
                     assert!(matches!(
                         engine::advance_until_decision(current),
-                        Decision::GameOver { .. }
+                        Decision::GameOver { winner: Some(winner) } if winner == actor.opponent()
                     ));
-                    // Preserve the existing engine terminal convention: loss is reported
-                    // before the pending resolved spell's final departure is drained.
-                    assert_eq!(current.objects.get(spell).zone, Zone::Stack);
-                    assert!(current.engine.pending_effect.as_ref().is_some_and(|p| p
-                        .resolving_item
-                        .source
-                        == spell
-                        && p.choice.is_none()));
+                    // The authenticated discard resumes and completes the
+                    // remaining draw inside the same resolution. The spell
+                    // departs before the following game-over checkpoint.
+                    assert_eq!(current.objects.get(spell).zone, Zone::Graveyard);
+                    assert!(current.engine.pending_effect.is_none());
+                    assert!(current.stack.iter().all(|item| item.source != spell));
+                    assert_eq!(current.objects.get(card).zone, Zone::Graveyard);
+                    assert_eq!(current.objects.get(recipient).damage, 0);
+                    assert_eq!(
+                        current
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter(
+                                |event| matches!(event, mtg_kernel::event::CommittedEvent::Draw {
+                                player, object: None
+                            } if *player == actor)
+                            )
+                            .count(),
+                        1
+                    );
                 }
                 assert_eq!(
                     serde_json::to_vec(&state).unwrap(),

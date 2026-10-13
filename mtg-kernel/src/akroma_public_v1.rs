@@ -442,11 +442,11 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "requires genuine Akroma catalog; typed face-down primitive is not an admitted disguise spell"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
+
     fn original_hidden_departure_masks_private_definition_after_later_reentry_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             assert!(crate::card_def::card_id_by_name("Akroma's Memorial").is_some());

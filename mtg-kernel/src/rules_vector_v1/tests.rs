@@ -54,7 +54,7 @@ fn nine_deck_cards() -> BTreeSet<u16> {
     ids
 }
 
-// The frozen V1 extractor deliberately refuses variable cast targets. These
+// The frozen V1 extractor deliberately refuses these exact new descriptors. These
 // audits still inspect every supported current record, without claiming that
 // the complete current catalog has a publishable V1 table.
 fn supported_v1_card_ids() -> Vec<u16> {
@@ -64,15 +64,45 @@ fn supported_v1_card_ids() -> Vec<u16> {
         .filter(|(_, def)| {
             def.target_spec == TargetSpec::KickerControlledCreatures
                 || def.kicked_target_spec == Some(TargetSpec::KickerControlledCreatures)
+                || def.damage_replacement_v1.is_some()
+                || def.game_outcome_protection_v1.is_some()
+                || def.as_enters_color_choice_v1.is_some()
+                || def.chosen_color_creature_boost_v1.is_some()
         })
         .map(|(id, _)| id as u16)
         .collect();
     if !excluded.is_empty() {
-        assert_eq!(excluded, vec![card_id("Divine Resilience")]);
+        assert_eq!(
+            excluded,
+            vec![
+                card_id("Divine Resilience"),
+                card_id("Heraldic Banner"),
+                card_id("Herald of Eternal Dawn"),
+                card_id("Twinflame Tyrant"),
+            ]
+        );
         assert!(matches!(
             (CARD_DEFS[usize::from(excluded[0])].spell_effect)(),
             Some(EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. })
         ));
+        let banner = &CARD_DEFS[usize::from(card_id("Heraldic Banner"))];
+        assert_eq!(
+            banner.as_enters_color_choice_v1,
+            Some(crate::card_def::AsEntersColorChoiceDefV1::AnyWubrg)
+        );
+        assert_eq!(
+            banner.chosen_color_creature_boost_v1,
+            Some(crate::card_def::ChosenColorCreatureBoostDefV1 {
+                power: 1,
+                toughness: 0
+            })
+        );
+        crate::rules_meaning_game_outcome_protection_v1::meaning(
+            &crate::rules_meaning_game_outcome_protection_v1::live_selector().unwrap(),
+            card_id("Herald of Eternal Dawn"),
+        )
+        .unwrap();
+        crate::twinflame_tyrant_v1::printed_meaning(card_id("Twinflame Tyrant")).unwrap();
     }
     (0..CARD_DEFS.len() as u16)
         .filter(|id| !excluded.contains(id))
@@ -113,6 +143,38 @@ fn supported_records_for_audit() -> RulesTableV1 {
 #[should_panic(expected = "variable cast target effects require a RulesMeaning successor")]
 fn complete_current_catalog_still_refuses_frozen_v1_publication() {
     build_table();
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "game-outcome prohibition requires its precise successor")]
+fn registered_herald_still_refuses_frozen_v1_publication() {
+    card_rules(card_id("Herald of Eternal Dawn"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "damage multiplier requires its exact successor")]
+fn registered_twinflame_still_refuses_frozen_v1_publication() {
+    card_rules(card_id("Twinflame Tyrant"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(
+    expected = "as-enters color and chosen-color anthem require their precise successor"
+)]
+fn registered_banner_still_refuses_frozen_v1_publication() {
+    card_rules(card_id("Heraldic Banner"));
 }
 
 // 1. Determinism.

@@ -269,6 +269,31 @@ class LimitedDeckTest(unittest.TestCase):
             self.assertEqual(resolved.count(self.registry[name].card_id), 4)
         self.assertEqual(resolved.count(self.registry["Island"].card_id), 24)
 
+    def test_outcome_memorial_fishing_and_twinflame_reference_decks_resolve_reserved_ids(self) -> None:
+        cases = [
+            ("herald_of_eternal_dawn", "Herald of Eternal Dawn", 432,
+             ["Savannah Lions", "Helpful Hunter", "Sun-Blessed Healer", "Banishing Light"], "Plains"),
+            ("akromas_memorial", "Akroma's Memorial", 433,
+             ["Llanowar Elves", "Webweaver Changeling", "Mossborn Hydra", "Garruk's Uprising"], "Forest"),
+            ("fishing_pole", "Fishing Pole", 434,
+             ["Llanowar Elves", "Quirion Ranger", "Viridian Longbow", "Scavenging Ooze"], "Forest"),
+            ("twinflame_tyrant", "Twinflame Tyrant", 436,
+             ["Lightning Bolt", "Fanatical Firebrand", "Heartfire Immolator", "Gorehorn Raider"], "Mountain"),
+        ]
+        for suffix, name, card_id, spells, land in cases:
+            with self.subTest(name=name):
+                deck = limited.parse_dck((FIXTURES / f"FDN_reference_{suffix}.dck").read_text(encoding="utf-8"))
+                resolved = limited.resolve_mainboard(deck, self.registry)
+                self.assertEqual(len(resolved), 40)
+                self.assertEqual(self.registry[name].card_id, card_id)
+                self.assertEqual(resolved[:4], [card_id] * 4)
+                for spell in spells:
+                    self.assertEqual(resolved.count(self.registry[spell].card_id), 4)
+                self.assertEqual(resolved.count(self.registry[land].card_id), 20)
+                self.assertNotIn(self.registry["Fish Token"].card_id, resolved)
+        self.assertEqual(self.registry["Fish Token"].card_id, 435)
+        self.assertTrue(self.registry["Fish Token"].is_token)
+
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
             ("FDN_top_04956_UG.dck", 40, "bb618d6eaddf04b0a9e51e9a88cd512a04635e99ebca91b11ace4c305d634c86"),
@@ -471,7 +496,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 227)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 231)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

@@ -120,7 +120,10 @@ mod future_printed {
         assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_cast_player_damage_multiple_live_sources_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -152,7 +155,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_damage_recipient_control_zero_combat_and_consumable_order_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -205,7 +211,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_bolt_owned_scalar_order_has_zero_or_three_damage_and_retained_input_proof_both_seats(
     ) {
         use crate::effect::crystal_prevention_v1::PreventionV1;
@@ -337,7 +346,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_bushwhack_batch_orders_both_players_before_damage_and_binds_outcomes_both_seats() {
         use crate::effect::crystal_prevention_v1::PreventionV1;
         use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
@@ -507,7 +519,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_combat_shared_player_shield_orders_packets_before_simultaneous_damage_both_seats() {
         use crate::effect::crystal_prevention_v1::PreventionV1;
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -664,7 +679,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_gorehorn_raid_without_numeric_prevention_uses_owned_doubled_outcome_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
@@ -755,7 +773,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_sure_strike_and_double_strike_have_two_owned_combat_waves_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for foundations in [false, true] {
@@ -908,7 +929,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn real_bite_down_owned_menu_refuses_overflow_before_mutation_and_accepts_prevention_first_both_seats(
     ) {
         use crate::effect::crystal_prevention_v1::PreventionV1;
@@ -999,7 +1023,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn large_real_bite_down_with_guaranteed_barricade_prevention_commits_zero_without_overflow_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1048,7 +1075,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_lotleth_dynamic_damage_samples_original_graveyard_before_ordering_both_seats() {
         use crate::effect::crystal_prevention_v1::PreventionV1;
         use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
@@ -1165,7 +1195,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_cast_into_fire_multi_target_ordering_and_returned_target_exclusion_both_seats() {
         use crate::effect::crystal_prevention_v1::PreventionV1;
         use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
@@ -1296,7 +1329,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_fiery_opaque_program_finishes_equipment_and_shield_after_actual_replacement_answer_both_seats(
     ) {
         use crate::effect::crystal_prevention_v1::PreventionV1;
@@ -1466,7 +1502,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn large_genuine_bushwhack_full_prevention_retains_other_packet_lifelink_and_replay_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1522,7 +1561,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_bolt_queries_current_tyrant_controller_suppression_departure_and_return_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for case in 0..4 {
@@ -1579,7 +1621,10 @@ mod future_printed {
         }
     }
     #[test]
-    #[ignore = "true Twinflame printing remains unregistered"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_stolen_firebrand_captured_damage_controller_survives_sacrifice_and_reentry_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

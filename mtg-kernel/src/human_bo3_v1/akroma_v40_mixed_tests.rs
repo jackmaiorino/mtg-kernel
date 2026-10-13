@@ -159,7 +159,10 @@ fn registered_employment_held_resolved_safe_facts_retry_and_rollback_both_seats(
     check(false);
 }
 #[test]
-#[ignore = "requires genuine Akroma registration; actual Employment cast/target/pay/resolve remain mandatory"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_akroma_employment_union_canonical_control_facts_and_owning_replay_both_seats() {
     check(true);
 }
@@ -196,7 +199,10 @@ fn twin_v40(
         .unwrap()
 }
 #[test]
-#[ignore = "requires genuine Twinflame registration; real Employment installation and Bolt resolution"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_employment_twinflame_union_order_privacy_retry_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let state =
@@ -288,7 +294,10 @@ fn actual_employment_twinflame_union_order_privacy_retry_and_restore_both_seats(
     }
 }
 #[test]
-#[ignore = "requires genuine Twinflame registration; real shared combat wave and owning V40 actions"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_twinflame_shared_combat_allocation_in_union_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let state = crate::twinflame_observation_v1::tests::at_combat(actor);

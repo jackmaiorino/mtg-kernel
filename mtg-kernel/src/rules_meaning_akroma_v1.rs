@@ -214,11 +214,11 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "requires genuine unregistered Akroma definition; native unrun"]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
+
     fn actual_two_roots_and_all_meaning_fields_reconstruct() {
         let id = crate::card_def::card_id_by_name("Akroma's Memorial").unwrap();
         let selector = live_selector().unwrap();
