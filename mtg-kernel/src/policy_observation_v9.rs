@@ -114,14 +114,11 @@ pub fn observe_policy_v9(
 mod tests {
     use super::*;
     use crate::engine::{self, Action};
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
     use crate::state::{Step, Zone};
 
     fn declared_state(actor: PlayerId) -> GameState {
-        let mut state = ready_state();
-        state.turn = 3;
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_for(actor);
         state.step = Step::DeclareAttackers;
         let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
         engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();
@@ -170,18 +167,44 @@ mod tests {
     #[test]
     fn stale_turn_history_never_becomes_current_raid_authority() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = declared_state(actor);
-            state.turn += 1;
-            assert_eq!(
-                observe(&state, actor).extensions.attacked_this_turn,
-                [false; 2]
-            );
-            let mut state = declared_state(actor);
-            state.active_player = actor.opponent();
-            assert_eq!(
-                observe(&state, actor).extensions.attacked_this_turn,
-                [false; 2]
-            );
+            for following_turns in [1, 2] {
+                let mut state = declared_state(actor);
+                let stale = state.attack_declaration_turn_v1;
+                // Keep the intervening real draw legal when returning to the
+                // original actor. All turn ledgers advance through the engine.
+                put(&mut state, actor.opponent(), "Forest", Zone::Library);
+                let mut crossed = 0;
+                for _ in 0..48 {
+                    match engine::advance_until_decision(&mut state) {
+                        engine::Decision::CastSpellOrPass { .. } => {}
+                        engine::Decision::DeclareAttackers { .. } => {
+                            engine::step(&mut state, Action::DeclareAttackers(Vec::new())).unwrap();
+                            continue;
+                        }
+                        other => panic!("unexpected real turn transition {other:?}"),
+                    }
+                    if state.step == Step::Upkeep {
+                        crossed += 1;
+                        if crossed == following_turns {
+                            break;
+                        }
+                        // Leave this upkeep before counting another boundary.
+                        engine::step(&mut state, Action::Pass).unwrap();
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    } else {
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                }
+                assert_eq!(crossed, following_turns);
+                assert!(state.attack_declaration_turn_v1.is_none());
+                // Deliberately restore only the stale Raid evidence. Its
+                // turn/player mismatch must never authorize current Raid.
+                state.attack_declaration_turn_v1 = stale;
+                assert_eq!(
+                    observe(&state, actor).extensions.attacked_this_turn,
+                    [false; 2]
+                );
+            }
         }
     }
 
