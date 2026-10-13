@@ -676,4 +676,79 @@ pub(crate) mod tests {
             }
         }
     }
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn at_combat(actor: PlayerId) -> GameState {
+        use crate::engine::{self, Action, Decision};
+        use crate::mana::ManaColor;
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            for _ in 0..16 {
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+            // Genuine mana decisions prevent the backend from advancing across Cleanup after completion.
+            put(&mut state, player, "Forest", Zone::Battlefield);
+        }
+        let tyrant = put(&mut state, actor, "Twinflame Tyrant", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(tyrant)).unwrap();
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.objects.get(tyrant).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(state.objects.get(tyrant).zone, Zone::Battlefield);
+        let dragon = put(&mut state, actor, "Shivan Dragon", Zone::Battlefield);
+        for source in [tyrant, dragon] {
+            state.objects.get_mut(source).summoning_sick = false;
+            state.objects.get_mut(source).v4.lifelink_keyword_counters = 1;
+        }
+        state
+            .engine
+            .active_replacements
+            .push(crate::event::ActiveReplacement {
+                id: 90_065,
+                source: dragon,
+                kind: crate::event::ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Player(actor.opponent()),
+                    remaining: 3,
+                },
+            });
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::DeclareAttackers { .. }) {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        engine::step(&mut state, Action::DeclareAttackers(vec![tyrant, dragon])).unwrap();
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if crate::twinflame_tyrant_v1::combat::has_pending(&state) {
+                break;
+            }
+            match decision {
+                Decision::DeclareBlockers { .. } => {
+                    engine::step(&mut state, Action::DeclareBlockers(vec![])).unwrap()
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("actual combat allocation entry {other:?}"),
+            }
+        }
+        assert!(crate::twinflame_tyrant_v1::combat::has_pending(&state));
+        state
+    }
 }

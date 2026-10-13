@@ -374,3 +374,157 @@ fn genuine_scalar_owning_human_order_target_mask_restore_and_readonly_both_seats
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "requires actual Twinflame registration"]
+fn genuine_shared_shield_human_combat_allocation_completion_restore_and_readonly_both_seats() {
+    use crate::twinflame_tyrant_v1::combat;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let state = crate::twinflame_observation_v1::tests::at_combat(actor);
+        let saved = serde_json::to_vec(&state).unwrap();
+        let lives = state.players.each_ref().map(|p| p.life);
+        let mut session = owned(state);
+        assert_eq!(session.human_seat, actor.opponent().into());
+        let mut projector = HumanTwinflameProjectorV38::new(actor.opponent().into());
+        let prompt = projector
+            .project_current(&session, expected(&session))
+            .unwrap();
+        assert_safe(&serde_json::to_value(&prompt).unwrap());
+        let allocation = prompt.state.extensions.combat_allocation.as_ref().unwrap();
+        assert_eq!(allocation.packets.len(), 2);
+        assert_eq!(allocation.packets[0].amount, 3);
+        assert_eq!(allocation.packets[1].amount, 5);
+        assert!(allocation
+            .packets
+            .iter()
+            .all(|packet| matches!(packet.recipient, HumanDamageRecipientV38::You)));
+        let snapshot = session.snapshot_v38();
+        let allocation_request = request(&prompt, "Apply replacements to 3 combat damage");
+        let receipt = projector
+            .submit(&mut session, allocation_request.clone())
+            .unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector
+                .submit(&mut session, allocation_request.clone())
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let menu = projector
+            .project_current(&session, expected(&session))
+            .unwrap();
+        assert!(menu.state.extensions.combat_allocation.is_none());
+        assert!(
+            menu.state
+                .extensions
+                .prevention_menu
+                .as_ref()
+                .unwrap()
+                .is_combat
+        );
+        assert_eq!(
+            menu.state
+                .extensions
+                .prevention_menu
+                .as_ref()
+                .unwrap()
+                .remaining_damage,
+            3
+        );
+        let doubling = menu
+            .actions
+            .iter()
+            .find(|a| a.label.contains("double the remaining damage"))
+            .unwrap();
+        let doubled = HumanActionRequestV1 {
+            prompt_seq: menu.prompt_seq,
+            action_index: doubling.action_index,
+        };
+        projector.submit(&mut session, doubled.clone()).unwrap();
+        let current = session.inner.twinflame_fixture_state();
+        assert!(!combat::has_pending(current));
+        combat::validate(current).unwrap();
+        assert_eq!(
+            current.players[actor.opponent().index()].life,
+            lives[actor.opponent().index()] - 13
+        );
+        assert_eq!(
+            current.players[actor.index()].life,
+            lives[actor.index()] + 13
+        );
+        session.restore_v38(&snapshot).unwrap();
+        let before = session.inner.privileged_core_environment_hash();
+        assert_eq!(
+            projector.submit(&mut session, doubled),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(session.inner.privileged_core_environment_hash(), before);
+        let fresh = projector
+            .project_current(&session, expected(&session))
+            .unwrap();
+        projector
+            .submit(
+                &mut session,
+                request(&fresh, "Apply replacements to 3 combat damage"),
+            )
+            .unwrap();
+        let fresh = projector
+            .project_current(&session, expected(&session))
+            .unwrap();
+        let shield = fresh
+            .actions
+            .iter()
+            .find(|a| a.label.contains("shield"))
+            .unwrap();
+        projector
+            .submit(
+                &mut session,
+                HumanActionRequestV1 {
+                    prompt_seq: fresh.prompt_seq,
+                    action_index: shield.action_index,
+                },
+            )
+            .unwrap();
+        let current = session.inner.twinflame_fixture_state();
+        assert!(!combat::has_pending(current));
+        combat::validate(current).unwrap();
+        assert_eq!(
+            current.players[actor.opponent().index()].life,
+            lives[actor.opponent().index()] - 10
+        );
+        assert_eq!(
+            current.players[actor.index()].life,
+            lives[actor.index()] + 10
+        );
+        for mutation in 0..2 {
+            let mut malformed: GameState = serde_json::from_slice(&saved).unwrap();
+            if mutation == 0 {
+                malformed.engine.twinflame_combat_v38 = Default::default();
+            } else {
+                malformed
+                    .engine
+                    .twinflame_combat_v38
+                    .0
+                    .as_mut()
+                    .unwrap()
+                    .remaining
+                    .reverse();
+            }
+            let bytes = serde_json::to_vec(&malformed).unwrap();
+            let rejected = FastActorSessionV1::from_twinflame_v38_fixture_state(malformed);
+            assert!(matches!(
+                rejected.current_response(),
+                FastActorResponseV1::Terminal(_)
+            ));
+            assert_eq!(
+                serde_json::to_vec(rejected.twinflame_fixture_state()).unwrap(),
+                bytes
+            );
+        }
+    }
+}
