@@ -841,6 +841,40 @@ fn optional_discard_draw(op: &EffectOp) -> bool {
         discard: 1, sacrifice_lands: 0, return_permanent: None, then, otherwise: None
     } if **then == (EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }))
 }
+
+/// The common frame guard retains its generic legacy-leaf refusal. Only this
+/// interpreter's exact published optional discard/draw remainder has a separate
+/// authenticated executor. No marker or mutable frame alone grants ownership.
+pub(crate) fn authenticates_legacy_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    op: &EffectOp,
+    path: &[u16],
+) -> Result<bool, String> {
+    if pending
+        .resolving_item
+        .v4
+        .crystal_prevention_started_v1
+        .is_empty()
+        || !optional_discard_draw(op)
+    {
+        return Ok(false);
+    }
+    validate(state)?;
+    let boundary = last(state, &pending.resolving_item)
+        .ok_or("Crystal legacy frame lost its committed owner")?;
+    if boundary.pending.as_deref() != Some(pending)
+        || boundary.item.as_ref() != &pending.resolving_item
+        || effect_op_at_structural_path(&boundary.root, path) != Some(op)
+        || !pending.frames.iter().any(|frame| {
+            matches!(frame, EffectFrame::Program { op: actual, path: actual_path }
+                if actual == op && actual_path == path)
+        })
+    {
+        return Err("Crystal legacy frame changed its published root/path/remainder".into());
+    }
+    Ok(true)
+}
 fn supported(op: &EffectOp) -> bool {
     if optional_discard_draw(op) || fight_recipe(op) {
         return true;
