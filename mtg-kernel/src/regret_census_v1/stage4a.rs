@@ -37,6 +37,8 @@ mod refresh;
 mod replay_labels;
 mod seeds;
 mod tree;
+#[cfg(feature = "viewer-recording-v1")]
+pub(super) mod viewer_replay;
 mod world;
 
 use super::search::{game_setup, new_session, GameSetup};
