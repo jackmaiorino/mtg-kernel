@@ -65,7 +65,11 @@ pub(crate) fn owns_definition(id: u16) -> bool {
             && d.keywords == Keywords::NONE
             && !d.is_token
             && !d.is_land
-            && (d.spell_effect)().is_none()
+            && (d.spell_effect)()
+                == Some(EffectOp::MoveObject {
+                    object: crate::effect::ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                })
             && d.target_spec == TargetSpec::None
             && d.activated_abilities.is_empty()
             && d.additional_cost.is_none()
