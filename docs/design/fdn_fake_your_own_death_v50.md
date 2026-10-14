@@ -10,7 +10,7 @@ The second component installs the ordinary exact-incarnation +2/+0 modifier and 
 
 Next source work must bind the actual paid spell/target/turn and cleanup to those operands; own each mandatory trigger through collection, APNAP, publication, counter/removal, return/entry suspension and Treasure completion; and supply precise ordered meaning plus complete V50 public/backend/Human privacy and restore adapters. Legacy modes and samplers must refuse unsupported original or retained facts. Printing registration and native qualification follow those components.
 
-Fourteen authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. The Witness group needs pure Limited; the new death-binding groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the three new groups, modified copied-token group and all genuine Fake printing/custody/consumer cases remain unqualified.
+Fifteen authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. The Witness group needs pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the four new groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes
 and passes ten predecessor primitive groups, including real cleanup, copied-token
@@ -40,3 +40,18 @@ still authenticate the actual paid cast, original grant and committed event and
 own collection, publication, removal, cleanup and completion. No primitive
 operand is executable trigger authority. Source review is scoped CLEAR; native
 qualification remains pending.
+
+## Simultaneous death roster
+
+One immutable pre-batch battlefield supplies every grant lookback. The primitive
+preserves proposed-event order and distinct issued-grant order; it rejects
+duplicate timestamps and repeated original battlefield deaths before mutation.
+The future owner must supply the complete installed-grant inventory, retain
+these captures through commitment and own APNAP ordering and publication.
+
+The new both-seat group prepares two distinct grants on one creature and one
+on another, genuine control transfer, simultaneous commitment, exact death
+binding and readonly duplicate refusal. The paid Witness group contrasts a
+simultaneous Aura/creature departure with a separate Aura departure: the latter
+restores an earlier ability, while that later board cannot supply the former's
+lookback. This is scoped source-CLEAR, not native execution or printing admission.

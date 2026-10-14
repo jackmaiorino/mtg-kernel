@@ -143,6 +143,51 @@ pub fn primitive_death_lookback_v50(
     }))
 }
 
+/// Capture one complete caller-owned grant roster against the same original
+/// battlefield for every proposed death. The future owner must derive the
+/// complete grant inventory and retain these operands through the actual batch.
+/// Event order and distinct grant order are preserved; this is not APNAP
+/// ordering or executable trigger publication authority.
+pub fn primitive_capture_death_roster_v50(
+    state: &GameState,
+    grants: &[PrimitiveGrantV50],
+    events: &[ProposedEvent],
+) -> Result<Vec<PrimitiveDeathLookbackV50>, String> {
+    for (index, grant) in grants.iter().enumerate() {
+        if grants[..index]
+            .iter()
+            .any(|prior| prior.timestamp == grant.timestamp)
+        {
+            return Err("Fake primitive grant inventory repeats an issued timestamp".into());
+        }
+    }
+    let mut deaths = Vec::new();
+    let mut captures = Vec::new();
+    for event in events {
+        let ProposedEvent::ZoneChange(change) = event else {
+            continue;
+        };
+        if change.to_zone != Zone::Graveyard
+            || !state
+                .objects
+                .try_get(change.object)
+                .is_some_and(|object| object.zone == Zone::Battlefield)
+        {
+            continue;
+        }
+        if deaths.contains(&change.object) {
+            return Err("Fake primitive death roster repeats a battlefield departure".into());
+        }
+        deaths.push(change.object);
+        for grant in grants {
+            if let Some(capture) = primitive_death_lookback_v50(state, *grant, event)? {
+                captures.push(capture);
+            }
+        }
+    }
+    Ok(captures)
+}
+
 /// Bind immediately after the captured move commits, before another move or
 /// token state-based action. The caller must own the original grant/lookback
 /// and this committed event; this primitive does not publish an ability.
@@ -268,6 +313,75 @@ mod tests {
                     .filter(|object| state.objects.get(**object).card_def == treasure)
                     .count();
                 assert_eq!(count, if actor == owner { 0 } else { 2 });
+            }
+        }
+    }
+
+    #[test]
+    fn primitive_simultaneous_deaths_keep_distinct_grants_and_original_controllers() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let first = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let second = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let first_binding = binding(&state, first);
+            let second_binding = binding(&state, second);
+            let grants = [
+                primitive_install_grant_v50(&mut state, first_binding).unwrap(),
+                primitive_install_grant_v50(&mut state, first_binding).unwrap(),
+                primitive_install_grant_v50(&mut state, second_binding).unwrap(),
+            ];
+            crate::standard_cards_v1::gain_control(&mut state, first, actor.opponent());
+            let events = [
+                ProposedEvent::zone_change(first, Zone::Graveyard),
+                ProposedEvent::zone_change(second, Zone::Graveyard),
+            ];
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(
+                primitive_capture_death_roster_v50(&state, &[grants[0], grants[0]], &events)
+                    .is_err()
+            );
+            assert!(primitive_capture_death_roster_v50(
+                &state,
+                &grants,
+                &[events[0].clone(), events[0].clone()]
+            )
+            .is_err());
+            let captures = primitive_capture_death_roster_v50(&state, &grants, &events).unwrap();
+            assert_eq!(captures.len(), 3);
+            assert_eq!(
+                captures
+                    .iter()
+                    .map(|capture| capture.grant)
+                    .collect::<Vec<_>>(),
+                grants
+            );
+            assert!(captures
+                .iter()
+                .all(|capture| capture.battlefield_source.controller == actor.opponent()));
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            crate::event::propose_and_commit_batch(&mut state, events.to_vec());
+            for capture in captures {
+                let source = capture.battlefield_source.source;
+                let context = primitive_bind_committed_death_v50(
+                    &state,
+                    &capture,
+                    last_death_index(&state, source),
+                )
+                .unwrap();
+                assert_eq!(context.controller, actor.opponent());
+                assert_eq!(
+                    context.ability_source_contract.unwrap().owner,
+                    if source == first {
+                        actor
+                    } else {
+                        actor.opponent()
+                    }
+                );
             }
         }
     }
@@ -408,6 +522,28 @@ mod tests {
             assert!(later.active(&state).unwrap());
             assert!(!earlier.active(&state).unwrap());
             assert_eq!(crate::engine::effective_power(&state, creature), 5);
+            let simultaneous = [
+                ProposedEvent::zone_change(witness, Zone::Graveyard),
+                ProposedEvent::zone_change(creature, Zone::Graveyard),
+            ];
+            let captures =
+                primitive_capture_death_roster_v50(&state, &[earlier, later], &simultaneous)
+                    .unwrap();
+            assert_eq!(captures.len(), 1);
+            assert_eq!(captures[0].grant, later);
+            // Removing the Aura in a separate event genuinely restores the
+            // earlier ability. That later board cannot describe simultaneous death.
+            let mut separate = state.clone();
+            crate::event::propose_and_commit(&mut separate, simultaneous[0].clone());
+            assert!(earlier.active(&separate).unwrap());
+            let mut simultaneous_state = state.clone();
+            crate::event::propose_and_commit_batch(&mut simultaneous_state, simultaneous.to_vec());
+            primitive_bind_committed_death_v50(
+                &simultaneous_state,
+                &captures[0],
+                last_death_index(&simultaneous_state, creature),
+            )
+            .unwrap();
             let death = ProposedEvent::zone_change(creature, Zone::Graveyard);
             assert!(primitive_death_lookback_v50(&state, earlier, &death)
                 .unwrap()
