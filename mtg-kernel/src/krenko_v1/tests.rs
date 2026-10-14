@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 
 #[test]
 #[cfg(all(
