@@ -149,13 +149,26 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import hashlib
           import re
           for path in sorted(Path('target/release/build').glob('mtg-kernel-*/out/card_defs.rs')):
-              source = path.read_text()
+              raw = path.read_bytes()
+              source = raw.decode('utf-8')
               match = re.search(r'pub const KERNEL_CARDDB_HASH: u64 = (0x[0-9a-f]+)', source)
+              count = re.search(r'pub static CARD_DEFS: \[CardDef; (\d+)\]', source)
               if match:
-                  print(path, match.group(1), flush=True)
+                  print(path, match.group(1), 'definitions=' + (count.group(1) if count else 'unknown'),
+                        'sha256=' + hashlib.sha256(raw).hexdigest(), flush=True)
           PY
+
+      - name: Retain generated catalog source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/release/build/mtg-kernel-*/out/card_defs.rs
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Hosted runners have no CUDA device, so behavioral CUDA gates run
       # under the local merge protocol; this step still fails closed on any
