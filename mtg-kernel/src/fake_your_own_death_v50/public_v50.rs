@@ -3,6 +3,7 @@
 use super::spell_custody::{self, journal, JournalV50, RemovalV50};
 use crate::effect::{EffectObjectBinding, EffectOp};
 use crate::event::CommittedEvent;
+use crate::ids::PlayerId;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::rules_meaning_fake_your_own_death_v50 as meaning;
 use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackTargetContractV4, Zone};
@@ -248,6 +249,124 @@ fn resolution_death(
         ));
     };
     ordinal(captures, *capture)
+}
+
+fn death_binding(effect: &EffectOp) -> Option<u64> {
+    match effect {
+        EffectOp::FakeDeathFromCaptureV50 { capture } => Some(*capture),
+        _ => None,
+    }
+}
+
+/// Shape classification only. References require the real validated owner.
+pub fn selected(item: &StackItem) -> bool {
+    item.inline_effect
+        .as_ref()
+        .and_then(death_binding)
+        .is_some()
+}
+
+fn captured_death_source(
+    state: &GameState,
+    capture: u64,
+) -> Result<CardStableRefV1, RlContractError> {
+    let JournalV50::DeathCaptured { lookback, .. } = at(state, capture)? else {
+        return Err(RlContractError(
+            "Fake source reference lost original death capture".into(),
+        ));
+    };
+    Ok(source(state, lookback.battlefield_source))
+}
+
+pub fn stack_source_reference(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(capture) = item.inline_effect.as_ref().and_then(death_binding) else {
+        return Ok(None);
+    };
+    spell_custody::validate_retained_grant_history(state).map_err(RlContractError)?;
+    if state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>()
+        .as_slice()
+        != [item]
+    {
+        return Err(RlContractError(
+            "Fake source reference requires its complete original live row".into(),
+        ));
+    }
+    Ok(Some(captured_death_source(state, capture)?))
+}
+
+pub fn pending_source_reference(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(capture) = death_binding(&pending.effect) else {
+        return Ok(None);
+    };
+    spell_custody::validate_retained_grant_history(state).map_err(RlContractError)?;
+    if !super::death_custody::held_triggers(state).any(|original| original == pending) {
+        return Err(RlContractError(
+            "Fake source reference requires its complete original held trigger".into(),
+        ));
+    }
+    Ok(Some(captured_death_source(state, capture)?))
+}
+
+/// Predecessors cannot erase known printing or gained-ability semantics.
+/// Unknown opponent hand and face-down identities do not select this refusal.
+pub(crate) fn require_legacy_visible(
+    state: &GameState,
+    actor: Option<PlayerId>,
+) -> Result<(), RlContractError> {
+    if super::death_custody::has_unowned_roots(state)
+        || state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| journal(event).is_some())
+    {
+        return Err(RlContractError(
+            "Fake Your Own Death history requires V50 family facts".into(),
+        ));
+    }
+    let known = state.objects.iter().any(|(id, object)| {
+        let hand_known = object.zone == Zone::Hand
+            && actor.is_some_and(|actor| {
+                actor == object.owner
+                    || state
+                        .known_hand_cards(actor, object.owner)
+                        .iter()
+                        .any(|entry| {
+                            entry.object == id
+                                && entry.zone_change_count == object.zone_change_count
+                        })
+            });
+        let visible = hand_known
+            || matches!(
+                object.zone,
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command
+            );
+        let definition_known = object.v4.face_down_v1.is_none()
+            || actor.is_some_and(|actor| {
+                object
+                    .v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << actor.index()) != 0)
+            });
+        visible && definition_known && spell_custody::selected_definition(object.card_def)
+    });
+    if known {
+        Err(RlContractError(
+            "Fake Your Own Death printing requires V50 family facts".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Family projection only. The future mixed consumer must also validate all

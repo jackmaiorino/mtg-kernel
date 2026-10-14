@@ -31,7 +31,7 @@ pub(crate) fn has_unowned_roots(state: &GameState) -> bool {
             .any(|event| journal(event).is_some())
 }
 
-fn held_triggers(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
+pub(super) fn held_triggers(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
     state
         .engine
         .pending_triggers

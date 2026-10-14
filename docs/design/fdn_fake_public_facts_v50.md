@@ -40,3 +40,18 @@ death revelation. Aura checkpoint menus and owner/death-controller outcome
 forgeries are checked. Copy and Disguise initialization are existing engine
 operands, not additional paid-printing claims. Source consultation found no
 concrete family-projection or fixture defect. No runtime pass is claimed.
+
+Live and held trigger-source helpers now require the exact original owner and
+project its battlefield identity, preserving the controller at death after the
+physical card's graveyard controller resets to its owner. Forged passed rows are
+refused without mutation. Shared predecessor builders and action/source paths
+now refuse retained Fake history or a printing known to the observer. Unknown
+opponent hands and unknown face-down identities do not choose that refusal;
+actual revealed-hand knowledge does. The mixed V50 scope remains unfinished.
+
+Fourteen paid fixture groups are written. The two additions pay for two real
+grants on one creature, order their actual held abilities, restore and require
+one return plus two Treasures; and check predecessor API refusal after real
+revelation or paid Fake while unknown-hand variation preserves its extensions.
+Existing separate-owner checks also authenticate the original battlefield source.
+Compilation, runtime and executable V50 backend/Human admission remain pending.

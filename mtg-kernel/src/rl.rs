@@ -2140,6 +2140,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
 ) -> Result<ObservationV2> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
@@ -2669,6 +2670,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
@@ -3961,6 +3963,10 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
     accept_cerberus: bool,
     accepted_statics: FamilyCapabilitiesWithFishingV40,
 ) -> Result<PolicyObservationStorageV6> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+        request.0.state,
+        Some(request.0.acting_player),
+    )?;
     let (request, (accepted_planes, accept_conqueror)) = request;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(request.state).map_err(RlContractError)?;
@@ -4468,6 +4474,7 @@ fn policy_observation_extensions_conqueror_inner_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let pending = state
         .engine
@@ -5006,6 +5013,7 @@ pub(crate) fn core_policy_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -5219,6 +5227,7 @@ fn core_surface_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -9202,6 +9211,7 @@ fn engine_context_v2_conqueror_inner_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<EngineContextV2> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
@@ -10593,6 +10603,7 @@ fn stack_source_ref_conqueror_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<CardStableRefV1> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
     if accept_conqueror {
         if let Some(source) = crate::conqueror_public_v49::stack_source_reference(state, item)? {
             return Ok(source);

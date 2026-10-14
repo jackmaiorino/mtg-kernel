@@ -675,6 +675,20 @@ fn actual_paid_fake_returns_opponent_owned_card_but_treasure_belongs_to_death_co
         drain(&mut state);
         death(&mut state, target);
         assert_eq!(state.stack.last().unwrap().controller, actor);
+        let original = state.stack.last().unwrap().clone();
+        let source = public_v50::stack_source_reference(&state, &original)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (source.zone, source.controller, source.owner),
+            (Zone::Battlefield, actor.into(), owner.into())
+        );
+        assert_eq!(state.objects.get(target).controller, owner);
+        let mut forged = original.clone();
+        forged.controller = owner;
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(public_v50::stack_source_reference(&state, &forged).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
         let bytes = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
         for game in [&mut state, &mut restored] {
@@ -994,5 +1008,141 @@ fn actual_paid_fake_public_facts_mask_face_down_recipient_and_ignore_unrelated_h
             public_v50::DeathPhaseV50::Resolved
         );
         assert_eq!(treasures(&state, actor), 1);
+    }
+}
+
+#[test]
+fn actual_two_paid_fake_grants_hold_distinct_original_sources_and_return_once_with_two_treasures() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, target) = paid(actor, actor);
+        drain(&mut state);
+        let (mut state, _, _) = paid_on(state, actor, target);
+        drain(&mut state);
+        assert_eq!(engine::effective_power(&state, target), 5);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Graveyard),
+        );
+        let Decision::OrderTriggers { player, pending } =
+            engine::advance_until_decision(&mut state)
+        else {
+            panic!("two real gained death abilities must require ordering");
+        };
+        assert_eq!(player, actor);
+        assert_eq!(pending.len(), 2);
+        let held = state.engine.pending_triggers.clone();
+        assert_eq!(held.len(), 2);
+        assert_ne!(held[0].effect, held[1].effect);
+        for trigger in &held {
+            let source = public_v50::pending_source_reference(&state, trigger)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (
+                    source.arena_id,
+                    source.zone,
+                    source.zone_change_count,
+                    source.controller
+                ),
+                (target.0, Zone::Battlefield, 0, actor.into())
+            );
+            let mut forged = trigger.clone();
+            forged.controller = actor.opponent();
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(public_v50::pending_source_reference(&state, &forged).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+        let facts = public_facts(&state);
+        assert_eq!(facts.deaths.len(), 2);
+        assert_eq!(facts.trigger_order.len(), 2);
+        assert!(facts
+            .deaths
+            .iter()
+            .all(|death| death.phase == public_v50::DeathPhaseV50::Held));
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            engine::step(game, Action::OrderTriggers(vec![1, 0])).unwrap();
+            for item in &game.stack {
+                if public_v50::selected(item) {
+                    let reference = public_v50::stack_source_reference(game, item)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(
+                        (reference.zone, reference.controller),
+                        (Zone::Battlefield, actor.into())
+                    );
+                }
+            }
+            drain(game);
+            assert_eq!(game.objects.get(target).zone, Zone::Battlefield);
+            assert!(game.objects.get(target).tapped);
+            assert_eq!(game.objects.get(target).zone_change_count, 2);
+            assert_eq!(engine::effective_power(game, target), 1);
+            assert_eq!(treasures(game, actor), 2);
+            let facts = public_facts(game);
+            assert_eq!(
+                facts
+                    .deaths
+                    .iter()
+                    .filter(|death| death.returned_incarnation.is_some())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                facts
+                    .deaths
+                    .iter()
+                    .map(|death| death.treasures.len())
+                    .sum::<usize>(),
+                2
+            );
+            assert!(facts
+                .deaths
+                .iter()
+                .all(|death| death.phase == public_v50::DeathPhaseV50::Resolved));
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn legacy_consumer_refusal_depends_on_known_fake_facts_not_unknown_opponent_hand() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let hidden = put(
+            &mut state,
+            actor.opponent(),
+            "Fake Your Own Death",
+            Zone::Hand,
+        );
+        public_v50::require_legacy_visible(&state, Some(actor)).unwrap();
+        let original = crate::rl::policy_observation_extensions_panda_v47(&state, actor).unwrap();
+        let mut alternate = state.clone();
+        alternate.objects.get_mut(hidden).card_def =
+            crate::card_def::card_id_by_name("Mountain").unwrap();
+        alternate.objects.get_mut(hidden).name = "Mountain".into();
+        assert_eq!(
+            original,
+            crate::rl::policy_observation_extensions_panda_v47(&alternate, actor).unwrap()
+        );
+        assert!(public_v50::require_legacy_visible(&state, Some(actor.opponent())).is_err());
+        state
+            .reveal_hand_card(actor, actor.opponent(), hidden)
+            .unwrap();
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::rl::policy_observation_extensions_panda_v47(&state, actor).is_err());
+        assert!(crate::rl::policy_observation_extensions_conqueror_v49(&state, actor).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+
+        let (paid, _, _) = paid(actor, actor);
+        let before = serde_json::to_vec(&paid).unwrap();
+        assert!(crate::rl::policy_observation_extensions_panda_v47(&paid, actor).is_err());
+        assert!(crate::rl::policy_observation_extensions_conqueror_v49(&paid, actor).is_err());
+        assert_eq!(serde_json::to_vec(&paid).unwrap(), before);
+        public_facts(&paid);
     }
 }
