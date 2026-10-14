@@ -388,3 +388,13 @@ level 3 and real departure, and never inserts a fake Season definition or joint
 catalog. Crystal's counter-bearing chosen-power adapter uses the authenticated
 actual placement amount for its source snapshot and counter occurrence, then
 retains the original subsequent sampled-power/damage validation.
+
+
+A final serial-creator audit also routes retained counter-reward,
+destroy-then-create and other-named-creature logical creation rosters through
+one simultaneous entry batch under V48. Every original request samples one
+unchanged replacement world. Their genuinely absent branches retain their
+prior execution. The real future paid Bolt/An Offer response fixture verifies
+four Treasures for the original countered-spell controller from one complete
+two-request input/roster, no Bolt damage, both source graveyards and three
+identical serialized executions.

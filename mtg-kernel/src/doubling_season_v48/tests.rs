@@ -2023,3 +2023,122 @@ fn genuine_talent_level_order_changes_cost_rule_and_effect_quotes_without_joint_
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_offer_counter_reward_is_one_whole_expanded_entry_roster_for_original_controller() {
+    use crate::engine::{self, Action, Decision};
+    use crate::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Battlefield);
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { spell, .. } if spell == bolt)
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
+        );
+        let offer = put(
+            &mut state,
+            actor.opponent(),
+            "An Offer You Can't Refuse",
+            Zone::Hand,
+        );
+        state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(offer)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets == vec![Target::Object(bolt)])
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(bolt))).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
+        );
+        assert_eq!(state.players[actor.opponent().index()].mana_pool, [0; 6]);
+        let original = restore(&state);
+        let start = state.engine.event_history.len();
+        let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            for _ in 0..32 {
+                if branch.stack.is_empty() {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut branch),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut branch, Action::Pass).unwrap();
+            }
+            assert!(branch.stack.is_empty());
+            assert_eq!(branch.objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(branch.objects.get(offer).zone, Zone::Graveyard);
+            assert_eq!(
+                branch.players[actor.opponent().index()].life,
+                20,
+                "actual Bolt was countered"
+            );
+            let actual = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::CreateToken {
+                        object,
+                        token_def,
+                        controller,
+                        replacement_input_v48,
+                    } if *token_def == treasure => {
+                        assert_eq!(
+                            *controller, actor,
+                            "reward belongs to countered spell's original controller"
+                        );
+                        Some((*object, replacement_input_v48.0.unwrap()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual.len(), 4);
+            assert!(actual.iter().all(|(_, input)| *input == actual[0].1));
+            let completions = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::TokenCreationReplacementV48 { creation }
+                        if creation.input == actual[0].1 =>
+                    {
+                        Some(creation)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(completions.len(), 1);
+            assert_eq!(completions[0].original.len(), 2);
+            assert_eq!(completions[0].created.len(), 4);
+            validate_token_journals(&branch).unwrap();
+            assert_eq!(restore(&branch), branch);
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+    }
+}

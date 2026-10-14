@@ -17990,6 +17990,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if state.engine.halted.is_some() {
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                event::propose_and_commit_batch(
+                    state,
+                    (0..*count)
+                        .map(|_| event::ProposedEvent::create_token(*token_def, controller))
+                        .collect(),
+                );
+                return;
+            }
             let mut reward_ctx = ctx.clone();
             reward_ctx.controller = controller;
             for _ in 0..*count {
@@ -18047,6 +18056,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
             let controller = state.objects.get(id).controller;
             execute(&EffectOp::DestroyObject { object: *object }, ctx, state);
+            if crate::doubling_season_v48::requires_successor(state) {
+                if state.engine.halted.is_none() {
+                    event::propose_and_commit_batch(
+                        state,
+                        (0..*count)
+                            .map(|_| event::ProposedEvent::create_token(*token_def, controller))
+                            .collect(),
+                    );
+                }
+                return;
+            }
             for _ in 0..*count {
                 event::propose_and_commit(
                     state,
@@ -19162,6 +19182,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let count = other_controlled_creatures_named_count(state, source, name);
+            if crate::doubling_season_v48::requires_successor(state) {
+                event::propose_and_commit_batch(
+                    state,
+                    (0..count)
+                        .map(|_| event::ProposedEvent::create_token(*token_def, ctx.controller))
+                        .collect(),
+                );
+                return;
+            }
             for _ in 0..count {
                 event::propose_and_commit(
                     state,
