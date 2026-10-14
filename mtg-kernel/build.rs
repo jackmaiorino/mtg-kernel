@@ -3473,6 +3473,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
             "EffectOp::CreateControlledCreatureTargetCopyV1",
         ),
+        "Fiery Annihilation" => program(
+            "CreatureThenUpToOneAttachedEquipment",
+            "FieryAnnihilation(5Damage,CreatureMandatory,AttachedEquipmentOptionalTarget,IndependentExactIncarnationRecheck,EquipmentExile,CommittedThisTurnExactCreatureDeathExileReplacement)",
+            "EffectOp::FieryAnnihilation",
+        ),
         "Run Away Together" => program(
             "TwoCreaturesWithDifferentControllers",
             "ReturnTwoDifferentControllerCreaturesToOwnersHands(exactlyTwo,distinctObjects,currentDifferentControllers,exactIncarnations,simultaneousLegalitySnapshot,batchOwnerHandMove,partialLegalTargets)",
@@ -3848,6 +3853,9 @@ fn program_target_spec_src(target: &str) -> &'static str {
         "NonartifactCreature" => "TargetSpec::NonartifactCreature",
         "CreatureToughnessAtLeastFour" => "TargetSpec::CreatureToughnessAtLeastFour",
         "AttackingCreature" => "TargetSpec::AttackingCreature",
+        "CreatureThenUpToOneAttachedEquipment" => {
+            "TargetSpec::CreatureThenUpToOneAttachedEquipment"
+        }
         "TwoCreaturesWithDifferentControllers" => {
             "TargetSpec::TwoCreaturesWithDifferentControllers"
         }
@@ -6816,12 +6824,16 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Skyship Buccaneer" => "self_etb:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:draw_controller:1",
         "Gorehorn Raider" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:any_target_player_creature_planeswalker:damage2",
         "Gutless Plunderer" => "self_etb:independent_original_entry_controller:raid_capture_and_recheck:private_look3:keep0_or1_top:rest_ordered_graveyard:exact_committed_library",
+        "Arahbo, the First Fang" => "self_or_other_controlled_nontoken_effective_cat_permanent_enters:original_beneficiary:create_white_cat_creature_token:1/1:other_controlled_cat_creatures_plus1_plus1",
+        "Strongbox Raider" => "self_etb:original_controller:raid_capture_and_recheck:exile_top2:choose_exact_one_new_exile:ordinary_play_until_holder_next_cleanup",
+        "Stromkirk Bloodthief" => "controller_end_step:intervening_opponent_actual_life_loss_this_turn:target_controlled_vampire_permanent:counter:plus1_plus1:1:captured_controller_recheck",
         "Authority of the Consuls" => "opponent_creature_entry:actual_zonechange_or_create_token:captured_controller:gain_life_1;static:opponent_creatures_enter_tapped:active_printed_ability",
         "Searslicer Goblin" => "beginning_captured_controller_end_step:intervening_if_captured_controller_declared_attackers_this_turn:declaration_history_round_and_active_seat:recheck_at_resolution:create_goblin_token_for_captured_controller:1:untapped:nonattacking:no_haste",
         "Ruby, Daring Tracker" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:2:2",
         "Courageous Goblin" => "source_attacks_while_controller_has_effective_power_at_least:4:bound_source_pump_until_end_of_turn:1:0:menace_on_exact_trigger_source",
         "Ashroot Animist" => "attack:another_controlled_creature:trample_and_boost_until_cleanup:power_sample_once_resolution:same_source_or_actual_departure_lki:nonnegative:exact_source_target_incarnations",
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
+        "Vampire Gourmand" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_draw_controller:1_and_exact_source_cannot_be_blocked_until_cleanup",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
@@ -6959,6 +6971,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Elegant Parlor" | "Lush Portico" | "Underground Mortuary" => "etb:surveil:1",
         "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
         "Meteor Golem" => "etb:target_opponent_nonland_permanent:destroy",
+        "Banishing Light" => "self_etb:target_opponent_nonland_permanent:exile_until_exact_source_incarnation_leaves:no_exile_if_source_already_left:immediate_return_exact_exile_incarnation_under_owner:independent_of_removed_source_abilities",
         "Dauntless Veteran" => "source_declared_attacker:boost_controlled_creatures:1:1:none:end_of_turn",
         "Crackling Cyclops" => "cast_noncreature:pump_bound_source:3:0:end_of_turn",
         "Reclamation Sage" => "etb:target_artifact_or_enchantment:may_destroy",

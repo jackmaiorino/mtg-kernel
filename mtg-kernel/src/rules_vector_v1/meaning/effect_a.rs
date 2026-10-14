@@ -88,6 +88,7 @@ fn target_slot_origin(spec: TargetSpec, slot: u8) -> (Option<ZoneF>, Option<RelF
         | TargetSpec::AttackingOrBlockingCreature
         | TargetSpec::AttackingCreature
         | TargetSpec::TwoCreaturesWithDifferentControllers
+        | TargetSpec::CreatureThenUpToOneAttachedEquipment
         | TargetSpec::CreatureOrPlaneswalker
         | TargetSpec::ArtifactEnchantmentOrFlyingCreature
         | TargetSpec::ArtifactEnchantmentOrCreaturePowerAtLeastFour

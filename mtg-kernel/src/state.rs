@@ -1323,6 +1323,7 @@ pub fn stack_target_contract_is_structurally_valid(
             ) | (
                 TargetSpec::TwoCreaturesWithDifferentControllers
                     | TargetSpec::UpToTwoCreatures
+                    | TargetSpec::CreatureThenUpToOneAttachedEquipment
                     | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | TargetSpec::ExactlyTwoArtifactPermanents
@@ -1494,10 +1495,35 @@ pub struct StackStateV4 {
     pub frenzied_goblin_started_v1: FrenziedGoblinStartedV1,
     #[serde(default, skip_serializing_if = "FrenziedGoblinPublicationV1::is_empty")]
     pub frenzied_goblin_publication_v1: FrenziedGoblinPublicationV1,
+    /// Empty contributes neither serialized bytes nor Hash input.
+    #[serde(default, skip_serializing_if = "VampireGourmandStartedV1::is_empty")]
+    pub vampire_gourmand_started_v1: VampireGourmandStartedV1,
     #[serde(default, skip_serializing_if = "GorehornPublishedV1::is_empty")]
     pub gorehorn_published_v1: GorehornPublishedV1,
+    #[serde(default, skip_serializing_if = "CrystalPreventionStartedV1::is_empty")]
+    pub crystal_prevention_started_v1: CrystalPreventionStartedV1,
+    #[serde(default, skip_serializing_if = "FixedDamagePaidV3::is_empty")]
+    pub fixed_damage_paid_v3: FixedDamagePaidV3,
+    #[serde(default, skip_serializing_if = "EquipmentDamagePublishedV4::is_empty")]
+    pub equipment_damage_published_v4: EquipmentDamagePublishedV4,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EquipmentDamagePublishedV4(pub Option<u32>);
+impl EquipmentDamagePublishedV4 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for EquipmentDamagePublishedV4 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "equipment-damage-publication/v4".hash(state);
+            index.hash(state);
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct GorehornPublishedV1(pub Option<u32>);
@@ -1575,6 +1601,69 @@ impl Hash for FrenziedGoblinPublicationV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if let Some(index) = self.0 {
             "frenzied-goblin-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VampireGourmandStartedBindingV1 {
+    pub stack_item_id: StackItemId,
+    pub source: AbilitySourceContractV4,
+    pub first_receipt_history_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VampireGourmandStartedV1(pub Option<VampireGourmandStartedBindingV1>);
+
+impl VampireGourmandStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VampireGourmandStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(binding) = self.0 {
+            "vampire-gourmand-started/v1".hash(state);
+            binding.hash(state);
+        }
+    }
+}
+
+/// Mana spent to cast a spell. Zero contributes nothing to the in-process
+/// `Hash`, so stack items that never record it keep their prior
+/// `GameState::state_hash`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CrystalPreventionStartedV1(pub Option<u32>);
+impl CrystalPreventionStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for CrystalPreventionStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "crystal-prevention-started/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FixedDamagePaidV3(pub Option<u32>);
+impl FixedDamagePaidV3 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for FixedDamagePaidV3 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "fixed-damage-paid/v3".hash(state);
             index.hash(state);
         }
     }
@@ -2011,8 +2100,8 @@ pub struct GameState {
     /// battlefield incarnation for intervening-if trigger comparisons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_stats_lki_v1: Option<Vec<CreatureStatsLkiV1>>,
-    /// Players who lost life this turn. Only `standard-magezero-fixtures`
-    /// builds record it.
+    /// Players who lost life this turn. Standard records its original ledger;
+    /// Limited opts in only through an actual selected life-loss definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_loss_turn_v1: Option<LifeLossTurnV1>,
     /// Creatures that can't attack or block while a source stays under
@@ -2311,7 +2400,10 @@ impl GameState {
     }
 
     /// Records that `player` lost life now.
-    #[cfg(feature = "standard-magezero-fixtures")]
+    #[cfg(any(
+        feature = "standard-magezero-fixtures",
+        feature = "limited-fdn-fixtures"
+    ))]
     pub(crate) fn record_life_loss_v1(&mut self, player: PlayerId) {
         let mut players = if self.player_lost_life_this_turn_v1(player.opponent()) {
             let mut players = [false; 2];
@@ -2448,6 +2540,7 @@ impl GameState {
             raid_waiting_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
+        crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
         state
     }
 

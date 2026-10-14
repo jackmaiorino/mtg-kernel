@@ -324,10 +324,8 @@ fn passage_cost_target_restore_expiry_and_repeat_after_untap() {
         dragon,
         Keywords::CANT_BE_BLOCKED
     ));
-    state.active_player = PlayerId::P0;
-    state.priority_player = PlayerId::P0;
-    state.step = Step::Main1;
-    state.objects.get_mut(passage).tapped = false;
+    super::fixture_turn_v1::reach(&mut state, PlayerId::P0, Step::Main1);
+    assert!(!state.objects.get(passage).tapped);
     state.players[0].mana_pool[5] = 4;
     activate(&mut state, passage);
     choose(&mut state, dragon);

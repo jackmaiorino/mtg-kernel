@@ -16,6 +16,7 @@ pub(crate) fn owns_definition(card: u16) -> bool {
         let expected = match def.name {
             "Gorehorn Raider" => crate::trigger::gorehorn_raider_effect(),
             "Gutless Plunderer" => crate::trigger::gutless_plunderer_effect(),
+            "Strongbox Raider" => crate::trigger::strongbox_raider_effect(),
             _ => return false,
         };
         def.is_executable()
@@ -62,7 +63,8 @@ pub(crate) fn validate_source_for_program(
     source: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
     let intrinsic = *program == crate::trigger::gorehorn_raider_effect()
-        || *program == crate::trigger::gutless_plunderer_effect();
+        || *program == crate::trigger::gutless_plunderer_effect()
+        || *program == crate::trigger::strongbox_raider_effect();
     let Some(source) = source.filter(|source| owns_definition(source.card_def)) else {
         return if intrinsic {
             Err("printed Raid root lost its independent source definition".into())
@@ -127,6 +129,7 @@ pub(crate) fn validate_source_for_program(
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::effect::exile_top_choose_v1::validate_state(state)?;
     crate::raid_entry_custody_v1::validate(state)?;
     if state.engine.event_log.iter().any(|event| {
         matches!(
@@ -162,6 +165,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if pending.granted_by.is_none()
             && (pending.effect == crate::trigger::gorehorn_raider_effect()
                 || pending.effect == crate::trigger::gutless_plunderer_effect()
+                || pending.effect == crate::trigger::strongbox_raider_effect()
                 || pending
                     .source_contract
                     .is_some_and(|source| owns_definition(source.card_def))
@@ -179,6 +183,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             && (item.inline_effect.as_ref().is_some_and(|op| {
                 *op == crate::trigger::gorehorn_raider_effect()
                     || *op == crate::trigger::gutless_plunderer_effect()
+                    || *op == crate::trigger::strongbox_raider_effect()
             }) || item
                 .v4
                 .ability_source_contract

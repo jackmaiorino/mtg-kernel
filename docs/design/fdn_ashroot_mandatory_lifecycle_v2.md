@@ -1,5 +1,15 @@
 # Ashroot attack occurrence ownership
 
+The root later-source composition combines the reviewed Ashroot repair in
+`a395d48ba97b0cd25b9ff081485c9a95abca7da6` with Banishing/Stromkirk/Gourmand
+composition `61fe467659795ee09f89d9aa69da0cd950d4958c`.
+Ashroot records immediately after each genuine declaration, before Gourmand
+uses the saved declaration index. Both cleanup-expiry hooks run before the
+global effect removal, and disjoint private pre-pop/counter owners coexist.
+All existing source composition event/effect variants remain a prefix.
+Formatting and diff checks pass. This419-definition candidate remains
+unqualified with a stale profile; native79 verifies the separate a395 head.
+
 Prepared source on PR235 `ecf149117b46d60c8def95eed74a70d51403a75c`.
 No definition, ID, catalog, profile, frozen 286 external names or 24 external
 token dependencies change. Native compilation, gameplay and sampler/model

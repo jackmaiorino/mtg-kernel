@@ -1,0 +1,32 @@
+{
+  "definition": {
+    "name": "Arahbo, the First Fang",
+    "mana_cost": "{2}{W}",
+    "mana_value": 3,
+    "colors": [
+      "W"
+    ],
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Cat",
+      "Avatar"
+    ],
+    "supertypes": [
+      "Legendary"
+    ],
+    "power": 2,
+    "toughness": 2,
+    "is_land": false,
+    "produces_mana": [],
+    "is_token": false,
+    "java_file": "Mage.Sets/src/mage/cards/a/ArahboTheFirstFang.java"
+  },
+  "primary_source": {
+    "repository": "XMage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/a/ArahboTheFirstFang.java"
+  },
+  "disposition": "UNREGISTERED source preparation; no catalog/profile ID or capability admission"
+}

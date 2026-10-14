@@ -43,9 +43,8 @@ pub(crate) mod tests {
     ))]
     pub(crate) fn actual_source(player: PlayerId) -> (GameState, crate::ids::ObjectId) {
         use crate::engine::{Action, Decision};
-        let mut state = ready_state();
-        state.active_player = player;
-        state.priority_player = player;
+        let mut state =
+            crate::policy_observation_v6::tests::ready_state_with_turn_authority(player);
         state.step = crate::state::Step::Main1;
         for seat in [PlayerId::P0, PlayerId::P1] {
             for _ in 0..20 {

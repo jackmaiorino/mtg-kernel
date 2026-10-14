@@ -334,11 +334,9 @@ pub(crate) mod tests {
         use crate::effect::EffectBooleanChoicePurpose;
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
         use crate::state::{Target, Zone};
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_with_turn_authority(actor);
         state.players[actor.index()].life = life;
         state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 4;
         let sire = put(

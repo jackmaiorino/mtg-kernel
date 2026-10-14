@@ -124,6 +124,8 @@ impl Scan<'_> {
             | SkipNextUntap { .. }
             | AttachSourceToTarget { .. }
             | AddCountersToTarget { .. }
+            | StromkirkVampirePermanentCounterV1
+            | StromkirkCounterFromCaptureV2 { .. }
             | CreateTokenAndAttachSource { .. }
             | CreateRoleAttachedToTarget { .. }
             | AddMana { .. }
@@ -165,14 +167,21 @@ impl Scan<'_> {
             | PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
             | GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. }
             | ReturnTwoDifferentControllerCreaturesToOwnersHands
+            | BindArahboCatEntryV1
+            | ArahboTokenFromCaptureV1 { .. }
+            | BindGarrukEtbDrawV1
+            | BindGarrukPowerEntryDrawV1
+            | GarrukDrawFromCaptureV1 {..}
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
+            | ExileTopChooseOneUntilNextTurn { .. }
             | BindAshrootAttackBoostV1
             | AshrootBoostFromCaptureV2 { .. }
             | CerberusUntapV1 { .. }
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
+            | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
             | CreateTokensForOtherControlledCreaturesNamed { .. }
@@ -439,6 +448,7 @@ impl Scan<'_> {
                     || self.op(then)
                     || self.fs(expected_remaining_frames)
             }
+            GrantChosenExilePlayPermission { .. } => true,
             SurveilLibraryOne {
                 original_library,
                 expected_remaining_frames,
@@ -533,6 +543,7 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             ExileBatch { choice } => {
@@ -639,6 +650,7 @@ impl Scan<'_> {
                 then,
                 ..
             } => self.bs(original_graveyard) || self.bs(candidates) || self.op(then),
+            CrystalDiscardAfterDamageV2 { .. } => true,
             SelectObjectsV1 {
                 original_candidates,
                 ..
@@ -727,6 +739,7 @@ impl Scan<'_> {
                             ..
                         } => self.fs(expected_remaining_frames),
                         Generic => false,
+                        CrystalPreventionV1 { .. } => true,
                         CreatureChoiceV1 {
                             kind,
                             expected_remaining_frames,
@@ -875,6 +888,7 @@ fn continuation_conflicts(
             OwnerLibrarySecondOrBottom { frame }
             | CounterUnlessPaysGeneric { frame }
             | CounterUnlessPaysLife { frame }
+            | ChosenExilePlayPermission { frame }
             | CounterTargetUnlessPaysGeneric { frame }
             | ExileOneFromGraveyard { frame }
             | SurveilLibraryOne { frame }
@@ -955,6 +969,15 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
+                | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
                 | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
                 | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
                 | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
@@ -965,11 +988,48 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
                 | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
                 | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+                | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
+                | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
+                | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
+                | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+                | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
         )
     }) {
         return true;
     }
+    // Crystal execution captures whole historical item/context authority.
+    // Its private-history resampling semantics have not been qualified.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::CrystalShieldOperationV1 { .. }
+                | crate::event::CommittedEvent::CrystalExecutionV1 { .. }
+                | crate::event::CommittedEvent::CrystalDamageOperationV3 { .. }
+                | crate::event::CommittedEvent::CrystalBatchPreparedV3 { .. }
+                | crate::event::CommittedEvent::CrystalProgramChoiceV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageDepartureV3 { .. }
+                | crate::event::CommittedEvent::FixedDamagePaidV3 { .. }
+                | crate::event::CommittedEvent::FixedDamageRemovedV3 { .. }
+        )
+    }) || state
+        .stack
+        .iter()
+        .any(|item| item.v4.crystal_prevention_started_v1.0.is_some())
+    {
+        return true;
+    }
     let s = Scan { state, pool };
+    if state.engine.event_history.iter().any(|e| {
+        matches!(
+            e,
+            crate::event::CommittedEvent::StromkirkEndStepObserversV1 { .. }
+        )
+    }) {
+        return true;
+    }
     if let Some(crate::engine::PendingDiscard {
         resume: crate::engine::DiscardResume::FinishEffectContinuation { original_hand, .. },
         ..
@@ -1022,6 +1082,46 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
+            StromkirkEndStepObserversV1 { .. }
+            | StromkirkTriggerCaptureV2 { .. }
+            | StromkirkCollectedV2 { .. }
+            | StromkirkPublishedV2 { .. }
+            | StromkirkPlacementRemovedV2 { .. }
+            | StromkirkResolutionRemovedV2 { .. }
+            | StromkirkCounterRemovedV2 { .. }
+            | StromkirkOperationV2 { .. }
+            | StromkirkCompletedV2 { .. } => true,
+            // These are history-only owning records. Reject malformed log
+            // transport too, rather than implying sampler admission.
+            CrystalPreventionBoundaryV1 { .. }
+            | CrystalShieldOperationV1 { .. }
+            | CrystalExecutionV1 { .. }
+            | CrystalDamageOperationV3 { .. }
+            | CrystalBatchPreparedV3 { .. }
+            | CrystalProgramChoiceV3 { .. }
+            | FixedDamageDepartureV3 { .. }
+            | FixedDamagePaidV3 { .. }
+            | FixedDamageRemovedV3 { .. } => true,
+            ExileIfDiesReplacementInstalledV1 { replacement }
+            | ExileIfDiesReplacementExpiredV1 { replacement, .. } => {
+                s.raw(replacement.source)
+                    || match replacement.kind {
+                        crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                            target: crate::state::StackTargetContractV4::Object { object, .. },
+                            ..
+                        } => s.raw(object),
+                        _ => false,
+                    }
+            }
+            ExileIfDiesReplacementCleanupV1 { installations, .. } => {
+                installations.iter().any(|r| {
+                    s.raw(r.source)
+                        || matches!(r.kind,
+                    crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                        target: crate::state::StackTargetContractV4::Object { object, .. }, ..
+                    } if s.raw(object))
+                })
+            }
             Damage { source, target, .. } => {
                 s.raw(*source) || matches!(target,crate::state::Target::Object(id) if s.raw(*id))
             }
@@ -1082,6 +1182,18 @@ pub(super) fn conflicts(
                     })
             }
             AshrootPowerBeforeDepartureV1 { source, .. } => s.raw(source.object),
+            BanishingEntryV1 { .. }
+            | BanishingCollectedV1 { .. }
+            | BanishingNoTargetsV1 { .. }
+            | BanishingPublishedV1 { .. }
+            | BanishingRemovedV1 { .. }
+            | BanishingFinishedV1 { .. }
+            | BanishingLinkInstalledV1 { .. }
+            | BanishingLinkExpiredV1 { .. }
+            | BanishingRecipientCeasedV1 { .. }
+            | BanishingAuraHostsCapturedV1 { .. }
+            | BanishingAuraHostChosenV1 { .. }
+            | BanishingAuraOperationStartedV1 { .. } => true,
             AshrootDispatchV2 { .. } => !s.pool.is_empty(),
             CerberusCaptureV1 { capture } => s.raw(capture.source.source),
             CerberusObserversV1 { sources, .. } => {
@@ -1089,6 +1201,19 @@ pub(super) fn conflicts(
             }
             CerberusPublishedV1 { item, .. } => s.raw(item.source),
             CerberusOperationV1 { source, .. } => s.raw(source.source),
+            ArahboEntryObservationV1 { .. }
+            | ArahboTokenCaptureV1 { .. }
+            | ArahboTokenCollectedV1 { .. }
+            | ArahboTokenPublishedV1 { .. }
+            | ArahboTokenRemovedV1 { .. }
+            | ArahboTokenCompletedV1 { .. }
+            | ArahboCounterInputV1 { .. } => true,
+            GarrukEntryObservationV1 { .. }
+            | GarrukDrawCaptureV1 { .. }
+            | GarrukDrawCollectedV1 { .. }
+            | GarrukDrawPublishedV1 { .. }
+            | GarrukDrawRemovedV1 { .. }
+            | GarrukDrawCompletedV1 { .. } => true,
             AuthorityEntryPublishedV1 { item, .. } => {
                 s.raw(item.source)
                     || item.v4.ability_source_contract.is_some_and(|source| {
@@ -1117,6 +1242,13 @@ pub(super) fn conflicts(
             | CerberusCompletedV1 { .. }
             | PrivateKeepOneLibraryCapturedV1 { .. }
             | PrivateKeepOneLibraryConsumedV1 { .. }
+            | ExilePlaySelectionCapturedV1 { .. }
+            | ExilePlaySelectionConsumedV1 { .. }
+            | StrongboxPermissionGrantedV1 { .. }
+            | StrongboxPermissionTurnStartedV1 { .. }
+            | StrongboxPermissionCleanupV1 { .. }
+            | StrongboxPermissionExpiredV1 { .. }
+            | StrongboxRaidSkippedV1 { .. }
             | PrivateKeepOneRaidSkippedV1 { .. }
             | RaidEntrySourceV1 { .. }
             | RaidEntryCaptureV1 { .. }
@@ -1129,6 +1261,13 @@ pub(super) fn conflicts(
             | GorehornPreparedV1 { .. }
             | GorehornDamageOperationV1 { .. }
             | GorehornOperationV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+            | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+            | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+            | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
@@ -1152,10 +1291,20 @@ pub(super) fn conflicts(
             | FrenziedGoblinInstalledV1 { .. }
             | FrenziedGoblinExpiredV1 { .. }
             | FrenziedGoblinCleanupV1 { .. }
+            | VampireGourmandResolutionBoundaryV1 { .. }
+            | VampireGourmandCostOperationV2 { .. }
+            | VampireGourmandCleanupV2 { .. }
+            | VampireGourmandExpiredV2 { .. }
+            | VampireGourmandAttackCaptureV2 { .. }
+            | VampireGourmandCollectedV2 { .. }
+            | VampireGourmandPublishedV2 { .. }
+            | VampireGourmandCounterRemovedV2 { .. }
+            | VampireGourmandCounterClosedV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }
+            | LifeLossTurnBeganV1 { .. }
             | ManaAdded { .. }
             | UpkeepBegan { .. }
             | CrimeCommitted { .. }

@@ -272,6 +272,10 @@ pub struct EffectAtom {
 
 /// Bit indices of the keywords set in `keywords`.
 pub fn keyword_bits(keywords: crate::card_def::Keywords) -> Vec<u8> {
+    assert!(
+        !keywords.has(crate::card_def::Keywords::SHROUD),
+        "shroud requires a successor keyword representation"
+    );
     (0..32u8)
         .filter(|bit| keywords.0 & (1 << bit) != 0)
         .collect()

@@ -60,6 +60,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("raid_entry_custody_v1.rs"),
         include_str!("gorehorn_damage_v1.rs"),
         include_str!("source_power_activation_v1.rs"),
+        include_str!("gorehorn_crystal_v1.rs"),
         include_str!("card_def.rs"),
         include_str!("trigger.rs"),
         include_str!("effect.rs"),

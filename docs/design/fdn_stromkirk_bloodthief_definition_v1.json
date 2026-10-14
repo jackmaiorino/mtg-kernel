@@ -1,0 +1,40 @@
+{
+  "schema": "prepared_card_definition_v1",
+  "name": "Stromkirk Bloodthief",
+  "registered": false,
+  "card_id": null,
+  "status": "prepared_unqualified",
+  "source_base": "3b38dab4d73dffea40b0006e5afc967f50a75203",
+  "reference": {
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/s/StromkirkBloodthief.java"
+  },
+  "printed": {
+    "cost": "{2}{B}",
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Vampire",
+      "Rogue"
+    ],
+    "power": 2,
+    "toughness": 2,
+    "text": "At the beginning of your end step, if an opponent lost life this turn, put a +1/+1 counter on target Vampire you control."
+  },
+  "recipe": {
+    "spell": "ordinary_creature",
+    "trigger": "BeginningControllerEndStepIfOpponentLostLife",
+    "target": "ControlledPermanentWithAnySubtype([Vampire;4])",
+    "effect": "Conditional(OpponentLostLifeThisTurn, StromkirkVampirePermanentCounterV1)"
+  },
+  "qualified": false,
+  "native_tests": "unrun",
+  "model_admission": false,
+  "remaining": [
+    "True printed registration",
+    "Serial native gameplay and restore qualification",
+    "Precise meaning and Public/Human V28 qualification",
+    "Model/tensor and historical sampler qualification"
+  ]
+}

@@ -258,6 +258,14 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
     }
     graveyard.sort_by_key(|binding| binding.object);
     graveyard.dedup();
+    crate::equipment_damage_source_v4::before_protected_departures(
+        state,
+        &graveyard
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>(),
+        &pending.waiting_triggers,
+    );
     event::propose_and_commit_batch(
         state,
         graveyard

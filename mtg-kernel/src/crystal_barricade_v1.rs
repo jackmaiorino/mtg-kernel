@@ -22,6 +22,10 @@ fn source_controller(state: &GameState, source: ObjectId) -> Option<PlayerId> {
     .then_some(object.controller)
 }
 
+pub(crate) fn is_active_source(state: &GameState, source: ObjectId) -> bool {
+    source_controller(state, source).is_some()
+}
+
 pub(crate) fn controller_has_hexproof(state: &GameState, player: PlayerId) -> bool {
     state
         .objects
@@ -62,6 +66,18 @@ pub(crate) fn prevents(state: &GameState, damage: &DamageProposed) -> bool {
         .objects
         .iter()
         .any(|(source, _)| protects_creature(state, source, target))
+}
+
+pub(crate) fn sources_protecting(
+    state: &GameState,
+    target: ObjectId,
+) -> Vec<crate::state::AbilitySourceContractV4> {
+    state
+        .objects
+        .iter()
+        .filter(|(source, _)| protects_creature(state, *source, target))
+        .map(|(source, _)| crate::state::AbilitySourceContractV4::capture(state, source))
+        .collect()
 }
 
 #[cfg(test)]

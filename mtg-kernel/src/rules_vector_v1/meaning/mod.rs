@@ -144,14 +144,24 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. } => effect_b::effect_op(op, env, out),
+        EffectOp::BindArahboCatEntryV1 | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
+            out.atoms.push(Atom::Opaque)
+        }
+        EffectOp::ExileTopChooseOneUntilNextTurn { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::BindGarrukEtbDrawV1
+        | EffectOp::BindGarrukPowerEntryDrawV1
+        | EffectOp::GarrukDrawFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::BindAshrootAttackBoostV1
         | EffectOp::AshrootAttackBoostV1 { .. }
         | EffectOp::AshrootBoostFromCaptureV2 { .. } => out.atoms.push(Atom::Opaque),
+
         EffectOp::TakeExtraTurnAfterThisOneV1
         | EffectOp::BindAuthorityEntryGainLifeV1
         | EffectOp::AuthorityEntryGainLifeV1 { .. }
         | EffectOp::CerberusUntapV1 { .. }
         | EffectOp::LookTopMayKeepOneRestGraveyard { .. }
+        | EffectOp::StromkirkVampirePermanentCounterV1
+        | EffectOp::StromkirkCounterFromCaptureV2 { .. }
         | EffectOp::PreventTargetBlockingUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::WildwoodCounterFromReceiptV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::GainLifeEqualToPaidCostManaValue { .. }
@@ -299,6 +309,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness { .. }
         | EffectOp::StandardLegendV1(_)
+        | EffectOp::FieryAnnihilation
         | EffectOp::AnimateSource
         | EffectOp::AnimateSourcePermanentlyV1
         | EffectOp::SetTargetBasePowerToughnessUntilEndOfTurn { .. }

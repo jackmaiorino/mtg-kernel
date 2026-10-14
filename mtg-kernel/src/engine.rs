@@ -290,6 +290,12 @@ pub struct EngineState {
     /// engine; omitted from snapshots and ignored by `Hash` while default.
     #[serde(default, skip_serializing_if = "RuntimeRulesV1::is_default")]
     pub runtime_rules: RuntimeRulesV1,
+    /// Genuine immediate owner operation; absent legacy bytes and hashes are unchanged.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::linked_aura_operation_v1::StateV1::is_empty"
+    )]
+    pub linked_aura_operation_v1: crate::linked_aura_operation_v1::StateV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -504,6 +510,13 @@ pub enum UntilEndOfTurnEffect {
         previous_controller: PlayerId,
         controller: PlayerId,
         timestamp: u64,
+    },
+    /// Rule-changing evasion, not a removable granted ability.
+    ResolvedObjectCantBeBlockedV1 {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        timestamp: u64,
+        duration: EffectDuration,
     },
 }
 
@@ -1559,7 +1572,7 @@ pub enum Decision {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     PlayLand(ObjectId),
     CastSpell(ObjectId),
@@ -1799,6 +1812,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::TwoCreaturesWithDifferentControllers
+        | TargetSpec::CreatureThenUpToOneAttachedEquipment
         | TargetSpec::UpToTwoOtherControlledCreatures
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1813,6 +1827,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
 
 fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => 1,
         TargetSpec::UpToOneOtherCreature
         | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -2445,7 +2460,7 @@ pub(crate) fn validate_historical_ability_source_contract(
     Ok(())
 }
 
-fn validate_equipment_granted_trigger_contract(
+pub(crate) fn validate_equipment_granted_trigger_contract(
     state: &GameState,
     host: AbilitySourceContractV4,
     equipment: AbilitySourceContractV4,
@@ -3331,6 +3346,31 @@ fn legal_targets_for_controller_from_source(
             .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreatureThenUpToOneAttachedEquipment => match targets_chosen {
+            [] => battlefield_objects(state)
+                .filter(|&id| object_has_type(state, id, CardType::Creature))
+                .map(Target::Object)
+                .collect(),
+            [Target::Object(creature)] => {
+                let generation = state
+                    .objects
+                    .try_get(*creature)
+                    .filter(|live| live.zone == Zone::Battlefield)
+                    .map(|live| live.zone_change_count);
+                battlefield_objects(state)
+                    .filter(|&id| {
+                        id != *creature
+                            && generation.is_some_and(|generation| {
+                                crate::fiery_annihilation_v1::attached_equipment(
+                                    state, id, *creature, generation,
+                                )
+                            })
+                    })
+                    .map(Target::Object)
+                    .collect()
+            }
+            _ => Vec::new(),
+        },
         TargetSpec::TwoCreaturesWithDifferentControllers => battlefield_objects(state)
             .filter(|&id| object_has_type(state, id, CardType::Creature))
             .filter(|&id| {
@@ -3843,8 +3883,9 @@ fn legal_targets_for_controller_from_source(
         };
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
-            || live.controller == controller
-            || !has_effective_keyword(state, object, Keywords::HEXPROOF)
+            || (!has_effective_keyword(state, object, Keywords::SHROUD)
+                && (live.controller == controller
+                    || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
     if source.is_some_and(targeting_source_is_monocolored) {
         targets.retain(|target| {
@@ -5997,14 +6038,17 @@ fn commit_cost_components_from_plan_v1(
 /// half of a `SacrificeLands` sub-cost, once `Decision::ChooseCostTargets`
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
+    crate::linked_aura_operation_v1::begin_batch(state);
     if chosen.len() > 1 && crate::creature_death_capture_v1::enabled() {
         event::commit_sacrifice_death_group_v1(state, chosen);
+        crate::linked_aura_operation_v1::end_batch(state);
         return;
     }
     for &id in chosen {
         event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
+    crate::linked_aura_operation_v1::end_batch(state);
 }
 
 /// Zone-changes `id` to its owner's hand -- the actual payment half of a
@@ -7033,7 +7077,7 @@ fn normal_cast_target_prefix_is_payable(
         })
 }
 
-fn completable_next_cast_targets(
+pub(crate) fn completable_next_cast_targets(
     def: &card_def::CardDef,
     pending: &PendingCast,
     spec: TargetSpec,
@@ -8926,7 +8970,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
         return Vec::new();
     }
-    if has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED) {
+    if crate::vampire_gourmand_v1::cant_be_blocked(state, attacker)
+        || has_effective_keyword(state, attacker, Keywords::CANT_BE_BLOCKED)
+    {
         return Vec::new();
     }
     // Azure Fleet Admiral: "can't be blocked by creatures the monarch
@@ -9051,14 +9097,49 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if let Err(source) = event::validate_exile_if_dies_replacements(state) {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
-    if crate::raid_entry_v1::validate_state(state).is_err() {
+    if crate::source_power_activation_v1::validate_state(state).is_err()
+        || crate::raid_entry_v1::validate_state(state).is_err()
+        || crate::gorehorn_damage_v1::validate_state(state).is_err()
+        || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || effect::crystal_prevention_v1::validate(state).is_err()
+        || effect::validate_vampire_gourmand_state(state).is_err()
+        || crate::arahbo_v1::validate_state(state).is_err()
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    crate::linked_aura_operation_v1::advance(state)
+}
+
+pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
+    if crate::source_power_activation_v1::validate_state(state).is_err()
+        || crate::raid_entry_v1::validate_state(state).is_err()
+        || crate::gorehorn_damage_v1::validate_state(state).is_err()
+        || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || effect::validate_vampire_gourmand_state(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
     if crate::ashroot_animist_v1::validate_state(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
+    if crate::stromkirk_bloodthief_v1::validate_state(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
             mechanic: UnsupportedMechanic::InvalidEffectContinuation,
@@ -9072,8 +9153,37 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
             source: ObjectId(0),
         };
     }
+    if effect::crystal_prevention_v1::validate(state).is_err() {
+        let source = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .map(|p| p.ctx.source)
+            .or_else(|| {
+                state
+                    .stack
+                    .iter()
+                    .find(|i| i.v4.crystal_prevention_started_v1.0.is_some())
+                    .map(|i| i.source)
+            })
+            .unwrap_or(ObjectId(0));
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        };
+    }
     // A closed Cerberus operation still owns historical authority. Validate it
     // before automatic step/cleanup work can mutate a restored malformed state.
+    if crate::garruks_uprising_v1::validate_state(state).is_err()
+        || crate::arahbo_v1::validate_state(state).is_err()
+    {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
     if crate::cerberus_capture_v1::validate_state(state).is_err() {
         let source = state
             .engine
@@ -9100,6 +9210,9 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_statics_v1::expire_attack_block_restrictions(state);
+        if let Err(source) = event::validate_exile_if_dies_replacements(state) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        }
         if let Err(source) = state.validate_attachment_relations() {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
         }
@@ -10148,6 +10261,31 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let gourmand_owner =
+        match effect::acquire_vampire_gourmand_resolution_owner(state, &item, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        };
+    let crystal_owner = match effect::crystal_prevention_v1::acquire_owner(state, &item, false) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
+    let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10167,10 +10305,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = squad_owner.as_ref() {
+    let progress = if let Some(owner) = crystal_owner.as_ref() {
+        effect::crystal_prevention_v1::resume_owned(state, owner)
+    } else if let Some(owner) = squad_owner.as_ref() {
         effect::resume_owned_squad_rallier_resolution(state, owner)
     } else if let Some(owner) = frenzied_owner.as_ref() {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
+    } else if let Some(owner) = gourmand_owner.as_ref() {
+        effect::resume_owned_vampire_gourmand_resolution(state, owner)
     } else {
         effect::resume_resumable_resolution(state)
     };
@@ -10181,6 +10323,18 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
             }
+            if crate::fixed_source_damage_v3::record_removed(
+                state,
+                fixed_removal_owner,
+                crate::fixed_source_damage_v3::OutcomeV3::Resolved,
+            )
+            .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+            crate::source_power_activation_v1::finish(state, &item);
             if finish_resolved_stack_item(state, completed.as_ref()).is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
@@ -12457,7 +12611,8 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             // batch was just put on the stack), and a trigger whose targets
             // cannot be completed is removed rather than posing a
             // `ChooseTargets` with no legal choice.
-            if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+            if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
+                || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
             {
                 state.engine.halted = Some((
@@ -12492,7 +12647,8 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 // false`), which `drain_pending_cast_or_decide`'s matching
                 // `targeting_can_complete`/`abort_cast` guard already
                 // avoids for spell casts.
-                if crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
+                if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
+                    || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                     || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
                 {
                     state.engine.halted = Some((
@@ -12981,6 +13137,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         },
     });
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
+    crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
     if t.target_spec != TargetSpec::None {
         if let Err(error) = log_final_targeting_events(state, stack_item_id) {
@@ -13000,10 +13157,16 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::garruks_uprising_v1::publish(state, &finalized)?;
+    crate::arahbo_v1::publish(state, &finalized)?;
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
+    let gourmand_item = state.stack.last().expect("trigger just published").clone();
+    crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
+    crate::banishing_light_v1::publish(state, &finalized)?;
+    crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
     // Same `priority_passes`/`priority_player` reset as `reset_priority`
     // (117.5: priority passes to the active player once a triggered
     // ability is put on the stack), but deliberately inlined instead of
@@ -13216,12 +13379,17 @@ fn triggered_stack_item_expected_target_spec(
             ability_source_contract,
         )?;
     }
+
+    crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
         ability_source_contract,
     )?;
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
+
+    crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13343,10 +13511,23 @@ fn triggered_stack_item_expected_target_spec(
         )?;
     }
     if !granted_trigger {
+        crate::stromkirk_bloodthief_v1::validate_source(
+            state,
+            inline_effect,
+            ability_source_contract,
+        )?;
         crate::raid_entry_v1::validate_source_for_program(
             state,
             inline_effect,
             ability_source_contract,
+        )?;
+    }
+    if crate::banishing_light_v1::owns_definition(source_card_def)
+        && *inline_effect == crate::banishing_light_v1::recipe()
+    {
+        crate::banishing_light_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("Banishing ETB lost source")?,
         )?;
     }
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
@@ -13692,7 +13873,9 @@ fn validated_stack_item_target_metadata(
             crate::ashroot_animist_v1::normalize_target(state, contract)
         } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::normalize_historical_target(state, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
             contract
@@ -13763,6 +13946,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
+        return Ok(crate::fiery_annihilation_v1::target_legalities(
+            state,
+            item.source,
+            item.controller,
+            &item.targets,
+            &item.v4.target_contracts,
+        )
+        .into_iter()
+        .any(|legal| legal));
+    }
     if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
         return Ok(different_controller_creature_targets_are_legal(
             state,
@@ -13788,7 +13982,9 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
             )
         } else if crate::self_reflection_v1::owns_spell(state, item) {
             crate::self_reflection_v1::target_matches_live(state, target, contract)
-        } else if effect::temporary_control_v1::owns_spell(state, item) {
+        } else if effect::temporary_control_v1::owns_spell(state, item)
+            || crate::stromkirk_bloodthief_v1::owns_item(item)
+        {
             target_contract_matches_live(
                 state,
                 target,
@@ -13815,7 +14011,17 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     live.zone_change_count != source_contract.zone_change_count
                         || live.zone != source_contract.zone
                 });
-                if matches!(
+                if crate::fixed_source_damage_v3::tracked(state, item) {
+                    crate::fixed_source_damage_v3::legal_targets(
+                        state,
+                        crate::fixed_source_damage_v3::damage_source(
+                            state,
+                            item.source,
+                            item.v4.stack_item_id,
+                        )?,
+                    )
+                    .contains(&target)
+                } else if matches!(
                     item.inline_effect.as_ref(),
                     Some(EffectOp::StandardV1(
                         crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
@@ -13976,6 +14182,10 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
+    let gourmand_counter_owner =
+        crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
+    let fixed_removal_owner = crate::fixed_source_damage_v3::acquire_removal(state, &item)?;
     effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, &item)?;
     validated_stack_item_target_spec(&item, state)?;
     if item.kind == StackItemKind::Spell
@@ -13986,15 +14196,19 @@ pub(crate) fn counter_stack_item_by_id(
         // on the stack after the attempt, so callers finish the effect normally.
         return Ok(Some(item));
     }
+    let arahbo_counter_owner = crate::arahbo_v1::before_remove(state, &item)?;
+    let garruk_counter_owner = crate::garruks_uprising_v1::before_remove(state, &item)?;
     let mut departure = if item.kind == StackItemKind::Spell {
         Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
     } else {
         None
     };
+    let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
+    let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
@@ -14004,13 +14218,41 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    if let Some(owner) = arahbo_counter_owner {
+        crate::arahbo_v1::record_counter_input(state, &owner)?;
+        crate::arahbo_v1::counter_removed(state, owner)?;
+    }
+    if let Some(owner) = garruk_counter_owner {
+        crate::garruks_uprising_v1::counter_removed(state, owner)?;
+    }
     crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
+
     crate::extra_turn_v1::record_countered(state, temporal_owner);
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Countered,
+    );
+    crate::banishing_light_v1::finish(state, &item);
+    crate::stromkirk_dispatch_v1::counter_removed(state, stromkirk_counter_owner.as_ref(), &item)?;
+    crate::vampire_gourmand_dispatch_v2::counter_removed(
+        state,
+        gourmand_counter_owner.as_ref(),
+        &item,
+    )?;
+
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
+    crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,
         crate::gorehorn_damage_v1::OutcomeV1::Countered,
+    )?;
+
+    crate::fixed_source_damage_v3::record_removed(
+        state,
+        fixed_removal_owner,
+        crate::fixed_source_damage_v3::OutcomeV3::Countered,
     )?;
     effect::frenzied_goblin_resolution_v1::complete_unstarted(
         state,
@@ -14145,29 +14387,41 @@ fn execute_resolving_program(
     program: &EffectOp,
     squad_owner: Option<&effect::SquadRallierResolutionOwnerV1>,
     frenzied_owner: Option<&effect::FrenziedGoblinResolutionOwnerV1>,
+    extra_owners: (
+        Option<&effect::VampireGourmandResolutionOwnerV1>,
+        Option<&effect::crystal_prevention_v1::OwnerV1>,
+    ),
 ) -> ResolutionProgress {
-    if !effect::contains_player_choice(program) {
+    let (gourmand_owner, crystal_owner) = extra_owners;
+    if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    let progress = if let Some(owner) = squad_owner {
+    let progress = if let Some(owner) = crystal_owner {
+        effect::crystal_prevention_v1::begin_owned(state, program, ctx, owner)
+    } else if let Some(owner) = squad_owner {
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
     } else if let Some(owner) = frenzied_owner {
         effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = gourmand_owner {
+        effect::begin_owned_vampire_gourmand_resolution(state, program, ctx, owner)
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if squad_owner.map_or_else(
-                || {
-                    frenzied_owner.map_or(*completed == *item, |owner| {
-                        owner.completion_matches(&completed)
-                    })
-                },
-                |owner| owner.completion_matches(&completed),
-            ) =>
+            if if let Some(owner) = crystal_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = squad_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = frenzied_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = gourmand_owner {
+                owner.completion_matches(&completed)
+            } else {
+                *completed == *item
+            } =>
         {
             ResolutionProgress::Complete
         }
@@ -14175,7 +14429,11 @@ fn execute_resolving_program(
             // Keep the resolving item visible throughout the decision, but
             // grant no priority/SBA/trigger window until the continuation
             // completes.
-            let published = if squad_owner.is_some() || frenzied_owner.is_some() {
+            let published = if squad_owner.is_some()
+                || frenzied_owner.is_some()
+                || gourmand_owner.is_some()
+                || crystal_owner.is_some()
+            {
                 state
                     .engine
                     .pending_effect
@@ -14264,6 +14522,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let gourmand_owner = match effect::acquire_vampire_gourmand_resolution_owner(
+        state,
+        state.stack.last().expect("resolving genuine stack item"),
+        true,
+    ) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     if !targets_legal
         && effect::frenzied_goblin_resolution_v1::preflight_unstarted_removal(state, item).is_err()
     {
@@ -14288,6 +14560,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     } else {
         None
     };
+    let crystal_owner = if targets_legal {
+        match effect::crystal_prevention_v1::acquire_owner(state, item, true) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        }
+    } else {
+        None
+    };
     if targets_legal && crate::sower_restriction_capture_v1::begin_resolution(state).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -14296,6 +14582,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Suspended;
     }
     let current = state.stack.last().expect("resolving item exists").clone();
+    let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     if crate::wildwood_capture_v1::begin(state, &current).is_err()
         || (targets_legal
             && effect::temporary_control_v1::authority::begin_resolution(state).is_err())
@@ -14306,6 +14603,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         ));
         return ResolutionProgress::Suspended;
     }
+    let stromkirk_owner = match crate::stromkirk_dispatch_v1::preflight_resolution(state, &current)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let temporal_owner =
         match crate::extra_turn_v1::acquire(state, state.stack.last().expect("resolving item")) {
             Ok(owner) => owner,
@@ -14344,10 +14652,64 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let banishing_owner = match crate::banishing_light_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let banishing_source_present = current
+        .v4
+        .ability_source_contract
+        .is_some_and(|source| crate::banishing_light_v1::source_present(state, source));
+
+    let arahbo_owner = match crate::arahbo_v1::before_remove(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let garruk_owner = match crate::garruks_uprising_v1::before_remove(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let initialized_entry =
+        match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let item = state
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    crate::banishing_light_v1::record_removed(
+        state,
+        banishing_owner,
+        crate::banishing_light_v1::RemovalV1::Resolving {
+            source_present: banishing_source_present,
+            target_legal: targets_legal,
+        },
+    );
     // Single-shot signal to the trigger-collection pass that always
     // immediately follows this resolution (`collect_and_queue_triggers`,
     // called right after by every caller of `resolve_top_of_stack`) --
@@ -14380,6 +14742,30 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = arahbo_owner {
+        if crate::arahbo_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = garruk_owner {
+        if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = stromkirk_owner.as_ref() {
+        if crate::stromkirk_dispatch_v1::resolve_owned(state, owner).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = ashroot_owner {
         if crate::ashroot_dispatch_v2::resolve(state, &owner, targets_legal).is_err() {
             state.engine.halted =
@@ -14401,6 +14787,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Bestow) {
+            if let Some(owner) = initialized_entry.as_ref() {
+                if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    return ResolutionProgress::Suspended;
+                }
+                return ResolutionProgress::Complete;
+            }
             effect::execute(
                 &EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters,
                 &ctx,
@@ -14428,6 +14822,18 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        crate::banishing_light_v1::finish(state, &item);
+        if crate::fixed_source_damage_v3::record_removed(
+            state,
+            fixed_removal_owner,
+            crate::fixed_source_damage_v3::OutcomeV3::NoLegalTarget,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         crate::source_power_activation_v1::finish(state, &item);
         return ResolutionProgress::Complete;
     }
@@ -14447,35 +14853,59 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(effect) = item.inline_effect.clone() {
         let effect_history_start = state.engine.event_history.len();
-        let progress = if let Some(owner) = gorehorn_owner.as_ref() {
-            let before = state.clone();
-            if crate::gorehorn_damage_v1::execute_owned(state, &effect, &ctx, owner).is_ok() {
-                ResolutionProgress::Complete
-            } else {
-                *state = before;
-                state.stack.push(item.clone());
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
-                ResolutionProgress::Suspended
+        if item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| crate::banishing_light_v1::owns_definition(source.card_def))
+            && effect == crate::banishing_light_v1::recipe()
+        {
+            // This definition-owned leaf is atomic. The original removal loan
+            // authenticates it while its actual row is absent from the stack.
+            effect::execute(&effect, &ctx, state);
+            if state.engine.halted.is_some() {
+                return ResolutionProgress::Suspended;
             }
-        } else {
-            execute_resolving_program(
-                state,
-                &item,
-                &ctx,
-                &effect,
-                squad_owner.as_ref(),
-                frenzied_owner.as_ref(),
-            )
-        };
+            crate::banishing_light_v1::finish(state, &item);
+            return ResolutionProgress::Complete;
+        }
+        let progress =
+            if let Some(owner) = gorehorn_owner.as_ref().filter(|_| crystal_owner.is_none()) {
+                let before = state.clone();
+                if crate::gorehorn_damage_v1::execute_owned(state, &effect, &ctx, owner).is_ok() {
+                    ResolutionProgress::Complete
+                } else {
+                    *state = before;
+                    state.stack.push(item.clone());
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    ResolutionProgress::Suspended
+                }
+            } else {
+                execute_resolving_program(
+                    state,
+                    &item,
+                    &ctx,
+                    &effect,
+                    squad_owner.as_ref(),
+                    frenzied_owner.as_ref(),
+                    (gourmand_owner.as_ref(), crystal_owner.as_ref()),
+                )
+            };
         if progress == ResolutionProgress::Complete {
             if crate::librarian_activation_v1::record_resolved(state, &item, effect_history_start)
+                .is_err()
+                || crate::fixed_source_damage_v3::record_removed(
+                    state,
+                    fixed_removal_owner,
+                    crate::fixed_source_damage_v3::OutcomeV3::Resolved,
+                )
                 .is_err()
             {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return ResolutionProgress::Suspended;
             }
+            crate::banishing_light_v1::finish(state, &item);
             crate::source_power_activation_v1::finish(state, &item);
             crate::librarian_activation_v1::finish(state, &item);
             crate::authority_of_the_consuls_v1::finish(state, &item);
@@ -14531,13 +14961,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             state.stack.push(item.clone());
         }
     } else if let Some(program) = program {
-        if execute_resolving_program(
+        if let Some(owner) = initialized_entry.as_ref() {
+            if crate::event::commit_garruk_initialized_entry(state, owner).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+        } else if execute_resolving_program(
             state,
             &item,
             &ctx,
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
+            (gourmand_owner.as_ref(), crystal_owner.as_ref()),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
@@ -14703,7 +15140,15 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
-    if state.step == Step::Cleanup && crate::ashroot_dispatch_v2::has_active(state) {
+    if state.step == Step::Cleanup
+        && (crate::ashroot_dispatch_v2::has_active(state)
+            || state.engine.active_replacements.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+                )
+            }))
+    {
         for player in &mut state.players {
             player.mana_pool = [0; 6];
             player.restricted_mana_pool.0.clear();
@@ -14744,11 +15189,13 @@ fn advance_step(state: &mut GameState) {
     // Cleanup priority can install a fresh rule-changing restriction. CR 514.3
     // repeats cleanup before the player flip, including these new records.
     if state.step == Step::Cleanup
-        && state
-            .engine
-            .until_end_of_turn
-            .iter()
-            .any(|effect| matches!(effect, UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }))
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
+                    | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. }
+            )
+        })
     {
         for player in &mut state.players {
             player.mana_pool = [0; 6];
@@ -14919,6 +15366,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             #[cfg(feature = "standard-magezero-fixtures")]
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
+            crate::life_loss_turn_v1::reset_at_untap(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
@@ -14938,6 +15386,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             // Percussionist, Reckless Impulse) -- only flips once (the
             // first such Untap after the permission was granted), not
             // re-armed on a later one.
+            if crate::effect::strongbox_permission_v1::untap(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             for perm in state.engine.exile_play_permissions.iter_mut() {
                 if perm.holder == p {
                     if let PlayPermissionExpiry::UntilHoldersNextTurn {
@@ -15074,10 +15527,9 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 };
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
-                crate::cerberus_capture_v1::record_begin(
-                    state,
-                    state.engine.event_history.len() - 1,
-                );
+                let beginning_index = state.engine.event_history.len() - 1;
+                crate::cerberus_capture_v1::record_begin(state, beginning_index);
+                crate::stromkirk_bloodthief_v1::record_begin(state, beginning_index);
             }
             let p = state.active_player;
             // 306.3: logged only for whichever player's own End step this
@@ -15130,21 +15582,34 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
-            if crate::ashroot_dispatch_v2::expire(state).is_err() {
+            if effect::expire_vampire_gourmand_restrictions(state).is_err()
+                || crate::ashroot_dispatch_v2::expire(state).is_err()
+            {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
             state.engine.until_end_of_turn.clear();
+            if let Err(source) = event::expire_exile_if_dies_replacements(state) {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+                return;
+            }
             state.engine.active_replacements.retain(|replacement| {
                 !matches!(
                     replacement.kind,
                     event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
                     | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+                    | event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
                 )
             });
             let p = state.active_player;
             state.players[p.index()].lands_played_this_turn = 0;
+            if crate::effect::strongbox_permission_v1::cleanup(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             // `EndOfTurn` permissions expire at the very next Cleanup,
             // whoever's; `UntilHoldersNextTurn` only once it's the
             // *holder's* own Cleanup, and only after their own Untap has
@@ -15206,6 +15671,16 @@ pub(crate) fn static_controlled_subtype_boost_for(
     name: &str,
 ) -> Option<StaticControlledSubtypeBoostDef> {
     match name {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Arahbo, the First Fang" => Some(StaticControlledSubtypeBoostDef {
+            subtype: card_def::Subtype::Cat,
+            exclude_source: true,
+            power: 1,
+            toughness: 1,
+        }),
         "Dwynen, Gilt-Leaf Daen" | "Elvish Archdruid" => Some(StaticControlledSubtypeBoostDef {
             subtype: card_def::Subtype::Elf,
             exclude_source: true,
@@ -15884,6 +16359,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
+    if crate::garruks_uprising_v1::grants_keyword(state, id, kw) {
+        return true;
+    }
     if crate::standard_creatures_v1::keyword_granted(state, id, kw) {
         return true;
     }
@@ -16080,7 +16558,8 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
                 UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
                 | UntilEndOfTurnEffect::ResolvedObjectCantBlock { .. }
-                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. } => false,
+                | UntilEndOfTurnEffect::ResolvedObjectControlEffect { .. }
+                | UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => false,
             };
             if grants {
                 return true;
@@ -17054,6 +17533,17 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    event::validate_exile_if_dies_replacements(state)
+        .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
+    crate::linked_aura_operation_v1::step(state, action)
+}
+
+pub(crate) fn step_without_linked_aura_v1(
+    state: &mut GameState,
+    action: Action,
+) -> Result<(), String> {
+    event::validate_exile_if_dies_replacements(state)
+        .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     // A restored continuation must be valid before any action can mutate
     // state, including when its separately saved discard slot was removed.
     effect::validate_pending_effect_choice(state)?;
@@ -19166,7 +19656,9 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             };
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
+            let declaration = state.engine.event_history.len() - 1;
             crate::ashroot_dispatch_v2::record_attack(state, source);
+            crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
         }
     }
     if !state.engine.combat.attackers.is_empty() {
@@ -19221,6 +19713,10 @@ mod raid_history_tests;
 ))]
 #[path = "engine/sower_of_chaos_v1_tests.rs"]
 mod sower_of_chaos_v1_tests;
+
+#[cfg(test)]
+#[path = "engine/vampire_gourmand_v1_tests.rs"]
+mod vampire_gourmand_v1_tests;
 
 #[cfg(test)]
 #[path = "engine/anytarget_planeswalker_tests.rs"]
@@ -20261,6 +20757,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                state.engine.pending_activation.as_ref().unwrap().source,
+            ));
+            return;
+        }
+    };
     let pending = state
         .engine
         .pending_activation
@@ -20273,7 +20779,7 @@ fn finalize_activation(state: &mut GameState) {
         pending.source,
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
-    let frozen = freeze_activation_source(state, &pending, ability);
+    let mut frozen = freeze_activation_source(state, &pending, ability);
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -20311,14 +20817,42 @@ fn finalize_activation(state: &mut GameState) {
                 .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
         })
         .flatten();
-    let paid = pay_cost_components_with_x(
-        state,
-        pending.controller,
-        pending.source,
-        ability.cost,
-        &object_cost_ids,
-        x_value,
-    );
+    let paid = if let Some(owner) = fixed_payment_owner.as_ref() {
+        if !pay_cost_components_with_x(
+            state,
+            pending.controller,
+            pending.source,
+            &[CostComponent::Tap],
+            &object_cost_ids,
+            x_value,
+        ) {
+            false
+        } else {
+            match crate::fixed_source_damage_v3::capture_after_tap(state, owner) {
+                Ok(index) => {
+                    frozen.fixed_departure = Some(index);
+                    pay_cost_components_with_x(
+                        state,
+                        pending.controller,
+                        pending.source,
+                        &[CostComponent::SacrificeSelf],
+                        &object_cost_ids,
+                        x_value,
+                    )
+                }
+                Err(_) => false,
+            }
+        }
+    } else {
+        pay_cost_components_with_x(
+            state,
+            pending.controller,
+            pending.source,
+            ability.cost,
+            &object_cost_ids,
+            x_value,
+        )
+    };
     if !paid {
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
@@ -20354,6 +20888,7 @@ struct FrozenActivationSource {
     ability: ActivatedAbilityDef,
     source: AbilitySourceContractV4,
     granted_by: Option<AbilitySourceContractV4>,
+    fixed_departure: Option<u32>,
 }
 
 fn freeze_activation_source(
@@ -20381,6 +20916,7 @@ fn freeze_activation_source(
         ability,
         source,
         granted_by,
+        fixed_departure: None,
     }
 }
 
@@ -20494,6 +21030,7 @@ fn push_paid_activation(
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
+    crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -27561,3 +28098,14 @@ mod divine_variable_targeting_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod ashroot_declaration_boundary_tests;
+
+#[cfg(test)]
+mod shroud_target_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/crystal_native95_tests.rs"]
+mod crystal_native95_tests;

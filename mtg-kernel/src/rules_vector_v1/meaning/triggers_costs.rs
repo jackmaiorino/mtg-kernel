@@ -41,7 +41,10 @@ fn threshold(out: &mut Collector, player: RelF, zone: ZoneF, obj: ObjF, minimum:
 /// The event a triggered ability waits for, plus any intervening reads.
 pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector) {
     match condition {
-        TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),
+        TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1
+        | TriggerCondition::GarrukOwnEtbFerociousV1
+        | TriggerCondition::GarrukControlledCreaturePowerEntryV1
+        | TriggerCondition::OpponentCreatureEntersV1 => out.atoms.push(Atom::Opaque),
         TriggerCondition::ThisOrControlledCreatureDies => {
             // The frozen vocabulary lacks self-or-controlled-other death.
             // Mark the gap instead of inventing an exact predecessor facet.
@@ -309,6 +312,13 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
                 Some(ObjF::Typed(CardTypeF::Creature)),
                 AggF::EventThisTurn,
             );
+        }
+        TriggerCondition::BeginningControllerEndStepIfOpponentLostLife => {
+            out.trigger(TrigF::StepBegins {
+                step: StepF::EndStep,
+                yours_only: true,
+            });
+            out.atoms.push(Atom::Opaque);
         }
         TriggerCondition::BeginningControllerEndStep => {
             out.trigger(TrigF::StepBegins {

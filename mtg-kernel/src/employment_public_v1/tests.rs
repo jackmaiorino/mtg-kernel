@@ -3,16 +3,14 @@ use crate::effect::{self, EffectOp, ExecCtx, ObjectRef};
 use crate::engine::{self, Action, Decision};
 use crate::event::{self, ProposedEvent};
 use crate::ids::ObjectId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 use crate::state::{Step, Target};
 
 pub(crate) fn primitive(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     primitive_with_face(actor, None)
 }
 fn primitive_with_face(actor: PlayerId, face: Option<bool>) -> (GameState, ObjectId, ObjectId) {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_for(actor);
     let source = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
     let recipient = put(
         &mut state,
@@ -83,9 +81,7 @@ pub(crate) fn cleanup(state: &mut GameState) {
 #[test]
 fn absent_successor_matches_all_real_predecessor_fields_and_hidden_substitution() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_for(actor);
         put(&mut state, actor, "Forest", Zone::Hand);
         let hidden = put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         let surface = PolicySurfaceV5::new();
@@ -237,9 +233,7 @@ fn registered_primitive_forgery_deletion_replay_and_snapshot_mask_refuse_readonl
     }
 }
 pub(crate) fn ward_state(actor: PlayerId) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_for(actor);
     let recipient = put(
         &mut state,
         actor.opponent(),
@@ -278,9 +272,7 @@ fn registered_real_ward_successor_preserves_extensions() {
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) fn printed(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_for(actor);
     let source = put(&mut state, actor, "Involuntary Employment", Zone::Hand);
     let recipient = put(
         &mut state,

@@ -257,6 +257,11 @@ pub enum TriggerCondition {
     AnotherControlledNonHydraCreatureGetsPlusOneCounters,
     /// Scoped committed opposing-creature entry captures; generic matching is unused.
     OpponentCreatureEntersV1,
+    /// Own end step with intervening actual opponent life loss.
+    BeginningControllerEndStepIfOpponentLostLife,
+    GarrukOwnEtbFerociousV1,
+    GarrukControlledCreaturePowerEntryV1,
+    ArahboThisOrOtherNontokenCatEntryV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1570,6 +1575,18 @@ const GOREHORN_RAIDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gorehorn_raider_effect)
 }];
+pub(crate) fn strongbox_raider_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControllerAttackedThisTurn,
+        then: Box::new(EffectOp::ExileTopChooseOneUntilNextTurn { count: 2 }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+const STRONGBOX_RAIDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
+    ..etb_trigger(strongbox_raider_effect)
+}];
+
 pub(crate) fn gutless_plunderer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
@@ -1581,6 +1598,39 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gutless_plunderer_effect)
 }];
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn arahbo_cat_entry() -> EffectOp {
+    EffectOp::BindArahboCatEntryV1
+}
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+const ARAHBO_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ArahboThisOrOtherNontokenCatEntryV1,
+    ..etb_trigger(arahbo_cat_entry)
+}];
+
+fn garruk_etb_draw() -> EffectOp {
+    EffectOp::BindGarrukEtbDrawV1
+}
+fn garruk_power_entry_draw() -> EffectOp {
+    EffectOp::BindGarrukPowerEntryDrawV1
+}
+const GARRUKS_UPRISING_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukOwnEtbFerociousV1,
+        ..etb_trigger(garruk_etb_draw)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::GarrukControlledCreaturePowerEntryV1,
+        ..etb_trigger(garruk_power_entry_draw)
+    },
+];
+
 fn skyship_buccaneer_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControllerAttackedThisTurn,
@@ -1591,6 +1641,14 @@ fn skyship_buccaneer_effect() -> EffectOp {
         else_: Box::new(EffectOp::Sequence(vec![])),
     }
 }
+
+fn stromkirk_bloodthief_effect() -> EffectOp {
+    crate::stromkirk_bloodthief_v1::root()
+}
+const STROMKIRK_BLOODTHIEF_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepIfOpponentLostLife,
+    ..etb_trigger(stromkirk_bloodthief_effect)
+}];
 
 const SKYSHIP_BUCCANEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
@@ -1678,6 +1736,14 @@ pub(crate) fn frenzied_goblin_effect() -> EffectOp {
 const FRENZIED_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb_trigger(frenzied_goblin_effect)
+}];
+
+fn vampire_gourmand_effect() -> EffectOp {
+    crate::vampire_gourmand_v1::program()
+}
+const VAMPIRE_GOURMAND_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(vampire_gourmand_effect)
 }];
 
 fn blood_fountain_effect() -> EffectOp {
@@ -2811,6 +2877,11 @@ fn journey_to_nowhere_etb_effect() -> EffectOp {
     }
 }
 
+/// Banishing Light has one ETB ability; its return is a duration expiration,
+/// committed immediately when the exact source incarnation leaves.
+const BANISHING_LIGHT_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [etb_trigger(journey_to_nowhere_etb_effect)];
+
 fn journey_to_nowhere_ltb_effect() -> EffectOp {
     EffectOp::ReturnObjectsExiledBySource
 }
@@ -3495,12 +3566,22 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Skyship Buccaneer" => &SKYSHIP_BUCCANEER_TRIGGERS,
         "Gorehorn Raider" => &GOREHORN_RAIDER_TRIGGERS,
         "Gutless Plunderer" => &GUTLESS_PLUNDERER_TRIGGERS,
+        "Strongbox Raider" => &STRONGBOX_RAIDER_TRIGGERS,
+        "Stromkirk Bloodthief" => &STROMKIRK_BLOODTHIEF_TRIGGERS,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Arahbo, the First Fang" => &ARAHBO_TRIGGERS,
+        "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
+
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
         "Ashroot Animist" => &ASHROOT_ANIMIST_TRIGGERS,
+        "Vampire Gourmand" => &VAMPIRE_GOURMAND_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -3540,6 +3621,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
         "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
         "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
+        "Banishing Light" => &BANISHING_LIGHT_TRIGGERS,
         "Lembas" => &LEMBAS_TRIGGERS,
         "Weather the Storm" => &WEATHER_THE_STORM_TRIGGERS,
         "Masked Vandal" => &MASKED_VANDAL_TRIGGERS,
@@ -3694,6 +3776,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,
         "Felidar Savior" => TargetSpec::UpToTwoOtherControlledCreatures,
         "Armasaur Guide" => TargetSpec::ControlledCreature,
+        "Stromkirk Bloodthief" => crate::stromkirk_bloodthief_v1::target_spec(),
         "Vampire Soulcaller" => TargetSpec::CreatureCardInOwnGraveyard,
         "Affectionate Indrik" => TargetSpec::OpponentControlledCreature,
         "Ambush Wolf" => TargetSpec::UpToOneCardInGraveyards,
@@ -3706,7 +3789,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         }
         "Humbling Elder" => TargetSpec::OpponentControlledCreature,
         "Battlesong Berserker" => TargetSpec::ControlledCreature,
-        "Meteor Golem" => TargetSpec::OpponentNonlandPermanent,
+        "Meteor Golem" | "Banishing Light" => TargetSpec::OpponentNonlandPermanent,
         "Reclamation Sage" => TargetSpec::ArtifactOrEnchantmentPermanent,
         "Saiba Cryptomancer" | "Aloe Alchemist" | "Frenzied Goblin" => TargetSpec::Creature,
         "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
@@ -3816,6 +3899,11 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
     if template == effect {
         return true;
     }
+    if *template == crate::stromkirk_bloodthief_v1::root()
+        && crate::stromkirk_dispatch_v1::capture_of(effect).is_some()
+    {
+        return true;
+    }
     match (template, effect) {
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
@@ -3891,6 +3979,11 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             },
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
+        (EffectOp::BindArahboCatEntryV1, EffectOp::ArahboTokenFromCaptureV1 { .. }) => true,
+        (
+            EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
+            EffectOp::GarrukDrawFromCaptureV1 { .. },
+        ) => true,
         (template, EffectOp::CerberusUntapV1 { .. })
             if *template == crate::slumbering_cerberus_v1::program_v1() =>
         {
@@ -4008,6 +4101,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if matches!(effect, EffectOp::ArahboTokenFromCaptureV1 { .. }) {
+        return crate::arahbo_v1::selected_definition(card_def).then_some(TargetSpec::None);
+    }
+    if matches!(effect, EffectOp::GarrukDrawFromCaptureV1 { .. }) {
+        return crate::garruks_uprising_v1::selected_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::WildwoodCounterFromReceiptV1 { .. }) {
         return crate::wildwood_capture_v1::owns_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4320,6 +4420,11 @@ fn sba_fixed_point_with_protected_triggers(
             }
         }
         if !dying.is_empty() {
+            crate::equipment_damage_source_v4::before_protected_departures(
+                state,
+                &dying,
+                protected_triggers,
+            );
             crate::event::commit_sba_death_batch_v1(state, dying);
             changed = true;
         }
@@ -4576,20 +4681,25 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
-    for pending in &new_triggers {
-        if !crate::engine::pending_trigger_targets_can_complete(pending, state)
-            && (crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
-                || crate::raid_entry_custody_v1::record_drop(state, pending).is_err())
-        {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                pending.source,
-            ));
-            return Vec::new();
+    new_triggers.retain(|pending| {
+        let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
+        if !keep {
+            crate::banishing_light_v1::discard_without_targets(state, pending);
+            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
+                || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
+                || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+            }
         }
+        keep
+    });
+    if state.engine.halted.is_some() {
+        return Vec::new();
     }
-    new_triggers
-        .retain(|pending| crate::engine::pending_trigger_targets_can_complete(pending, state));
 
     order_apnap(new_triggers, state.active_player)
 }
@@ -4663,6 +4773,36 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::vampire_gourmand_dispatch_v2::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::stromkirk_dispatch_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::banishing_light_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::cerberus_capture_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4674,6 +4814,26 @@ fn triggers_from_events(
         }
     }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::garruks_uprising_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::arahbo_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((
@@ -4859,6 +5019,11 @@ fn triggers_from_events(
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
                 if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
+                    continue;
+                }
+                if def.condition == TriggerCondition::Etb
+                    && crate::banishing_light_v1::owns_definition(obj.card_def)
+                {
                     continue;
                 }
                 if crate::raid_entry_v1::owns_definition(obj.card_def)
@@ -5502,6 +5667,12 @@ fn trigger_matches(
     state: &GameState,
     draws_this_turn_at_event: u32,
 ) -> bool {
+    if cond == TriggerCondition::Attacks
+        && crate::vampire_gourmand_dispatch_v2::owns_definition(state.objects.get(source).card_def)
+    {
+        return false;
+    }
+
     match (cond, ev) {
         (
             TriggerCondition::TurnedFaceUp,
@@ -5806,6 +5977,14 @@ fn trigger_matches(
             TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
             CommittedEvent::BeginningEndStep { active_player, .. },
         ) => *active_player == controller && state.player_attacked_this_turn_v1(controller),
+        (
+            TriggerCondition::BeginningControllerEndStepIfOpponentLostLife,
+            CommittedEvent::BeginningEndStep { active_player, .. },
+        ) => {
+            let _ = (active_player, controller);
+            // Exact observers are captured before SBA and collected through their own journal.
+            false
+        }
         (TriggerCondition::BeginningEndStepAfterWarp, CommittedEvent::BeginningEndStep { .. }) => {
             state.objects.get(source).v4.warped_v1
         }
@@ -6397,13 +6576,10 @@ mod tests {
     ))]
     fn raid_entry_predicate_uses_actual_declarations_and_the_captured_controller() {
         use crate::engine::{self, Action};
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
         use crate::state::Step;
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
-            state.turn = 3;
+            let mut state = ready_state_for(actor);
             let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
             let entrant = put(&mut state, actor, "Guttersnipe", Zone::Hand);
             state.step = Step::DeclareAttackers;
@@ -6447,7 +6623,31 @@ mod tests {
             assert_eq!(state.players[actor.index()].hand.len(), before + 1);
             let mut stale: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            stale.turn += 1;
+            let original_turn = stale.turn;
+            let original_attack = stale.attack_declaration_turn_v1;
+            for _ in 0..48 {
+                match engine::advance_until_decision(&mut stale) {
+                    engine::Decision::CastSpellOrPass { .. } => {}
+                    engine::Decision::DeclareBlockers { .. } => {
+                        engine::step(&mut stale, Action::DeclareBlockers(Vec::new())).unwrap();
+                        continue;
+                    }
+                    engine::Decision::DeclareAttackers { .. } => {
+                        engine::step(&mut stale, Action::DeclareAttackers(Vec::new())).unwrap();
+                        continue;
+                    }
+                    other => panic!("unexpected real Raid turn transition {other:?}"),
+                }
+                if stale.turn != original_turn {
+                    break;
+                }
+                engine::step(&mut stale, Action::Pass).unwrap();
+            }
+            assert_ne!(stale.turn, original_turn);
+            assert!(stale.attack_declaration_turn_v1.is_none());
+            // Only stale Raid evidence is restored. The genuine life-loss and
+            // turn ledgers must remain valid at this actual new turn.
+            stale.attack_declaration_turn_v1 = original_attack;
             let before = stale.diagnostic_state_hash();
             crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut stale);
             assert_eq!(stale.diagnostic_state_hash(), before);
@@ -6458,12 +6658,10 @@ mod tests {
     #[cfg(feature = "limited-fdn-fixtures")]
     fn raid_empty_declaration_cannot_capture_or_resolve_a_draw() {
         use crate::engine::{self, Action};
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
         use crate::state::Step;
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = ready_state_for(actor);
             state.step = Step::DeclareAttackers;
             engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap();
             let source = put(&mut state, actor, "Guttersnipe", Zone::Hand);

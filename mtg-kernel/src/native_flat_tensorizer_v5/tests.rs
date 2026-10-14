@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::rl_session::FastActorResponseV1;
 use crate::state::{GameState, Zone};
 use sha2::{Digest, Sha256};
@@ -13,9 +13,7 @@ fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
 }
 
 fn ordinary_state(actor: PlayerId) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Mountain", Zone::Hand);
     state
 }

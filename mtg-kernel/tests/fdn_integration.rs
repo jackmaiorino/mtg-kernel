@@ -1,5 +1,10 @@
 //! Consolidated integration tests; CI runs each module in its own process.
 
+#[cfg(feature = "limited-fdn-fixtures")]
+mod fixture_turn_v1 {
+    include!("common/fixture_turn_v1.rs");
+}
+
 #[path = "fdn/fdn_activated_combat_v1.rs"]
 mod fdn_activated_combat_v1;
 #[path = "fdn/fdn_aetherize_v1.rs"]
@@ -10,6 +15,8 @@ mod fdn_arbiter_of_woe_v1;
 mod fdn_armasaur_guide_v1;
 #[path = "fdn/fdn_attack_draw_triggers_v1.rs"]
 mod fdn_attack_draw_triggers_v1;
+#[path = "fdn/fdn_banishing_light_v1.rs"]
+mod fdn_banishing_light_v1;
 #[path = "fdn/fdn_bloom_tender_v1.rs"]
 mod fdn_bloom_tender_v1;
 #[path = "fdn/fdn_bounty_v1.rs"]
@@ -48,6 +55,8 @@ mod fdn_exsanguinate_v1;
 mod fdn_felidar_savior_v1;
 #[path = "fdn/fdn_ferocious_attacks_v1.rs"]
 mod fdn_ferocious_attacks_v1;
+#[path = "fdn/fdn_fiery_annihilation_v1.rs"]
+mod fdn_fiery_annihilation_v1;
 #[path = "fdn/fdn_fight_v1.rs"]
 mod fdn_fight_v1;
 #[path = "fdn/fdn_first_lifegain_v1.rs"]
@@ -196,3 +205,9 @@ mod fdn_wildwood_scourge_v1;
 mod fdn_ashroot_animist_v1;
 #[path = "fdn/fdn_juggernaut_v1.rs"]
 mod fdn_juggernaut_v1;
+
+#[path = "fdn/fdn_strongbox_raider_v1.rs"]
+mod fdn_strongbox_raider_v1;
+
+#[path = "fdn/fdn_vampire_gourmand_v1.rs"]
+mod fdn_vampire_gourmand_v1;

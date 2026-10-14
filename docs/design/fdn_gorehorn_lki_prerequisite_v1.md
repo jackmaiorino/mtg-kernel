@@ -1,5 +1,17 @@
 # Gorehorn original-incarnation damage prerequisite
 
+Root later-source composition combines repaired Gorehorn head
+`a519c0a4dd8e2ef260bde9b4c6f1736f150b9f88` with Ashroot/Banishing/Stromkirk/
+Gourmand composition `d841d989799d118e451f9357a6f5f671cb7bc0c0`.
+The disjoint pre-pop and counter owners all remain; generic owned resolution
+still passes the Gourmand loan, and Banishing's atomic leaf remains separate.
+Prebatch Gorehorn snapshots run before any actual member moves, inside the
+existing linked-return batch operation. Old composition event and state fields
+remain a prefix with absent publication wrappers contributing no Hash input.
+Pinned formatting and diff checks pass; this419-definition candidate is
+unqualified and its profile stays stale. Shared eligible Raid/Gutless capture
+ownership remains pending. Native79 runs the separate earlier a395 head.
+
 Owned source base ecf149117b46d60c8def95eed74a70d51403a75c, the unaccepted seven-card PR235 candidate. This patch changes neither registration nor catalog/profile identity. Pinned primary source is Mage a5c90fe180021e70e2a644ade00eeab07f857a40, Mage.Sets/src/mage/cards/g/GorehornRaider.java: 4R, 4/4 Minotaur Pirate, genuine ETB with intervening Raid and two damage to any target.
 
 The real engine publishes the complete definition-owned triggered row before target marker validation. A nonserializable owner is acquired against that unique live row before actual resolution, fizzle or counter removal. It cannot be reconstructed from a saved journal or supplied to ordinary damage execution. The printed conditional resolves atomically without a Crystal dependency. Ordinary interpreter execution of this selected source context refuses.

@@ -31,10 +31,20 @@ fn id(name: &str) -> u16 {
 }
 
 fn ready() -> GameState {
-    let mut state = GameState::new_from_libraries(&[], &[], |_| "Plains".into(), 0x4644_4e45);
-    state.active_player = PlayerId::P0;
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[],
+        &[],
+        |_| "Plains".into(),
+        0x4644_4e45,
+        active,
+    );
+
     state.priority_player = PlayerId::P0;
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     state
 }
 
@@ -461,8 +471,7 @@ fn burst_lightning_deals_two_unkicked_and_four_kicked() {
 
 #[test]
 fn burst_lightning_is_instant_speed_and_kills_a_creature() {
-    let mut state = ready();
-    state.active_player = PlayerId::P1;
+    let mut state = ready_for(PlayerId::P1);
     state.priority_player = PlayerId::P0;
     state.step = Step::BeginCombat;
     let burst = put(&mut state, PlayerId::P0, "Burst Lightning", Zone::Hand);
@@ -713,8 +722,11 @@ fn swiftfoot_boots_cast_for_two_and_equip_for_one_at_sorcery_speed() {
         (Step::Main1, PlayerId::P0, true),
     ] {
         let mut state = state.clone();
+        if active != state.active_player {
+            put(&mut state, active, "Plains", Zone::Library);
+            super::fixture_turn_v1::reach(&mut state, active, Step::Main1);
+        }
         state.step = step;
-        state.active_player = active;
         state.priority_player = PlayerId::P0;
         put(
             &mut state,
@@ -767,7 +779,8 @@ fn swiftfoot_boots_grant_haste_and_hexproof_only_while_attached() {
 
     // The opponent cannot target the equipped creature, on either turn.
     let mut opposing = state.clone();
-    opposing.active_player = PlayerId::P1;
+    put(&mut opposing, PlayerId::P1, "Plains", Zone::Library);
+    super::fixture_turn_v1::reach(&mut opposing, PlayerId::P1, Step::Main1);
     opposing.priority_player = PlayerId::P1;
     let burst = put(&mut opposing, PlayerId::P1, "Burst Lightning", Zone::Hand);
     mana(&mut opposing, PlayerId::P1, ManaColor::R, 1);
@@ -909,8 +922,8 @@ fn adventuring_gear_ignores_opposing_lands_and_does_nothing_unattached() {
         Zone::Battlefield,
     );
     equip_one(&mut state, gear, host);
-    state.active_player = PlayerId::P1;
-    state.priority_player = PlayerId::P1;
+    put(&mut state, PlayerId::P1, "Plains", Zone::Library);
+    super::fixture_turn_v1::reach(&mut state, PlayerId::P1, Step::Main1);
     let opposing = play_land(&mut state, PlayerId::P1);
     settle_to_priority(&mut state);
     assert_eq!(state.objects.get(opposing).zone, Zone::Battlefield);

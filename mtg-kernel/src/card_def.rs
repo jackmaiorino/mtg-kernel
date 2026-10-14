@@ -626,6 +626,11 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Devil,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Avatar,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1059,6 +1064,8 @@ pub enum TargetSpec {
     /// Zero to two distinct nontoken cards from one physical graveyard.
     /// Stable id 66 is reserved for this unregistered FDN successor.
     UpToTwoCardsInSingleGraveyard,
+    /// Fiery Annihilation: mandatory creature, optional attached Equipment.
+    CreatureThenUpToOneAttachedEquipment,
 }
 
 impl TargetSpec {
@@ -1151,6 +1158,7 @@ impl TargetSpec {
             TargetSpec::KickerControlledCreatures => 63,
             TargetSpec::CardInGraveyards => 65,
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
+            TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
         }
     }
 }
@@ -1194,6 +1202,8 @@ impl Keywords {
     /// gives that player a poison counter. The Phyrexian Mite token is the
     /// first consumer.
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
+    /// This permanent cannot be targeted by any player (702.18).
+    pub const SHROUD: Keywords = Keywords(1 << 18);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -2560,7 +2570,7 @@ mod tests {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn creature_type_choice_ids_preserve_pauper_and_foundations_profiles() {
         // Preserve the ordered lists from ddff546a, with Elder appended to
-        // Foundations by v68, Ooze149, then Scout and Devil in this candidate.
+        // Foundations by v68, Ooze149, then Scout, Devil and Avatar in this candidate.
         // These also define the changeling subtype
         // projection and creature-type choice surface in these profiles.
         let expected: &[u16] = &[
@@ -2574,7 +2584,11 @@ mod tests {
                 79, 80, 81, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
                 100, 101, 102, 103, 104, 119, 124, 125, 126, 127, 109, 149,
             ]);
-            expected.extend_from_slice(&[Subtype::Scout.stable_id(), Subtype::Devil.stable_id()]);
+            expected.extend_from_slice(&[
+                Subtype::Scout.stable_id(),
+                Subtype::Devil.stable_id(),
+                Subtype::Avatar.stable_id(),
+            ]);
         }
         assert_eq!(
             Subtype::CREATURE_TYPES
@@ -2610,12 +2624,12 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 417 (Ashroot after Juggernaut, Temporal,
-        // Bloom, Gutless, Gorehorn and Librarian; earlier definitions retain ids).
+        // batches append through id 425 (Crystal after Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
+        // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                418
+                426
             } else {
                 192
             }
@@ -2653,7 +2667,10 @@ mod tests {
         assert!(crate::trigger::triggers_for(391).is_empty());
         assert_eq!(card_id_by_name("Gorehorn Raider"), Some(412));
         assert_eq!(card_id_by_name("Gutless Plunderer"), Some(413));
-        assert!(card_id_by_name("Strongbox Raider").is_none());
+        assert_eq!(card_id_by_name("Arahbo, the First Fang"), Some(422));
+        assert_eq!(card_id_by_name("Strongbox Raider"), Some(423));
+        assert_eq!(card_id_by_name("Fiery Annihilation"), Some(424));
+        assert_eq!(card_id_by_name("Crystal Barricade"), Some(425));
     }
 
     #[test]
@@ -2750,6 +2767,7 @@ mod tests {
             (TargetSpec::AttackingCreature, 61),
             (TargetSpec::TwoCreaturesWithDifferentControllers, 62),
             (TargetSpec::KickerControlledCreatures, 63),
+            (TargetSpec::CreatureThenUpToOneAttachedEquipment, 64),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -2779,8 +2797,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v80_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0xcd01_0e14_1405_787c;
+    fn card_db_hash_v81_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x88c0_d510_de5b_6cea;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

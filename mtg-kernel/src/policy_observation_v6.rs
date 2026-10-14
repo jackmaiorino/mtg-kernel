@@ -157,11 +157,63 @@ pub(crate) mod tests {
     use crate::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 
     pub(crate) fn ready_state() -> GameState {
-        let mut state = GameState::new_from_libraries(&[], &[], card_name, 60_001);
+        ready_state_for(PlayerId::P0)
+    }
+
+    pub(crate) fn ready_state_for(actor: PlayerId) -> GameState {
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[],
+            &[],
+            card_name,
+            60_001,
+            actor,
+        );
         state.step = Step::Main1;
-        state.active_player = PlayerId::P0;
-        state.priority_player = PlayerId::P0;
         state
+    }
+
+    pub(crate) fn ready_state_with_turn_authority(actor: PlayerId) -> GameState {
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            return ready_state_for(actor);
+        }
+        // Earlier Default/Standard tensor fixtures retain their exact inputs.
+        // Selected Limited turn ledgers require the real starting constructor.
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state
+    }
+
+    pub(crate) fn advance_to_next_main_for(state: &mut GameState, actor: PlayerId) {
+        let original = (state.turn_key_v1(), state.active_player);
+        for _ in 0..128 {
+            let decision = engine::advance_until_decision(state);
+            if (state.turn_key_v1(), state.active_player) != original
+                && state.active_player == actor
+                && state.priority_player == actor
+                && state.step == Step::Main1
+                && state.stack.is_empty()
+                && matches!(&decision, engine::Decision::CastSpellOrPass { player, .. } if *player == actor)
+            {
+                return;
+            }
+            match decision {
+                engine::Decision::CastSpellOrPass { .. } => {
+                    engine::step(state, Action::Pass).unwrap();
+                }
+                engine::Decision::DeclareAttackers { .. } => {
+                    engine::step(state, Action::DeclareAttackers(Vec::new())).unwrap();
+                }
+                engine::Decision::DeclareBlockers { .. } => {
+                    engine::step(state, Action::DeclareBlockers(Vec::new())).unwrap();
+                }
+                other => panic!("unexpected real fixture turn transition {other:?}"),
+            }
+        }
+        panic!("fixture did not reach the requested real main phase");
     }
 
     pub(crate) fn put(state: &mut GameState, owner: PlayerId, name: &str, zone: Zone) -> ObjectId {

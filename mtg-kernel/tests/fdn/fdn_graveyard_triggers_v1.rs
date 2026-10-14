@@ -13,10 +13,19 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 use mtg_kernel::trigger;
 
 fn ready() -> GameState {
+    ready_for(PlayerId::P0)
+}
+fn ready_for(active: PlayerId) -> GameState {
     let forest = card_id_by_name("Forest").unwrap();
-    let mut state =
-        GameState::new_from_libraries(&[forest; 40], &[forest; 40], |_| "Forest".into(), 831);
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &[forest; 40],
+        &[forest; 40],
+        |_| "Forest".into(),
+        831,
+        active,
+    );
     state.step = Step::Main1;
+    state.priority_player = PlayerId::P0;
     enable_foundations_combat_v1(&mut state).unwrap();
     state
 }
@@ -146,9 +155,8 @@ fn printed_characteristics_costs_subtypes_and_flash_are_exact() {
         settle(&mut state);
         assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
     }
-    let mut state = ready();
+    let mut state = ready_for(PlayerId::P1);
     state.step = Step::End;
-    state.active_player = PlayerId::P1;
     let wolf = put(&mut state, PlayerId::P0, "Ambush Wolf", Zone::Hand);
     let regrower = put(&mut state, PlayerId::P0, "Elvish Regrower", Zone::Hand);
     state.players[0].mana_pool[5] = 2;

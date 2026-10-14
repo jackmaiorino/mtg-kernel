@@ -41,6 +41,7 @@ use crate::state::{
     StackSourceContractV4, StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
+pub mod crystal_prevention_v1;
 pub(crate) mod frenzied_goblin_resolution_v1;
 pub(crate) use frenzied_goblin_resolution_v1::{
     acquire_owner as acquire_frenzied_goblin_resolution_owner,
@@ -50,6 +51,16 @@ pub(crate) use frenzied_goblin_resolution_v1::{
 pub use frenzied_goblin_resolution_v1::{
     FrenziedGoblinOutcomeV1, FrenziedGoblinPublicationRecordV1, FrenziedGoblinResolutionReceiptV1,
     FrenziedGoblinRestrictionV1,
+};
+mod vampire_gourmand_resolution_v1;
+pub(crate) use vampire_gourmand_resolution_v1::{
+    acquire_owner as acquire_vampire_gourmand_resolution_owner,
+    begin_owned as begin_owned_vampire_gourmand_resolution,
+    expire as expire_vampire_gourmand_restrictions,
+    resume_owned as resume_owned_vampire_gourmand_resolution, VampireGourmandResolutionOwnerV1,
+};
+pub use vampire_gourmand_resolution_v1::{
+    VampireGourmandCostOperationV2, VampireGourmandCostResultV2, VampireGourmandResolutionReceiptV1,
 };
 mod squad_rallier_resolution_v1;
 pub(crate) use squad_rallier_resolution_v1::owned_root as squad_rallier_root_is_exact;
@@ -394,6 +405,8 @@ pub enum EffectCond {
     },
     /// Raid recheck uses the resolving ability's captured controller.
     ControllerAttackedThisTurn,
+    /// Intervening recheck using the captured original controller.
+    OpponentLostLifeThisTurn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -976,6 +989,8 @@ pub enum EffectOp {
     /// Exile one exact target and link it to this resolving ability's frozen
     /// source incarnation. If that source already left before this trigger
     /// resolves, the target is still exiled but no return link is created.
+    /// Definition-owned until-leaves sources (including Banishing Light) instead
+    /// require the captured source incarnation to remain and return at expiration.
     ExileTargetLinkedToSource {
         object: ObjectRef,
     },
@@ -1623,6 +1638,26 @@ pub enum EffectOp {
     AshrootBoostFromCaptureV2 {
         capture_history_index: u64,
     },
+    /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
+    StromkirkVampirePermanentCounterV1,
+    StromkirkCounterFromCaptureV2 {
+        capture_history_index: u64,
+    },
+    BindGarrukEtbDrawV1,
+    BindGarrukPowerEntryDrawV1,
+    GarrukDrawFromCaptureV1 {
+        capture_history_index: u64,
+    },
+    BindArahboCatEntryV1,
+    ArahboTokenFromCaptureV1 {
+        capture_history_index: u64,
+    },
+    /// Strongbox newly-exiled choice, ordinary holder-next-turn permission.
+    ExileTopChooseOneUntilNextTurn {
+        count: u8,
+    },
+    /// Printed Fiery Annihilation, with independent legality and a committed death shield.
+    FieryAnnihilation,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2069,6 +2104,10 @@ pub enum EffectFrame {
         pay: bool,
         path: Vec<u16>,
     },
+    GrantChosenExilePlayPermission {
+        binding: ExileTopChoiceBindingV1,
+        chosen: EffectObjectBinding,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2416,6 +2455,12 @@ pub enum EffectTargetSelectionPurpose {
     DiscardDraw {
         choice: DiscardDrawChoice,
     },
+    CrystalDiscardAfterDamageV2 {
+        capture: u32,
+    },
+    ChooseNewlyExiledCard {
+        binding: ExileTopChoiceBindingV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2606,6 +2651,28 @@ pub enum EffectOptionChoicePurpose {
         kind: crate::standard_creature_choices_v1::CreatureChoiceV1,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    CrystalPreventionV1 {
+        choice: Box<crystal_prevention_v1::ChoiceV1>,
+    },
+}
+
+/// Private actual exile capture, never a public or Human record.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ExileTopChoiceBindingV1 {
+    pub player: PlayerId,
+    pub requested_count: u8,
+    pub stack_item_id: Option<StackItemId>,
+    pub source: ObjectId,
+    pub granted_turn: u32,
+    pub granted_active_player: PlayerId,
+    pub original_library: Vec<EffectObjectBinding>,
+    pub resulting_library: Vec<EffectObjectBinding>,
+    pub exiled: Vec<EffectObjectBinding>,
+    pub exiled_public: Vec<crate::rl::CardStableRefV1>,
+    pub exile_event_indices: Vec<u32>,
+    pub canonical_path: Vec<u16>,
+    pub expected_remaining_frames: Vec<EffectFrame>,
+    pub provenance_digest: [u8; 32],
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -2783,6 +2850,9 @@ pub enum EffectAnsweredChoiceGuard {
     CounterUnlessPaysLife {
         frame: Box<EffectFrame>,
     },
+    ChosenExilePlayPermission {
+        frame: Box<EffectFrame>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2942,6 +3012,9 @@ impl std::hash::Hash for ExecCtx {
 /// private library/hand ordering, and multi-card mill ordering enter the v4
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
+    if matches!(op, EffectOp::ExileTopChooseOneUntilNextTurn { .. }) {
+        return true;
+    }
     match op {
         EffectOp::Sequence(ops) => ops.iter().enumerate().any(|(index, op)| {
             contains_player_choice(op)
@@ -3029,10 +3102,18 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if (crystal_prevention_v1::mixed_environment(state)
+        && !crystal_prevention_v1::ordinary_nondamage(op))
+        || resolving_item.v4.crystal_prevention_started_v1.0.is_some()
+    {
+        return Err("Crystal damage requires its genuine pre-pop loan".into());
+    }
     if state.engine.pending_effect.is_some() {
         return Err("cannot begin an effect while another continuation is pending".to_string());
     }
     validate_resumable_program(op)?;
+    let owned_gourmand =
+        vampire_gourmand_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_squad_look =
         squad_rallier_resolution_v1::preflight_begin(state, op, ctx, &resolving_item)?;
     let owned_frenzied =
@@ -3047,6 +3128,9 @@ pub fn begin_resumable_resolution(
         choice: None,
         answered_choice_guard: None,
     });
+    if owned_gourmand {
+        vampire_gourmand_resolution_v1::record_begin(state)?;
+    }
     if owned_squad_look {
         squad_rallier_resolution_v1::record_begin(state)?;
     }
@@ -3058,6 +3142,15 @@ pub fn begin_resumable_resolution(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.resolving_item
+            .v4
+            .crystal_prevention_started_v1
+            .0
+            .is_some()
+    }) {
+        return Err("Crystal continuation requires its genuine pre-removal loan".into());
+    }
     if state.engine.pending_effect.is_none() {
         return Err("no effect continuation is pending".to_string());
     }
@@ -3069,6 +3162,12 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 /// snapshot taken immediately after the action deterministic too.
 pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_choice(state) {
+        return crystal_prevention_v1::answer(state, option_index);
+    }
+    if crystal_prevention_v1::is_program_choice(state) {
+        return crystal_prevention_v1::answer_program_choice(state, option_index);
+    }
     let continuation = state
         .engine
         .pending_effect
@@ -3098,6 +3197,9 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                 ));
             };
             match purpose {
+                EffectOptionChoicePurpose::CrystalPreventionV1 { .. } => {
+                    return Err("Crystal choice requires its authenticated answer reducer".into())
+                }
                 EffectOptionChoicePurpose::PayGenericDrawV1 {
                     expected_remaining_frames,
                     ..
@@ -3300,6 +3402,9 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
 /// wrong-shape actions byte-for-byte nonmutating.
 pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_discard_choice(state) {
+        return crystal_prevention_v1::answer_discard(state, Some(target));
+    }
     let choice = state
         .engine
         .pending_effect
@@ -3402,6 +3507,7 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
         complete_resumable_target_selection(continuation)?;
     }
     squad_rallier_resolution_v1::record_boundary(state)?;
+    vampire_gourmand_resolution_v1::record_boundary(state)?;
     Ok(())
 }
 
@@ -3410,6 +3516,9 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
 /// final card auto-completes and this action is never legal there.
 pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    if crystal_prevention_v1::is_discard_choice(state) {
+        return crystal_prevention_v1::answer_discard(state, None);
+    }
     let choice = state
         .engine
         .pending_effect
@@ -3469,7 +3578,8 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
         drop(token);
     }
     complete_resumable_target_selection(state.engine.pending_effect.as_mut().unwrap())?;
-    squad_rallier_resolution_v1::record_boundary(state)
+    squad_rallier_resolution_v1::record_boundary(state)?;
+    vampire_gourmand_resolution_v1::record_boundary(state)
 }
 
 /// Records one generic Boolean answer without executing its consequence.
@@ -4066,6 +4176,15 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
+            return Err("Crystal discard requires its authenticated owning answer".into())
+        }
+        EffectTargetSelectionPurpose::ChooseNewlyExiledCard { binding } => {
+            if path != binding.canonical_path || objects.len() != 1 {
+                return Err("Strongbox answer cardinality/path changed".into());
+            }
+            exile_top_choose_v1::stage_answer(continuation, binding, objects[0])?;
+        }
         EffectTargetSelectionPurpose::StandardCopyTargetV1 { .. } => {
             unreachable!("answered above without object bindings")
         }
@@ -5127,7 +5246,9 @@ fn surveil_top_card(
     })
 }
 
+pub(crate) mod exile_top_choose_v1;
 mod private_keep_one_v1;
+pub(crate) mod strongbox_permission_v1;
 pub(crate) use private_keep_one_v1::selection_shape;
 pub use private_keep_one_v1::PrivateKeepOneBindingV1;
 mod surveil_many;
@@ -6259,13 +6380,33 @@ fn returning_aura_hosts(
     state: &GameState,
     aura: EffectObjectBinding,
 ) -> Result<Vec<EffectObjectBinding>, String> {
+    returning_aura_hosts_in_zone(state, aura, Zone::Graveyard)
+}
+
+pub(crate) fn exiled_aura_hosts(
+    state: &GameState,
+    aura: EffectObjectBinding,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    returning_aura_hosts_in_zone(state, aura, Zone::Exile)
+}
+
+fn returning_aura_hosts_in_zone(
+    state: &GameState,
+    aura: EffectObjectBinding,
+    expected_zone: Zone,
+) -> Result<Vec<EffectObjectBinding>, String> {
     validate_effect_object_binding(state, aura)?;
-    if aura.expected_zone != Zone::Graveyard
+    if aura.expected_zone != expected_zone
         || crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
             .attachment
             .is_none()
     {
-        return Err("returning Aura is not a creature Aura in its graveyard".to_string());
+        return Err(if expected_zone == Zone::Graveyard {
+            "returning Aura is not a creature Aura in its graveyard"
+        } else {
+            "returning Aura lost its exact permitted card zone"
+        }
+        .to_string());
     }
     Ok(state
         .objects
@@ -6325,6 +6466,25 @@ fn put_returning_aura_attached(
     if !returning_aura_hosts(state, aura)?.contains(&host) {
         return Err("returning Aura host is no longer legal".to_string());
     }
+    put_aura_attached_from_validated_zone(state, aura, host)
+}
+
+pub(crate) fn put_exiled_aura_attached(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
+    if !exiled_aura_hosts(state, aura)?.contains(&host) {
+        return Err("exiled Aura host is no longer legal".to_string());
+    }
+    put_aura_attached_from_validated_zone(state, aura, host)
+}
+
+fn put_aura_attached_from_validated_zone(
+    state: &mut GameState,
+    aura: EffectObjectBinding,
+    host: EffectObjectBinding,
+) -> Result<(), String> {
     event::propose_and_commit(
         state,
         event::ProposedEvent::zone_change(aura.object, Zone::Battlefield),
@@ -7015,7 +7175,7 @@ fn validate_answered_choice_guard(
     pending: &EffectContinuation,
 ) -> Result<(), String> {
     for frame in &pending.frames {
-        if let EffectFrame::Program { op, .. } = frame {
+        if let EffectFrame::Program { op, path } = frame {
             if matches!(op, EffectOp::PutBoundAuraOntoBattlefieldAttached { .. }) {
                 if !matches!(
                     pending.answered_choice_guard,
@@ -7040,7 +7200,8 @@ fn validate_answered_choice_guard(
                         "bound chosen-permanent action has no answered choice guard".to_string()
                     );
                 }
-            } else {
+            } else if !crystal_prevention_v1::authenticates_legacy_frame(state, pending, op, path)?
+            {
                 validate_resumable_program(op)?;
             }
         }
@@ -7091,6 +7252,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::PayManaThen { .. }
                         | EffectFrame::LinkedExileChosenHandCard { .. }
                         | EffectFrame::BeginSearchLibraryToBattlefieldTapped { .. }
+                        | EffectFrame::GrantChosenExilePlayPermission { .. }
                         | EffectFrame::EnterUndercityRoom { .. }
                         | EffectFrame::ResolveUndercityThrone { .. }
                 )
@@ -7132,6 +7294,9 @@ fn validate_answered_choice_guard(
                 return Err("owner-library answered continuation frame stack changed".to_string());
             }
             validate_owner_library_placement_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::ChosenExilePlayPermission { frame }) => {
+            exile_top_choose_v1::validate_answer(state, pending, frame)?;
         }
         Some(EffectAnsweredChoiceGuard::SurveilLibraryOne { frame }) => {
             let EffectFrame::SurveilLibraryOne {
@@ -7787,20 +7952,38 @@ fn validate_standard_choose_permanent_origin(
     Ok(*filter)
 }
 
+pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), String> {
+    // A linked checkpoint can hold the original row outside the live stack.
+    // Its validator replays the authenticated starting state and parent root.
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return crate::linked_aura_operation_v1::validate(state);
+    }
+    vampire_gourmand_resolution_v1::validate(state)
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if crate::linked_aura_operation_v1::has_pending(state) {
+        return crate::linked_aura_operation_v1::validate(state);
+    }
     crate::raid_entry_v1::validate_state(state)?;
     crate::extra_turn_v1::validate(state)?;
     crate::ashroot_animist_v1::validate_state(state)?;
+    crate::stromkirk_bloodthief_v1::validate_state(state)?;
     temporary_control_v1::authority::validate(state)?;
+    crate::garruks_uprising_v1::validate_state(state)?;
+    crate::arahbo_v1::validate_state(state)?;
     crate::self_reflection_v1::validate_live_stack(state)?;
     crate::authority_of_the_consuls_v1::validate_state(state)?;
     crate::cerberus_capture_v1::validate_state(state)?;
     crate::soul_shackled_zombie_v1::validate_state(state)?;
+    crate::banishing_light_v1::validate_state(state)?;
     crate::source_power_activation_v1::validate_state(state)?;
     crate::librarian_activation_v1::validate_state(state)?;
     crate::wildwood_capture_v1::validate_state(state)?;
     squad_rallier_resolution_v1::validate(state)?;
     frenzied_goblin_resolution_v1::validate(state)?;
+    validate_vampire_gourmand_state(state)?;
+    crystal_prevention_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(());
     };
@@ -7864,6 +8047,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     private_keep_one_v1::validate_required_stage(state, pending)?;
+    exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
@@ -7893,6 +8077,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_effect_target_candidate(state, candidate)?;
             }
             match purpose {
+                EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. } => {
+                    exile_top_choose_v1::validate_choice(state, pending)?;
+                }
                 EffectTargetSelectionPurpose::StandardDiscardToDrawV1 {
                     player,
                     original_candidates,
@@ -8081,6 +8268,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("chosen-permanent candidates changed".to_string());
                     }
+                }
+                EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
+                    crystal_prevention_v1::validate_discard_choice(state, pending)?
                 }
                 EffectTargetSelectionPurpose::DiscardDraw { choice } => {
                     standard_discard::validate(state, pending, choice)?;
@@ -9462,6 +9652,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
             purpose,
             path,
         } => match purpose {
+            EffectOptionChoicePurpose::CrystalPreventionV1 { .. } => {
+                crystal_prevention_v1::validate(state)?
+            }
             EffectOptionChoicePurpose::PayGenericDrawV1 {
                 maximum,
                 canonical_path,
@@ -9836,7 +10029,7 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    frenzied_goblin_resolution_v1::drive(state)
+    vampire_gourmand_resolution_v1::drive(state)
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
@@ -11267,6 +11460,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                             ),
                         );
                     }
+                }
+                frame @ EffectFrame::GrantChosenExilePlayPermission { .. } => {
+                    exile_top_choose_v1::resume_answer(state, &mut continuation, frame)?;
                 }
                 frame @ EffectFrame::SurveilLibraryMany { .. } => {
                     if surveil_many::resume(state, &mut continuation, frame)? {
@@ -13269,6 +13465,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::ExileTopChooseOneUntilNextTurn { count } => {
+                if exile_top_choose_v1::begin(state, &mut continuation, count, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::Surveil { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
                 if count == 0 {
@@ -14750,6 +14952,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Dusk Rose Reliquary"
             | "Sheltered by Ghosts"
             | "Hardlight Containment"
+            | "Banishing Light"
     )
 }
 
@@ -14762,6 +14965,19 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
     source: ObjectId,
     left_zone_change_count: u32,
 ) {
+    if crate::linked_aura_operation_v1::defer_departure(state, source, left_zone_change_count) {
+        return;
+    }
+    if state.engine.linked_exile_records.iter().any(|record| {
+        record.source.source == source
+            && record.source.zone_change_count == left_zone_change_count
+            && crate::banishing_light_v1::owns_definition(record.source.card_def)
+    }) {
+        crate::linked_aura_operation_v1::return_departures(
+            state,
+            &[(source, left_zone_change_count)],
+        );
+    }
     loop {
         let position = state.engine.linked_exile_records.iter().position(|record| {
             record.source.source == source
@@ -14773,9 +14989,85 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
         });
         let Some(position) = position else { break };
         let record = state.engine.linked_exile_records.remove(position);
-        if state.objects.try_get(record.exiled).is_some_and(|live| {
-            live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
-        }) {
+        let return_start = state.engine.event_history.len();
+        let mut no_return_reason = None;
+        if crate::banishing_light_v1::owns_definition(record.source.card_def) {
+            match crate::banishing_light_v1::original_token(state, record) {
+                Ok(true) => {
+                    no_return_reason =
+                        Some(crate::banishing_light_v1::NoReturnV1::TokenCannotReturn)
+                }
+                Ok(false) => {
+                    let still_exiled = state.objects.try_get(record.exiled).is_some_and(|live| {
+                        live.zone == Zone::Exile
+                            && live.zone_change_count == record.exiled_zone_change_count
+                            && state.exile.contains(&record.exiled)
+                    });
+                    if !still_exiled {
+                        no_return_reason =
+                            Some(crate::banishing_light_v1::NoReturnV1::RecipientDeparted);
+                    } else if crate::card_def::CARD_DEFS
+                        [state.objects.get(record.exiled).card_def as usize]
+                        .attachment
+                        .is_some()
+                    {
+                        match crate::linked_aura_return_v1::prepare(state, record) {
+                            Ok(choice) if choice.original_candidates.is_empty() => {
+                                match crate::linked_aura_return_v1::record_capture(state, choice) {
+                                    Ok(capture_history_index) => no_return_reason = Some(
+                                        crate::banishing_light_v1::NoReturnV1::AuraNoLegalHost {
+                                            capture_history_index,
+                                        },
+                                    ),
+                                    Err(_) => {
+                                        state.engine.halted=Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation,source));
+                                        return;
+                                    }
+                                }
+                            }
+                            Ok(choice) => {
+                                match crate::linked_aura_operation_v1::request(state, choice) {
+                                    Ok(true) => {
+                                        crate::banishing_light_v1::record_expiry(
+                                            state,
+                                            record,
+                                            return_start,
+                                            None,
+                                        );
+                                        continue;
+                                    }
+                                    Ok(false) => continue,
+                                    Err(_) => {
+                                        state.engine.halted=Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation,source));
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                state.engine.halted = Some((
+                                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                    source,
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source,
+                    ));
+                    return;
+                }
+            }
+        }
+        if no_return_reason.is_none()
+            && state.objects.try_get(record.exiled).is_some_and(|live| {
+                live.zone == Zone::Exile
+                    && live.zone_change_count == record.exiled_zone_change_count
+            })
+        {
             let to = if battlefield_exile_until_source_leaves(record.source.card_def) {
                 Zone::Battlefield
             } else {
@@ -14786,6 +15078,7 @@ pub(crate) fn return_cards_exiled_until_source_leaves(
                 event::ProposedEvent::zone_change_preserving_known_identity(record.exiled, to),
             );
         }
+        crate::banishing_light_v1::record_expiry(state, record, return_start, no_return_reason);
     }
 }
 
@@ -16036,6 +16329,30 @@ fn creature_matches_filter(
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if crate::linked_aura_operation_v1::needs_event_owner(state)
+        && crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::Effect {
+                op: op.clone(),
+                ctx: Box::new(ctx.clone()),
+            },
+        )
+    {
+        return;
+    }
+    execute_without_linked_aura_v1(op, ctx, state);
+}
+
+pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if crystal_prevention_v1::mixed_environment(state)
+        && !crystal_prevention_v1::ordinary_nondamage(op)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     match op {
         EffectOp::Sequence(ops) => {
             for inner in ops {
@@ -16052,7 +16369,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EffectOp::DealDamage { target, amount } => {
-            if crate::gorehorn_damage_v1::owns_context(state, ctx) {
+            if crate::gorehorn_damage_v1::owns_context(state, ctx)
+                || crate::equipment_damage_source_v4::owns_context(state, ctx)
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
@@ -16166,6 +16485,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 crate::engine::effective_power(state, second).max(0),
             ];
             let mut packets = Vec::with_capacity(2);
+            if first == second {
+                let Some(amount) = powers[0].checked_mul(2) else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                if amount > 0 {
+                    packets.push(event::ProposedEvent::damage(
+                        first,
+                        Target::Object(first),
+                        amount,
+                    ));
+                }
+                event::propose_and_commit_batch(state, packets);
+                return;
+            }
             if powers[0] > 0 {
                 packets.push(event::ProposedEvent::damage(
                     first,
@@ -18431,6 +18768,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 install_temporary_boost(state, object, 0, 0, *keyword);
             }
         }
+        EffectOp::FieryAnnihilation => crate::fiery_annihilation_v1::execute(ctx, state),
         EffectOp::PutTargetCreatureOnOwnersLibraryBottomThenControllerGainsToughness {
             target_index,
         } => {
@@ -18580,17 +18918,36 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 ));
             }
         }
-        EffectOp::TakeExtraTurnAfterThisOneV1 => {
-            // Only the private pre-removal resolution owner may schedule turns.
+        EffectOp::TakeExtraTurnAfterThisOneV1 | EffectOp::StromkirkCounterFromCaptureV2 { .. } => {
+            // These operations require their private pre-removal owners.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
             ));
         }
+        EffectOp::StromkirkVampirePermanentCounterV1 => {
+            crate::stromkirk_bloodthief_v1::resolve(state, ctx);
+        }
         EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index } => {
             crate::sower_of_chaos_v1::install(state, ctx, *target_index);
         }
         EffectOp::BindAuthorityEntryGainLifeV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::BindArahboCatEntryV1 | EffectOp::ArahboTokenFromCaptureV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::BindGarrukEtbDrawV1
+        | EffectOp::BindGarrukPowerEntryDrawV1
+        | EffectOp::GarrukDrawFromCaptureV1 { .. } => {
+            // Actual execution requires the private removed-row owner in
+            // resolve_top_of_stack, never a caller-constructed generic ctx.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -18856,7 +19213,15 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let source_is_live = state.objects.try_get(ctx.source).is_some_and(|source| {
-                source.card_def == source_contract.card_def
+                (source.card_def == source_contract.card_def
+                    || (crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                        == "Banishing Light"
+                        && crate::standard_cards_v1::had_card_def(
+                            state,
+                            ctx.source,
+                            source_contract.zone_change_count,
+                            source_contract.card_def,
+                        )))
                     && source.owner == source_contract.owner
                     && source.zone == Zone::Battlefield
                     && source.zone_change_count == source_contract.zone_change_count
@@ -18866,6 +19231,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let target_owner = state.objects.get(object).owner;
+            let target_generation = state.objects.get(object).zone_change_count;
+            let exile_start = state.engine.event_history.len();
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(object, Zone::Exile),
@@ -18873,6 +19240,14 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             // Read after the move: a creature that was a copy (Assimilation
             // Aegis) arrives in exile as its own card.
             let target_card_def = state.objects.get(object).card_def;
+            if crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                == "Banishing Light"
+                && (state.objects.get(object).zone != Zone::Exile
+                    || target_generation.checked_add(1)
+                        != Some(state.objects.get(object).zone_change_count))
+            {
+                return;
+            }
             if source_is_live {
                 let exiled_zone_change_count = state.objects.get(object).zone_change_count;
                 let source = ObjectLinkV4 {
@@ -18897,7 +19272,28 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     exiled_owner: target_owner,
                     exiled_zone_change_count,
                 });
+                let installed = *state
+                    .engine
+                    .linked_exile_records
+                    .last()
+                    .expect("just installed link");
+                crate::banishing_light_v1::record_install(state, installed, exile_start);
                 state.objects.get_mut(object).v4.exiled_by = Some(source);
+                if crate::card_def::CARD_DEFS[source_contract.card_def as usize].name
+                    == "Banishing Light"
+                    && state.objects.try_get(ctx.source).is_none_or(|live| {
+                        live.zone != Zone::Battlefield
+                            || live.zone_change_count != source_contract.zone_change_count
+                    })
+                {
+                    // A transferred source can itself be a legal opponent permanent.
+                    // Its initial exile also ends this exact source duration.
+                    return_cards_exiled_until_source_leaves(
+                        state,
+                        ctx.source,
+                        source_contract.zone_change_count,
+                    );
+                }
             }
         }
         EffectOp::ReturnObjectsExiledBySource => {
@@ -19290,6 +19686,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::LookTopPickToHandBottomRest { .. }
         | EffectOp::LookTopSelectV1 { .. }
+        | EffectOp::ExileTopChooseOneUntilNextTurn { .. }
         | EffectOp::SelectObjectsV1 { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }
         | EffectOp::LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
@@ -19536,6 +19933,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::OpponentLostLifeThisTurn => {
+            crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
+        }
         EffectCond::ControllerAttackedThisTurn => {
             state.player_attacked_this_turn_v1(ctx.controller)
         }

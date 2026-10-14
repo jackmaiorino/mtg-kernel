@@ -1,0 +1,7 @@
+# Fiery Annihilation Native89 repair
+
+Owned source starts at 41d5242dc3c3afb38ea76ef4d929384aa99ee160. Native89's retained log reports Exile expected but Graveyard observed in both Fiery damage primitives (lines 311 and 463) and actual printed fixtures (415 and 502), across the affected catalogs. The state-based death batch used direct commits, bypassing the installed exile-if-dies replacement.
+
+The shared zone commit now runs the existing authenticated replacement interpreter when an exact Fiery shield applies, before zone bookkeeping and publication of frozen death observations. Ordinary direct commits preserve their previous path. A rewritten exile therefore emits no creature-death capture; no replacement or identity schema changes are made. Existing lethal, protection, incarnation and printed assertions are retained. A new both-seat simultaneous shielded/ordinary death fixture asserts distinct destinations, exactly one real move per recipient, no death capture for exile and byte-identical restored replay. The predecessor refusal fixture now expects the exact observed V33 transport message without changing its refusal or readonly assertion.
+
+Pinned rustfmt and git diff checks only. No native or build launch occurred, and the observed failures are not claimed fixed by runtime qualification. Other Native89 failures (including life-loss, compatibility and selected successor surfaces) remain with their assigned owners.

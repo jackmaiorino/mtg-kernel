@@ -353,12 +353,9 @@ fn raid_no_attack_empty_declaration_other_seat_and_stale_resolution_do_not_look(
                 raid(&mut state, actor, false);
             }
             if history == 2 {
-                state.active_player = actor.opponent();
-                state.priority_player = actor.opponent();
+                super::fixture_turn_v1::reach(&mut state, actor.opponent(), Step::Main1);
                 raid(&mut state, actor.opponent(), true);
-                state.active_player = actor;
-                state.priority_player = actor;
-                state.step = Step::Main2;
+                super::fixture_turn_v1::reach(&mut state, actor, Step::Main1);
             }
             if history == 3 {
                 raid(&mut state, actor, true);

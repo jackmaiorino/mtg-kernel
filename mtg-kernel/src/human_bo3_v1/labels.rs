@@ -1423,6 +1423,166 @@ pub(super) fn label_employment_v18(
     label_parts_v8(action, observation, handles, human)
 }
 
+/// Exact optional sacrifice wording is available only through the V29 producer.
+pub(super) fn label_gourmand_v29(
+    action: &A,
+    observation: &crate::gourmand_public_v1::GourmandObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(menu) = &observation.sacrifice_menu {
+        let selector = crate::rules_meaning_gourmand_v1::live_selector()
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        crate::rules_meaning_gourmand_v1::meaning(&selector, menu.source_at_attack.card_db_id, 0)
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        match action {
+            A::ChooseEffectTarget {actor,source,target:crate::rl::TargetRefV1::Object {object:card},selected_count,min_targets,max_targets}
+                if *actor==human && menu.payer==human && *source==menu.source_at_attack
+                    && *selected_count as usize==menu.selected.len() && *min_targets==menu.minimum && *max_targets==menu.maximum
+                    && menu.legal.contains(card) => return Ok(format!("Sacrifice {} for {}: draw one card; the original attacking incarnation cannot be blocked until cleanup",handles.name(card)?,handles.name(source)?)),
+            A::FinishEffectSelection {actor,source,selected_count}
+                if *actor==human && menu.payer==human && *source==menu.source_at_attack && *selected_count as usize==menu.selected.len()
+                    && menu.can_finish && menu.selected.is_empty() => return Ok(format!("Decline the sacrifice for {}: do not draw or add an evasion rule",handles.name(source)?)),
+            A::ChooseEffectTarget { .. } | A::FinishEffectSelection { .. }=>return Err(Error::UnsupportedPrompt),
+            _=>{},
+        }
+    }
+    if let A::CastSpell { actor, source } = action {
+        if definition(source)?.name == "Vampire Gourmand" {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selector = crate::rules_meaning_gourmand_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_gourmand_v1::meaning(&selector, source.card_db_id, 0)
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            return Ok(format!("Begin casting {} (printed cost {{1}}{{B}}): its attack offers an optional sacrifice of another controlled creature for one draw and original-incarnation evasion until cleanup",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
+pub(super) fn label_strongbox_v32(
+    action: &A,
+    observation: &crate::strongbox_public_v1::StrongboxObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(menu) = &observation.selection_menu {
+        let selector = crate::rules_meaning_strongbox_v1::live_selector()
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        crate::rules_meaning_strongbox_v1::meaning(&selector, menu.source_at_entry.card_db_id, 0)
+            .map_err(|_| Error::UnsupportedPrompt)?;
+        match action {
+            A::ChooseEffectTarget {actor,source,target:crate::rl::TargetRefV1::Object {object:card},selected_count,min_targets,max_targets}
+                if *actor==human && menu.chooser==human && *source==menu.source_at_entry && *selected_count as usize==menu.selected.len()
+                    && *min_targets==menu.minimum && *max_targets==menu.maximum && menu.legal.contains(card) =>
+                return Ok(format!("Choose {} from {}'s newly exiled cards: may play it with ordinary timing and costs until the end of your next turn",handles.name(card)?,handles.name(source)?)),
+            A::FinishEffectSelection {actor,source,selected_count}
+                if *actor==human && menu.chooser==human && *source==menu.source_at_entry && menu.can_finish && *selected_count==1 && menu.selected.len()==1 =>
+                return Ok(format!("Confirm {} for {}: ordinary play permission until the end of your next turn",handles.name(&menu.selected[0])?,handles.name(source)?)),
+            A::ChooseEffectTarget {..}|A::FinishEffectSelection {..}=>return Err(Error::UnsupportedPrompt),_=>{}
+        }
+    }
+    if let A::CastSpell { actor, source } = action {
+        if definition(source)?.name == "Strongbox Raider" {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let selector = crate::rules_meaning_strongbox_v1::live_selector()
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            crate::rules_meaning_strongbox_v1::meaning(&selector, source.card_db_id, 0)
+                .map_err(|_| Error::UnsupportedPrompt)?;
+            return Ok(format!("Begin casting {} (printed cost {{2}}{{R}}{{R}}): its Raid entry exiles two cards and grants ordinary play permission to one until the end of your next turn",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
+pub(super) fn label_fiery_v33(
+    action: &A,
+    observation: &crate::fiery_observation_v1::FieryObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    if let Some(menu) = &observation.cast_menu {
+        match action {
+            A::ChooseTarget {
+                actor,
+                source,
+                remaining,
+                target: crate::rl::TargetRefV1::Object { object },
+            } if *actor == human
+                && menu.caster == human
+                && *source == menu.source
+                && *remaining == menu.remaining
+                && menu.legal.contains(object) =>
+            {
+                return Ok(match menu.phase {
+                    crate::fiery_public_v1::CastTargetPhaseV1::MandatoryCreature=>format!("Choose {} as the creature target of {}: five damage; if it would die this turn, exile it instead",handles.name(object)?,handles.name(source)?),
+                    crate::fiery_public_v1::CastTargetPhaseV1::OptionalAttachedEquipment=>format!("Choose {} as the optional attached Equipment target of {}: exile only this selected Equipment",handles.name(object)?,handles.name(source)?),
+                    _=>return Err(Error::UnsupportedPrompt),
+                });
+            }
+            A::FinishTargetSelection {
+                actor,
+                source,
+                selected_count: 1,
+            } if *actor == human
+                && menu.caster == human
+                && *source == menu.source
+                && menu.can_finish =>
+            {
+                return Ok(format!(
+                    "Finish {} without an Equipment target",
+                    handles.name(source)?
+                ))
+            }
+            A::ChooseTarget { .. } | A::FinishTargetSelection { .. } => {
+                return Err(Error::UnsupportedPrompt)
+            }
+            _ => {}
+        }
+    }
+    if let A::CastSpell { actor, source } = action {
+        if observation
+            .roots
+            .iter()
+            .any(|root| root.card_id == source.card_db_id)
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{2}}{{R}}): five damage to one creature, exile up to one targeted Equipment attached to it, and exile that creature if it would die this turn",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
 #[cfg(test)]
 mod variable_target_refusal_tests {
     use super::*;

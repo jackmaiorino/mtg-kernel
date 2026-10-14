@@ -52,7 +52,10 @@ pub(crate) fn record_started(state: &mut GameState, id: StackItemId) -> Result<(
     if item.v4.stack_item_id != id
         || item.v4.ability_source_contract.is_none_or(|s| {
             !definition(s)
-                || crate::card_def::CARD_DEFS[usize::from(s.card_def)].name != "Gutless Plunderer"
+                || !matches!(
+                    crate::card_def::CARD_DEFS[usize::from(s.card_def)].name,
+                    "Gutless Plunderer" | "Strongbox Raider"
+                )
         })
     {
         return Ok(());
@@ -343,7 +346,7 @@ fn published_matches_base(state: &GameState, item: &StackItem, p: &PublishedV1) 
         }
         normalized.v4.squad_rallier_started_v1 = p.item.v4.squad_rallier_started_v1;
     }
-    normalized == *p.item
+    crate::gorehorn_damage_v1::publication_matches(state, &normalized, &p.item)
 }
 
 fn published_matches(state: &GameState, item: &StackItem, p: &PublishedV1) -> bool {
@@ -615,6 +618,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
       if o.item.v4.stack_item_id==p.item.v4.stack_item_id)
                         })
                         .count()
+                        + crate::gorehorn_damage_v1::crystal::completed_count(
+                            state,
+                            p.item.v4.stack_item_id,
+                        )
                         == 1
                 } else {
                     let receipts = state
@@ -641,7 +648,24 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                             );
                         }
                     }
-                    receipts.last().is_some_and(|r| r.pending.is_none())
+                    let completed = receipts.last().is_some_and(|r| r.pending.is_none());
+                    if completed
+                        && crate::card_def::CARD_DEFS
+                            [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
+                        .name
+                            == "Strongbox Raider"
+                    {
+                        let first = receipts.first().unwrap();
+                        let last = receipts.last().unwrap();
+                        crate::effect::exile_top_choose_v1::validate_closed(
+                            state,
+                            p.item.v4.stack_item_id,
+                            p.item.v4.ability_source_contract.unwrap(),
+                            first.history_index,
+                            last.history_index,
+                        )?;
+                    }
+                    completed
                 };
                 if counters.len() > 1 || (!gorehorn && !counters.is_empty() && completed) {
                     return Err("Raid published instruction has duplicate closure".into());
@@ -660,10 +684,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 if s.index as usize != index
                     || s.first_boundary <= p.index
                     || s.first_boundary >= s.index
-                    || crate::card_def::CARD_DEFS
-                        [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
-                    .name
-                        != "Gutless Plunderer"
+                    || !matches!(
+                        crate::card_def::CARD_DEFS
+                            [usize::from(p.item.v4.ability_source_contract.unwrap().card_def)]
+                        .name,
+                        "Gutless Plunderer" | "Strongbox Raider"
+                    )
                     || !published_matches_base(state, &s.item, p)
                     || s.item.v4.squad_rallier_started_v1.0.is_none_or(|binding| {
                         binding.first_receipt_history_index != s.first_boundary

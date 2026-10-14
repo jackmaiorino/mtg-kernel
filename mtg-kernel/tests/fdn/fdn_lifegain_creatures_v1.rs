@@ -426,14 +426,22 @@ fn control_change_preserves_limit_and_opponents_turn_gets_a_new_limit() {
     );
     place_counter(&mut state, exemplar, PlayerId::P0);
     drain(&mut surface(), &mut state, &[]);
+    state.players[0].battlefield.retain(|id| *id != exemplar);
+    state.players[1].battlefield.push(exemplar);
     state.objects.get_mut(exemplar).controller = PlayerId::P1;
     place_counter(&mut state, exemplar, PlayerId::P1);
     assert!(state.engine.pending_triggers.is_empty());
-    state.active_player = PlayerId::P1;
+    super::fixture_turn_v1::reach(&mut state, PlayerId::P1, Step::Main1);
+    let ordinary_draw = state.players[1].hand.clone();
+    assert_eq!(ordinary_draw.len(), 1);
+    assert_eq!(
+        state.objects.get(ordinary_draw[0]).card_def,
+        card_id_by_name("Forest").unwrap()
+    );
     place_counter(&mut state, exemplar, PlayerId::P1);
     drain(&mut surface(), &mut state, &[]);
     assert_eq!(state.players[0].hand.len(), 1);
-    assert_eq!(state.players[1].hand.len(), 1);
+    assert_eq!(state.players[1].hand.len(), ordinary_draw.len() + 1);
 }
 
 #[test]
