@@ -79,7 +79,7 @@ pub struct GeneralCheckpointV36 {
     pub choice: GeneralChoiceV36,
     pub operation_history_index: u32,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ColorPlanV36 {
     choice: crate::heraldic_banner_v1::ChoiceV1,
     capture: u32,
@@ -88,9 +88,9 @@ struct ColorPlanV36 {
     committed: Option<u32>,
 }
 
-/// Runtime ownership cannot be deserialized or constructed outside this
-/// module. It exists only inside one synchronous engine invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// GameState never restores runtime ownership, and other modules cannot
+/// construct it. Opaque input borrowing is confined to speculative Panda replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
     original_stack: Vec<crate::state::StackItem>,
     original_history_len: usize,
@@ -138,6 +138,58 @@ impl Hash for StateV1 {
 
 pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
+}
+
+/// An opaque input for speculative Panda verification. It cannot install a
+/// runtime in a restored game; the only installer below borrows a local replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PandaReplayBorrowV1 {
+    runner: Option<Box<RunnerV1>>,
+}
+impl Hash for PandaReplayBorrowV1 {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        serde_json::to_vec(self)
+            .expect("Panda replay input serializes")
+            .hash(hasher);
+    }
+}
+pub(crate) fn capture_panda_replay_borrow_v1(state: &GameState) -> PandaReplayBorrowV1 {
+    PandaReplayBorrowV1 {
+        runner: state.engine.linked_aura_operation_v1.runtime.clone(),
+    }
+}
+pub(crate) fn with_panda_replay_borrow_v1(
+    replay: &mut GameState,
+    original_item: &crate::state::StackItem,
+    input: &PandaReplayBorrowV1,
+    run: impl FnOnce(&mut GameState) -> Result<(), String>,
+) -> Result<(), String> {
+    if locally_owned(replay) || has_pending(replay) {
+        return Err("Panda verification cannot acquire a public operation checkpoint".into());
+    }
+    if let Some(runner) = input.runner.as_ref() {
+        if runner.operation != OperationV1::Advance
+            || runner.checkpoint.is_some()
+            || runner.original_history_len > replay.engine.event_history.len()
+            || runner
+                .original_stack
+                .iter()
+                .filter(|item| item.v4.stack_item_id == original_item.v4.stack_item_id)
+                .count()
+                != 1
+            || !runner
+                .original_stack
+                .iter()
+                .any(|item| item == original_item)
+        {
+            return Err("Panda replay lost its genuine enclosing Advance/stack input".into());
+        }
+    }
+    replay.engine.linked_aura_operation_v1.runtime = input.runner.clone();
+    let result = run(replay);
+    // The borrowed runner never escapes into an actual/restored game.
+    replay.engine.linked_aura_operation_v1.runtime = None;
+    result
 }
 pub fn has_pending(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.pending.is_some() || has_banner_pending(state)
