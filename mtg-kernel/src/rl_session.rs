@@ -5631,6 +5631,21 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        // The frozen Episode transport has no original loss-batch facts.
+        // Refuse before its policy surface can collect or resolve a real root.
+        if crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state).is_err() {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:conqueror_v49_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         if crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,

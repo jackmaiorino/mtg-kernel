@@ -351,3 +351,71 @@ fn real_registered_generic_ward_payment_or_decline_keeps_original_spell_and_full
         }
     }
 }
+
+#[test]
+#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+fn legacy_episode_profiled_advance_refuses_fresh_and_closed_original_history_readonly_after_restore(
+) {
+    use crate::bloodthirsty_conqueror_v49::tests::future_printed;
+    use crate::event::{self, ProposedEvent};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut original, source) = future_printed::paid(actor);
+        event::propose_and_commit(&mut original, ProposedEvent::life_loss(actor.opponent(), 3));
+        assert!(original.stack.is_empty());
+        assert!(original.engine.event_log.iter().any(|event| matches!(
+            event,
+            crate::event::CommittedEvent::ConquerorCapturedV49 { .. }
+        )));
+        for closed in [false, true] {
+            let mut state = original.clone();
+            if closed {
+                assert!(!matches!(
+                    crate::engine::advance_until_decision(&mut state),
+                    crate::engine::Decision::Halted { .. }
+                ));
+                let id = state
+                    .stack
+                    .iter()
+                    .find(|item| crate::conqueror_public_v49::selected(item))
+                    .unwrap()
+                    .v4
+                    .stack_item_id;
+                crate::engine::counter_stack_item_by_id(&mut state, id).unwrap();
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(source, Zone::Hand),
+                );
+                assert_eq!(
+                    crate::conqueror_public_v49::capture(&state)
+                        .unwrap()
+                        .occurrences[0]
+                        .phase,
+                    crate::conqueror_public_v49::PhaseV49::Countered
+                );
+                assert!(state.stack.is_empty());
+            }
+            crate::bloodthirsty_conqueror_v49::validate(&state).unwrap();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let before = serde_json::to_vec(&restored).unwrap();
+            let mut episode = RlEpisodeSessionV1::reset_with_limits(23, 91, 10_000, 10_000);
+            episode.state = restored;
+            episode.current = None;
+            episode.terminal = None;
+            let counts = (episode.policy_step_count, episode.physical_decision_count);
+            episode.advance_to_decision_or_terminal_profiled(None);
+            assert!(episode.terminal.is_some() && episode.current.is_none());
+            assert_eq!(
+                (episode.policy_step_count, episode.physical_decision_count),
+                counts
+            );
+            assert_eq!(serde_json::to_vec(&episode.state).unwrap(), before);
+            // Repeat the actual legacy profiled route; no collection, publication,
+            // gain or unrelated automatic phase work may precede the refusal.
+            episode.terminal = None;
+            episode.advance_to_decision_or_terminal_profiled(None);
+            assert!(episode.terminal.is_some() && episode.current.is_none());
+            assert_eq!(serde_json::to_vec(&episode.state).unwrap(), before);
+        }
+    }
+}
