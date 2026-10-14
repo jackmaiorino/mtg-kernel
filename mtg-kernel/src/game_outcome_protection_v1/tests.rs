@@ -59,6 +59,9 @@ fn cast_herald_on_turn(actor: PlayerId, active_player: PlayerId) -> (GameState, 
         for _ in 0..16 {
             put(&mut state, owner, "Forest", Zone::Library);
         }
+        // Keep a genuine priority action available after resolution instead
+        // of letting the pass-only traversal advance into the next turn.
+        put(&mut state, owner, "Forest", Zone::Hand);
     }
     put(&mut state, actor, "Forest", Zone::Battlefield);
     let source = put(&mut state, actor, "Herald of Eternal Dawn", Zone::Hand);
@@ -97,6 +100,20 @@ fn cast_herald_on_turn(actor: PlayerId, active_player: PlayerId) -> (GameState, 
     panic!("genuine Herald cast did not resolve");
 }
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn empty_draw(state: &mut GameState, actor: PlayerId) {
+    // The shared cast fixture retains libraries for real turn traversal.
+    // Exhaust that actual library before testing the next failed draw.
+    while !state.players[actor.index()].library.is_empty() {
+        crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(actor));
+    }
+    crate::event::propose_and_commit(state, crate::event::ProposedEvent::draw(actor));
+    assert!(state.players[actor.index()].drew_from_empty);
+}
+
 #[test]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
@@ -109,13 +126,7 @@ fn actual_paid_herald_prevents_life_poison_and_empty_draw_losses_with_restore_bo
             match cause {
                 0 => state.players[actor.index()].life = 0,
                 1 => state.players[actor.index()].poison_counters.0 = 10,
-                2 => {
-                    crate::event::propose_and_commit(
-                        &mut state,
-                        crate::event::ProposedEvent::draw(actor),
-                    );
-                    assert!(state.players[actor.index()].drew_from_empty);
-                }
+                2 => empty_draw(&mut state, actor),
                 _ => unreachable!(),
             }
             let mut replay: GameState =
@@ -180,8 +191,7 @@ fn actual_herald_control_and_simultaneous_lethal_departure_preserve_loss_scope_b
 fn actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_prevented_loss() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = cast_herald(actor);
-        crate::event::propose_and_commit(&mut state, crate::event::ProposedEvent::draw(actor));
-        assert!(state.players[actor.index()].drew_from_empty);
+        empty_draw(&mut state, actor);
         // Named physical lethal-damage prerequisite. Both conditions exist
         // before the first SBA pass, rather than removing the source later.
         state.objects.get_mut(source).damage = 6;
@@ -461,13 +471,7 @@ fn actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore(
                 match cause {
                     0 => state.players[actor.index()].life = 0,
                     1 => state.players[actor.index()].poison_counters.0 = 10,
-                    _ => {
-                        crate::event::propose_and_commit(
-                            &mut state,
-                            crate::event::ProposedEvent::draw(actor),
-                        );
-                        assert!(state.players[actor.index()].drew_from_empty);
-                    }
+                    _ => empty_draw(&mut state, actor),
                 }
                 if lethal {
                     // Named physical lethal-damage prerequisite before the pass.

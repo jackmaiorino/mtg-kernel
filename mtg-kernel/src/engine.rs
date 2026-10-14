@@ -12523,7 +12523,9 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        // V39 binds the granting Pole through its explicit named-cost input,
+        // including a singleton menu, before either tap or mana is collected.
+        if candidates.len() == 1 && !crate::fishing_pole_v39::named_cost(ability.cost) {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
             let binding = EffectObjectBinding {

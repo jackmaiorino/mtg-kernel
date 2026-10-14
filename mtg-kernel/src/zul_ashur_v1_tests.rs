@@ -1,12 +1,10 @@
 use super::*;
 use crate::engine::{self, Action, Decision};
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
 #[test]
 fn unrelated_actual_bolt_private_loan_publication_and_restore_preserve_bytes_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_with_turn_authority(actor);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
         engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
@@ -57,9 +55,7 @@ mod future_printed {
         d
     }
     fn setup(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_with_turn_authority(actor);
         state.step = crate::state::Step::Main1;
         let source = put(&mut state, actor, "Zul Ashur, Lich Lord", Zone::Battlefield);
         let target = put(&mut state, actor, "Diregraf Ghoul", Zone::Graveyard);
@@ -211,9 +207,7 @@ mod future_printed {
     fn actual_printed_cast_life_ward_pay_decline_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for pay in [false, true] {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state = ready_state_with_turn_authority(actor);
                 state.step = crate::state::Step::Main1;
                 let source = put(&mut state, actor, "Zul Ashur, Lich Lord", Zone::Hand);
                 state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
@@ -323,8 +317,7 @@ mod future_printed {
                 serde_json::to_vec(&restored).unwrap()
             );
 
-            let mut offturn = ready_state();
-            offturn.active_player = actor.opponent();
+            let mut offturn = ready_state_with_turn_authority(actor.opponent());
             offturn.priority_player = actor;
             offturn.step = crate::state::Step::Main1;
             let source = put(
