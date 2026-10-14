@@ -56,7 +56,16 @@ def publish(path, value):
         json.dump(value, stream, indent=1, allow_nan=False)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temp, path)
+    # Windows readers briefly deny delete sharing. Match the supported
+    # allocator's bounded one-second publication retry, preserving real errors.
+    for attempt in range(20):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError as error:
+            if os.name != "nt" or getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 19:
+                raise
+            time.sleep(.05)
 
 
 def append_ledger(path, value):

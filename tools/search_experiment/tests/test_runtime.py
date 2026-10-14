@@ -1,9 +1,12 @@
 import json
+import ctypes
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +19,41 @@ import sequential_driver
 
 
 class QualificationTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "actual Windows delete-sharing contention")
+    def test_atomic_publish_waits_for_windows_reader_and_preserves_persistent_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            launch.publish(path, {"old": True})
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                                          ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+            kernel.CreateFileW.restype = ctypes.c_void_p
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            handle = kernel.CreateFileW(str(path), 0x80000000, 3, None, 3, 0, None)
+            self.assertNotEqual(handle, ctypes.c_void_p(-1).value)
+            released = threading.Event()
+
+            def release():
+                time.sleep(.12)
+                kernel.CloseHandle(handle)
+                released.set()
+
+            thread = threading.Thread(target=release)
+            thread.start()
+            try:
+                launch.publish(path, {"new": True})
+            finally:
+                thread.join()
+            self.assertTrue(released.is_set())
+            self.assertEqual(launch.load(path), {"new": True})
+            denied = PermissionError("persistent sharing denial")
+            denied.winerror = 5
+            with patch.object(launch.os, "replace", side_effect=denied) as replace, patch.object(launch.time, "sleep"):
+                with self.assertRaises(PermissionError):
+                    launch.publish(path, {"lost": True})
+                self.assertEqual(replace.call_count, 20)
+            self.assertEqual(launch.load(path), {"new": True})
+
     def test_controller_helper_large_output_is_retained_without_pipe_wait(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "helper.log"
