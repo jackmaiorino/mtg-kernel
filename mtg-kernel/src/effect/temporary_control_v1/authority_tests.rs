@@ -1,12 +1,13 @@
 //! Honest registered-recipient opcode fixtures, not printed card admission.
 use super::*;
 use crate::event::{self, CommittedEvent, ProposedEvent};
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
 
 fn installed(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_for(actor);
+    for owner in [actor, actor.opponent()] {
+        put(&mut state, owner, "Forest", Zone::Library);
+    }
     let source = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
     let recipient = put(
         &mut state,
@@ -62,6 +63,10 @@ fn cleanup(state: &mut GameState) {
     state.step = crate::state::Step::End;
     for _ in 0..12 {
         let decision = crate::engine::advance_until_decision(state);
+        assert!(
+            !matches!(decision, crate::engine::Decision::Halted { .. }),
+            "{decision:?}"
+        );
         if !state.engine.until_end_of_turn.iter().any(|row| {
             matches!(
                 row,
@@ -190,15 +195,99 @@ fn actual_cleanup_authority_rejects_expiry_erasure_rewrite_duplicates_and_resurr
     }
 }
 
+// Genuine initial Cleanup discards produce the Madness priority window. A
+// later physical control installation is then distinct from the expired first
+// grant; neither the active player nor any journal anchor is rewritten.
+pub(super) fn later_cleanup_priority(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let (mut state, source, recipient) = installed(actor);
+    for player in [actor, actor.opponent()] {
+        put(&mut state, player, "Forest", Zone::Library);
+    }
+    let forest = put(&mut state, actor, "Forest", Zone::Hand);
+    for _ in 0..6 {
+        put(&mut state, actor, "Forest", Zone::Hand);
+    }
+    let temper = put(&mut state, actor, "Fiery Temper", Zone::Hand);
+    assert_eq!(state.players[actor.index()].hand.len(), 9);
+    state.step = crate::state::Step::End;
+    state.engine.priority_passes = [false; 2];
+    for _ in 0..32 {
+        let decision = crate::engine::advance_until_decision(&mut state);
+        match decision {
+            crate::engine::Decision::Discard {
+                player,
+                count,
+                choices,
+            } => {
+                assert_eq!(player, actor);
+                assert_eq!(count, 2);
+                assert!(choices.contains(&forest) && choices.contains(&temper));
+                crate::engine::step(
+                    &mut state,
+                    crate::engine::Action::Discard(vec![forest, temper]),
+                )
+                .unwrap();
+            }
+            crate::engine::Decision::CastSpellOrPass { player, .. }
+                if state.step == crate::state::Step::Cleanup && !state.stack.is_empty() =>
+            {
+                assert_eq!(player, actor);
+                assert_eq!(state.active_player, actor);
+                assert!(state.stack.iter().any(|item| item.madness_offer));
+                assert_eq!(state.objects.get(recipient).controller, actor.opponent());
+                assert_eq!(
+                    state
+                        .engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            CommittedEvent::TemporaryControlCleanupV1 { .. }
+                        ))
+                        .count(),
+                    1
+                );
+                return (state, source, recipient);
+            }
+            crate::engine::Decision::CastSpellOrPass { .. } => {
+                crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap();
+            }
+            other => panic!("expected genuine Cleanup discard/priority, got {other:?}"),
+        }
+    }
+    panic!("no real Cleanup Madness priority");
+}
+pub(super) fn finish_later_cleanup(state: &mut GameState, actor: PlayerId) {
+    for _ in 0..32 {
+        let decision = crate::engine::advance_until_decision(state);
+        assert!(
+            !matches!(
+                decision,
+                crate::engine::Decision::Halted { .. } | crate::engine::Decision::GameOver { .. }
+            ),
+            "{decision:?}"
+        );
+        if state.active_player != actor {
+            assert_eq!(state.active_player, actor.opponent());
+            return;
+        }
+        let action = match decision {
+            crate::engine::Decision::CastSpellOrPass { .. } => crate::engine::Action::Pass,
+            crate::engine::Decision::ChooseMadnessCast { player, .. } => {
+                assert_eq!(player, actor);
+                crate::engine::Action::ChooseMadnessCast(false)
+            }
+            other => panic!("unexpected actual later Cleanup response {other:?}"),
+        };
+        crate::engine::step(state, action).unwrap();
+    }
+    panic!("real repeated Cleanup did not advance to the next player");
+}
+
 #[test]
 fn later_same_cleanup_installation_expires_via_real_repeated_cleanup_before_player_flip() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut state, source, recipient) = installed(actor);
-        cleanup(&mut state);
-        state.step = crate::state::Step::Cleanup;
-        state.active_player = actor;
-        state.priority_player = actor;
-        state.engine.priority_passes = [true; 2];
+        let (mut state, source, recipient) = later_cleanup_priority(actor);
         let mut ctx = ExecCtx::no_targets(source, actor);
         ctx.targets.push(Target::Object(recipient));
         ctx.target_contracts.push(StackTargetContractV4::capture(
@@ -208,7 +297,12 @@ fn later_same_cleanup_installation_expires_via_real_repeated_cleanup_before_play
         gain_control(&ctx, 0, &mut state);
         authority::validate(&state).unwrap();
         let mut restored = restore(&state);
-        let _ = crate::engine::advance_until_decision(&mut restored);
+        finish_later_cleanup(&mut restored, actor);
+        finish_later_cleanup(&mut state, actor);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
         assert!(restored
             .engine
             .until_end_of_turn

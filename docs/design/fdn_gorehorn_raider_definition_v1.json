@@ -1,0 +1,36 @@
+{
+  "name": "Gorehorn Raider",
+  "pinned_mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "frozen_printing_id": "78ce6c40-3452-4aa0-a45b-dbfd70f8d220",
+  "set": "FDN",
+  "collector_number": "89",
+  "source_base": "3f13d8c5f71fe619af12ddf103141f326715c1bc",
+  "printed": {
+    "cost": "{4}{R}",
+    "mana_value": 5,
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Minotaur",
+      "Pirate"
+    ],
+    "power": 4,
+    "toughness": 4,
+    "keywords": []
+  },
+  "recipe": {
+    "trigger": "EtbAfterControllerAttackedThisTurn",
+    "resolution_recheck": "ControllerAttackedThisTurn",
+    "effect": "DamageTarget",
+    "target": "AnyTarget",
+    "amount": 2
+  },
+  "admission": {
+    "registered": false,
+    "native_checks": "unrun",
+    "profile": null,
+    "catalog_hash": null,
+    "model_runtime": false
+  }
+}

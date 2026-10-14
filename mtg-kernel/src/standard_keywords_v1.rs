@@ -91,7 +91,7 @@ pub(crate) fn note_life_loss(
     let current = state.speed_v1?;
     let active = state.active_player;
     let stamp = CreatureDeathTurnV1 {
-        turn: state.turn,
+        turn: state.turn_key_v1(),
         active_player: active,
     };
     let player_speed = current.speeds[active.index()];
@@ -427,7 +427,7 @@ pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zo
     if to == Zone::Graveyard && !def.is_token && permanent_card {
         let owner = live.owner;
         let stamp = CreatureDeathTurnV1 {
-            turn: state.turn,
+            turn: state.turn_key_v1(),
             active_player: state.active_player,
         };
         let mut descended = state
@@ -447,7 +447,7 @@ pub(crate) fn descended_this_turn(state: &GameState, player: PlayerId) -> bool {
     state.descended_v1.is_some_and(|descended| {
         descended.turn
             == CreatureDeathTurnV1 {
-                turn: state.turn,
+                turn: state.turn_key_v1(),
                 active_player: state.active_player,
             }
             && descended.players[player.index()]

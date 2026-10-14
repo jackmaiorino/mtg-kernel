@@ -6476,6 +6476,470 @@
       "sideboard_only": false,
       "complexity": "moderate",
       "mechanics": []
+    },
+    {
+      "name": "Mild-Mannered Librarian",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/m/MildManneredLibrarian.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_mild_mannered_librarian.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "once_per_incarnation_werewolf_counters_draw"
+      ]
+    },
+    {
+      "name": "Gorehorn Raider",
+      "mana_cost": "{4}{R}",
+      "mana_value": 5,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Minotaur",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GorehornRaider.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_gorehorn_raider.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "raid"
+      ]
+    },
+    {
+      "name": "Gutless Plunderer",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GutlessPlunderer.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_gutless_plunderer.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "deathtouch",
+        "raid"
+      ]
+    },
+    {
+      "name": "Bloom Tender",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "mechanics": [
+        "mana_ability"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "java_file": "Mage.Sets/src/mage/cards/b/BloomTender.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_bloom_tender.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate"
+    },
+    {
+      "name": "Temporal Manipulation",
+      "mana_cost": "{3}{U}{U}",
+      "mana_value": 5,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/t/TemporalManipulation.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_temporal_manipulation.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "extra_turn"
+      ]
+    },
+    {
+      "name": "Juggernaut",
+      "mana_cost": "{4}",
+      "mana_value": 4,
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Juggernaut"
+      ],
+      "power": 5,
+      "toughness": 3,
+      "colors": [],
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/j/Juggernaut.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_juggernaut.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "must_attack",
+        "cannot_be_blocked_by_walls"
+      ]
+    },
+    {
+      "name": "Ashroot Animist",
+      "mana_cost": "{2}{R}{G}",
+      "mana_value": 4,
+      "colors": [
+        "R",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Lizard",
+        "Druid"
+      ],
+      "power": 4,
+      "toughness": 4,
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/AshrootAnimist.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_ashroot_animist.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "trample",
+        "attack_trigger",
+        "source_power_lki"
+      ]
+    },
+    {
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "power": null,
+      "toughness": null,
+      "name": "Banishing Light",
+      "supertypes": [],
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/b/BanishingLight.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_banishing_light.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "linked_exile_until_source_leaves",
+        "nonland_permanent_target",
+        "linked_aura_return"
+      ]
+    },
+    {
+      "name": "Stromkirk Bloodthief",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/StromkirkBloodthief.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_stromkirk_bloodthief.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "intervening_end_step",
+        "actual_opponent_life_loss",
+        "vampire_permanent_counter"
+      ]
+    },
+    {
+      "name": "Vampire Gourmand",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/v/VampireGourmand.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_vampire_gourmand.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "attack_trigger",
+        "optional_sacrifice_cost",
+        "draw",
+        "incarnation_unblockable"
+      ]
+    },
+    {
+      "name": "Garruk's Uprising",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/g/GarruksUprising.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_garruks_uprising.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "own_etb_intervening_ferocious",
+        "controlled_creature_power_entry",
+        "controlled_creature_trample"
+      ]
+    },
+    {
+      "name": "Arahbo, the First Fang",
+      "mana_cost": "{2}{W}",
+      "mana_value": 3,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Avatar"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/a/ArahboTheFirstFang.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_arahbo.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controlled_other_cat_creature_bonus",
+        "self_or_other_nontoken_cat_permanent_entry",
+        "white_cat_token"
+      ]
+    },
+    {
+      "name": "Strongbox Raider",
+      "mana_cost": "{2}{R}{R}",
+      "mana_value": 4,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Orc",
+        "Pirate"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/s/StrongboxRaider.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_strongbox_raider.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "raid_capture_and_recheck",
+        "exile_top_two_choose_exact_one",
+        "ordinary_play_until_holder_next_cleanup"
+      ]
+    },
+    {
+      "name": "Fiery Annihilation",
+      "mana_cost": "{2}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "java_file": "Mage.Sets/src/mage/cards/f/FieryAnnihilation.java",
+      "is_land": false,
+      "produces_mana": [],
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_fiery_annihilation.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "five_damage_to_creature",
+        "up_to_one_independent_attached_equipment_exile",
+        "original_creature_this_turn_death_exile_replacement"
+      ]
+    },
+    {
+      "name": "Crystal Barricade",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Artifact",
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "java_file": "Mage.Sets/src/mage/cards/c/CrystalBarricade.java",
+      "engine_capability": "full",
+      "decks": [
+        "FDN_reference_crystal_barricade.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "defender",
+        "controller_hexproof",
+        "other_controlled_creature_noncombat_prevention"
+      ]
     }
   ]
 }

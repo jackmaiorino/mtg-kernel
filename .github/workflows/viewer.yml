@@ -25,7 +25,7 @@ jobs:
         working-directory: viewer
       - run: npm test && npm run build
         working-directory: viewer
-      - run: python3 -m unittest discover -s python/tests -p 'test_viewer_export_v1.py'
+      - run: python3 -m unittest discover -s python/tests -p 'test_viewer_*.py'
       - run: npx playwright install --with-deps chromium
         working-directory: viewer
       - run: npm run test:browser

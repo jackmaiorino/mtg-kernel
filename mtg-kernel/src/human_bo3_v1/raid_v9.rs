@@ -202,16 +202,14 @@ mod tests {
     use super::*;
     use crate::engine::{self, Action};
     use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     use crate::state::{Step, Zone};
 
     #[test]
     fn actual_history_projects_safely_refuses_stale_history_and_retries_once() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.turn = 3;
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             state.step = Step::DeclareAttackers;
             let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
             engine::step(&mut state, Action::DeclareAttackers(vec![attacker])).unwrap();

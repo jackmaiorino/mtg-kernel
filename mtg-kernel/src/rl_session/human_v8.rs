@@ -176,7 +176,7 @@ impl FastActorSessionV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
 
     fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
@@ -186,9 +186,7 @@ mod tests {
     }
 
     fn fixture(actor: PlayerId) -> FastActorSessionV1 {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         put(&mut state, actor, "Mountain", Zone::Hand);
         put(&mut state, actor, "Forest", Zone::Hand);
         FastActorSessionV1::from_v3_fixture_state(state)
@@ -289,7 +287,7 @@ mod tests {
     #[test]
     #[cfg(feature = "standard-magezero-fixtures")]
     fn human_v8_binding_includes_registered_printed_life_ward_traits() {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         let source = put(&mut state, PlayerId::P1, "Brutal Cathar", Zone::Battlefield);
         put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
         crate::event::propose_and_commit(

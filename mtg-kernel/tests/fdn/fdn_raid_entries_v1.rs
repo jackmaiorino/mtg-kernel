@@ -157,7 +157,9 @@ fn boarders_counter_is_an_entry_replacement_for_both_seats() {
                 main2_after_declaration(&mut state, actor, nonempty);
             }
             if mode == 3 {
-                state.turn += 1;
+                // A real later turn clears Raid and refreshes all occurrence anchors.
+                super::fixture_turn_v1::reach(&mut state, actor, Step::Main1);
+                assert!(!state.player_attacked_this_turn_v1(actor));
             }
             let enabled = mode == 2;
             let board = put(&mut state, actor, "Goblin Boarders", Zone::Hand);
@@ -187,7 +189,9 @@ fn skyship_captures_only_after_a_nonempty_declaration_and_draws_on_resolution() 
                 main2_after_declaration(&mut state, actor, nonempty);
             }
             if mode == 3 {
-                state.turn += 1;
+                // A real later turn clears Raid and refreshes all occurrence anchors.
+                super::fixture_turn_v1::reach(&mut state, actor, Step::Main1);
+                assert!(!state.player_attacked_this_turn_v1(actor));
             }
             let enabled = mode == 2;
             let sky = put(&mut state, actor, "Skyship Buccaneer", Zone::Hand);
@@ -268,6 +272,17 @@ fn pending_skyship_draw_restores_captured_controller_and_intervening_condition()
             let hand = state.players[actor.index()].hand.len();
             let mut replay = restored(&state);
             for current in [&mut state, &mut replay] {
+                if mode == 4 {
+                    // A forged round cannot be resumed as a legitimate new turn.
+                    super::fixture_turn_v1::stale_turn_refuses_readonly(current);
+                    assert_eq!(current.players[actor.index()].hand.len(), hand);
+                    assert_eq!(current.players[actor.index()].library.len(), library);
+                    assert_eq!(
+                        current.players[actor.opponent().index()].library.len(),
+                        other_library
+                    );
+                    continue;
+                }
                 pass(current);
                 pass(current);
                 assert!(matches!(next(current), Decision::CastSpellOrPass { .. }));

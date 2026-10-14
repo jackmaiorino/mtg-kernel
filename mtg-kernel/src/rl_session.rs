@@ -36,14 +36,28 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod arahbo_v31;
+pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
+pub(crate) mod banishing_v26;
+mod bloom_tender_v24;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
+pub(crate) mod crystal_v22;
 pub(crate) mod employment_v18;
+pub mod extra_turn_v23;
+pub(crate) mod fiery_v33;
 pub(crate) mod frenzied_v15;
+pub(crate) mod garruk_v30;
+pub(crate) mod gourmand_v29;
+pub(crate) mod strongbox_v32;
+
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
+pub(crate) mod juggernaut_v25;
+pub(crate) mod librarian_v20;
 pub(crate) mod sower_v14;
+pub(crate) mod stromkirk_v28;
 pub(crate) mod wildwood_v16;
 
 pub const RL_SESSION_SCHEMA_VERSION: u32 = 5;
@@ -301,6 +315,7 @@ mod flat_action_v4;
 mod flat_action_v5;
 pub(crate) mod heartfire_history_v1;
 pub(crate) mod heartfire_v12;
+pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
 pub mod variable_cast_v1;
@@ -4317,14 +4332,21 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if session.state.objects.iter().any(|(_, object)| {
+    if (crate::fiery_annihilation_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
+        || (crate::combat_static_rules_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
+        || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
     }) || session.state.planeswalkers_v1.is_some()
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
-            matches!(replacement.kind,
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. })
+            match replacement.kind {
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => true,
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33,
+                _ => false,
+            }
         })
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -4433,6 +4455,19 @@ enum FlatActionContractModeV1 {
     AuthorityV17,
     EmploymentV18,
     CerberusV19,
+    LibrarianV20,
+    RaidEntryV21,
+    ExtraTurnV23,
+    JuggernautV25,
+    AshrootV27,
+    BanishingV26,
+    StromkirkV28,
+    GourmandV29,
+    GarrukV30,
+    CrystalV22,
+    ArahboV31,
+    StrongboxV32,
+    FieryV33,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5388,6 +5423,41 @@ impl RlEpisodeSessionV1 {
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
         self.current = None;
+        if crate::arahbo_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:arahbo_v31_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::garruks_uprising_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:garruk_v30_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if self.state.extra_turn_v1.is_some() {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:extra turns require V23 owning transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         let surfaced = match measure_optional(&mut profile, RlPhaseV1::Advance, || {
             self.surface
                 .next_decision_owned(&mut self.state, self.environment_revision)
@@ -5405,6 +5475,17 @@ impl RlEpisodeSessionV1 {
                 return;
             }
         };
+        if crate::banishing_light_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banishing_requires_v26".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         match &surfaced {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
                 self.terminal = Some(terminal_from_winner(
@@ -6951,6 +7032,14 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.state.extra_turn_v1.is_some()
+            && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+        {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "extra turns require V23 owning transport",
+            ));
+        }
         if episode_id != self.episode_id {
             return Err(session_error(
                 RlSessionErrorCode::EpisodeIdMismatch,
@@ -7079,7 +7168,51 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if crate::arahbo_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:arahbo_v31_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::garruks_uprising_v1::requires_successor(&self.state)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::GarrukV30 | FlatActionContractModeV1::ArahboV31
+            )
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:garruk_v30_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         self.current = None;
+        if self.state.extra_turn_v1.is_some()
+            && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+        {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:extra turns require V23 owning transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         let surfaced = match self
             .surface
             .next_decision_owned(&mut self.state, self.environment_revision)
@@ -7097,6 +7230,24 @@ impl FastActorSessionV1 {
                 return;
             }
         };
+        if crate::banishing_light_v1::requires_successor(&self.state)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::BanishingV26
+                    | FlatActionContractModeV1::GarrukV30
+                    | FlatActionContractModeV1::ArahboV31
+            )
+        {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banishing_requires_v26".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         match &surfaced {
             PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) => {
                 self.terminal = Some(terminal_from_winner(
@@ -7251,6 +7402,21 @@ impl FastActorSessionV1 {
                 let cache_result = flat_action_v3::prepare_and_build_v3(self, &mut current);
                 flat_install_action_cache_build_result_v2(&mut current, cache_result);
             }
+            FlatActionContractModeV1::AshrootV27 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = ashroot_v27::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:ashroot_v27:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
             FlatActionContractModeV1::HumanV8 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
@@ -7260,6 +7426,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:human_v8:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::RaidEntryV21 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = raid_entry_v21::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:raid_entry_v21:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
@@ -7326,6 +7507,51 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
+            FlatActionContractModeV1::GourmandV29 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = gourmand_v29::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:gourmand_v29:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::StrongboxV32 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = strongbox_v32::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:strongbox_v32:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FieryV33 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = fiery_v33::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:fiery_v33:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
             FlatActionContractModeV1::AuthorityV17 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
@@ -7335,6 +7561,36 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:authority_v17:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::GarrukV30 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = garruk_v30::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:garruk_v30:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ArahboV31 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = arahbo_v31::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:arahbo_v31:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));
@@ -7356,6 +7612,36 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
+            FlatActionContractModeV1::CrystalV22 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = crystal_v22::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:crystal_v22:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::StromkirkV28 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = stromkirk_v28::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:stromkirk_v28:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
             FlatActionContractModeV1::CerberusV19 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
@@ -7365,6 +7651,66 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:cerberus_v19:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::LibrarianV20 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = librarian_v20::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:librarian_v20:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ExtraTurnV23 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = extra_turn_v23::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:extra_turn_v23:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::JuggernautV25 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = juggernaut_v25::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:juggernaut_v25:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::BanishingV26 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = banishing_v26::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:banishing_v26:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

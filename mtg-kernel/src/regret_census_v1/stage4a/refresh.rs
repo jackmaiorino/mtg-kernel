@@ -42,6 +42,13 @@ use std::time::Instant;
 pub(super) const TOTAL_BUDGET: u64 = 512_000;
 pub(super) const ANCHOR_BUDGET: u64 = 128_000;
 pub(super) const REFRESH_BUDGET: u64 = 64_000;
+/// Row label of the opt-in interchangeable-choice merging (`interchange.rs`).
+pub(super) const INTERCHANGE_RULE: &str = "interchange-orbit-v1";
+
+/// Row label of the opt-in best-line backup with threshold `m` (`tree.rs`).
+pub(super) fn bestline_rule(m: u64) -> String {
+    format!("bestline-m{m}")
+}
 
 /// One arm's search allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,12 +123,20 @@ pub(super) struct GuideRun {
     /// choice) rather than from a bank anchor.
     pub(super) opening: bool,
     pub(super) mode: KeyMode,
+    /// Merge interchangeable choices (`interchange.rs`) in every search and
+    /// in the cursor that walks its tree.
+    pub(super) interchange: bool,
+    /// Best-line backup threshold in every search (`tree.rs` `BestLine`);
+    /// None is the formal mean backup.
+    pub(super) bestline: Option<u64>,
 }
 
 impl GuideRun {
     pub(super) const ANCHOR_LEGACY: Self = Self {
         opening: false,
         mode: KeyMode::Legacy,
+        interchange: false,
+        bestline: None,
     };
 }
 
@@ -158,13 +173,15 @@ struct Cursor {
 struct Hit {
     step: KeyStep,
     backups: Option<u64>,
+    /// The matched node's key (Supported or Unsupported lookups).
+    key: Option<super::tree::Key>,
 }
 
 impl Cursor {
-    fn new(tree: Tree, search: usize, mode: KeyMode) -> Self {
+    fn new(tree: Tree, search: usize, mode: KeyMode, interchange: bool) -> Self {
         Self {
             tree,
-            keyer: Keyer::new(mode, KeyStats::default()),
+            keyer: Keyer::new(mode, KeyStats::default()).with_interchange(interchange),
             advanced: false,
             matching: true,
             depth: 0,
@@ -201,7 +218,15 @@ impl Cursor {
         if found == Lookup::Miss {
             self.matching = false;
         }
-        Ok((found, Some(Hit { step: st, backups })))
+        let key = (found != Lookup::Miss).then_some(key);
+        Ok((
+            found,
+            Some(Hit {
+                step: st,
+                backups,
+                key,
+            }),
+        ))
     }
 
     /// The live candidate of storage edge `e` at a looked-up decision.
@@ -218,6 +243,8 @@ impl Cursor {
 }
 
 struct Searches<'a> {
+    #[cfg(feature = "viewer-recording-v1")]
+    observer: Option<&'a mut super::viewer_uct::Recorder>,
     roles: &'a mut Roles,
     sh: &'a BankShared,
     focal: PlayerId,
@@ -227,6 +254,8 @@ struct Searches<'a> {
     used: u64,
     records: Vec<Value>,
     mode: KeyMode,
+    interchange: bool,
+    bestline: Option<u64>,
     keys: KeyStats,
 }
 
@@ -255,11 +284,25 @@ impl Searches<'_> {
         };
         let mut ctx = guide_ctx(s, self.focal, self.opp, &seeds, &self.sh.prior, limits)?;
         ctx.key_mode = self.mode;
+        ctx.interchange = self.interchange;
+        ctx.bestline = self.bestline;
         let started = Instant::now();
         let mut diag = super::arms::SearchDiag::default();
-        let (sel, tree) = self
-            .roles
-            .select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        #[cfg(feature = "viewer-recording-v1")]
+        let mut trace = self
+            .observer
+            .as_ref()
+            .filter(|r| r.error.is_none() && k < 3)
+            .map(|_| {
+                let mut trace = super::diag::Trace::default();
+                trace.viewer = Some(super::viewer_uct::SearchCapture::default());
+                trace
+            });
+        #[cfg(not(feature = "viewer-recording-v1"))]
+        let mut trace = None;
+        let (sel, tree) =
+            self.roles
+                .select_e_diagnosed(&ctx, trace.as_mut(), 1, None, None, Some(&mut diag));
         self.keys.merge(&diag.keys);
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();
@@ -268,6 +311,20 @@ impl Searches<'_> {
             "transitions":sel.transitions,"completed_natural":sel.completed,"attempted":sel.attempted,
             "nonnatural":sel.nonnatural,"incomplete":sel.incomplete,"faults":sel.faults,
             "tree":sel.extra["tree"].clone(),"keys":diag.keys.json(),"wall":started.elapsed().as_secs_f64()}));
+        if !diag.key_memo.is_null() {
+            if let Some(r) = self.records.last_mut() {
+                r["key_memo"] = diag.key_memo;
+            }
+        }
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = self.observer.as_deref_mut() {
+            let mut record = self.records.last().unwrap().clone();
+            record["key"] =
+                serde_json::to_value(crate::rl::PlayerSeatV1::from(self.focal)).unwrap();
+            let d = decision(s).unwrap();
+            record["decision"] = json!({"episode_id":d.episode_id,"step":d.step,"physical_decision_id":d.physical_decision_id,"substep_index":d.substep_index,"acting_player":d.acting_player});
+            observer.search(k, &record, trace.and_then(|mut t| t.viewer.take()));
+        }
         Ok((!failed).then_some(tree))
     }
 }
@@ -286,10 +343,88 @@ fn guide(
     anchor_tree: Option<(Tree, Value)>,
     run: GuideRun,
 ) -> Result<(Value, Option<Tree>), String> {
+    guide_inner(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        opp,
+        allocation,
+        anchor_tree,
+        run,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+        #[cfg(feature = "viewer-recording-v1")]
+        None,
+    )
+}
+
+#[cfg(feature = "viewer-recording-v1")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "same guide with passive viewer observer"
+)]
+pub(super) fn guide_viewer(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    observer: Option<&mut super::viewer_uct::Recorder>,
+    max_step: u64,
+) -> Result<Value, String> {
+    let mut actual_core_hash = 0u64;
+    guide_inner(
+        sh,
+        roles,
+        live_focal,
+        live_opp,
+        anchor,
+        src,
+        0,
+        Allocation::R,
+        None,
+        GuideRun::ANCHOR_LEGACY,
+        observer,
+        Some(max_step),
+        Some(&mut actual_core_hash),
+    )
+    .map(|(mut v, _)| {
+        v["actual_core_hash"] = json!(actual_core_hash);
+        v
+    })
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "existing guide roles and optional passive viewer sink"
+)]
+fn guide_inner(
+    sh: &BankShared,
+    roles: &mut Roles,
+    live_focal: &mut FrozenPlayPolicyV1,
+    live_opp: &mut FrozenPlayPolicyV1,
+    anchor: &FastActorSessionV1,
+    src: &SourceSpec,
+    opp: usize,
+    allocation: Allocation,
+    anchor_tree: Option<(Tree, Value)>,
+    run: GuideRun,
+    #[cfg(feature = "viewer-recording-v1")] observer: Option<&mut super::viewer_uct::Recorder>,
+    #[cfg(feature = "viewer-recording-v1")] max_step: Option<u64>,
+    #[cfg(feature = "viewer-recording-v1")] actual_core_hash: Option<&mut u64>,
+) -> Result<(Value, Option<Tree>), String> {
     let started = Instant::now();
     let focal = PlayerId(src.seat);
     let defs = spy_defs();
     let mut searches = Searches {
+        #[cfg(feature = "viewer-recording-v1")]
+        observer,
         roles,
         sh,
         focal,
@@ -299,6 +434,8 @@ fn guide(
         used: 0,
         records: Vec::new(),
         mode: run.mode,
+        interchange: run.interchange,
+        bestline: run.bestline,
         keys: KeyStats::default(),
     };
     let (first, kept) = if run.opening {
@@ -327,7 +464,11 @@ fn guide(
             },
         }
     };
-    let mut cursor = Cursor::new(first, 0, run.mode);
+    if run.interchange && !run.opening {
+        // A bank anchor tree was built without merging.
+        return Err("interchangeable-choice merging runs from openings only".into());
+    }
+    let mut cursor = Cursor::new(first, 0, run.mode, run.interchange);
     let mut cursor_keys = KeyStats::default();
     let mut suffix = run.opening.then(|| super::labels::Suffix::new(true));
     live_focal.reset_sampling_v1(src.guide_policy_seeds);
@@ -337,7 +478,18 @@ fn guide(
     let mut c = Counters::default();
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
     let mut invalid: Option<String> = None;
+    // Passive (`pathlog.rs`): the actual history's nodes in each tree.
+    let mut actual = super::pathlog::dir().map(|_| super::pathlog::ActualLog::default());
     while let Some(d) = decision(&s) {
+        #[cfg(feature = "viewer-recording-v1")]
+        if max_step.is_some_and(|limit| d.step >= limit) {
+            invalid = Some("viewer development step bound".into());
+            break;
+        }
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = searches.observer.as_deref_mut() {
+            observer.before(&s, d);
+        }
         let a = if acting(&d) == focal && d.legal_action_count >= 2 {
             let remaining_before = allocation.total.saturating_sub(searches.used);
             let (mut lookup, mut hit) = cursor.lookup(&s, d)?;
@@ -357,7 +509,12 @@ fn guide(
                 match searches.run(&s, budget, d.step, reason)? {
                     Some(tree) => {
                         cursor_keys.merge(&cursor.keyer.stats);
-                        cursor = Cursor::new(tree, searches.records.len() - 1, run.mode);
+                        cursor = Cursor::new(
+                            tree,
+                            searches.records.len() - 1,
+                            run.mode,
+                            run.interchange,
+                        );
                         refreshed = Some(reason);
                         (lookup, hit) = cursor.lookup(&s, d)?;
                     }
@@ -366,6 +523,9 @@ fn guide(
                         break;
                     }
                 }
+            }
+            if let (Some(log), Some(Hit { key: Some(k), .. })) = (actual.as_mut(), hit.as_ref()) {
+                log.hit(cursor.search, d.step, k);
             }
             let new_root = cursor.depth == 1 && !cursor.advanced;
             let mut edge_backups = None;
@@ -379,6 +539,12 @@ fn guide(
                     )
                 }
                 _ => (act_plain(live_focal, &s, &d, &mut c)?, "plain"),
+            };
+            // Along a matching history an interchangeable copy plays as its
+            // representative, so the cursor stays on the stored edge.
+            let a = match &hit {
+                Some(h) if cursor.matching => cursor.keyer.representative(&h.step, a),
+                _ => a,
             };
             if let Some(h) = hit {
                 if cursor.matching {
@@ -419,8 +585,21 @@ fn guide(
         };
         actions.push(a);
         apply(&mut s, &d, a, &mut meter, focal, suffix.as_mut(), &defs).map_err(err)?;
+        #[cfg(feature = "viewer-recording-v1")]
+        if let Some(observer) = searches.observer.as_deref_mut() {
+            let evidence = decisions
+                .last()
+                .filter(|r| r["step"] == d.step)
+                .cloned()
+                .unwrap_or(Value::Null);
+            observer.after(&s, a, evidence);
+        }
     }
     cursor_keys.merge(&cursor.keyer.stats);
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(hash) = actual_core_hash {
+        *hash = s.privileged_core_environment_hash();
+    }
     let end = if invalid.is_some() {
         None
     } else {
@@ -432,6 +611,22 @@ fn guide(
         (Vec::new(), Vec::new())
     };
     let valid = invalid.is_none() && end.is_some_and(|e| e != "nonnatural");
+    if let (Some(log), Some(dir)) = (actual, super::pathlog::dir()) {
+        let roots: Vec<Value> = searches
+            .records
+            .iter()
+            .enumerate()
+            .map(|(k, r)| {
+                json!({"search":k,"step":r["step"],"reason":r["reason"],
+                    "tree_hash":r["tree"]["hash"],"budget":r["budget"]})
+            })
+            .collect();
+        let header = json!({"id":src.id,"lineage":sh.spec.lineage,"search_root":src.search_root,
+            "seat":src.seat,"opp":src.opp,"end":end,"valid":valid,"searches":roots});
+        if let Err(e) = log.write(&dir, header) {
+            eprintln!("S4A_PATH_LOG: guide log not written: {e}");
+        }
+    }
     Ok((
         json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
@@ -448,12 +643,18 @@ fn guide(
 /// first focal choice with two or more legal actions, then 64,000 per
 /// support-triggered refresh, within `total`. Seeds come from the case, never
 /// from the ceiling.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit case and opt-in search controls"
+)]
 pub(super) fn budget_case(
     sh: &BankShared,
     policy: &FrozenPlayPolicyV1,
     src: &SourceSpec,
     total: u64,
     mode: KeyMode,
+    interchange: bool,
+    bestline: Option<u64>,
     binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -484,16 +685,24 @@ pub(super) fn budget_case(
         GuideRun {
             opening: true,
             mode,
+            interchange,
+            bestline,
         },
     )?;
-    Ok(
-        json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
+    let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
         "lineage":sh.spec.lineage,"own":src.own,"other":src.other,"seat":src.seat,"opp":src.opp,
         "seed":src.seed,"starting_player":src.starting_player,"live_policy_seeds":src.guide_policy_seeds,
         "search_root":src.search_root,"bank_binding_sha256":binding,
         "allocation":{"initial":allocation.anchor,"refresh":allocation.refresh,"total":allocation.total},
-        "game":rec,"wall":started.elapsed().as_secs_f64()}),
-    )
+        "game":rec,"wall":started.elapsed().as_secs_f64()});
+    // Present only when merging was on, so default rows are unchanged.
+    if interchange {
+        row["interchange"] = json!(INTERCHANGE_RULE);
+    }
+    if let Some(m) = bestline {
+        row["backup"] = json!(bestline_rule(m));
+    }
+    Ok(row)
 }
 
 /// Replay check of one recorded budget game (analysis only): rebuilds the
@@ -716,6 +925,7 @@ mod tests {
 
     use super::super::world::{sample, DeckPrior};
     use crate::runtime_decks::RUNTIME_DECKS;
+    use std::collections::HashMap;
 
     fn game(seed: u64) -> FastActorSessionV1 {
         let decks = [&RUNTIME_DECKS[4], &RUNTIME_DECKS[5]];
@@ -790,6 +1000,201 @@ mod tests {
             let y = reference.select_fast_session_v1(&a).unwrap();
             assert_eq!(x, y, "search changed a live sampling stream");
             a.step(d.episode_id, d.step, x).unwrap();
+        }
+    }
+
+    /// The path log (`pathlog.rs`) is passive: the same search with it
+    /// leaves the tree and its transitions unchanged, and the logged attempts
+    /// rebuild every stored node's counts.
+    #[test]
+    #[ignore = "native qualification: fixture games and a small search"]
+    fn path_log_is_passive_and_rebuilds_the_tree() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut s = game(11);
+        advance(&mut s, |d| {
+            d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0
+        });
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "path-log".into(),
+        };
+        let limits = Limits {
+            select_cap: 6_000,
+            ..Limits::FORMAL
+        };
+        let ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+        let (plain, plain_tree) = roles(&policy).select_e(&ctx);
+        let dir = std::env::temp_dir().join(format!("s4a-path-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut diag = super::super::arms::SearchDiag::default();
+        diag.path_log = Some(super::super::pathlog::PathLog::new(dir.clone()));
+        let (sel, tree) =
+            roles(&policy).select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        assert_eq!(tree.hash(), plain_tree.hash());
+        assert_eq!(
+            (sel.transitions, sel.completed),
+            (plain.transitions, plain.completed)
+        );
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        let v: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+        assert_eq!(v["tree_hash"], tree.hash());
+        let nodes = v["nodes"].as_array().unwrap();
+        let sims = v["sims"].as_array().unwrap();
+        assert_eq!(nodes.len(), tree.nodes.len());
+        assert_eq!(sims.len() as u64, sel.completed);
+        let mut n: Vec<Vec<u64>> = nodes
+            .iter()
+            .map(|x| vec![0; x["k"].as_u64().unwrap() as usize])
+            .collect();
+        let mut w = n.clone();
+        for sim in sims {
+            let win = sim[1].as_u64().unwrap();
+            let flat = sim[4].as_array().unwrap();
+            for pair in flat.chunks(2) {
+                let (id, a) = (pair[0].as_i64().unwrap(), pair[1].as_u64().unwrap());
+                assert!(id >= 0, "broken path");
+                n[id as usize][a as usize] += 1;
+                w[id as usize][a as usize] += win;
+            }
+        }
+        for (i, x) in nodes.iter().enumerate() {
+            assert_eq!(x["n"], json!(n[i]), "node {i}");
+            assert_eq!(x["wins"], json!(w[i]), "node {i}");
+            let p = x["parent"].as_i64().unwrap();
+            assert!(p < i as i64, "parents precede children");
+        }
+        assert_eq!(nodes.iter().filter(|x| x["parent"] == -1).count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The best-line test's formal untried-first search (`urgency` None),
+    /// pinned from the code before Step 1 (main at 7c700c61).
+    const UNTRIED_FIRST_PIN: &str =
+        "a12b94f260a43dbbe8ed3d93d4ba5b3c3bb329ab9757d328ae81009ea57b120e";
+    const UNTRIED_FIRST_COUNTS: (u64, u64) = (6_000, 23);
+
+    /// Step 1 of the best-line proposal is exact when off: the default search,
+    /// with and without finite urgency, builds the tree pinned from the code
+    /// before the rule existed. On, every stored node carries best-line values
+    /// that equal a from-scratch recomputation, each attempt's result is
+    /// tallied clean or rollout by its logged rollout choices, and the root
+    /// has a frozen pick.
+    #[test]
+    #[ignore = "native qualification: fixture games and a small search"]
+    fn best_line_rule_is_exact_when_off_and_consistent_when_on() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut s = game(11);
+        advance(&mut s, |d| {
+            d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0
+        });
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "path-log".into(),
+        };
+        let limits = Limits {
+            select_cap: 6_000,
+            ..Limits::FORMAL
+        };
+        let mut ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+        let (off, off_tree) = roles(&policy).select_e(&ctx);
+        // Pinned from the same search on the code before Step 1 (main at
+        // ecf5282c, `path_log_is_passive_and_rebuilds_the_tree`'s plain search).
+        assert_eq!(
+            off_tree.hash(),
+            "63957afec560de632059cc0f5ca25b18fa6def55951a7013c328d69452a286e7"
+        );
+        assert_eq!((off.transitions, off.completed), (6_000, 20));
+        assert!(off_tree.nodes.values().all(|n| n.bl.is_none()));
+        // The formal untried-first rule (no finite urgency), pinned the same way.
+        let urgency = ctx.urgency.take();
+        let (plain, plain_tree) = roles(&policy).select_e(&ctx);
+        assert_eq!(plain_tree.hash(), UNTRIED_FIRST_PIN);
+        assert_eq!((plain.transitions, plain.completed), UNTRIED_FIRST_COUNTS);
+        ctx.urgency = urgency;
+        ctx.limits.select_cap = 40_000;
+        for m in [3, 8] {
+            ctx.bestline = Some(m);
+            let dir = std::env::temp_dir().join(format!("s4a-bestline-{}-{m}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut diag = super::super::arms::SearchDiag::default();
+            diag.path_log = Some(super::super::pathlog::PathLog::new(dir.clone()));
+            let (on, tree) =
+                roles(&policy).select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+            assert!(on.completed > 100, "m={m}: {}", on.completed);
+            let bad = tree.best_line_mismatches();
+            assert!(
+                bad.is_empty(),
+                "m={m}: {} of {}: {:?}",
+                bad.len(),
+                tree.nodes.len(),
+                &bad[..bad.len().min(3)]
+            );
+            let root = tree
+                .nodes
+                .values()
+                .find(|n| n.parent == [0; 32])
+                .expect("root");
+            assert_eq!(root.visits, on.completed, "m={m}");
+            assert!(root.frozen_choice().is_some(), "m={m}: no frozen pick");
+            // Each attempt's result is a clean or rollout result of the last
+            // edge on its path, by the logged rollout-choice count.
+            let files: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            assert_eq!(files.len(), 1, "{files:?}");
+            let v: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+            assert_eq!(v["backup"], json!(bestline_rule(m)));
+            let by_hex: HashMap<String, super::super::tree::Key> = tree
+                .nodes
+                .keys()
+                .map(|k| (super::super::pathlog::key_hex(k), *k))
+                .collect();
+            let keys: Vec<_> = v["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| by_hex[x["key"].as_str().unwrap()])
+                .collect();
+            let mut want: HashMap<(usize, usize), super::super::tree::DirectResults> =
+                HashMap::new();
+            let mut rollout_results = 0;
+            for sim in v["sims"].as_array().unwrap() {
+                let win = sim[1].as_u64().unwrap();
+                let flat = sim[4].as_array().unwrap();
+                let (id, a) = (
+                    flat[flat.len() - 2].as_u64().unwrap() as usize,
+                    flat[flat.len() - 1].as_u64().unwrap() as usize,
+                );
+                let x = want.entry((id, a)).or_default();
+                let t = if sim[3].as_u64().unwrap() == 0 {
+                    &mut x.0
+                } else {
+                    rollout_results += 1;
+                    &mut x.1
+                };
+                t.0 += 1;
+                t.1 += win;
+            }
+            assert!(
+                rollout_results > 0,
+                "m={m}: the fixture has rollout choices"
+            );
+            for (id, k) in keys.iter().enumerate() {
+                let n = &tree.nodes[k];
+                for a in 0..n.n.len() {
+                    let got = n.best_line_direct(a).expect("best-line node");
+                    let exp = want.get(&(id, a)).copied().unwrap_or_default();
+                    assert_eq!(got, exp, "m={m}: node {id} edge {a}");
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
         }
     }
 

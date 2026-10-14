@@ -8,9 +8,13 @@
 mod heartfire_history_v1;
 mod heartfire_v12;
 pub use heartfire_history_v1::*;
+mod bloom_tender_v24;
 mod employment_v18;
 mod labels;
+mod librarian_v20;
+pub use librarian_v20::*;
 mod life_ward_v8;
+pub use bloom_tender_v24::*;
 mod ooze_v11;
 pub use employment_v18::*;
 mod sower_v14;
@@ -18,9 +22,32 @@ pub use sower_v14::*;
 mod wildwood_v16;
 pub use wildwood_v16::*;
 mod cerberus_v19;
+mod raid_entry_v21;
 pub use cerberus_v19::*;
+pub use raid_entry_v21::*;
+pub mod extra_turn_v23;
+pub use extra_turn_v23::*;
+mod juggernaut_v25;
+pub use juggernaut_v25::*;
+mod ashroot_v27;
+pub use ashroot_v27::*;
+mod stromkirk_v28;
+pub use stromkirk_v28::*;
+mod crystal_v22;
+pub use crystal_v22::*;
+mod arahbo_v31;
 mod authority_v17;
+mod garruk_v30;
+pub use arahbo_v31::*;
 pub use authority_v17::*;
+mod gourmand_v29;
+pub use garruk_v30::*;
+pub use gourmand_v29::{
+    HumanDecisionGourmandV29, HumanGourmandExtensionsV29, HumanGourmandProjectorV29,
+    HumanGourmandResolutionV29, HumanGourmandRestrictionV29, HumanGourmandSacrificeMenuV29,
+    HumanGourmandSessionV29, HumanGourmandSnapshotV29,
+};
+
 mod frenzied_v15;
 pub use frenzied_v15::*;
 mod raid_v9;
@@ -251,5 +278,14 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod fiery_v33;
+pub use fiery_v33::*;
+
+mod strongbox_v32;
+pub use strongbox_v32::*;
+
 #[cfg(test)]
 mod tests;
+
+mod banishing_v26;
+pub use banishing_v26::*;

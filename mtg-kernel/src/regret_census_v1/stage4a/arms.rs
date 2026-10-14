@@ -1,13 +1,15 @@
 //! Candidate E and controls A and D: selection under the transition ceiling,
 //! then independent evaluation on paired worlds (RUNNER.md sections 2-3).
 
-use super::canon2::{KeyMode, KeyStats, Keyer};
+use super::canon2::{KeyMemo, KeyMode, KeyStats, Keyer};
 use super::diag::{EvalSrc, SelSrc, Trace};
 use super::labels::{SpyDefs, Suffix};
 use super::play::{
     act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
 };
+use super::root_allocation::{RootAllocation, RootAllocator, SearchOptions};
 use super::seeds::{Purpose, RootSeeds};
+use super::sharing::{Cursor as SharingCursor, Sharing};
 use super::tree::{
     canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
     MAX_DEPTH,
@@ -30,6 +32,18 @@ pub(crate) const D_TOP: usize = 2;
 pub(crate) const D_UNIFORM: usize = 2;
 pub(crate) const D_HORIZON: usize = 3;
 pub(crate) const ARMS: [&str; 3] = ["E", "A", "D"];
+
+fn select_observed(node: &Node, urgency: Option<f64>, _trace: &mut Option<&mut Trace>) -> usize {
+    #[cfg(feature = "viewer-recording-v1")]
+    if let Some(v) = _trace
+        .as_deref_mut()
+        .and_then(|t| t.viewer.as_mut())
+        .filter(|v| v.error.is_none())
+    {
+        return node.select_with_scores(urgency, &mut v.scores);
+    }
+    node.select_with(urgency)
+}
 
 /// Run settings (the formal values are the constants above; tests and the
 /// cost-only engineering checks may lower them, and every row records them).
@@ -83,6 +97,12 @@ pub(crate) struct RootCtx<'a> {
     /// E's node key version (`canon2.rs`); selection and frozen execution
     /// always use the same one.
     pub(crate) key_mode: KeyMode,
+    /// Merge interchangeable choices into one edge (`interchange.rs`);
+    /// selection and frozen execution always agree on it.
+    pub(crate) interchange: bool,
+    /// Opt-in best-line backup with try threshold m (`tree.rs` `BestLine`);
+    /// None is the formal mean backup.
+    pub(crate) bestline: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -687,6 +707,10 @@ impl Roles {
         rec: &mut SimRecord,
         mut capture: Option<&mut Capture>,
         diag: &mut SearchDiag,
+        mut memo: Option<&mut KeyMemo>,
+        mut allocator: Option<&mut RootAllocator>,
+        mut sharing: Option<&mut Sharing>,
+        sharing_cursor: &mut SharingCursor,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -696,11 +720,29 @@ impl Roles {
                 "depth retention and capture use legacy keys only".into(),
             ));
         }
+        if ctx.bestline.is_some() && retain > 1 {
+            return Err(PlayErr::Fault(
+                "depth retention does not use the best-line backup".into(),
+            ));
+        }
+        if ctx.interchange && (retain > 1 || capturing || !ctx.visible_history.is_empty()) {
+            return Err(PlayErr::Fault(
+                "depth retention, capture and E history do not merge interchangeable choices"
+                    .into(),
+            ));
+        }
         let SearchDiag {
-            keys, legacy_path, ..
+            keys,
+            legacy_path,
+            path_log,
+            ..
         } = diag;
         legacy_path.clear();
-        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?;
+        let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
+        if memo.is_some() {
+            keyer.start_memo();
+        }
         let mut sup = Sup::new();
         let mut path: Vec<(Key, usize)> = Vec::new();
         let mut new: Vec<(Key, Node)> = Vec::new();
@@ -715,11 +757,14 @@ impl Roles {
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
         loop {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Response);
             if let Some(end) = terminal(&s, ctx.focal) {
+                drop(span);
                 sup.finish(rec);
                 return Ok((path, new, end));
             }
             let d = decision(&s).expect("decision");
+            drop(span);
             let a = if acting(&d) == ctx.focal {
                 if d.legal_action_count >= 2 {
                     if last_phys != Some(d.physical_decision_id) {
@@ -741,16 +786,52 @@ impl Roles {
                         SelSrc::TailAfterExpand
                     };
                     let a = if in_tree && depth <= MAX_DEPTH {
-                        let st = keyer.step(&s, d)?;
+                        let span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::KeyStep,
+                        );
+                        let st = keyer.step_memo(&s, d, memo.as_deref_mut())?;
                         let (key, pk, pe, cn) = keyer.storage(&st);
-                        let (edge_index, edge) = match tree.find(&key, &pk, &pe, cn)? {
+                        drop(span);
+                        let sharing_probe = sharing
+                            .as_deref_mut()
+                            .map(|sharing| {
+                                sharing.probe(
+                                    sharing_cursor,
+                                    &s,
+                                    d,
+                                    cn,
+                                    key,
+                                    depth,
+                                    meter.spent - spent0,
+                                )
+                            })
+                            .transpose()?;
+                        let span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::TreeFind,
+                        );
+                        let found = tree.find(&key, &pk, &pe, cn)?;
+                        drop(span);
+                        let (edge_index, edge) = match found {
                             Found::Hit(node) => {
+                                let _span = crate::search_profile_v1::span(
+                                    crate::search_profile_v1::Bucket::NodeSelect,
+                                );
                                 src = SelSrc::Tree;
                                 rec.existing += 1;
                                 if staged.contains(&key) {
                                     rec.staged_hits += 1;
                                 }
-                                let e = node.select_with(ctx.urgency);
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, node))
+                                } else {
+                                    None
+                                }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| sharing.select(probe, node, ctx.urgency),
+                                    )
+                                })
+                                .unwrap_or_else(|| select_observed(node, ctx.urgency, &mut trace));
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
@@ -762,9 +843,33 @@ impl Roles {
                                 if let Some(t) = trace.as_deref_mut() {
                                     t.node_created(&key, path.last(), cn, &s, ctx.focal, &ctx.defs);
                                 }
+                                let span = crate::search_profile_v1::span(
+                                    crate::search_profile_v1::Bucket::Expand,
+                                );
                                 let perm = keyer.perm(&st, ctx.seeds)?;
-                                let node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
-                                let e = node.select_with(ctx.urgency);
+                                let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
+                                node.skip = keyer.skipped(&st);
+                                if let Some(m) = ctx.bestline {
+                                    let k = node.n.len();
+                                    node.bl = Some(Box::new(super::tree::BestLine::new(k, m)));
+                                }
+                                if let Some(log) = path_log.as_mut() {
+                                    log.created(key, &s, cn, ctx.focal);
+                                }
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, &node))
+                                } else {
+                                    None
+                                }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| {
+                                            sharing.select(probe, &node, ctx.urgency)
+                                        },
+                                    )
+                                })
+                                .unwrap_or_else(|| select_observed(&node, ctx.urgency, &mut trace));
+                                drop(span);
                                 new.push((key, node));
                                 in_tree = false;
                                 // Boundary: before the expanded choice's
@@ -776,8 +881,14 @@ impl Roles {
                         path.push((key, edge_index));
                         legacy_path.push(st.legacy_key);
                         let live = live_index(cn, &edge)?;
+                        if let Some(probe) = sharing_probe {
+                            sharing_cursor.advance(probe, live, edge_index, meter.spent - spent0);
+                        }
                         parent = (key, edge);
-                        keyer.advance(st, live);
+                        let _span = crate::search_profile_v1::span(
+                            crate::search_profile_v1::Bucket::KeyAdvance,
+                        );
+                        keyer.advance_memo(st, live, memo.as_deref_mut());
                         live
                     } else if !in_tree && new.len() < retain && depth <= MAX_DEPTH {
                         // Depth retention (D8): stage this choice node and
@@ -785,6 +896,10 @@ impl Roles {
                         let cn = canon(&s, d)?;
                         let key = child_key(&parent.0, &parent.1, &cn);
                         let a = act(&mut self.focal, &s, &d, c)?;
+                        rec.rollout_choices += 1;
+                        if let Some(log) = path_log.as_mut() {
+                            log.created(key, &s, &cn, ctx.focal);
+                        }
                         let edge = cn.menu[a as usize].clone();
                         let e = cn
                             .edges
@@ -801,6 +916,7 @@ impl Roles {
                         parent = (key, edge);
                         a
                     } else {
+                        rec.rollout_choices += 1;
                         act(&mut self.focal, &s, &d, c)?
                     };
                     if let Some(cap) = capture.as_deref_mut() {
@@ -837,7 +953,15 @@ impl Roles {
                 }
                 a
             };
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.before(&s, d, a);
+            }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
+            #[cfg(feature = "viewer-recording-v1")]
+            if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
+                v.after(&s, suffix.last);
+            }
             if let Some(t) = trace.as_deref_mut() {
                 t.event(meter.spent, acting(&d) == ctx.focal, suffix.last);
             }
@@ -902,9 +1026,86 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: Option<&mut SearchDiag>,
     ) -> (Selection, Tree) {
+        self.select_e_options(
+            ctx,
+            trace.take(),
+            retain,
+            records.take(),
+            capture.take(),
+            diag,
+            &SearchOptions::default(),
+        )
+    }
+
+    /// Explicit experiment controls; defaults preserve the production path.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "existing search roles and opt-in controls"
+    )]
+    pub(crate) fn select_e_options(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+        retain: usize,
+        mut records: Option<&mut Vec<SimRecord>>,
+        mut capture: Option<&mut Capture>,
+        diag: Option<&mut SearchDiag>,
+        options: &SearchOptions,
+    ) -> (Selection, Tree) {
         let mut own = SearchDiag::default();
         let diag = diag.unwrap_or(&mut own);
+        if options.sharing
+            && (options.allocation != RootAllocation::Uct
+                || retain > 1
+                || trace.is_some()
+                || capture.is_some())
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec![
+                        "sharing requires UCT, one-node expansion, and no trace/capture".into(),
+                    ],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        if ctx.bestline.is_some() && (options.sharing || options.allocation != RootAllocation::Uct)
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec!["the best-line backup runs with UCT and no sharing".into()],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        let cpu_start = match super::process_cpu::seconds() {
+            Ok(t) => t,
+            Err(e) if options.cpu_seconds.is_some() => {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![e],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                );
+            }
+            Err(_) => 0.0,
+        };
+        let mut allocator =
+            (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
+        let mut sharing = options.sharing.then(Sharing::default);
+        let mut stop_reason = None;
+        if diag.path_log.is_none() {
+            diag.path_log = super::pathlog::dir().map(super::pathlog::PathLog::new);
+        }
         let retain = retain.max(1);
+        // Exact and per search: this context's keys only.
+        let mut memo = key_memo_enabled().then(KeyMemo::new);
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
         let mut sel = Selection::default();
@@ -914,6 +1115,24 @@ impl Roles {
         let mut consecutive = 0u64;
         let mut i = 0u64;
         loop {
+            if options.work_limit.is_some_and(|limit| i >= limit) {
+                stop_reason = Some("work_limit");
+                break;
+            }
+            if let Some(limit) = options.cpu_seconds {
+                match super::process_cpu::seconds() {
+                    Ok(t) if t - cpu_start >= limit => {
+                        stop_reason = Some("cpu_budget");
+                        break;
+                    }
+                    Err(e) => {
+                        sel.incomplete = true;
+                        sel.faults.push(e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
             if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
                 break;
@@ -922,7 +1141,10 @@ impl Roles {
             let index = i;
             i += 1;
             sel.attempted += 1;
-            let world = match sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Sample);
+            let world = sample_world(ctx, ctx.root, seed, &mut sel.sampler);
+            drop(span);
+            let world = match world {
                 Ok(w) => w,
                 Err(_) => {
                     consecutive += 1;
@@ -939,12 +1161,18 @@ impl Roles {
                 }
             };
             consecutive = 0;
+            let span = crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Reseed);
             self.reset_main(ctx, "E", index, "select");
+            drop(span);
             let mut suffix = Suffix::new(ctx.cast_root);
             if let Some(t) = trace.as_deref_mut() {
                 t.sim_begin(index, meter.spent);
             }
             let mut rec = SimRecord::default();
+            if let Some(log) = diag.path_log.as_mut() {
+                log.begin_sim();
+            }
+            let mut sharing_cursor = SharingCursor::default();
             let (spent0, calls0) = (meter.spent, c.inference);
             if let Some(cap) = capture.as_deref_mut() {
                 cap.begin(index);
@@ -962,6 +1190,10 @@ impl Roles {
                 &mut rec,
                 capture.as_deref_mut(),
                 diag,
+                memo.as_mut(),
+                allocator.as_mut(),
+                sharing.as_mut(),
+                &mut sharing_cursor,
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -1001,8 +1233,16 @@ impl Roles {
                 Ok((path, new, End::Natural { win })) => {
                     sel.discovery
                         .add(&suffix, Some(End::Natural { win }), index);
+                    let _span =
+                        crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
-                    tree.backup(&path, new, win);
+                    if let Some(log) = diag.path_log.as_mut() {
+                        log.natural(index, &path, &new, win, &rec);
+                    }
+                    tree.backup_observed(&path, new, win, rec.rollout_choices == 0);
+                    if let Some(sharing) = sharing.as_mut() {
+                        sharing.backup(&sharing_cursor, index, win);
+                    }
                     sel.completed += 1;
                 }
                 Ok((_, _, End::NonNatural)) => {
@@ -1023,9 +1263,35 @@ impl Roles {
         if let Some(t) = trace {
             t.finish_tree(&tree);
         }
+        if let Some(m) = &memo {
+            diag.key_memo = m.json();
+        }
         sel.transitions = meter.spent;
         sel.inference = c.inference;
+        if let Some(log) = diag.path_log.take() {
+            if let Err(e) = log.write(ctx, &tree, sel.completed, sel.attempted, sel.transitions) {
+                eprintln!("S4A_PATH_LOG: search log not written: {e}");
+            }
+        }
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(sharing) = sharing.as_ref() {
+            sel.extra["sharing"] = sharing.json();
+        }
+        if let Some(allocator) = &allocator {
+            if let Some((key, node)) = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.depth == 1 && n.parent == [0; 32])
+            {
+                sel.choice = allocator
+                    .choice(key, node)
+                    .map(|a| node.canon.edges[a].clone());
+            }
+            sel.extra["root_allocation"] = json!("successive-halving-v1");
+        }
+        if options.cpu_seconds.is_some() || options.work_limit.is_some() {
+            sel.extra["stop_reason"] = json!(stop_reason);
+        }
         sel.wall = started.elapsed().as_secs_f64();
         (sel, tree)
     }
@@ -1132,7 +1398,8 @@ impl Roles {
         mut log: Option<&mut Vec<u32>>,
     ) -> Result<End, PlayErr> {
         let mut kstats = KeyStats::default();
-        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?;
+        let mut keyer = Keyer::with_history(ctx.key_mode, &mut kstats, ctx.visible_history)?
+            .with_interchange(ctx.interchange);
         let mut matching = true;
         let mut depth = 0u32;
         let mut last_phys: Option<u64> = None;
@@ -1184,7 +1451,11 @@ impl Roles {
                                     None => {
                                         src = EvalSrc::MatchedNoQualified;
                                         stats.fallbacks += 1;
-                                        act(&mut self.focal, s, &d, c)?
+                                        // An interchangeable copy plays as
+                                        // its representative, so the history
+                                        // stays on the stored edge.
+                                        let a = act(&mut self.focal, s, &d, c)?;
+                                        keyer.representative(&st, a)
                                     }
                                 }
                             }
@@ -1379,14 +1650,30 @@ pub(crate) struct EdgeWin {
     pub(crate) wins_after: u64,
 }
 
+/// Whether E searches memoize key steps (`S4A_KEY_MEMO=1`; default off).
+/// Exact: selection, trees and key statistics are unchanged; only time is.
+pub(crate) fn key_memo_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("S4A_KEY_MEMO").as_deref() {
+        Ok("1") => true,
+        Ok("0") | Err(_) => false,
+        Ok(v) => panic!("S4A_KEY_MEMO must be 0 or 1, got {v:?}"),
+    })
+}
+
 /// Search diagnostics (never read by selection, backup or execution).
 #[derive(Debug, Default)]
 pub(crate) struct SearchDiag {
     pub(crate) keys: KeyStats,
+    /// Key memo counters when `S4A_KEY_MEMO=1` (null otherwise).
+    pub(crate) key_memo: Value,
     pub(crate) edges: HashMap<(Key, usize), EdgeWin>,
     /// Stored node -> legacy history identity -> natural backups per edge.
     pub(crate) legacy: HashMap<Key, BTreeMap<Key, Vec<u64>>>,
     legacy_path: Vec<Key>,
+    /// Per-attempt path log (`pathlog.rs`, `S4A_PATH_LOG`); a log set by the
+    /// caller is used as is.
+    pub(crate) path_log: Option<super::pathlog::PathLog>,
 }
 
 impl SearchDiag {
@@ -1531,6 +1818,9 @@ pub(crate) struct SimRecord {
     pub(crate) supported_groups: u32,
     pub(crate) supported_substeps: u32,
     pub(crate) first_unsupported_depth: u32,
+    /// Focal nonforced choices the rollout policy made (after the tree path,
+    /// past the depth limit, or on retained tail nodes).
+    pub(crate) rollout_choices: u32,
 }
 
 impl SimRecord {

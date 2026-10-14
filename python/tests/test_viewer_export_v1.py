@@ -20,20 +20,26 @@ class ViewerExportTests(unittest.TestCase):
         root_actions=[{'index':i,'label':label,'kind':'pass','refs':[]} for i,label in enumerate(['Pass','Other move'])]
         menu=[{'action_kind':'cast_spell','source':{'arena_id':99,'card_db_id':999}}]
         contexts=[{'simulation':0,'node':0,'action':0,'actor':'p0','board':observation},
-          {'simulation':0,'node':1,'action':0,'actor':'p1','board':observation,'actions':menu,'labels':['SECRET CARD']},
           {'simulation':0,'leaf':True,'reason':'expanded','board':observation},
-          {'simulation':1,'node':0,'action':1,'actor':'p0','board':observation},
-          {'simulation':1,'leaf':True,'reason':'coverage','board':observation}]
+          {'simulation':1,'node':0,'action':0,'actor':'p0','board':observation},
+          {'simulation':1,'node':1,'action':0,'actor':'p1','board':observation,'actions':menu,'labels':['SECRET CARD']},
+          {'simulation':1,'leaf':True,'reason':'expanded','board':observation},
+          {'simulation':2,'node':0,'action':1,'actor':'p0','board':observation},
+          {'simulation':2,'leaf':True,'reason':'coverage','board':observation}]
         raw={'schema':'mtg-kernel-search-capture/v1','complete':True,'contexts':contexts,
-          'nodes':[{'key':'PRIVATE KEY','actor':0,'visits':2,'priors':[700000,300000],'children':[[1],[]],'edge_visits':[1,1],'edge_value_sums':[900,-500]},
-          {'key':'PRIVATE KEY','actor':1,'visits':1,'priors':[1000000],'children':[[]],'edge_visits':[1],'edge_value_sums':[900]}],
-          'trace':[{'ordinal':0,'value':900,'choices':[{'node':0,'action':0,'mode':'puct','scores':[None,None]},{'node':1,'action':0,'mode':'unvisited','scores':[None]}]},
-          {'ordinal':1,'value':-500,'choices':[{'node':0,'action':1,'mode':'unvisited','scores':['1000',None]}]}]}
-        search={'simulations':2,'stats':[{'index':0,'visits':1,'valueSum':'900'},{'index':1,'visits':1,'valueSum':'-500'}]}
+          'nodes':[{'key':'PRIVATE KEY','actor':0,'visits':3,'priors':[700000,300000],'children':[[1],[]],'edge_visits':[2,1],'edge_value_sums':[1800,-500]},
+          {'key':'PRIVATE KEY','actor':1,'visits':2,'priors':[1000000],'children':[[2]],'edge_visits':[1],'edge_value_sums':[900]},
+          {'key':'PRIVATE KEY','actor':0,'visits':1,'priors':[1000000],'children':[[]],'edge_visits':[0],'edge_value_sums':[0]}],
+          'trace':[{'ordinal':0,'value':900,'choices':[{'node':0,'action':0,'mode':'unvisited','scores':[None,None]}]},
+          {'ordinal':1,'value':900,'choices':[{'node':0,'action':0,'mode':'puct','scores':['1000',None]},{'node':1,'action':0,'mode':'unvisited','scores':[None]}]},
+          {'ordinal':2,'value':-500,'choices':[{'node':0,'action':1,'mode':'coverage','scores':['1000',None]}]}]}
+        search={'simulations':3,'stats':[{'index':0,'visits':2,'valueSum':'1800'},{'index':1,'visits':1,'valueSum':'-500'}]}
         exporter=export.Exporter({'999':{'name':'SECRET CARD'}},'p0')
         result=replay_export.export_replay(raw,exporter,{'episode':1,'step':1,'physical':1,'substep':0,'actor':'p0'},root_actions,search)
         self.assertNotIn('SECRET',json.dumps(result));self.assertNotIn('PRIVATE',json.dumps(result));self.assertEqual(exporter.cards,{})
         self.assertEqual(result['nodes'][1]['actions'][0]['label'],'Cast spell')
+        self.assertEqual(result['schema'],'mtg-kernel-search-replay/v2')
+        self.assertEqual([s['leafNode'] for s in result['simulations']],[1,2,None])
         import copy
         compact=copy.deepcopy(raw);compact['snapshots']=[]
         for context in compact['contexts']:
@@ -43,7 +49,7 @@ class ViewerExportTests(unittest.TestCase):
         self.assertEqual(replay_export.export_replay(compact,exporter,result['key'],root_actions,search),result)
         compact['contexts'][0]['snapshot']=999
         with self.assertRaisesRegex(ValueError,'snapshot'):replay_export.export_replay(compact,exporter,result['key'],root_actions,search)
-        raw['nodes'][0]['edge_visits'][0]=2
+        raw['nodes'][0]['edge_visits'][0]=3
         with self.assertRaisesRegex(ValueError,'statistics'):replay_export.export_replay(raw,exporter,result['key'],root_actions,search)
 
     def test_missing_or_interrupted_capture_is_incomplete(self):

@@ -1,7 +1,15 @@
 //! Actual registered recipients exercise the primitive, not printed admission.
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
 use crate::state::StackTargetContractV4;
+
+fn ready_turn(actor: PlayerId) -> GameState {
+    let mut state = ready_state_for(actor);
+    for owner in [actor, actor.opponent()] {
+        put(&mut state, owner, "Forest", Zone::Library);
+    }
+    state
+}
 
 fn ctx(state: &GameState, source: ObjectId, controller: PlayerId, target: ObjectId) -> ExecCtx {
     let mut ctx = ExecCtx::no_targets(source, controller);
@@ -23,6 +31,10 @@ fn cleanup(state: &mut GameState) {
     state.step = crate::state::Step::End;
     for _ in 0..8 {
         let decision = crate::engine::advance_until_decision(state);
+        assert!(
+            !matches!(decision, crate::engine::Decision::Halted { .. }),
+            "{decision:?}"
+        );
         if !state.engine.until_end_of_turn.iter().any(|effect| {
             matches!(
                 effect,
@@ -45,9 +57,7 @@ fn prepared_recipe_registered_recipients_control_untap_haste_treasure_and_real_c
 {
     for controller in [PlayerId::P0, PlayerId::P1] {
         for owner in [controller, controller.opponent()] {
-            let mut state = ready_state();
-            state.active_player = controller;
-            state.priority_player = controller;
+            let mut state = ready_turn(controller);
             let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
             let target = put(&mut state, owner, "Llanowar Elves", Zone::Battlefield);
             state.objects.get_mut(target).tapped = true;
@@ -104,8 +114,7 @@ fn prepared_recipe_registered_recipients_control_untap_haste_treasure_and_real_c
 #[test]
 fn overlapping_control_effects_unwind_to_nonowner_baseline_and_survive_source_departure() {
     for controller in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = controller;
+        let mut state = ready_turn(controller);
         let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
         let target = put(&mut state, controller, "Llanowar Elves", Zone::Battlefield);
         // A real borrowed-creature baseline: changing control does not change ownership.
@@ -191,8 +200,7 @@ fn stale_departed_reentered_and_protected_target_primitives_cannot_gain_control(
 #[test]
 fn control_effect_expiry_never_controls_a_reentered_incarnation() {
     for controller in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = controller;
+        let mut state = ready_turn(controller);
         let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
         let target = put(
             &mut state,
@@ -223,9 +231,7 @@ fn control_effect_expiry_never_controls_a_reentered_incarnation() {
 #[test]
 fn control_change_removes_real_attackers_from_combat() {
     for controller in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = controller.opponent();
-        state.priority_player = controller.opponent();
+        let mut state = ready_turn(controller.opponent());
         state.step = crate::state::Step::DeclareAttackers;
         let target = put(
             &mut state,
@@ -289,19 +295,9 @@ fn frozen_observations_refuse_expiring_control_for_both_viewers_without_hidden_d
 #[test]
 fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
     for controller in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = controller;
-        state.priority_player = controller;
-        let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
-        let target = put(
-            &mut state,
-            controller.opponent(),
-            "Llanowar Elves",
-            Zone::Battlefield,
-        );
+        let (mut state, source, target) =
+            super::authority_tests::later_cleanup_priority(controller);
         gain_control(&ctx(&state, source, controller, target), 0, &mut state);
-        state.step = crate::state::Step::Cleanup;
-        state.engine.priority_passes = [true; 2];
         for player in &mut state.players {
             player.mana_pool = [9; 6];
             player
@@ -318,8 +314,8 @@ fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
                 });
         }
         let mut restored = replay(&state);
-        let _ = crate::engine::advance_until_decision(&mut state);
-        let _ = crate::engine::advance_until_decision(&mut restored);
+        super::authority_tests::finish_later_cleanup(&mut state, controller);
+        super::authority_tests::finish_later_cleanup(&mut restored, controller);
         assert_eq!(
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&restored).unwrap()
@@ -339,8 +335,7 @@ fn repeated_cleanup_clears_ordinary_and_restricted_mana_for_both_players() {
 fn accepted_typed_aegis_copy_preserves_employment_target_and_refuses_foreign_or_stale_history() {
     use crate::state::{AbilitySourceContractV4, ObjectLinkV4};
     for controller in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = controller;
+        let mut state = ready_turn(controller);
         let source = put(&mut state, controller, "Lightning Bolt", Zone::Hand);
         let target = put(
             &mut state,

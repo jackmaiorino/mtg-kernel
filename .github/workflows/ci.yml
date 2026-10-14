@@ -14,7 +14,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request replaces its running CI. Runs on main,
+  # tags and manual dispatches finish, because they carry the Windows
+  # feature groups that pull requests skip.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -89,6 +92,11 @@ jobs:
 
   rust-quality:
     name: Rust formatting and lint
+    needs: detect-changes
+    # Same path rule as the Rust test groups: a change that touches only
+    # docs, markdown, Python tests or non-embedded Python tools cannot
+    # change what rustfmt or Clippy see. Pushes to main always run it.
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -196,19 +204,22 @@ jobs:
           - trace
           - saved-input
           - limited-store
+        # Pull requests run Windows only for the workspace suite and the
+        # native Store group, whose production writer is Windows-only code.
+        # The other Windows groups never failed without Linux failing too
+        # (2026-10-10 to 10-14), so they run on main, tags and manual
+        # dispatches, which still cover every group on both systems.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
           # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
             runner: '"ubuntu-24.04"'
-          # Windows groups also default to hosted runners. The self-hosted
-          # Windows runners go offline whenever their host is reserved, which
-          # left these jobs queued for hours. Setting the repository variable
-          # MTG_CI_WINDOWS_RUNNER to '["self-hosted", "mtg-ci-windows"]'
-          # sends them to the self-hosted runners (the primary desktop, the
-          # compute host), which keep a per-group cargo target directory
-          # between runs, so most builds are incremental.
+          # Windows groups default to GitHub's hosted runners: on the local
+          # pool they queued for over an hour behind research claims. The
+          # repository variable routes them elsewhere, for example
+          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
           - os: windows-2025
             runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
     # Pull requests from forks never run on the self-hosted runners.
@@ -378,7 +389,8 @@ jobs:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     needs: detect-changes
     if: needs.detect-changes.outputs.python_relevant == 'true'
-    timeout-minutes: 60
+    # Includes waiting for the same low-priority CPU admission as Rust jobs.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -390,18 +402,57 @@ jobs:
           - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-    runs-on: ${{ matrix.os }}
+    # Fork pull requests stay hosted; trusted Windows jobs follow the same
+    # routing variable as the Rust groups, hosted by default.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
     steps:
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Prepare the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: |
+          # Runners without a configured target root keep one beside their
+          # work directory, so builds still persist between jobs.
+          if [ -z "${MTG_CI_TARGET_ROOT:-}" ]; then
+            printf 'MTG_CI_TARGET_ROOT=%s\n' "$RUNNER_WORKSPACE/../../mtg-ci-target" >> "$GITHUB_ENV"
+          fi
+          cargo_bin=
+          if ! command -v rustup >/dev/null && [ -x "$HOME/.cargo/bin/rustup" ]; then
+            cargo_bin="$HOME/.cargo/bin"
+          elif [ "$RUNNER_OS" = Windows ] && command -v cargo >/dev/null; then
+            cargo_bin="$(dirname "$(command -v cargo)")"
+          fi
+          if [ -n "$cargo_bin" ]; then
+            # Python's subprocess calls launch cargo through Windows, which
+            # cannot read a bash path such as /c/Users/...; publish a plain
+            # Windows path there.
+            if [ "$RUNNER_OS" = Windows ]; then
+              cargo_bin="$(cygpath -w "$cargo_bin")"
+            fi
+            echo "Adding the Cargo directory to PATH: $cargo_bin"
+            printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Install pinned Rust in a fresh toolchain directory
         shell: bash
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            ci_root="$MTG_CI_TARGET_ROOT"
+            if [ "$RUNNER_OS" = Windows ]; then
+              ci_root="$(cygpath -u "$ci_root")"
+            fi
+            RUSTUP_HOME="${ci_root%/}-fdn-rustup"
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
           fi
@@ -411,6 +462,7 @@ jobs:
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
 
       - name: Cache cargo registry
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -435,7 +487,24 @@ jobs:
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
 
+      - name: Use the runner's persistent Python environment build
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            target_dir="$MTG_CI_TARGET_ROOT/python-env"
+            kernel_bin="$target_dir/release/kernel_rl_env"
+            if [ "$RUNNER_OS" = Windows ]; then
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/python-env")"
+              kernel_bin="$target_dir/release/kernel_rl_env.exe"
+            fi
+            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+            printf 'MTG_KERNEL_RL_ENV_BIN=%s\n' "$kernel_bin" >> "$GITHUB_ENV"
+            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+          fi
+
       - name: Cache compiled Python environment
+        if: runner.environment == 'github-hosted'
         uses: ./.github/actions/cargo-build-cache
         with:
           scope: python-env

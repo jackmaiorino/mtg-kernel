@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "admission": "unregistered",
+  "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "reference_file": "Mage.Sets/src/mage/cards/m/MildManneredLibrarian.java",
+  "name": "Mild-Mannered Librarian",
+  "mana_cost": "{G}",
+  "types": [
+    "Creature"
+  ],
+  "subtypes": [
+    "Human"
+  ],
+  "colors": [
+    "G"
+  ],
+  "power": 1,
+  "toughness": 1,
+  "rules_text": "{3}{G}: Mild-Mannered Librarian becomes a Werewolf. Put two +1/+1 counters on it and you draw a card. Activate only once.",
+  "prepared_effect": "crate::mild_mannered_librarian_v1::program_v1",
+  "qualification": "No registration, card ID, catalog hash, Full status, public/Human or model admission."
+}

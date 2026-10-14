@@ -1831,11 +1831,30 @@ pub fn card_name(card_id: u16) -> String {
     }
 }
 
+fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
+    if state.objects.iter().any(|(id, object)| {
+        object.zone == Zone::Battlefield
+            && engine::has_effective_keyword(state, id, Keywords::SHROUD)
+    }) {
+        return Err(RlContractError(
+            "shroud requires an explicit public keyword representation".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn observe_v1(
     state: &GameState,
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    refuse_unrepresented_shroud(state)?;
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    if state.extra_turn_v1.is_some() {
+        return Err(RlContractError(
+            "extra turns require their selected public/Human successor".into(),
+        ));
+    }
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
@@ -1941,8 +1960,9 @@ fn build_observation_v2(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -1952,14 +1972,56 @@ fn build_observation_common_v2(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
+    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
+    refuse_unrepresented_shroud(state)?;
+    let (
+        accept_cant_block,
+        accept_temporary_control,
+        accept_extra_turn,
+        accept_banishing,
+        accept_gourmand,
+        accept_garruk,
+        accept_crystal,
+        accept_arahbo,
+        accept_strongbox,
+        accept_fiery,
+    ) = capabilities;
+    if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Fiery requires selected V33 transport".into(),
+        ));
+    }
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(state)
+            .map_err(RlContractError)?;
+    }
+    if !accept_arahbo && crate::arahbo_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Arahbo requires V31 public/Human successor".into(),
+        ));
+    }
+    if !accept_garruk && crate::garruks_uprising_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Garruk requires V30 public/Human successor".into(),
+        ));
+    }
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    if !accept_extra_turn && state.extra_turn_v1.is_some() {
+        return Err(RlContractError(
+            "extra turns require their selected public/Human successor".into(),
+        ));
+    }
     if accept_temporary_control {
         crate::effect::temporary_control_v1::authority::validate(state).map_err(RlContractError)?;
     } else {
         crate::effect::temporary_control_v1::refuse_legacy_observation(state)
             .map_err(RlContractError)?;
+    }
+    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Crystal requires its selected public/Human successor".into(),
+        ));
     }
     let projection = PublicObservationProjectionV2 {
         turn: state.turn,
@@ -1992,12 +2054,13 @@ fn build_observation_common_v2(
         continuous_effects: continuous_effects_common_v2(
             state,
             acting_player,
-            accept_cant_block,
+            (accept_cant_block, accept_gourmand),
             accept_temporary_control,
+            accept_crystal,
         )?,
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
-        engine_context: engine_context_v2(state, acting_player)?,
+        engine_context: engine_context_v2(state, acting_player, accept_banishing)?,
         surface_context: surface_context_v2(state, surface, acting_player)?,
     };
     let own_hand = state.players[acting_player.index()]
@@ -2242,8 +2305,9 @@ fn build_policy_observation_parts(
         acting_player,
         step_index,
         text_mode,
-        false,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 fn build_policy_observation_parts_common(
@@ -2252,17 +2316,49 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    accept_cant_block: bool,
-    accept_temporary_control: bool,
+    capabilities: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    refuse_unrepresented_shroud(state)?;
+    let (
+        accept_cant_block,
+        accept_temporary_control,
+        accept_extra_turn,
+        accept_banishing,
+        accept_gourmand,
+        accept_garruk,
+        accept_crystal,
+        accept_arahbo,
+        accept_strongbox,
+        accept_fiery,
+    ) = capabilities;
+    if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(state) {
+        return Err(RlContractError(
+            "Fiery requires selected V33 transport".into(),
+        ));
+    }
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(state)
+            .map_err(RlContractError)?;
+    }
+
     let base = build_observation_common_v2(
         state,
         surface.harness_surface(),
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+            accept_banishing,
+            accept_gourmand,
+            accept_garruk,
+            accept_crystal,
+            accept_arahbo,
+            accept_strongbox,
+            accept_fiery,
+        ),
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -2438,7 +2534,68 @@ fn build_policy_observation_storage_v6(
         false,
         false,
         false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn extra_turn_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::extra_turn_v1::validate(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
         false,
+        false,
+        false,
+        false,
+        (
+            false, true, false, false, false, false, false, false, false, false,
+        ),
+    )
+}
+
+/// Distinct selected Librarian input using shared internal typed storage.
+/// This does not bypass any predecessor variable/cant-block/Wildwood refusal.
+pub(crate) fn librarian_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::librarian_activation_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_v6(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
     )
 }
 
@@ -2468,7 +2625,9 @@ pub(crate) fn sower_observation_storage_v1(
         false,
         false,
         false,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2498,7 +2657,9 @@ pub(crate) fn employment_observation_storage_v1(
         false,
         true,
         false,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2528,7 +2689,9 @@ pub(crate) fn wildwood_observation_storage_v1(
         true,
         false,
         false,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2558,7 +2721,9 @@ pub(crate) fn cerberus_observation_storage_v1(
         false,
         false,
         true,
-        false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2588,7 +2753,9 @@ pub(crate) fn authority_observation_storage_v1(
         false,
         false,
         false,
-        true,
+        (
+            true, false, false, false, false, false, false, false, false, false,
+        ),
     )
 }
 
@@ -2618,7 +2785,263 @@ pub(crate) fn frenzied_observation_storage_v1(
         false,
         false,
         false,
+        (
+            false, false, false, false, false, false, false, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn juggernaut_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::juggernaut_public_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
         false,
+        false,
+        false,
+        false,
+        (
+            false, false, true, false, false, false, false, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn banishing_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, true, false, false, false, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn gourmand_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::gourmand_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, true, false, false, false, false, false,
+        ),
+    )
+}
+pub(crate) fn strongbox_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::strongbox_public_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, false, false, false, false, true, false,
+        ),
+    )
+}
+pub(crate) fn fiery_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::fiery_observation_v1::validate_projection_authority(state)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, false, false, false, false, false, true,
+        ),
+    )
+}
+pub(crate) fn garruk_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::garruks_uprising_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, true, false, true, false, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn crystal_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, false, false, false, true, false, false, false,
+        ),
+    )
+}
+
+pub(crate) fn arahbo_observation_storage_v1(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<PolicyObservationStorageV6> {
+    crate::arahbo_v1::validate_state(state).map_err(RlContractError)?;
+    crate::garruks_uprising_v1::validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_legacy_variable_cast_targets(state).map_err(RlContractError)?;
+    build_policy_observation_storage_common(
+        PolicyObservationBuildV5 {
+            state,
+            surface,
+            acting_player: actor,
+            step_index,
+            physical_decision_id,
+            substep_index: substep.0,
+            substep_count: substep.1,
+            text_mode: ObservationTextModeV2::FullArtifact,
+        },
+        true,
+        false,
+        false,
+        false,
+        false,
+        (
+            false, false, false, true, false, true, false, true, false, false,
+        ),
     )
 }
 
@@ -2629,8 +3052,59 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accept_authority: bool,
+    accepted_statics: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<PolicyObservationStorageV6> {
+    let (
+        accept_authority,
+        accept_extra_turn,
+        accept_combat_rules,
+        accept_banishing,
+        accept_gourmand,
+        accept_garruk,
+        accept_crystal,
+        accept_arahbo,
+        accept_strongbox,
+        accept_fiery,
+    ) = accepted_statics;
+    if !accept_fiery && crate::fiery_annihilation_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Fiery requires selected V33 transport".into(),
+        ));
+    }
+    if !accept_strongbox {
+        crate::effect::exile_top_choose_v1::require_legacy_consumer_supported(request.state)
+            .map_err(RlContractError)?;
+    }
+    if !accept_arahbo && crate::arahbo_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Arahbo requires V31 public/Human successor".into(),
+        ));
+    }
+    if !accept_garruk && crate::garruks_uprising_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Garruk requires V30 public/Human successor".into(),
+        ));
+    }
+    if !accept_gourmand && crate::vampire_gourmand_dispatch_v2::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Gourmand requires its selected public/Human successor".into(),
+        ));
+    }
+    if !accept_banishing && crate::banishing_light_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Banishing Light requires its selected public/Human successor".into(),
+        ));
+    }
+    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "Crystal requires its selected public/Human successor".into(),
+        ));
+    }
+    if !accept_combat_rules && crate::combat_static_rules_v1::requires_successor(request.state) {
+        return Err(RlContractError(
+            "printed combat statics require their selected successor".into(),
+        ));
+    }
     if !accept_authority && crate::authority_of_the_consuls_v1::requires_successor(request.state) {
         return Err(RlContractError(
             "Authority requires its selected public/Human successor".into(),
@@ -2667,8 +3141,18 @@ fn build_policy_observation_storage_common(
         acting_player,
         step_index,
         text_mode,
-        accept_cant_block,
-        accept_temporary_control,
+        (
+            accept_cant_block,
+            accept_temporary_control,
+            accept_extra_turn,
+            accept_banishing,
+            accept_gourmand,
+            accept_garruk,
+            accept_crystal,
+            accept_arahbo,
+            accept_strongbox,
+            accept_fiery,
+        ),
     )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -6942,10 +7426,12 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
 fn continuous_effects_common_v2(
     state: &GameState,
     acting_player: PlayerId,
-    accept_cant_block: bool,
+    accept_cant_block: (bool, bool),
     accept_temporary_control: bool,
+    accept_crystal: bool,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
-    if crate::crystal_barricade_v1::active(state) {
+    let (accept_cant_block, accept_gourmand) = accept_cant_block;
+    if !accept_crystal && crate::effect::crystal_prevention_v1::requires_successor(state) {
         return Err(RlContractError(
             "player hexproof and controlled-creature noncombat prevention require a public successor".into(),
         ));
@@ -7186,6 +7672,14 @@ fn continuous_effects_common_v2(
                     "temporary cant-block restriction requires a public successor".into(),
                 ));
             }
+            UntilEndOfTurnEffect::ResolvedObjectCantBeBlockedV1 { .. } => {
+                if accept_gourmand {
+                    continue;
+                }
+                return Err(RlContractError(
+                    "temporary cant-block restriction requires a public successor".into(),
+                ));
+            }
             UntilEndOfTurnEffect::DamageCannotBePrevented {
                 timestamp,
                 duration,
@@ -7286,7 +7780,7 @@ fn continuous_effects_common_v2(
                 color,
                 turn,
                 active_player,
-            } if turn == state.turn && active_player == state.active_player => {
+            } if turn == state.turn_key_v1() && active_player == state.active_player => {
                 mask | crate::card_def::mana_color_mask(color)
             }
             _ => mask,
@@ -7365,7 +7859,11 @@ fn exile_play_permissions_public_v2(state: &GameState) -> Result<Vec<ExilePlayPe
     Ok(out)
 }
 
-fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<EngineContextV2> {
+fn engine_context_v2(
+    state: &GameState,
+    acting_player: PlayerId,
+    accept_banishing: bool,
+) -> Result<EngineContextV2> {
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
             .objects
@@ -7396,7 +7894,7 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             let live = state.objects.try_get(object.object)?;
             (live.zone == Zone::Battlefield
                 && live.zone_change_count == object.zone_change_count
-                && turn == state.turn
+                && turn == state.turn_key_v1()
                 && active_player == state.active_player)
                 .then(|| {
                     card_ref(state, object.object).map(|permanent| CombatPreventionSemanticV1 {
@@ -7531,7 +8029,23 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .engine
             .pending_activation
             .as_ref()
-            .map(|p| pending_activation_semantic_v2(state, acting_player, p))
+            .map(|p| {
+                if accept_banishing {
+                    if let Some(owner) = state.engine.linked_aura_operation_v1.pending.as_ref() {
+                        crate::linked_aura_operation_v1::validate(state)
+                            .map_err(RlContractError)?;
+                        if owner.original.engine.pending_activation.as_ref() != Some(p) {
+                            return Err(RlContractError(
+                                "linked Aura changed original activation announcement".into(),
+                            ));
+                        }
+                        // This is the genuine pre-operation announcement,
+                        // not a manufactured live source after sacrifice.
+                        return pending_activation_semantic_v2(&owner.original, acting_player, p);
+                    }
+                }
+                pending_activation_semantic_v2(state, acting_player, p)
+            })
             .transpose()?,
         pending_discard: state
             .engine
@@ -7709,6 +8223,7 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
                             | crate::effect::EffectTargetSelectionPurpose::DiscardDraw { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::WardCards { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
@@ -7802,6 +8317,7 @@ fn pending_effect_semantic_v4(
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::OrderIntoGraveyard {
                                 ..
                             }
@@ -7862,7 +8378,8 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
-                            crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
+                            crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
                             | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ConvokeLook { .. }
                             | crate::effect::EffectTargetSelectionPurpose::Hideaway { .. }
@@ -8405,6 +8922,153 @@ fn stack_item_public_v2(
     })
 }
 
+/// Selected Crystal transport: derive the resolving identity from the real
+/// owned continuation and captured producer, never its newer arena printing.
+pub(crate) fn crystal_resolving_source_ref(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<CardStableRefV1> {
+    crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
+    let pending = state.engine.pending_effect.as_ref().ok_or_else(|| {
+        RlContractError("Crystal resolving source lost its genuine continuation".into())
+    })?;
+    if pending.resolving_item != *item {
+        return Err(RlContractError(
+            "Crystal resolving source differs from its owned continuation".into(),
+        ));
+    }
+    let positions: Vec<_> = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect();
+    let [(ordinal, live)] = positions.as_slice() else {
+        return Err(RlContractError(
+            "Crystal resolving source lost its unique live owner".into(),
+        ));
+    };
+    if **live != *item {
+        return Err(RlContractError(
+            "Crystal resolving source changed its published row".into(),
+        ));
+    }
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    let ordinal = u32::try_from(*ordinal)
+        .map_err(|_| RlContractError("Crystal stack ordinal overflow".into()))?;
+    if crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id) {
+        // This producer authenticates original publication, departure or
+        // preparation and its existing hidden/copied-source refusal.
+        return crate::equipment_damage_source_v4::public_sources(state)
+            .map_err(RlContractError)?
+            .into_iter()
+            .find(|row| row.stack_ordinal == ordinal)
+            .map(|row| row.source)
+            .ok_or_else(|| RlContractError("Crystal grant lost original public source".into()));
+    }
+    if crate::gorehorn_damage_v1::has_publication(state, item.v4.stack_item_id) {
+        let row = crate::gorehorn_damage_v1::public_sources(state)
+            .map_err(RlContractError)?
+            .into_iter()
+            .find(|row| row.stack_ordinal == ordinal)
+            .ok_or_else(|| RlContractError("Crystal Raid lost original public source".into()))?;
+        let captured = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                crate::event::CommittedEvent::GorehornPublishedV1 { publication }
+                    if publication.item.v4.stack_item_id == item.v4.stack_item_id =>
+                {
+                    publication.item.v4.ability_source_contract
+                }
+                _ => None,
+            })
+            .ok_or_else(|| {
+                RlContractError("Crystal Raid publication lost captured source".into())
+            })?;
+        if captured.source != item.source
+            || captured.card_def != row.printed_card_db_id
+            || PlayerSeatV1::from(captured.controller) != row.ability_controller
+        {
+            return Err(RlContractError(
+                "Crystal Raid source differs from authenticated publication".into(),
+            ));
+        }
+        return Ok(CardStableRefV1 {
+            arena_id: captured.source.0,
+            card_db_id: captured.card_def,
+            owner: captured.owner.into(),
+            controller: captured.controller.into(),
+            zone: captured.zone,
+            zone_change_count: captured.zone_change_count,
+        });
+    }
+    crate::source_power_activation_v1::validate_item(state, item).map_err(RlContractError)?;
+    let (source, card_def, owner, controller, zone, zone_change_count) = match item.kind {
+        StackItemKind::Spell => {
+            let s = item
+                .v4
+                .source_contract
+                .ok_or_else(|| RlContractError("Crystal spell lost captured source".into()))?;
+            (
+                s.source,
+                s.card_def,
+                s.owner,
+                s.controller,
+                s.zone,
+                s.zone_change_count,
+            )
+        }
+        StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility => {
+            let s = item
+                .v4
+                .ability_source_contract
+                .ok_or_else(|| RlContractError("Crystal ability lost captured source".into()))?;
+            crate::engine::validate_historical_ability_source_contract(state, s)
+                .map_err(RlContractError)?;
+            // Fixed/source-power validators above authenticate real payment
+            // and captured facts while the printed source may be elsewhere.
+            (
+                s.source,
+                s.card_def,
+                s.owner,
+                s.controller,
+                s.zone,
+                s.zone_change_count,
+            )
+        }
+        StackItemKind::MadnessOffer => {
+            return Err(RlContractError(
+                "Madness is not a Crystal resolving program".into(),
+            ))
+        }
+    };
+    if source != item.source {
+        return Err(RlContractError(
+            "Crystal captured source changed arena identity".into(),
+        ));
+    }
+    // Keep the predecessor copied-source boundary. This is refusal only:
+    // the current object's definition never supplies the emitted identity.
+    if state
+        .objects
+        .try_get(source)
+        .is_none_or(|live| live.card_def != card_def || live.owner != owner)
+    {
+        return Err(RlContractError(
+            "Crystal copied source needs separate historical transport".into(),
+        ));
+    }
+    Ok(CardStableRefV1 {
+        arena_id: source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count,
+    })
+}
 fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
     crate::engine::validated_stack_item_target_spec(item, state)
         .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
@@ -9939,6 +10603,95 @@ mod adventure_and_monarch_rl_tests {
             assert_eq!(public_paid.zone, Zone::Battlefield);
             assert_eq!(public_paid.zone_change_count, paid.zone_change_count);
             assert_eq!(state.stack.last().unwrap().v4.paid_cost_refs, vec![paid]);
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod crystal_resolving_source_ref_native84_tests {
+    use super::*;
+    use crate::engine::{self, Action, Decision};
+    use crate::event::{ActiveReplacement, ReplacementEffectKind};
+    use crate::policy_observation_v6::tests::put;
+
+    #[test]
+    fn actual_bolt_owned_menu_ref_uses_captured_contract_and_refuses_missing_or_foreign_owner_readonly_both_seats(
+    ) {
+        for receiver in [PlayerId::P0, PlayerId::P1] {
+            let caster = receiver.opponent();
+            let mut state = crate::policy_observation_v6::tests::ready_state_for(caster);
+            state.step = crate::state::Step::Main1;
+            let wall = put(&mut state, receiver, "Crystal Barricade", Zone::Battlefield);
+            let target = put(&mut state, receiver, "Llanowar Elves", Zone::Battlefield);
+            state.engine.next_replacement_id = 1;
+            state.engine.active_replacements.push(ActiveReplacement {
+                id: 1,
+                source: wall,
+                kind: ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 5,
+                },
+            });
+            let bolt = put(&mut state, caster, "Lightning Bolt", Zone::Hand);
+            state.players[caster.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            let _ = engine::advance_until_decision(&mut state);
+            for _ in 0..12 {
+                let d = engine::advance_until_decision(&mut state);
+                if matches!(d, Decision::ChooseEffectOption { player, .. } if player == receiver) {
+                    break;
+                }
+                assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseEffectOption { player, .. } if player == receiver)
+            );
+            let item = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .resolving_item
+                .clone();
+            let captured = item.v4.source_contract.unwrap();
+            let original = CardStableRefV1 {
+                arena_id: captured.source.0,
+                card_db_id: captured.card_def,
+                owner: captured.owner.into(),
+                controller: captured.controller.into(),
+                zone: captured.zone,
+                zone_change_count: captured.zone_change_count,
+            };
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                crystal_resolving_source_ref(&state, &item).unwrap(),
+                original
+            );
+            assert_eq!(
+                crystal_resolving_source_ref(&restored, &item).unwrap(),
+                original
+            );
+            for mode in 0..3 {
+                let mut bad = restored.clone();
+                let mut supplied = item.clone();
+                match mode {
+                    0 => supplied.source = target,
+                    1 => bad.engine.pending_effect = None,
+                    _ => bad
+                        .stack
+                        .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id),
+                }
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(crystal_resolving_source_ref(&bad, &supplied).is_err());
+                assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
+            }
         }
     }
 }

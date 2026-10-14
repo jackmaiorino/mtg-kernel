@@ -7,6 +7,43 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if crate::arahbo_v1::requires_successor(state)
+        || state
+            .engine
+            .event_history
+            .iter()
+            .any(crate::arahbo_v1::is_history)
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(crate::garruks_uprising_v1::is_history)
+    {
+        return true;
+    }
+    // Retained linked duration and attack ownership need their qualified sampler.
+    if crate::banishing_light_v1::requires_successor(state)
+        || (state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::AshrootDispatchV2 { .. }
+            )
+        }) && !pool.is_empty())
+    {
+        return true;
+    }
+    // The source's old definition and power remain authoritative after it returns
+    // to a hidden zone. This lane does not admit a historical resampling scheme.
+    if state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        crate::event::CommittedEvent::AshrootPowerBeforeDepartureV1 { source, .. }
+            if pool.contains(&source.object))
+    }) {
+        return true;
+    }
     // Receipt-owned references remain binding through legend/deferred stages
     // and after the physical source or recipient returns to a hidden zone.
     match crate::wildwood_capture_v1::active(state) {
@@ -118,6 +155,24 @@ fn conflicts(
     {
         return true;
     }
+    // New committed authority must not be relabeled by hidden pool resampling,
+    // including after Cleanup removed the active shield. Predecessor histories
+    // contain no such event and retain their original sampling behavior.
+    if e.event_history.iter().any(|event| match event {
+        crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } => {
+            pool.contains(&replacement.source)
+                || match replacement.kind {
+                    crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                        target: crate::state::StackTargetContractV4::Object { object, .. },
+                        ..
+                    } => pool.contains(&object),
+                    _ => false,
+                }
+        }
+        _ => false,
+    }) {
+        return true;
+    }
     // Conservative exclusions for unversioned references. Do not pin or redraw.
     if e.active_replacements.iter().any(|r| {
         pool.contains(&r.source)
@@ -126,6 +181,10 @@ fn conflicts(
                     target: crate::state::Target::Object(id),
                     ..
                 } => pool.contains(&id),
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                    target: crate::state::StackTargetContractV4::Object { object, .. },
+                    ..
+                } => pool.contains(&object),
                 _ => false,
             }
     }) {
@@ -152,6 +211,11 @@ fn conflicts(
                 ..
             }
             | ResolvedObjectControlEffect {
+                object_id,
+                object_zone_change_count,
+                ..
+            }
+            | ResolvedObjectCantBeBlockedV1 {
                 object_id,
                 object_zone_change_count,
                 ..
@@ -203,6 +267,21 @@ fn redeterminize_with_library_plan_inner(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
 ) -> Result<(), Error> {
+    if state.extra_turn_v1.is_some()
+        || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::ExtraTurnOwnerPublishedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnOwnerRemovedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnVirtualCeasedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnScheduledV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnStartedV1 { .. }
+                    | crate::event::CommittedEvent::ExtraTurnBeganV1 { .. }
+            )
+        })
+    {
+        return Err(Error::UnsupportedActionContract);
+    }
     let mut rng = SplitMix64::seed(seed);
     for owner in [PlayerId::P0, PlayerId::P1] {
         // Slots are canonical: owner order, then hand indices, then library indices.
@@ -467,6 +546,40 @@ mod tests {
             state.stack.clear();
             state.engine.pending_triggers.clear();
             assert!(!conflicts(&state, &[source], None));
+        }
+    }
+    #[test]
+    fn fiery_historical_installation_receipt_refuses_hidden_resampling_readonly_after_cleanup() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = super::super::tests::state(player);
+            let source = state.players[player.index()].library[0];
+            let target = state.players[player.opponent().index()].library[0];
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+            let source_contract = AbilitySourceContractV4::capture(&state, source);
+            let target_contract = crate::state::StackTargetContractV4::capture(
+                &state,
+                crate::state::Target::Object(target),
+            );
+            crate::event::install_exile_if_dies(&mut state, source_contract, target_contract);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(target, Zone::Library),
+            );
+            // The historical receipt survives Cleanup. No active or event-log
+            // reference is needed to forbid rewriting its physical identities.
+            state.engine.active_replacements.clear();
+            state.engine.event_log.clear();
+            assert!(conflicts(&state, &[source], None));
+            assert!(conflicts(&state, &[target], None));
+            let before = serde_json::to_vec(&state).unwrap();
+            assert_eq!(
+                redeterminize(&mut state, player, 17),
+                Err(Error::HiddenStateContract)
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
         }
     }
 }

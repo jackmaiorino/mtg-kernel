@@ -33,12 +33,15 @@ fn anytarget_recipient_scope_matches_catalog_precedence_and_existing_order() {
     }
     for actor in [PlayerId::P0, PlayerId::P1] {
         let offered = legal_targets_for_controller(TargetSpec::AnyTarget, &[], actor, &state);
-        // Account for existing opponent hexproof filtering in every feature configuration.
+        // Account for existing object and player hexproof in every feature configuration.
         let expected: Vec<_> = expected
             .iter()
             .copied()
             .filter(|target| match target {
-                Target::Player(_) => true,
+                Target::Player(player) => {
+                    *player == actor
+                        || !crate::crystal_barricade_v1::controller_has_hexproof(&state, *player)
+                }
                 Target::StackItem(_) => false,
                 Target::Object(object) => {
                     state.objects.get(*object).controller == actor
@@ -85,11 +88,14 @@ mod fdn {
 
     fn ready(actor: PlayerId) -> GameState {
         let island = card_def::card_id_by_name("Island").unwrap();
-        let mut state =
-            GameState::new_from_libraries(&[island; 40], &[island; 40], |_| "Island".into(), 110);
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[island; 40],
+            &[island; 40],
+            |_| "Island".into(),
+            110,
+            actor,
+        );
         state.step = Step::Main1;
-        state.active_player = actor;
-        state.priority_player = actor;
         // Both seats retain an actual castable decision after resolution.
         for player in [PlayerId::P0, PlayerId::P1] {
             put(&mut state, player, "Mountain", Zone::Battlefield);

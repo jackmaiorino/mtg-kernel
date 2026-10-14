@@ -1323,6 +1323,7 @@ pub fn stack_target_contract_is_structurally_valid(
             ) | (
                 TargetSpec::TwoCreaturesWithDifferentControllers
                     | TargetSpec::UpToTwoCreatures
+                    | TargetSpec::CreatureThenUpToOneAttachedEquipment
                     | TargetSpec::UpToTwoOtherCreaturesDifferentControllers
                     | TargetSpec::UpToTwoOtherControlledCreatures
                     | TargetSpec::ExactlyTwoArtifactPermanents
@@ -1494,6 +1495,50 @@ pub struct StackStateV4 {
     pub frenzied_goblin_started_v1: FrenziedGoblinStartedV1,
     #[serde(default, skip_serializing_if = "FrenziedGoblinPublicationV1::is_empty")]
     pub frenzied_goblin_publication_v1: FrenziedGoblinPublicationV1,
+    /// Empty contributes neither serialized bytes nor Hash input.
+    #[serde(default, skip_serializing_if = "VampireGourmandStartedV1::is_empty")]
+    pub vampire_gourmand_started_v1: VampireGourmandStartedV1,
+    #[serde(default, skip_serializing_if = "GorehornPublishedV1::is_empty")]
+    pub gorehorn_published_v1: GorehornPublishedV1,
+    #[serde(default, skip_serializing_if = "CrystalPreventionStartedV1::is_empty")]
+    pub crystal_prevention_started_v1: CrystalPreventionStartedV1,
+    #[serde(default, skip_serializing_if = "FixedDamagePaidV3::is_empty")]
+    pub fixed_damage_paid_v3: FixedDamagePaidV3,
+    #[serde(default, skip_serializing_if = "EquipmentDamagePublishedV4::is_empty")]
+    pub equipment_damage_published_v4: EquipmentDamagePublishedV4,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EquipmentDamagePublishedV4(pub Option<u32>);
+impl EquipmentDamagePublishedV4 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for EquipmentDamagePublishedV4 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "equipment-damage-publication/v4".hash(state);
+            index.hash(state);
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GorehornPublishedV1(pub Option<u32>);
+impl GorehornPublishedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for GorehornPublishedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "gorehorn-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1556,6 +1601,69 @@ impl Hash for FrenziedGoblinPublicationV1 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if let Some(index) = self.0 {
             "frenzied-goblin-publication/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct VampireGourmandStartedBindingV1 {
+    pub stack_item_id: StackItemId,
+    pub source: AbilitySourceContractV4,
+    pub first_receipt_history_index: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VampireGourmandStartedV1(pub Option<VampireGourmandStartedBindingV1>);
+
+impl VampireGourmandStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VampireGourmandStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(binding) = self.0 {
+            "vampire-gourmand-started/v1".hash(state);
+            binding.hash(state);
+        }
+    }
+}
+
+/// Mana spent to cast a spell. Zero contributes nothing to the in-process
+/// `Hash`, so stack items that never record it keep their prior
+/// `GameState::state_hash`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CrystalPreventionStartedV1(pub Option<u32>);
+impl CrystalPreventionStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for CrystalPreventionStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "crystal-prevention-started/v1".hash(state);
+            index.hash(state);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FixedDamagePaidV3(pub Option<u32>);
+impl FixedDamagePaidV3 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for FixedDamagePaidV3 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "fixed-damage-paid/v3".hash(state);
             index.hash(state);
         }
     }
@@ -1914,6 +2022,8 @@ pub struct FirstLifeGainCaptureV1 {
 #[serde(deny_unknown_fields)]
 pub struct GameState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_turn_v1: Option<crate::extra_turn_v1::ExtraTurnStateV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creatures_attacked_turn_v1: Option<(u32, PlayerId, Vec<ObjectLinkV4>)>,
 
     pub objects: Arena<GameObject>,
@@ -1990,8 +2100,8 @@ pub struct GameState {
     /// battlefield incarnation for intervening-if trigger comparisons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creature_stats_lki_v1: Option<Vec<CreatureStatsLkiV1>>,
-    /// Players who lost life this turn. Only `standard-magezero-fixtures`
-    /// builds record it.
+    /// Players who lost life this turn. Standard records its original ledger;
+    /// Limited opts in only through an actual selected life-loss definition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub life_loss_turn_v1: Option<LifeLossTurnV1>,
     /// Creatures that can't attack or block while a source stays under
@@ -2024,6 +2134,8 @@ pub struct GameState {
     /// Kept separate from already ordered or target-suspended pending triggers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2083,6 +2195,19 @@ pub struct CreatureStatsLkiV1 {
 }
 
 impl GameState {
+    /// Legacy round key until the selected extra-turn scheduler is installed.
+    pub(crate) fn turn_key_v1(&self) -> u32 {
+        self.extra_turn_v1
+            .as_ref()
+            .map_or(self.turn, |turn| turn.occurrence)
+    }
+
+    pub(crate) fn own_turn_count_v1(&self, player: PlayerId) -> u32 {
+        self.extra_turn_v1
+            .as_ref()
+            .map_or(self.turn, |turn| turn.own_turns_started[player.index()])
+    }
+
     /// Counters `object`'s battlefield incarnation `zone_change_count` had
     /// when it left, or `None` if it had none (or was never recorded).
     pub fn counter_lki_for(&self, object: ObjectId, zone_change_count: u32) -> Option<Counters> {
@@ -2105,6 +2230,10 @@ impl GameState {
 /// its `EnvironmentV2` arm (explicit discriminant).
 impl Hash for GameState {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(extra) = &self.extra_turn_v1 {
+            "extra-turn-v1".hash(state);
+            extra.hash(state);
+        }
         if let Some(attacked) = &self.creatures_attacked_turn_v1 {
             "creatures-attacked-turn-v1".hash(state);
             attacked.hash(state);
@@ -2196,6 +2325,10 @@ impl Hash for GameState {
             "wildwood-waiting-v1".hash(state);
             waiting.hash(state);
         }
+        if let Some(waiting) = &self.raid_waiting_v1 {
+            "raid-entry-waiting/v1".hash(state);
+            waiting.hash(state);
+        }
     }
 }
 
@@ -2252,7 +2385,7 @@ impl GameState {
     /// current controllers, drained events or the current combat object.
     pub fn player_attacked_this_turn_v1(&self, player: PlayerId) -> bool {
         self.attack_declaration_turn_v1.is_some_and(|history| {
-            history.turn == self.turn
+            history.turn == self.turn_key_v1()
                 && history.active_player == self.active_player
                 && history.active_player == player
         })
@@ -2260,14 +2393,17 @@ impl GameState {
 
     pub fn player_lost_life_this_turn_v1(&self, player: PlayerId) -> bool {
         self.life_loss_turn_v1.is_some_and(|loss| {
-            loss.turn == self.turn
+            loss.turn == self.turn_key_v1()
                 && loss.active_player == self.active_player
                 && loss.players[player.index()]
         })
     }
 
     /// Records that `player` lost life now.
-    #[cfg(feature = "standard-magezero-fixtures")]
+    #[cfg(any(
+        feature = "standard-magezero-fixtures",
+        feature = "limited-fdn-fixtures"
+    ))]
     pub(crate) fn record_life_loss_v1(&mut self, player: PlayerId) {
         let mut players = if self.player_lost_life_this_turn_v1(player.opponent()) {
             let mut players = [false; 2];
@@ -2278,7 +2414,7 @@ impl GameState {
         };
         players[player.index()] = true;
         self.life_loss_turn_v1 = Some(LifeLossTurnV1 {
-            turn: self.turn,
+            turn: self.turn_key_v1(),
             active_player: self.active_player,
             players,
         });
@@ -2287,7 +2423,9 @@ impl GameState {
     pub fn creatures_attacked_this_turn_v1(&self) -> u32 {
         self.creatures_attacked_turn_v1
             .as_ref()
-            .filter(|(turn, active, _)| *turn == self.turn && *active == self.active_player)
+            .filter(|(turn, active, _)| {
+                *turn == self.turn_key_v1() && *active == self.active_player
+            })
             .map_or(0, |(_, _, objects)| {
                 u32::try_from(objects.len()).unwrap_or(u32::MAX)
             })
@@ -2295,7 +2433,7 @@ impl GameState {
 
     pub fn creature_died_this_turn_v1(&self) -> bool {
         self.creature_death_turn_v1.is_some_and(|death| {
-            death.turn == self.turn && death.active_player == self.active_player
+            death.turn == self.turn_key_v1() && death.active_player == self.active_player
         })
     }
 
@@ -2360,6 +2498,7 @@ impl GameState {
         player1.library = library1;
 
         let mut state = GameState {
+            extra_turn_v1: None,
             objects,
             players: [player0, player1],
             turn: 1,
@@ -2398,8 +2537,10 @@ impl GameState {
             legend_pending_v1: None,
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
+            raid_waiting_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
+        crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
         state
     }
 
@@ -2418,7 +2559,7 @@ impl GameState {
         self.transfer_library_knowledge_to_hand(player, 0, id);
         self.note_library_removal(player, 0);
         self.clear_object_relations(id);
-        let turn = self.turn;
+        let turn = self.turn_key_v1();
         let new_generation = {
             let object = self.objects.get_mut(id);
             object.zone = Zone::Hand;
@@ -3294,7 +3435,7 @@ impl GameState {
         ps.battlefield.push(id);
         self.forget_hand_object(id);
         self.clear_object_relations(id);
-        let turn = self.turn;
+        let turn = self.turn_key_v1();
         let enters_battlefield_tapped = crate::card_def::CARD_DEFS
             [self.objects.get(id).card_def as usize]
             .enters_battlefield_tapped;

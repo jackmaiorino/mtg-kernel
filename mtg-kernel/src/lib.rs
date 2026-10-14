@@ -39,6 +39,7 @@ pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod attack_target_v1;
+pub mod banishing_light_v1;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -50,9 +51,15 @@ pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
 pub mod legend_rule_v1;
+mod librarian_activation_v1;
+pub mod librarian_public_v1;
+pub mod linked_aura_operation_v1;
+pub mod linked_aura_return_v1;
+pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
 pub mod planeswalker_v1;
+pub mod rules_meaning_librarian_v1;
 mod soul_shackled_zombie_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
@@ -77,21 +84,39 @@ mod authority_public_capture_v1;
 pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
+pub mod crystal_public_v1;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
+mod equipment_damage_source_v4;
 pub mod event;
 pub mod expanded_deck_training_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 mod experimental_burn_net8_packed_v1;
+pub mod extra_turn_v1;
 mod fdn_raid_v1;
+mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
+pub mod garruk_public_v1;
+mod gorehorn_damage_v1;
+
+pub mod gourmand_public_v1;
+
+mod fiery_annihilation_v1;
+pub mod fiery_public_v1;
 pub mod human_opening_v1;
 pub mod native_expanded_training_run_v1;
+mod raid_entry_custody_v1;
+mod raid_entry_v1;
+pub mod rules_meaning_crystal_ordering_v1;
+pub mod rules_meaning_fiery_v1;
+pub mod rules_meaning_gourmand_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;
 mod sower_restriction_capture_v1;
+pub(crate) mod vampire_gourmand_dispatch_v2;
+mod vampire_gourmand_v1;
 #[cfg(feature = "viewer-recording-v1")]
 pub mod viewer_capture_v1;
 pub mod wildwood_public_v1;
@@ -120,6 +145,7 @@ pub mod policy_observation_v9;
 pub mod policy_observation_variable_cast_v1;
 pub mod rl_variable_cast_v1;
 pub mod rules_meaning_authority_v1;
+pub mod rules_meaning_garruk_v1;
 pub mod rules_meaning_heartfire_v1;
 pub mod rules_meaning_ooze_v1;
 pub mod unclamped_softmax_sampler_v1;
@@ -474,6 +500,7 @@ mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
 pub mod paired_bo1_harness_v1;
 pub mod phase1_w8a_live_swap_self_play_v1;
+pub(crate) mod search_profile_v1;
 pub mod sideboard_play_policy_v1;
 pub mod sideboard_search_campaign_v1;
 // MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
@@ -483,7 +510,10 @@ pub mod sideboard_search_campaign_v1;
 mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
+pub(crate) mod combat_static_rules_v1;
+pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
+pub(crate) mod life_loss_turn_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
@@ -492,7 +522,9 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
+pub mod rules_meaning_juggernaut_v1;
 pub mod rules_meaning_soul_shackled_zombie_v1;
+pub mod rules_meaning_stromkirk_v1;
 pub mod runtime_decks;
 mod self_reflection_v1;
 pub mod sideboard;
@@ -506,6 +538,9 @@ mod store_v2_resume_walk_timing_harness_v1;
 /// Frozen committed-source-tree capture for science workload preflight and
 /// postflight binding.
 pub mod strict_source_tree_attestation_v1;
+pub(crate) mod stromkirk_bloodthief_v1;
+pub(crate) mod stromkirk_dispatch_v1;
+pub mod stromkirk_public_v1;
 pub mod surface;
 pub mod surface_v2;
 pub mod trace;
@@ -516,9 +551,13 @@ pub mod xmage_observed_inference_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
+mod ashroot_animist_v1;
+pub mod ashroot_dispatch_v2;
+pub mod ashroot_public_v1;
 mod frenzied_goblin_v1;
 pub mod public_cost_features_v1;
 pub(crate) mod public_stack_features_v1;
+pub mod rules_meaning_ashroot_v1;
 pub mod rules_meaning_crystal_barricade_v1;
 pub mod rules_meaning_frenzied_goblin_v1;
 pub mod rules_meaning_searslicer_v1;
@@ -547,7 +586,29 @@ pub fn run_experimental_burn_net8_cuda_train_v1() -> Result<(), Box<dyn std::err
     experimental_burn_net8_packed_v1::run_cuda_training_v1()
 }
 
+pub(crate) mod bloom_tender_mana_v1;
+pub mod bloom_tender_public_v1;
 pub mod cauldron_grants_v1;
 mod crystal_barricade_v1;
+pub mod rules_meaning_bloom_tender_v1;
 pub mod rules_meaning_cerberus_v1;
 pub mod rules_meaning_employment_v1;
+
+pub mod extra_turn_public_v1;
+pub mod raid_entry_public_v1;
+pub mod rules_meaning_banishing_v1;
+pub mod rules_meaning_extra_turn_v1;
+pub mod rules_meaning_raid_entry_v1;
+
+pub mod arahbo_v1;
+pub mod banishing_public_v1;
+pub mod garruks_uprising_v1;
+
+pub mod rules_meaning_arahbo_v1;
+
+pub mod arahbo_public_v1;
+pub mod rules_meaning_strongbox_v1;
+
+pub mod strongbox_public_v1;
+
+pub mod fiery_observation_v1;

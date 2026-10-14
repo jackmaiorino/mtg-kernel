@@ -1,0 +1,27 @@
+{
+  "definition": {
+    "name": "Garruk's Uprising",
+    "mana_cost": "{2}{G}",
+    "mana_value": 3,
+    "colors": [
+      "G"
+    ],
+    "types": [
+      "Enchantment"
+    ],
+    "subtypes": [],
+    "supertypes": [],
+    "power": null,
+    "toughness": null,
+    "is_land": false,
+    "produces_mana": [],
+    "is_token": false,
+    "java_file": "Mage.Sets/src/mage/cards/g/GarruksUprising.java"
+  },
+  "primary_source": {
+    "repository": "XMage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/g/GarruksUprising.java"
+  },
+  "disposition": "UNREGISTERED source preparation; no catalog/profile ID or capability admission"
+}

@@ -1,0 +1,18 @@
+{
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "sources": {
+    "Arahbo, the First Fang": {
+      "path": "Mage.Sets/src/mage/cards/a/ArahboTheFirstFang.java",
+      "sha256": "6f9f1eb2f94dc2404139a8f78f94a8093c6034e24cac4cdce7b283f7bd26ded2"
+    },
+    "Strongbox Raider": {
+      "path": "Mage.Sets/src/mage/cards/s/StrongboxRaider.java",
+      "sha256": "f960d3c31bf03a65e39e1c39faf95f3da1b0d01306f09bbe03822bd7d3e7c0a9"
+    }
+  },
+  "engine_ids": {
+    "Arahbo, the First Fang": 422,
+    "Strongbox Raider": 423
+  },
+  "native_qualified": false
+}

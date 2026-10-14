@@ -1,12 +1,10 @@
 use super::*;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 
 #[test]
 fn ordinary_public_parts_and_hidden_identity_parity_keep_real_predecessor_fields() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         put(&mut state, actor, "Forest", Zone::Hand);
         let hidden = put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         let surface = PolicySurfaceV5::new();
@@ -59,9 +57,7 @@ fn activated_target(actor: PlayerId, name: &str) -> (GameState, ObjectId, Object
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     let source = put(&mut state, actor, "Sower of Chaos", Zone::Battlefield);
     let recipient = put(&mut state, actor.opponent(), name, Zone::Battlefield);
     put(&mut state, actor, "Forest", Zone::Hand);

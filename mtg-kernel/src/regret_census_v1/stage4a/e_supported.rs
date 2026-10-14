@@ -80,6 +80,8 @@ pub(crate) fn query(
         },
         urgency: Some(1.5),
         key_mode: KeyMode::Repaired,
+        interchange: false,
+        bestline: None,
     };
     let mut roles = Roles {
         focal: teacher.fork_for_collection_v3()?,
