@@ -5156,6 +5156,11 @@ fn triggers_from_events(
                 if crate::fiendish_panda_v1::owns_definition(obj.card_def) {
                     continue; // Both roots are captured at actual commit, before later operations/SBA.
                 }
+                if crate::high_society_hunter_v1::owns_definition(obj.card_def)
+                    && def.condition == TriggerCondition::Attacks
+                {
+                    continue; // The genuine attack capture owns this occurrence and full publication.
+                }
                 if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
                     continue;
                 }

@@ -300,6 +300,12 @@ mod future_printed {
                 && state.active_player == actor
                 && matches!(decision, Decision::CastSpellOrPass { .. })
             {
+                // Keep a genuine instant choice for both seats, so the actor
+                // surface cannot automatically pass every paid-stack window.
+                for seat in [actor, actor.opponent()] {
+                    put(&mut state, seat, "Lightning Bolt", Zone::Hand);
+                    put(&mut state, seat, "Mountain", Zone::Battlefield);
+                }
                 return state;
             }
             match decision {
