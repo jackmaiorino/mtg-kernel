@@ -3,10 +3,12 @@
 //! Cleanup binds expiry to an original complete ending-turn roster. Death
 //! custody and full consumer admission remain separate, unfinished work.
 
-use super::grant_primitive::{primitive_install_grant_v50, PrimitiveGrantV50};
+use super::grant_primitive::{
+    primitive_install_grant_v50, PrimitiveDeathLookbackV50, PrimitiveGrantV50,
+};
 use crate::card_def::{CardCapability, CardType, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp};
-use crate::event::CommittedEvent;
+use crate::event::{CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::state::{GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -116,6 +118,12 @@ pub enum JournalV50 {
     },
     CleanupCompleted {
         occurrence: u64,
+    },
+    DeathCaptured {
+        installation: u64,
+        lookback: PrimitiveDeathLookbackV50,
+        departure: u64,
+        graveyard_source: Option<crate::state::AbilitySourceContractV4>,
     },
 }
 
@@ -660,6 +668,80 @@ pub(crate) fn finish_cleanup(
         },
     );
     validate_grant_lifetime(state)
+}
+
+/// Called against the immutable pre-batch board after replacement selection.
+/// Grant order is installation order, regardless of the dying card's name.
+pub(crate) fn capture_death(
+    state: &GameState,
+    event: &ProposedEvent,
+) -> Result<Vec<CommittedEvent>, String> {
+    if !state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(journal(e), Some(JournalV50::Installed { .. })))
+    {
+        return Ok(Vec::new());
+    }
+    validate_grant_lifetime(state)?;
+    let end = state.engine.event_history.len();
+    let mut captures = Vec::new();
+    for (installation, grant, ..) in installations_before(state, end) {
+        if expired_before(state, installation, end) {
+            continue;
+        }
+        if let Some(lookback) =
+            super::grant_primitive::primitive_death_lookback_v50(state, grant, event)?
+        {
+            captures.push(CommittedEvent::FakeJournalV50 {
+                journal: Box::new(JournalV50::DeathCaptured {
+                    installation,
+                    lookback,
+                    departure: u64::MAX,
+                    graveyard_source: None,
+                }),
+            });
+        }
+    }
+    Ok(captures)
+}
+
+/// The original pre-death operand becomes committed authority only beside the
+/// exact real move, before a later move or token SBA can erase the graveyard.
+pub(crate) fn bind_death_departure(
+    state: &GameState,
+    event: &mut CommittedEvent,
+    index: usize,
+) -> Result<(), String> {
+    let CommittedEvent::FakeJournalV50 { journal: entry } = event else {
+        return Ok(());
+    };
+    let JournalV50::DeathCaptured {
+        installation,
+        lookback,
+        departure,
+        graveyard_source,
+    } = entry.as_mut()
+    else {
+        return Ok(());
+    };
+    if *departure != u64::MAX
+        || graveyard_source.is_some()
+        || !matches!(usize::try_from(*installation).ok().and_then(|i|state.engine.event_history.get(i)).and_then(journal),Some(JournalV50::Installed {grant,..}) if *grant==lookback.grant)
+        || expired_before(state, *installation, index)
+    {
+        return Err("Fake death capture changed original installation or was rebound".into());
+    }
+    let context =
+        super::grant_primitive::primitive_bind_committed_death_v50(state, lookback, index as u64)?;
+    *graveyard_source = Some(
+        context
+            .ability_source_contract
+            .ok_or("Fake committed death lost original graveyard source")?,
+    );
+    *departure = index as u64;
+    Ok(())
 }
 pub(crate) fn departure_candidate(state: &GameState, source: ObjectId) -> Option<(u64, StackItem)> {
     state.engine.event_history.iter().enumerate().rev().find_map(|(i,e)| match journal(e) {

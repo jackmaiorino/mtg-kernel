@@ -2874,8 +2874,19 @@ fn commit_with_entry_batch_and_source_color(
     let death_captures = if matches!(&event, ProposedEvent::ZoneChange(change)
         if change.to_zone == Zone::Graveyard)
     {
-        frozen_death_captures
+        match frozen_death_captures
+            .map(Ok)
             .unwrap_or_else(|| crate::creature_death_capture_v1::capture(state, &event))
+        {
+            Ok(captures) => captures,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
     } else {
         Vec::new()
     };
@@ -3436,6 +3447,19 @@ fn commit_with_entry_batch_and_source_color(
     if committed_death {
         for mut capture in death_captures {
             crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
+            if crate::fake_your_own_death_v50::spell_custody::bind_death_departure(
+                state,
+                &mut capture,
+                entry_history_index,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
             state.engine.event_log.push(capture.clone());
             state.engine.event_history.push(capture);
         }
@@ -3787,13 +3811,24 @@ fn commit_batch_survivors(
             })
             .collect::<Vec<_>>()
     });
-    let mut death_captures = crate::creature_death_capture_v1::enabled().then(|| {
-        survivors
+    let mut death_captures = if crate::creature_death_capture_v1::enabled() {
+        let captured = survivors
             .iter()
             .map(|event| crate::creature_death_capture_v1::capture(state, event))
-            .collect::<Vec<_>>()
-            .into_iter()
-    });
+            .collect::<Result<Vec<_>, _>>();
+        match captured {
+            Ok(captures) => Some(captures.into_iter()),
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let mut counter_inputs = survivors
         .iter()
         .map(|event| crate::doubling_season_v48::entry_input(state, event))
@@ -3951,7 +3986,17 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 &ProposedEvent::zone_change(*id, Zone::Graveyard),
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>();
+    let captures = match captures {
+        Ok(captures) => captures,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
     for (&id, captures) in chosen.iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         log_sacrifice(state, id);
@@ -4028,7 +4073,17 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     let captures = events
         .iter()
         .map(|event| crate::creature_death_capture_v1::capture(state, event))
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>();
+    let captures = match captures {
+        Ok(captures) => captures,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
     for (event, captures) in events.into_iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         commit_with_entry_batch_and_source_color(

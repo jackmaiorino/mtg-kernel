@@ -41,6 +41,18 @@ ownerless-root both-seat/restore case is
 authored, not passed; genuine paid printing and copy/counter/fizzle fixtures need
 the completed owner and eventual registration.
 
+The shared death-capture source now includes gained Fake abilities independently
+of the dying creature's printed name. Original unexpired installation records
+and the same immutable pre-batch board supply every lookback. Single departures,
+simultaneous replaced batches, sacrifice groups and SBA deaths propagate capture
+validation errors before moving those members. Only an actual battlefield to
+graveyard commitment binds the frozen grant and controller-at-death to its exact
+death index and original graveyard incarnation, before later moves or token SBA.
+Panda and older definition-owned captures retain their established prefix/order.
+The gained-ability marker remains private and is not yet a collected or published
+trigger. This new source is uncompiled/unrun; whole capture-roster validation,
+collection, APNAP, publication and removal/return/entry custody still need work.
+
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes
