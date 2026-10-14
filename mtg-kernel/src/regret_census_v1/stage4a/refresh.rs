@@ -316,6 +316,11 @@ impl Searches<'_> {
                 r["key_memo"] = diag.key_memo;
             }
         }
+        if !diag.inference_cache.is_null() {
+            if let Some(r) = self.records.last_mut() {
+                r["inference_cache"] = diag.inference_cache;
+            }
+        }
         #[cfg(feature = "viewer-recording-v1")]
         if let Some(observer) = self.observer.as_deref_mut() {
             let mut record = self.records.last().unwrap().clone();

@@ -439,6 +439,8 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            inference_cache: None,
+            inference_key: Vec::new(),
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]

@@ -392,6 +392,39 @@ fn finish(end: Result<End, PlayErr>, suffix: Suffix, meter: &Meter, c: &Counters
 }
 
 impl Roles {
+    fn policies_mut(&mut self) -> impl Iterator<Item = &mut FrozenPlayPolicyV1> {
+        [&mut self.focal, &mut self.scorer, &mut self.inner_focal]
+            .into_iter()
+            .chain(self.opps.iter_mut())
+            .chain(self.inner_opps.iter_mut())
+    }
+
+    /// This worker's prediction cache when `MTG_KERNEL_INFERENCE_CACHE_MIB`
+    /// is set (or one is already attached): attached to every role on first use and emptied at the start
+    /// of each search, so a search never sees another search's entries.
+    pub(crate) fn search_inference_cache(
+        &mut self,
+    ) -> Result<Option<crate::inference_cache_v1::SharedV1>, String> {
+        // A cache the caller attached is used as is (tests attach one).
+        let cache = match (
+            self.focal.inference_cache_v1(),
+            crate::inference_cache_v1::budget_bytes_v1(),
+        ) {
+            (Some(cache), _) => cache.clone(),
+            (None, Some(budget)) => crate::inference_cache_v1::InferenceCacheV1::shared(budget),
+            (None, None) => return Ok(None),
+        };
+        for p in self.policies_mut() {
+            if p.inference_cache_v1()
+                .is_none_or(|c| !std::sync::Arc::ptr_eq(c, &cache))
+            {
+                p.attach_inference_cache_v1(&cache)?;
+            }
+        }
+        cache.lock().unwrap_or_else(|p| p.into_inner()).reset();
+        Ok(Some(cache))
+    }
+
     /// D's improved choice at the current focal decision: top two, one
     /// uniform draw from the rest and the model-sampled action, one inner
     /// plain playout each on one shared lawful sample of the focal player's
@@ -1106,6 +1139,19 @@ impl Roles {
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
         let mut memo = key_memo_enabled().then(KeyMemo::new);
+        let inference_cache = match self.search_inference_cache() {
+            Ok(cache) => cache,
+            Err(e) => {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![e],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                )
+            }
+        };
         let mut staged: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let started = Instant::now();
         let mut sel = Selection::default();
@@ -1265,6 +1311,9 @@ impl Roles {
         }
         if let Some(m) = &memo {
             diag.key_memo = m.json();
+        }
+        if let Some(cache) = &inference_cache {
+            diag.inference_cache = cache.lock().unwrap_or_else(|p| p.into_inner()).json();
         }
         sel.transitions = meter.spent;
         sel.inference = c.inference;
@@ -1667,6 +1716,9 @@ pub(crate) struct SearchDiag {
     pub(crate) keys: KeyStats,
     /// Key memo counters when `S4A_KEY_MEMO=1` (null otherwise).
     pub(crate) key_memo: Value,
+    /// Prediction cache counters when `MTG_KERNEL_INFERENCE_CACHE_MIB` is
+    /// set (null otherwise).
+    pub(crate) inference_cache: Value,
     pub(crate) edges: HashMap<(Key, usize), EdgeWin>,
     /// Stored node -> legacy history identity -> natural backups per edge.
     pub(crate) legacy: HashMap<Key, BTreeMap<Key, Vec<u64>>>,
