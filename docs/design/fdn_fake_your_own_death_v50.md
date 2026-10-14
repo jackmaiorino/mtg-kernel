@@ -151,6 +151,32 @@ own collection, publication, removal, cleanup and completion. No primitive
 operand is executable trigger authority. Source review is scoped CLEAR; native
 qualification remains pending.
 
+## Owned death resolution candidate
+
+The next source component borrows the actual stack top before removal, retaining
+the complete original publication and stack. The gained row keeps its battlefield
+source. A separate private execution context uses the already committed graveyard
+incarnation and controller at death; it never recaptures a later incarnation.
+The actual post-pop callback retains the original source snapshot and ordered
+program, runs return before Treasure, and leaves the ordinary legend pass until
+both instructions finish. Tokens or cards that have already left that graveyard
+still receive the Treasure instruction.
+
+Treasure input is captured after return, so a returned replacement source can
+affect its complete issued token roster. Its original replacement operands,
+creation indices and unique completion are retained. Stable ingress accepts a
+removed row only with its completed operation or an authenticated enclosing
+Step/Advance entry checkpoint reconstructed by the existing entry replay. It
+does not change generic continuation context validation or ownerless root refusal.
+
+This component and extended both-seat restored orphan refusals are uncompiled
+and unrun. Native121 qualifies the preceding component: all20 authored groups
+pass there, but no genuine paid Fake printing exists. Animated returning Aura
+attachment remains an explicit refusal pending its owned choice path. Entry
+choice restore/coexistence, actual paid casting and resolution/counter fixtures,
+other departure and complete V50 consumers/models still require implementation
+or qualification. No printing ID, Full registration or model admission is added.
+
 ## Simultaneous death roster
 
 One immutable pre-batch battlefield supplies every grant lookback. The primitive

@@ -155,6 +155,24 @@ pub enum JournalV50 {
         input: u64,
         remaining_stack: Vec<StackItem>,
     },
+    DeathResolutionInput {
+        publication: u64,
+        original_stack: Vec<StackItem>,
+        context: Box<crate::effect::ExecCtx>,
+        original_source: Option<Box<crate::state::GameObject>>,
+        in_original_graveyard: bool,
+        program: Box<EffectOp>,
+    },
+    DeathTreasureInput {
+        resolution: u64,
+        replacement: crate::doubling_season_v48::ReplacementInputV48,
+    },
+    DeathResolutionClosed {
+        input: u64,
+        treasure: u64,
+        returned: Option<u64>,
+        created: Vec<(u64, crate::ids::ObjectId)>,
+    },
 }
 
 pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {

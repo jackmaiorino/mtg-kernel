@@ -86,6 +86,25 @@ pub fn primitive_death_program_v50(
     let source = context
         .ability_source_contract
         .ok_or("Fake Your Own Death primitive lacks its captured graveyard source")?;
+    primitive_death_program_from_input_v50(
+        context,
+        was_token_at_death,
+        state.objects.try_get(source.source),
+        state.players[source.owner.index()]
+            .graveyard
+            .contains(&source.source),
+    )
+}
+
+pub(crate) fn primitive_death_program_from_input_v50(
+    context: &ExecCtx,
+    was_token_at_death: bool,
+    original: Option<&crate::state::GameObject>,
+    in_original_graveyard: bool,
+) -> Result<EffectOp, String> {
+    let source = context
+        .ability_source_contract
+        .ok_or("Fake Your Own Death primitive lacks its captured graveyard source")?;
     if source.source != context.source
         || source.zone != Zone::Graveyard
         || !context.targets.is_empty()
@@ -95,7 +114,7 @@ pub fn primitive_death_program_v50(
     }
     let token_def = treasure_definition()?;
     let can_return = !was_token_at_death
-        && state.objects.try_get(source.source).is_some_and(|live| {
+        && original.is_some_and(|live| {
             live.zone == Zone::Graveyard
                 && live.zone_change_count == source.zone_change_count
                 && live.card_def == source.card_def
@@ -115,9 +134,7 @@ pub fn primitive_death_program_v50(
                         .into_iter()
                         .any(|kind| definition.has_type(kind))
                     })
-                && state.players[source.owner.index()]
-                    .graveyard
-                    .contains(&source.source)
+                && in_original_graveyard
         });
     let mut program = Vec::with_capacity(2);
     if can_return {
@@ -226,6 +243,7 @@ mod tests {
                 assert!(death_custody::publish(&mut state, &item).is_err());
                 assert_eq!(state, before);
                 assert!(death_custody::acquire_counter(&state, &item).is_err());
+                assert!(death_custody::acquire_resolution(&state, &item).is_err());
                 assert!(
                     engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id).is_err()
                 );
@@ -252,6 +270,26 @@ mod tests {
                 JournalV50::DeathCounterClosed {
                     input: 0,
                     remaining_stack: Vec::new(),
+                },
+                JournalV50::DeathResolutionInput {
+                    publication: 0,
+                    original_stack: vec![item.clone()],
+                    context: Box::new(context(&state, source, actor)),
+                    original_source: Some(Box::new(state.objects.get(source).clone())),
+                    in_original_graveyard: false,
+                    program: Box::new(EffectOp::Sequence(Vec::new())),
+                },
+                JournalV50::DeathTreasureInput {
+                    resolution: 0,
+                    replacement: crate::doubling_season_v48::ReplacementInputV48::capture(
+                        &state, actor,
+                    ),
+                },
+                JournalV50::DeathResolutionClosed {
+                    input: 0,
+                    treasure: 0,
+                    returned: None,
+                    created: Vec::new(),
                 },
             ] {
                 let mut injected = state.clone();

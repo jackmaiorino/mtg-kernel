@@ -163,6 +163,22 @@ pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
 }
 
+/// Borrow the existing enclosing operation of a published entry checkpoint.
+pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
+    if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
+        return Some((&pending.original, &pending.operation));
+    }
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_general_v36 {
+        return Some((&pending.original, &pending.operation));
+    }
+    state
+        .engine
+        .linked_aura_operation_v1
+        .pending
+        .as_ref()
+        .map(|pending| (pending.original.as_ref(), &pending.operation))
+}
+
 /// An opaque input for speculative Panda verification. It cannot install a
 /// runtime in a restored game; the only installer below borrows a local replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

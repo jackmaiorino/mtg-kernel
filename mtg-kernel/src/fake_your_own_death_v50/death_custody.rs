@@ -2,10 +2,12 @@
 //! These records are not permission to execute the private root.
 
 use super::spell_custody::{emit, journal, JournalV50};
-use crate::effect::EffectOp;
+use crate::effect::{EffectOp, ExecCtx};
 use crate::event::CommittedEvent;
 use crate::ids::ObjectId;
-use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackStateV4};
+use crate::state::{
+    AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, StackStateV4, Zone,
+};
 use crate::trigger::PendingTrigger;
 
 fn binding(item: &StackItem) -> Option<u64> {
@@ -257,6 +259,208 @@ fn counter_inputs(state: &GameState, publication: u64) -> Vec<u64> {
             if *original == publication).then_some(index as u64)).collect()
 }
 
+/// The public gained row keeps its battlefield source. This private operand
+/// carries the independently captured graveyard incarnation used for return.
+pub(crate) struct DeathResolutionOwnerV50 {
+    loan: CounterOwnerV50,
+    context: ExecCtx,
+    original_source: Option<Box<GameObject>>,
+    in_original_graveyard: bool,
+    program: EffectOp,
+}
+
+fn death_context(state: &GameState, item: &StackItem) -> Result<(ExecCtx, bool), String> {
+    let capture = binding(item).ok_or("Fake resolution lost its captured root")?;
+    let Some(JournalV50::DeathCaptured {
+        lookback,
+        graveyard_source: Some(source),
+        ..
+    }) = usize::try_from(capture)
+        .ok()
+        .and_then(|index| state.engine.event_history.get(index))
+        .and_then(journal)
+    else {
+        return Err("Fake resolution lost its original graveyard input".into());
+    };
+    let mut context = ExecCtx::no_targets(item.source, item.controller);
+    context.stack_item_id = Some(item.v4.stack_item_id);
+    context.ability_source_contract = Some(*source);
+    Ok((context, lookback.was_token_at_death))
+}
+
+pub(crate) fn acquire_resolution(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<DeathResolutionOwnerV50>, String> {
+    let Some(loan) = acquire_counter(state, item)? else {
+        return Ok(None);
+    };
+    if loan.position.checked_add(1) != Some(state.stack.len()) {
+        return Err("Fake resolution did not borrow the actual stack top".into());
+    }
+    let (context, token) = death_context(state, item)?;
+    let source = context.ability_source_contract.unwrap();
+    let original_source = state.objects.try_get(source.source).cloned().map(Box::new);
+    let in_original_graveyard = state.players[source.owner.index()]
+        .graveyard
+        .contains(&source.source);
+    let program = super::primitive_death_program_from_input_v50(
+        &context,
+        token,
+        original_source.as_deref(),
+        in_original_graveyard,
+    )?;
+    // Untargeted Aura attachment needs its own returning-Aura choice operand.
+    // Keep that unresolved path explicit rather than performing an illegal entry.
+    if matches!(&program, EffectOp::Sequence(steps) if steps.len() == 2)
+        && original_source.as_ref().is_some_and(|object| {
+            crate::card_def::CARD_DEFS[usize::from(object.card_def)]
+                .attachment
+                .is_some()
+        })
+    {
+        return Err(
+            "Fake returning Aura attachment requires its remaining owned choice path".into(),
+        );
+    }
+    Ok(Some(DeathResolutionOwnerV50 {
+        loan,
+        context,
+        original_source,
+        in_original_graveyard,
+        program,
+    }))
+}
+
+pub(crate) fn resolve_owned(
+    state: &mut GameState,
+    owner: DeathResolutionOwnerV50,
+    item: &StackItem,
+    battlefield_context: &ExecCtx,
+) -> Result<(), String> {
+    let mut original_context = owner.context.clone();
+    original_context.ability_source_contract = item.v4.ability_source_contract;
+    let mut remaining = owner.loan.original_stack.clone();
+    let original = remaining.remove(owner.loan.position);
+    let source = owner.context.ability_source_contract.unwrap();
+    if original != *item
+        || original_context != *battlefield_context
+        || state.stack != remaining
+        || state.objects.try_get(source.source) != owner.original_source.as_deref()
+        || state.players[source.owner.index()]
+            .graveyard
+            .contains(&source.source)
+            != owner.in_original_graveyard
+        || !matches!(usize::try_from(owner.loan.publication).ok().and_then(|index| state.engine.event_history.get(index)).and_then(journal),
+            Some(JournalV50::DeathPublished { item: row, .. }) if row.as_ref() == item)
+        || !counter_inputs(state, owner.loan.publication).is_empty()
+        || !resolution_inputs(state, owner.loan.publication).is_empty()
+    {
+        return Err(
+            "Fake resolution changed its borrowed full stack, context or original source".into(),
+        );
+    }
+    let input = emit(
+        state,
+        JournalV50::DeathResolutionInput {
+            publication: owner.loan.publication,
+            original_stack: owner.loan.original_stack,
+            context: Box::new(owner.context.clone()),
+            original_source: owner.original_source,
+            in_original_graveyard: owner.in_original_graveyard,
+            program: Box::new(owner.program.clone()),
+        },
+    );
+    let EffectOp::Sequence(steps) = owner.program else {
+        return Err("Fake resolution lost its ordered return/creation program".into());
+    };
+    if steps.len() == 2 {
+        crate::effect::execute(&steps[0], &owner.context, state);
+    }
+    if state.engine.halted.is_some() {
+        return Err("Fake owned return halted".into());
+    }
+    let returned = state.engine.event_history.iter().enumerate().skip(input as usize + 1)
+        .find_map(|(index, event)| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
+            if *object == item.source).then_some(index as u64));
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, item.controller);
+    let expected_count = replacement.replaced_token_count(1)?;
+    let treasure = emit(
+        state,
+        JournalV50::DeathTreasureInput {
+            resolution: input,
+            replacement,
+        },
+    );
+    crate::effect::execute(steps.last().unwrap(), &owner.context, state);
+    if state.engine.halted.is_some() {
+        return Err("Fake owned Treasure creation halted".into());
+    }
+    let created = token_roster(
+        state,
+        treasure as usize + 1,
+        state.engine.event_history.len(),
+        item.controller,
+    )?;
+    if created.len() != expected_count {
+        return Err("Fake creation lost its complete replaced Treasure roster".into());
+    }
+    emit(
+        state,
+        JournalV50::DeathResolutionClosed {
+            input,
+            treasure,
+            returned,
+            created,
+        },
+    );
+    Ok(())
+}
+
+fn resolution_inputs(state: &GameState, publication: u64) -> Vec<u64> {
+    state.engine.event_history.iter().enumerate().filter_map(|(index, event)|
+        matches!(journal(event), Some(JournalV50::DeathResolutionInput { publication: original, .. })
+            if *original == publication).then_some(index as u64)).collect()
+}
+
+fn token_roster(
+    state: &GameState,
+    start: usize,
+    end: usize,
+    controller: crate::ids::PlayerId,
+) -> Result<Vec<(u64, ObjectId)>, String> {
+    let definition = super::treasure_definition()?;
+    let mut roster = Vec::new();
+    for (index, event) in state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(start)
+    {
+        if let CommittedEvent::CreateToken {
+            object,
+            token_def,
+            controller: actual,
+            ..
+        } = event
+        {
+            if *token_def != definition
+                || *actual != controller
+                || roster.iter().any(|(_, old)| old == object)
+            {
+                return Err(
+                    "Fake Treasure operation changed its complete issued token roster".into(),
+                );
+            }
+            roster.push((index as u64, *object));
+        }
+    }
+    Ok(roster)
+}
+
 fn validate_pending_shape(
     state: &GameState,
     pending: &PendingTrigger,
@@ -336,15 +540,39 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                         .iter()
                         .filter(|row| row.v4.stack_item_id == original.v4.stack_item_id)
                         .collect::<Vec<_>>();
-                    let closed = counter_inputs(state, *publication);
-                    if (closed.is_empty() && rows.as_slice() != [*original])
-                        || (closed.len() == 1 && !rows.is_empty())
-                        || closed.len() > 1
+                    let counter = counter_inputs(state, *publication);
+                    let resolution = resolution_inputs(state, *publication);
+                    let departures = counter.len() + resolution.len();
+                    if (departures == 0 && rows.as_slice() != [*original])
+                        || (departures == 1 && !rows.is_empty())
+                        || departures > 1
                     {
                         return Err(
                             "Fake published gained trigger changed or lost its unique live owner"
                                 .into(),
                         );
+                    }
+                    if let [input] = resolution.as_slice() {
+                        let completions = resolution_completions(state, *input);
+                        if completions.is_empty() {
+                            let Some((before, operation)) =
+                                crate::linked_aura_operation_v1::pending_original_operation(state)
+                            else {
+                                return Err("Fake removed resolution lost its completion or enclosing entry checkpoint".into());
+                            };
+                            if *input < before.engine.event_history.len() as u64
+                                || !matches!(
+                                    operation,
+                                    crate::linked_aura_operation_v1::OperationV1::Advance
+                                        | crate::linked_aura_operation_v1::OperationV1::Step(_)
+                                )
+                            {
+                                return Err("Fake entry checkpoint did not produce the original death resolution".into());
+                            }
+                            crate::linked_aura_operation_v1::validate(state)?;
+                        } else if completions.len() != 1 {
+                            return Err("Fake death resolution completed more than once".into());
+                        }
                     }
                 }
                 _ => {
@@ -511,6 +739,158 @@ pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
                     )
                 {
                     return Err("Fake counter closure lost its independent original input".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    validate_resolution_history(state)
+}
+
+fn resolution_completions(state: &GameState, input: u64) -> Vec<(usize, &JournalV50)> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match journal(event) {
+            Some(
+                entry @ JournalV50::DeathResolutionClosed {
+                    input: original, ..
+                },
+            ) if *original == input => Some((index, entry)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Metadata validation permits a synchronous in-flight input. Only the stable
+/// ingress validator above can admit a completed or replay-owned state.
+fn validate_resolution_history(state: &GameState) -> Result<(), String> {
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        match journal(event) {
+            Some(JournalV50::DeathResolutionInput {
+                publication,
+                original_stack,
+                context,
+                original_source,
+                in_original_graveyard,
+                program,
+            }) => {
+                let Some(JournalV50::DeathPublished { item, .. }) = usize::try_from(*publication)
+                    .ok()
+                    .and_then(|at| state.engine.event_history.get(at))
+                    .and_then(journal)
+                else {
+                    return Err("Fake resolution input lost its original publication".into());
+                };
+                let (expected_context, token) = death_context(state, item)?;
+                if *publication >= index as u64
+                    || original_stack.last() != Some(item.as_ref())
+                    || original_stack
+                        .iter()
+                        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+                        .count()
+                        != 1
+                    || context.as_ref() != &expected_context
+                    || resolution_inputs(state, *publication).as_slice() != [index as u64]
+                    || !counter_inputs(state, *publication).is_empty()
+                    || program.as_ref()
+                        != &super::primitive_death_program_from_input_v50(
+                            context,
+                            token,
+                            original_source.as_deref(),
+                            *in_original_graveyard,
+                        )?
+                {
+                    return Err("Fake resolution input changed its complete original row, death context or program".into());
+                }
+                let completions = resolution_completions(state, index as u64);
+                if completions.len() > 1 {
+                    return Err("Fake resolution duplicated its original completion".into());
+                }
+                if let [(
+                    closed_at,
+                    JournalV50::DeathResolutionClosed {
+                        treasure,
+                        returned,
+                        created,
+                        ..
+                    },
+                )] = completions.as_slice()
+                {
+                    let treasure_at = usize::try_from(*treasure)
+                        .map_err(|_| "Fake Treasure input index overflow")?;
+                    let Some(JournalV50::DeathTreasureInput {
+                        resolution,
+                        replacement,
+                    }) = state
+                        .engine
+                        .event_history
+                        .get(treasure_at)
+                        .and_then(journal)
+                    else {
+                        return Err("Fake completion lost its independent Treasure input".into());
+                    };
+                    let treasury = state.engine.event_history.iter().filter(|event|
+                        matches!(journal(event), Some(JournalV50::DeathTreasureInput { resolution, .. }) if *resolution == index as u64)).count();
+                    let returns = state.engine.event_history.iter().enumerate().take(treasure_at).skip(index+1).filter_map(|(at, event)|
+                        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
+                            if *object == item.source).then_some(at as u64)).collect::<Vec<_>>();
+                    let expects_return =
+                        matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2);
+                    if *resolution != index as u64
+                        || treasury != 1
+                        || treasure_at <= index
+                        || treasure_at >= *closed_at
+                        || replacement.controller != item.controller
+                        || returns.len() != usize::from(expects_return)
+                        || returns.first().copied() != *returned
+                        || *created
+                            != token_roster(state, treasure_at + 1, *closed_at, item.controller)?
+                        || created.len() != replacement.replaced_token_count(1)?
+                    {
+                        return Err("Fake completion changed ordered return or the complete replaced Treasure roster".into());
+                    }
+                    for source in &replacement.seasons {
+                        if source.controller != item.controller
+                            || source.zone != Zone::Battlefield
+                            || !crate::doubling_season_v48::owns_definition(source.card_def)
+                        {
+                            return Err(
+                                "Fake Treasure replacement borrowed a foreign source".into()
+                            );
+                        }
+                        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+                    }
+                }
+            }
+            Some(JournalV50::DeathTreasureInput { resolution, .. }) => {
+                if *resolution >= index as u64
+                    || !matches!(
+                        usize::try_from(*resolution)
+                            .ok()
+                            .and_then(|at| state.engine.event_history.get(at))
+                            .and_then(journal),
+                        Some(JournalV50::DeathResolutionInput { .. })
+                    )
+                {
+                    return Err("Fake Treasure input lost its preceding original resolution".into());
+                }
+            }
+            Some(JournalV50::DeathResolutionClosed { input, .. }) => {
+                if *input >= index as u64
+                    || !matches!(
+                        usize::try_from(*input)
+                            .ok()
+                            .and_then(|at| state.engine.event_history.get(at))
+                            .and_then(journal),
+                        Some(JournalV50::DeathResolutionInput { .. })
+                    )
+                {
+                    return Err(
+                        "Fake resolution closure lost its independent original input".into(),
+                    );
                 }
             }
             _ => {}

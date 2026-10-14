@@ -15110,6 +15110,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    let fake_death_owner =
+        match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
             Ok(owner) => owner,
@@ -15496,6 +15507,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = fake_death_owner {
+        if crate::fake_your_own_death_v50::death_custody::resolve_owned(state, owner, &item, &ctx)
+            .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = conqueror_owner.as_ref() {
         if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
             state,
