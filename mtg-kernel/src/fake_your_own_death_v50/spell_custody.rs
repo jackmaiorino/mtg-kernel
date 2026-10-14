@@ -175,6 +175,20 @@ pub enum JournalV50 {
         returned: Option<u64>,
         created: Vec<(u64, crate::ids::ObjectId)>,
     },
+    AuraReturnInput {
+        input: Box<super::return_aura::InputV50>,
+    },
+    AuraAttachmentCommitted {
+        input: u64,
+        source: crate::state::ObjectLinkV4,
+        host: crate::state::ObjectLinkV4,
+    },
+    AuraReturnCompleted {
+        input: u64,
+        selected: Option<EffectObjectBinding>,
+        returned: Option<u64>,
+        attachment: Option<u64>,
+    },
 }
 
 pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {

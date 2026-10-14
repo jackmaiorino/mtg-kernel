@@ -6499,7 +6499,7 @@ fn validate_exact_spell_search_continuation(
     }
 }
 
-fn returning_aura_hosts(
+pub(crate) fn returning_aura_hosts(
     state: &GameState,
     aura: EffectObjectBinding,
 ) -> Result<Vec<EffectObjectBinding>, String> {

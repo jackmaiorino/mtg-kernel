@@ -1,4 +1,4 @@
-//! Ordered death-resolution primitive for the unregistered FDN printing.
+//! Ordered death-resolution primitives for the Partial FDN printing candidate.
 //!
 //! This factory does not grant an ability, collect a death, or authorize a
 //! publication. Its future caller must bind the context and token fact to
@@ -14,6 +14,7 @@ use crate::state::{GameState, Zone};
 
 pub mod death_custody;
 pub mod grant_primitive;
+pub mod return_aura;
 pub mod spell_custody;
 
 #[cfg(all(

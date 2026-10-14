@@ -45,3 +45,11 @@ the color choice, answer completion, one Treasure, expired animation and refusal
 of changed, duplicated, absent or ownerless rows. Its animation is the existing
 captured-target primitive operand, not a paid Tough Cookie printing. Compilation
 and runtime remain pending.
+
+
+The returning-Aura candidate is now implemented separately in
+`fdn_fake_aura_return_candidate_v50.md`: zero/one/many untargeted host selection,
+tapped entry through the existing attachment batch, private actual relation loan,
+checkpoint replay and explicit no-host closure. Its paid fixture is written;
+compilation, runtime and complete-consumer qualification remain pending. The
+printing remains Partial and current PR266442 coverage is unchanged.

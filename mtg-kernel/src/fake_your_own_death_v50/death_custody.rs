@@ -1,4 +1,4 @@
-//! Original gained-ability collection and publication for the unregistered card.
+//! Original gained-ability collection and publication for the Partial candidate.
 //! These records are not permission to execute the private root.
 
 use super::spell_custody::{emit, journal, JournalV50};
@@ -310,19 +310,6 @@ pub(crate) fn acquire_resolution(
         original_source.as_deref(),
         in_original_graveyard,
     )?;
-    // Untargeted Aura attachment needs its own returning-Aura choice operand.
-    // Keep that unresolved path explicit rather than performing an illegal entry.
-    if matches!(&program, EffectOp::Sequence(steps) if steps.len() == 2)
-        && original_source.as_ref().is_some_and(|object| {
-            crate::card_def::CARD_DEFS[usize::from(object.card_def)]
-                .attachment
-                .is_some()
-        })
-    {
-        return Err(
-            "Fake returning Aura attachment requires its remaining owned choice path".into(),
-        );
-    }
     Ok(Some(DeathResolutionOwnerV50 {
         loan,
         context,
@@ -392,7 +379,16 @@ pub(crate) fn resolve_owned(
         return Err("Fake resolution lost its ordered return/creation program".into());
     };
     if steps.len() == 2 {
-        crate::effect::execute(&steps[0], &owner.context, state);
+        if crate::card_def::CARD_DEFS[usize::from(state.objects.get(item.source).card_def)]
+            .attachment
+            .is_some()
+        {
+            if !super::return_aura::resolve_return(state, input)? {
+                return Ok(());
+            }
+        } else {
+            crate::effect::execute(&steps[0], &owner.context, state);
+        }
     }
     if state.engine.halted.is_some() {
         return Err("Fake owned return halted".into());
@@ -511,6 +507,7 @@ fn validate_pending_shape(
 /// and publication callbacks. Removal owners will later supply a closed state;
 /// until then every published gained trigger must retain its exact live row.
 pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> {
+    super::return_aura::validate_history(state)?;
     validate_mutable_capture_roster(state, &state.engine.event_log)?;
     for pending in held_triggers(state) {
         let Some(capture) = effect_capture(&pending.effect) else {
@@ -871,8 +868,8 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
                     let returns = state.engine.event_history.iter().enumerate().take(treasure_at).skip(index+1).filter_map(|(at, event)|
                         matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
                             if *object == item.source).then_some(at as u64)).collect::<Vec<_>>();
-                    let expects_return =
-                        matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2);
+                    let expects_return = matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2)
+                        && !super::return_aura::no_host_outcome(state, index as u64);
                     if *resolution != index as u64
                         || treasury != 1
                         || treasure_at <= index

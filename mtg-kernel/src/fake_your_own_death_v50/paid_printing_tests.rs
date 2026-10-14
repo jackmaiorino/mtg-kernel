@@ -324,3 +324,261 @@ fn reach_banner_color(state: &mut GameState, actor: PlayerId) {
     }
     panic!("actual Banner color choice did not arrive")
 }
+
+#[test]
+fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_before_treasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for owner in [actor, actor.opponent()] {
+            for host_count in [0, 1, 2] {
+                let mut state = crate::extra_turn_v1::tests::ready(actor);
+                for player in [PlayerId::P0, PlayerId::P1] {
+                    put(&mut state, player, "Lightning Bolt", Zone::Hand);
+                    put(&mut state, player, "Mountain", Zone::Battlefield);
+                }
+                let original_host = put(&mut state, owner, "Llanowar Elves", Zone::Battlefield);
+                let aura = put(&mut state, owner, "Witness Protection", Zone::Battlefield);
+                state
+                    .attach_object_exact(
+                        aura,
+                        state.objects.get(aura).zone_change_count,
+                        original_host,
+                        state.objects.get(original_host).zone_change_count,
+                    )
+                    .unwrap();
+                // The fixture starts with the existing incarnation-bound animation
+                // operand. It does not claim a paid animation printing in this pool.
+                let timestamp = engine::next_timestamp(&mut state);
+                state.objects.get_mut(aura).v4.creature_upgrade =
+                    Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                        temporary_creature: Some((4, 4, timestamp)),
+                        ..Default::default()
+                    });
+                assert!(engine::object_has_type(
+                    &state,
+                    aura,
+                    crate::card_def::CardType::Creature
+                ));
+                let (mut state, _, _) = paid_on(state, actor, aura);
+                drain(&mut state);
+                let protected = put(
+                    &mut state,
+                    owner.opponent(),
+                    "Guardian of the Guildpact",
+                    Zone::Battlefield,
+                );
+                let ward_host = (host_count == 2).then(|| {
+                    put(
+                        &mut state,
+                        owner.opponent(),
+                        "Tolarian Terror",
+                        Zone::Battlefield,
+                    )
+                });
+                if host_count == 0 {
+                    event::propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(original_host, Zone::Exile),
+                    );
+                } else {
+                    crate::effect::install_temporary_boost(
+                        &mut state,
+                        crate::effect::EffectObjectBinding {
+                            object: original_host,
+                            expected_zone: Zone::Battlefield,
+                            expected_zone_change_count: 0,
+                        },
+                        0,
+                        0,
+                        crate::card_def::Keywords::HEXPROOF
+                            .union(crate::card_def::Keywords::SHROUD),
+                    );
+                }
+                death(&mut state, aura);
+                let original = state.stack.last().unwrap().clone();
+                let target_events = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+                    .count();
+                if host_count == 2 {
+                    let mut found = false;
+                    for _ in 0..24 {
+                        match engine::advance_until_decision(&mut state) {
+                            Decision::ChooseEffectTargets {
+                                player,
+                                source,
+                                legal_targets,
+                                min_targets,
+                                max_targets,
+                                can_finish,
+                                ..
+                            } => {
+                                assert_eq!(
+                                    (player, source, min_targets, max_targets, can_finish),
+                                    (owner, aura, 1, 1, false)
+                                );
+                                assert_eq!(
+                                    legal_targets,
+                                    vec![
+                                        Target::Object(original_host),
+                                        Target::Object(ward_host.unwrap())
+                                    ]
+                                );
+                                assert!(!legal_targets.contains(&Target::Object(protected)));
+                                found = true;
+                                break;
+                            }
+                            Decision::CastSpellOrPass { .. } => {
+                                engine::step(&mut state, Action::Pass).unwrap()
+                            }
+                            other => panic!("actual untargeted Aura owner missing: {other:?}"),
+                        }
+                    }
+                    assert!(found);
+                    assert_eq!(state.stack.last(), Some(&original));
+                    assert_eq!(treasures(&state, owner), 0);
+                }
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+                let selected = ward_host.unwrap_or(original_host);
+                for game in [&mut state, &mut restored] {
+                    if host_count == 2 {
+                        let before = serde_json::to_vec(game).unwrap();
+                        assert!(engine::step(game, Action::FinishEffectSelection).is_err());
+                        assert_eq!(serde_json::to_vec(game).unwrap(), before);
+                        engine::step(game, Action::ChooseEffectTarget(Target::Object(selected)))
+                            .unwrap();
+                    }
+                    drain(game);
+                    spell_custody::validate_retained_grant_history(game).unwrap();
+                    assert_eq!(treasures(game, owner), 1);
+                    assert_eq!(treasures(game, owner.opponent()), 0);
+                    assert_eq!(
+                        game.engine
+                            .event_history
+                            .iter()
+                            .filter(|event| matches!(event, CommittedEvent::Targeted { .. }))
+                            .count(),
+                        target_events
+                    );
+                    let object = game.objects.get(aura);
+                    if host_count == 0 {
+                        assert_eq!(object.zone, Zone::Graveyard);
+                        assert_eq!(object.v4.attached_to, None);
+                    } else {
+                        assert_eq!(
+                            (object.zone, object.owner, object.controller, object.tapped),
+                            (Zone::Battlefield, owner, owner, true)
+                        );
+                        assert_eq!(
+                            object.v4.attached_to,
+                            Some(crate::state::ObjectLinkV4 {
+                                object: selected,
+                                zone_change_count: game.objects.get(selected).zone_change_count
+                            })
+                        );
+                        assert!(game.objects.get(selected).attachments.contains(&aura));
+                        assert!(!engine::object_has_type(
+                            game,
+                            aura,
+                            crate::card_def::CardType::Creature
+                        ));
+                    }
+                    let inputs = game
+                        .engine
+                        .event_history
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(at, event)| match spell_custody::journal(event) {
+                            Some(spell_custody::JournalV50::AuraReturnInput { input }) => {
+                                Some((at, input))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(inputs.len(), 1);
+                    assert_eq!(inputs[0].1.choice.owner, owner);
+                    assert_eq!(inputs[0].1.choice.candidates.len(), host_count);
+                    let completed = game
+                        .engine
+                        .event_history
+                        .iter()
+                        .enumerate()
+                        .find_map(|(at, event)| match spell_custody::journal(event) {
+                            Some(spell_custody::JournalV50::AuraReturnCompleted {
+                                selected,
+                                returned,
+                                attachment,
+                                ..
+                            }) => Some((at, *selected, *returned, *attachment)),
+                            _ => None,
+                        })
+                        .unwrap();
+                    let treasure_input = game
+                        .engine
+                        .event_history
+                        .iter()
+                        .position(|event| {
+                            matches!(
+                                spell_custody::journal(event),
+                                Some(spell_custody::JournalV50::DeathTreasureInput { .. })
+                            )
+                        })
+                        .unwrap();
+                    assert!(completed.0 < treasure_input);
+                    assert_eq!(completed.1.is_some(), host_count != 0);
+                    if let (Some(movement), Some(relation)) = (completed.2, completed.3) {
+                        assert!(
+                            inputs[0].0 < movement as usize
+                                && movement < relation
+                                && relation < completed.0 as u64
+                        );
+                    } else {
+                        assert_eq!(host_count, 0);
+                    }
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+                if host_count == 2 {
+                    for kind in 0..4 {
+                        let mut forged: GameState = serde_json::from_slice(&bytes).unwrap();
+                        let pending = forged
+                            .engine
+                            .linked_aura_operation_v1
+                            .pending_fake_aura_v50
+                            .as_mut()
+                            .unwrap();
+                        if kind == 2 {
+                            pending.original.stack.clear();
+                        } else {
+                            let crate::linked_aura_operation_v1::GeneralChoiceV36::FakeAuraV50 {
+                                choice,
+                                ..
+                            } = &mut pending.choice
+                            else {
+                                panic!("actual Aura checkpoint");
+                            };
+                            if kind == 0 {
+                                choice.owner = owner.opponent();
+                            } else if kind == 1 {
+                                choice.candidates.pop();
+                            } else {
+                                choice.aura.expected_zone_change_count += 1;
+                            }
+                        }
+                        let before = serde_json::to_vec(&forged).unwrap();
+                        assert!(engine::step(
+                            &mut forged,
+                            Action::ChooseEffectTarget(Target::Object(selected))
+                        )
+                        .is_err());
+                        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                    }
+                }
+            }
+        }
+    }
+}
