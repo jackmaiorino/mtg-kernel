@@ -62,6 +62,10 @@ pub use soul_shackled_zombie_v13::*;
 pub use visible::*;
 
 pub mod eaten_v46;
+pub mod panda_v47;
+pub use panda_v47::{
+    HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,
+};
 
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1, FlatActionDecisionBindingV3};

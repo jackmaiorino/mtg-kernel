@@ -4,11 +4,11 @@ use crate::card_def::{card_id_by_name, DynamicValueDef, Keywords};
 use crate::effect::{ObjectRef, TargetRef};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 
 fn fixture(actor: PlayerId) -> (GameState, ObjectId, ExecCtx) {
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     let source = put(&mut state, actor, "Counterspell", Zone::Hand);
     let creature = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
     event::propose_and_commit(
@@ -133,9 +133,8 @@ fn registered_zonechange_and_copy_token_etb_capture_exact_source_then_survive_de
     }
     for actor in [PlayerId::P0, PlayerId::P1] {
         for token_copy in [false, true] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             let original = put(&mut state, actor, "Healer of the Glade", Zone::Hand);
             event::propose_and_commit(
                 &mut state,
