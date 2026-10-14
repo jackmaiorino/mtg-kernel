@@ -1,9 +1,13 @@
 # Optional replacement allocation
 
-This is a proposal only. Jack's existing approval covered one pod, which was
-deleted after a controller handoff failure. A replacement needs new authority.
-No replacement pod or guardian has been launched. Windows fallback preparation
-continues on the eight newly available cores and may make this option unnecessary.
+Jack subsequently approved one replacement within the remaining $4 and original
+deadline. Two lease-003 create attempts failed; the diagnostic retry reported
+HTTP 500 because the requested instances were unavailable. A final exact-name
+census at 00:38:49 UTC found no pod. The unused guardian was stopped and
+unregistered, with its process confirmed absent. No paid replacement allocation
+or native work occurred. Windows fallback preparation continues. Cloud work can
+resume only after verified actual availability changes within the unchanged
+authority; there is no recurring watcher or active lease.
 
 Use one CPU3c pod in US-MD-1: 32 vCPUs, 64 GB RAM, 100 GB ephemeral container
 disk, no persistent/network volume, unique name
