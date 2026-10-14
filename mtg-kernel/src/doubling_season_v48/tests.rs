@@ -754,3 +754,38 @@ fn genuine_return_stun_primitive_uses_returned_owner_not_original_ability_contro
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn frozen_visible_printing_refusal_uses_only_actor_current_knowledge_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let hidden = put(&mut state, actor.opponent(), "Doubling Season", Zone::Hand);
+        put(&mut state, actor, "Forest", Zone::Hand);
+        let before = bytes(&state);
+        require_legacy_visible(&state, actor).unwrap();
+        assert!(require_legacy_visible(&state, actor.opponent()).is_err());
+        assert_eq!(bytes(&state), before);
+        state
+            .reveal_hand_card(actor, actor.opponent(), hidden)
+            .unwrap();
+        let before = bytes(&state);
+        assert!(require_legacy_visible(&state, actor).is_err());
+        assert_eq!(bytes(&state), before);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(hidden, Zone::Library),
+        );
+        // The real hand departure invalidates its old identity knowledge.
+        require_legacy_visible(&state, actor).unwrap();
+        state.reveal_library_top(actor, actor.opponent(), 1);
+        let before = bytes(&state);
+        assert!(require_legacy_visible(&state, actor).is_err());
+        assert_eq!(bytes(&state), before);
+        assert_eq!(restore(&state), state);
+    }
+}

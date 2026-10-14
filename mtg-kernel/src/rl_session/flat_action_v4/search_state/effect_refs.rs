@@ -969,6 +969,11 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // No hidden-state migration is admitted for the new replacement source,
+    // even before it emits its first original-world operation receipt.
+    if crate::doubling_season_v48::requires_successor(state) {
+        return true;
+    }
     if state
         .engine
         .event_history

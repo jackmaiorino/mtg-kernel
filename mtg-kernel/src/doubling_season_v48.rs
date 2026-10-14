@@ -332,12 +332,41 @@ pub(crate) fn counter_amount(
 
 pub(crate) fn require_legacy_visible(state: &GameState, actor: PlayerId) -> Result<(), String> {
     require_legacy_supported(state)?;
-    if state.players[actor.index()].hand.iter().any(|id| {
-        state
-            .objects
-            .try_get(*id)
-            .is_some_and(|object| object.zone == Zone::Hand && owns_definition(object.card_def))
-    }) {
+    // Consult only this observer's genuine current knowledge. An unknown
+    // opponent hand/library definition must never select a public refusal.
+    let visible_selected = state.objects.iter().any(|(id, object)| {
+        let visible = match object.zone {
+            Zone::Hand => {
+                object.owner == actor
+                    || state
+                        .known_hand_cards(actor, object.owner)
+                        .iter()
+                        .any(|entry| {
+                            entry.object == id
+                                && entry.zone_change_count == object.zone_change_count
+                        })
+            }
+            Zone::Library => state
+                .known_library_cards(actor, object.owner)
+                .iter()
+                .any(|entry| {
+                    entry.object == id
+                        && entry.zone_change_count == object.zone_change_count
+                        && state.players[object.owner.index()]
+                            .library
+                            .get(entry.position as usize)
+                            == Some(&id)
+                }),
+            Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Command | Zone::Stack => {
+                object
+                    .v4
+                    .face_down_v1
+                    .is_none_or(|face| face.lookers & (1 << actor.index()) != 0)
+            }
+        };
+        visible && owns_definition(object.card_def)
+    });
+    if visible_selected {
         return Err("visible Doubling Season printing requires V48".into());
     }
     Ok(())
