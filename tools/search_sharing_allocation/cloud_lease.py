@@ -10,6 +10,7 @@ import base64
 import copy
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -31,8 +32,20 @@ from runtime_observation import IMAGE_REFERENCE
 KEY_PLACEHOLDER = "__INJECT_AT_POST_DO_NOT_SAVE__"
 
 
-def prepare(root, name, public_key, region, now=None):
+def prepare(root, name, public_key, region, now=None, *, deadline_epoch=None,
+            prior_conservative_usd=0):
     now = time.time() if now is None else now
+    if (isinstance(prior_conservative_usd, bool)
+            or not isinstance(prior_conservative_usd, (int, float))
+            or not math.isfinite(prior_conservative_usd)
+            or not 0 <= prior_conservative_usd < 5):
+        raise ValueError("prior conservative spend must be finite and below the original $5 cap")
+    if prior_conservative_usd and deadline_epoch is None:
+        raise ValueError("replacement preparation requires the original absolute deadline")
+    deadline = now + 4 * 3600 if deadline_epoch is None else deadline_epoch
+    if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline) or not 600 < deadline - now <= 4 * 3600):
+        raise ValueError("deadline must leave recovery time and cannot grant over four hours")
     if not re.fullmatch(r"search-sharing-allocation-20261013-[a-z0-9-]+", name):
         raise ValueError("use a unique experiment lane Pod name")
     parts = public_key.read_text().strip().split()
@@ -40,12 +53,11 @@ def prepare(root, name, public_key, region, now=None):
         raise ValueError("existing ed25519 public key required")
     if root.exists():
         raise ValueError("fresh control directory required")
-    root.mkdir(parents=True)
     lease = {
         "schema": "phase1-cloud-lease/v1", "name": name,
-        "created_epoch": now, "deadline_epoch": now + 4 * 3600,
-        "increment_cap_usd": 5, "total_cap_usd": 5,
-        "prior_conservative_usd": 0, "rate_ceiling_usd_hour": 1.00,
+        "created_epoch": now, "deadline_epoch": deadline,
+        "increment_cap_usd": 5 - prior_conservative_usd, "total_cap_usd": 5,
+        "prior_conservative_usd": prior_conservative_usd, "rate_ceiling_usd_hour": 1.00,
         "storage_usd_hour": 100 * 0.10 / 720,
         "postrun_storage_reserve_usd": 0, "recovery_reserve_usd": 0.05,
         "funded_balance_usd": 5, "safety_multiplier": 1.2,
@@ -54,6 +66,7 @@ def prepare(root, name, public_key, region, now=None):
         "network_volume_id": None,
     }
     projection = lease_guard.validate(lease)
+    root.mkdir(parents=True)
     state = "/run/phase1/" + name
     blobs = {n: base64.b64encode((HELPERS / (n + ".py")).read_bytes()).decode()
              for n in ("common", "lease_guard")}
@@ -102,7 +115,9 @@ raise SystemExit(guard.returncode)
     write(root / "lease/create-request-template.json", body)
     metadata = {"name": name, "public_key_path": str(public_key.resolve()),
                 "resident_state": state, "remote_output": "/workspace/search-sharing-allocation/run",
-                "projected_conservative_usd": projection, "allocated": False}
+                "projected_conservative_usd": projection,
+                "projected_cumulative_conservative_usd": prior_conservative_usd + projection,
+                "allocated": False}
     write(root / "preparation.json", metadata)
     return metadata
 
@@ -134,7 +149,7 @@ def create(root, execute):
     if host_slots_v1.process_state(ready["pid"], ready["creation_time"]) != "alive":
         raise ValueError("guardian process identity is not currently alive")
     if time.time() > lease["created_epoch"] + 300:
-        raise ValueError("prepare a fresh four-hour lease immediately before allocation")
+        raise ValueError("prepare a fresh allocation timestamp without extending the approved deadline")
     key = external_guard.api_key()
     matches = matching_pods(key, lease["name"])
     if matches:
@@ -225,6 +240,8 @@ def main():
     p.add_argument("--name", required=True)
     p.add_argument("--public-key", type=Path, default=Path("C:/Users/Jack/.ssh/id_ed25519.pub"))
     p.add_argument("--region", default="US-MD-1")
+    p.add_argument("--deadline-epoch", type=float, help="original absolute deadline for replacement proposals")
+    p.add_argument("--prior-conservative-usd", type=float, default=0)
     for mode in ("guardian", "create", "release", "status"):
         p = sub.add_parser(mode)
         p.add_argument("--control", type=Path, required=True)
@@ -232,7 +249,9 @@ def main():
             p.add_argument("--execute", action="store_true")
     args = parser.parse_args()
     if args.mode == "prepare":
-        print(json.dumps(prepare(args.control, args.name, args.public_key, args.region)))
+        print(json.dumps(prepare(args.control, args.name, args.public_key, args.region,
+                                 deadline_epoch=args.deadline_epoch,
+                                 prior_conservative_usd=args.prior_conservative_usd)))
     elif args.mode == "create":
         print(json.dumps(create(args.control, args.execute)))
     elif args.mode == "guardian":

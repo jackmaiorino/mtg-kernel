@@ -8,6 +8,31 @@ import cloud_lease as lease
 
 
 class CloudLeaseOwnershipTests(unittest.TestCase):
+    def test_replacement_preserves_absolute_deadline_and_cumulative_cap(self):
+        with tempfile.TemporaryDirectory() as folder:
+            key = Path(folder) / "existing.pub"
+            key.write_text("ssh-ed25519 ZmFrZQ== existing")
+            now, deadline = 10000, 20000
+            root = Path(folder) / "replacement"
+            result = lease.prepare(root, "search-sharing-allocation-20261013-replacement", key,
+                                   "US-MD-1", now, deadline_epoch=deadline, prior_conservative_usd=1)
+            saved = lease.read(root / "lease/lease.json")
+            self.assertEqual(saved["deadline_epoch"], deadline)
+            self.assertEqual(saved["total_cap_usd"], 5)
+            self.assertEqual(saved["increment_cap_usd"], 4)
+            self.assertEqual(saved["prior_conservative_usd"], 1)
+            self.assertLessEqual(result["projected_cumulative_conservative_usd"], 5)
+            self.assertEqual(lease.lease_guard.decision(saved, deadline - 600, 1)["reason"], "deadline")
+            for options in ({"prior_conservative_usd": 1},
+                            {"deadline_epoch": now + 14401, "prior_conservative_usd": 1},
+                            {"deadline_epoch": deadline, "prior_conservative_usd": 4},
+                            {"deadline_epoch": deadline, "prior_conservative_usd": float("nan")}):
+                rejected = Path(folder) / "rejected"
+                with self.assertRaises(ValueError):
+                    lease.prepare(rejected, "search-sharing-allocation-20261013-rejected", key,
+                                  "US-MD-1", now, **options)
+                self.assertFalse(rejected.exists())
+
     def control(self, folder):
         root = Path(folder) / "control"
         key = Path(folder) / "existing.pub"
