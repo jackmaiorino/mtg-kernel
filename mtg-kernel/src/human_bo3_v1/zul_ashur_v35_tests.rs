@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
 use crate::state::{GameState, Zone};
 
 fn expected(session: &HumanZulAshurSessionV35) -> FastActorDecisionV1 {
@@ -18,9 +18,7 @@ fn owned(state: GameState) -> HumanZulAshurSessionV35 {
 }
 
 fn basic(actor: PlayerId, hidden: &str) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
@@ -168,9 +166,7 @@ fn ward_state(actor: PlayerId) -> GameState {
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_with_turn_authority(actor);
     let terror = put(
         &mut state,
         actor.opponent(),
@@ -279,9 +275,7 @@ mod future_printed {
     use crate::mana::ManaColor;
     use crate::state::{Step, Target};
     fn session(actor: PlayerId) -> (HumanZulAshurSessionV35, ObjectId, ObjectId) {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_with_turn_authority(actor);
         state.step = Step::Main1;
         let source = put(&mut state, actor, "Zul Ashur, Lich Lord", Zone::Battlefield);
         let target = put(&mut state, actor, "Diregraf Ghoul", Zone::Graveyard);

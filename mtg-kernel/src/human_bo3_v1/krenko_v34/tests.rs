@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
 use crate::state::{GameState, Zone};
 
 fn expected(session: &HumanKrenkoSessionV34) -> FastActorDecisionV1 {
@@ -18,9 +18,7 @@ fn owned(state: GameState) -> HumanKrenkoSessionV34 {
 }
 
 fn basic(actor: PlayerId, hidden: &str) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
@@ -168,9 +166,7 @@ fn ward_state(actor: PlayerId) -> GameState {
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_with_turn_authority(actor);
     let terror = put(
         &mut state,
         actor.opponent(),
