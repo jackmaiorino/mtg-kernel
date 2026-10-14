@@ -1442,12 +1442,6 @@ fn divine_unary(
     }
     Ok(())
 }
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanEatenPendingV46 {
