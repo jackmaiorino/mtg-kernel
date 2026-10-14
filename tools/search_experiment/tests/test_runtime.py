@@ -43,6 +43,7 @@ class QualificationTests(unittest.TestCase):
         launch.publish(calibration, {"schema": "search-sharing-allocation-cost-calibration/v1", "quality_read": False})
         asset = lambda path: {"path": str(path), "sha256": launch.digest(path)}
         spec = {"schema": launch.SCHEMA, "host": launch.platform.node(), "binary": asset(binary),
+                "host_slots": asset(HERE.parents[1] / "python/tools/host_slots_v1.py"), "core_pool": "0-1",
                 "inputs": [asset(model)], "storage": {"volume": "D"}, "eligible_workers": 2, "cores_claimed": 2,
                 "cpu_cap_seconds": 43200, "external_cpu_seconds": 2000, "projected_output_bytes": 0,
                 "qualification_cpu_cap_seconds": 1200,
@@ -127,6 +128,20 @@ class QualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "serial and parallel"):
                 launch.qualification_guard(spec, 1)
 
+    def test_actual_core_pool_drift_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            with self.assertRaisesRegex(ValueError, "actual allocation differs"):
+                launch.allocation(spec, [2, 3])
+            paths = []
+            for n, cores in ((1, [0, 1]), (2, [2, 3])):
+                path = Path(directory) / f"pool{n}.json"
+                launch.publish(path, {"workers": n, "compatible": {}, "error": None,
+                                      "allocation": {"cores": cores, "topology": []}})
+                paths.append(path)
+            with self.assertRaisesRegex(ValueError, "same observed core pool"):
+                launch.qualify(paths, Path(directory) / "receipt.json")
+
     def test_fastest_eligible_and_changed_workload(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = {"binary": {"sha256": "binary"}, "workload": {"mode": "search"},
@@ -155,6 +170,7 @@ class QualificationTests(unittest.TestCase):
             for n in (1, 2):
                 path = Path(directory) / f"{n}.json"
                 launch.publish(path, {"workers": n, "compatible": {}, "error": None,
+                                      "allocation": {"cores": [0, 1], "topology": []},
                                       "wall_seconds": 1, "cpu_seconds": .1,
                                       "results": [{"id": "root", "primary_sha256": str(n)}]})
                 paths.append(path)

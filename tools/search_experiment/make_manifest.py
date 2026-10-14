@@ -66,6 +66,7 @@ def prepare(args):
             "host_reservation": {"path": str(Path(args.host_reservation).resolve()), "sha256": digest(args.host_reservation)},
             "inputs": index["assets"], "collab_input_ref": index["collab_ref"],
             "eligible_workers": args.eligible_workers, "cores_claimed": args.cores_claimed, "cpu_cap_seconds": args.cpu_cap,
+            "core_pool": args.core_pool,
             "external_cpu_seconds": args.external_cpu, "qualification_cpu_cap_seconds": args.qualification_cpu_cap,
             "representative_qualification": args.representative_qualification,
             "output_cap_bytes": 4 * GIB, "projected_output_bytes": 64 * 1024**2,
@@ -115,6 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)
     parser.add_argument("--cores-claimed", type=int, default=2)
+    parser.add_argument("--core-pool", help="exact logical CPU pool for this qualified allocation, e.g. 8-15")
     parser.add_argument("--decks", default="0,1,2")
     parser.add_argument("--seeds", default="search-sharing-allocation-20261013/qualification/r1")
     parser.add_argument("--budgets", default="16000,64000")

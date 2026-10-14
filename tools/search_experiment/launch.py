@@ -78,6 +78,23 @@ def checked(asset):
     return Path(asset["path"])
 
 
+def allocator(spec):
+    helper = checked(spec["host_slots"])
+    sys.path.insert(0, str(helper.parent))
+    import host_slots_v1 as slots
+    require(Path(slots.__file__).resolve() == helper.resolve(), "allocator helper import differs")
+    return slots
+
+
+def allocation(spec, cores):
+    slots = allocator(spec)
+    actual = sorted(cores)
+    if spec.get("core_pool"):
+        require(actual == sorted(slots.parse_cores(spec["core_pool"])), "actual allocation differs from requested core pool")
+    topology = [row for row in slots.topology() if set(slots.parse_cores(row["cpus"])) & set(actual)]
+    return {"cores": actual, "topology": topology}
+
+
 def output_bytes(root):
     # This walks only the declared owned output root, never a source volume.
     def walk_error(error):
@@ -113,12 +130,15 @@ def storage_guard(spec, extra=0):
 
 def compatibility(spec):
     calibration = spec.get("calibration")
-    return {"host": platform.node().upper(), "binary_sha256": spec["binary"]["sha256"],
+    result = {"host": platform.node().upper(), "binary_sha256": spec["binary"]["sha256"],
             "workload_sha256": identity(spec["workload"]),
             "input_sha256s": sorted(a["sha256"] for a in spec["inputs"]
                                    if not calibration or (a["path"], a["sha256"]) !=
                                    (calibration["path"], calibration["sha256"])),
             "storage": spec["storage"], "cores_claimed": spec["cores_claimed"]}
+    if spec.get("core_pool"):
+        result["allocation"] = allocation(spec, allocator(spec).parse_cores(spec["core_pool"]))
+    return result
 
 
 def qualification_guard(spec, workers):
@@ -147,6 +167,9 @@ def validate(spec, workers, phase):
     require(spec["host"].upper() == platform.node().upper(), "manifest names another host")
     require(1 <= workers <= spec["eligible_workers"] <= (os.cpu_count() or 1), "invalid worker count")
     require(1 <= spec["cores_claimed"] <= (os.cpu_count() or 1), "invalid claimed core count")
+    if spec.get("core_pool"):
+        require(len(allocator(spec).parse_cores(spec["core_pool"])) == spec["cores_claimed"],
+                "requested core pool must exactly match claimed core count")
     require(0 < spec["cpu_cap_seconds"] <= CPU_CAP, "CPU cap exceeds authorized 12 aggregate hours")
     require(spec["projected_output_bytes"] >= 0, "negative output projection")
     require(spec.get("external_cpu_seconds", 0) >= 0, "negative external CPU accounting")
@@ -172,6 +195,7 @@ def validate(spec, workers, phase):
         require(not any(a.startswith("out=") or a.startswith("workers=") for a in job["argv"]),
                 "launcher owns output path and single-worker process count")
     if phase in ("measure", "calibrate"):
+        require(spec.get("core_pool"), "substantial work requires an explicitly qualified core pool")
         if phase == "measure":
             require(spec["workload"]["arms"] == "ABC"
                     and spec["workload"]["evaluation"]["enabled"] is True,
@@ -369,6 +393,10 @@ def execute(spec, workers, phase, label):
     require(accounted < spec["cpu_cap_seconds"], "aggregate process CPU cap already reached")
     phase_cap = spec["qualification_cpu_cap_seconds"] if phase == "qualify" else spec["cpu_cap_seconds"]
     require(label not in {row["label"] for row in previous}, "attempt label already used in CPU ledger")
+    cores = preferred_native_cores(spec, psutil.Process().cpu_affinity())
+    core_rank = {core: rank for rank, core in enumerate(cores)}
+    require(len(cores) == spec["cores_claimed"], "current claimed affinity does not match core allocation")
+    observed_allocation = allocation(spec, cores)
     append_ledger(ledger, {"label": label, "phase": phase, "cpu_seconds": 0,
                            "reserved_cpu_seconds": min(phase_cap, spec["cpu_cap_seconds"] - accounted),
                            "pid": os.getpid(), "state": "started"})
@@ -376,9 +404,6 @@ def execute(spec, workers, phase, label):
     batch_start = time.monotonic()
     active = {}
     pending = list(range(len(results)))
-    cores = preferred_native_cores(spec, psutil.Process().cpu_affinity())
-    core_rank = {core: rank for rank, core in enumerate(cores)}
-    require(len(cores) == spec["cores_claimed"], "current claimed affinity does not match core allocation")
     group_core = {}
     per_core_limit = math.ceil(workers / len(cores))
     peak_active_workers = 0
@@ -513,6 +538,7 @@ def execute(spec, workers, phase, label):
         cpu = sum(row["cpu_seconds"] for row in results if row) + time.process_time() - manager_start
         record = {"label": label, "phase": phase, "workers": workers, "cpu_seconds": cpu,
                   "peak_active_workers": peak_active_workers, "cores_claimed": len(cores),
+                  "allocation": observed_allocation,
                   "wall_seconds": time.monotonic() - batch_start, "compatible": compatibility(spec),
                   "results": results, "error": error, "output_bytes": output_bytes(root)}
         publish(destination / "completion.json", record)
@@ -527,6 +553,8 @@ def qualify(paths, out):
     first = batches[0]
     require(all(not row["error"] and row["compatible"] == first["compatible"] for row in batches),
             "incomplete or incompatible qualification batch")
+    require(first.get("allocation") and all(row.get("allocation") == first["allocation"] for row in batches),
+            "qualification needs the same observed core pool and topology")
     canonical = [(r["id"], r["primary_sha256"]) for r in first["results"]]
     require(all([(r["id"], r["primary_sha256"]) for r in row["results"]] == canonical for row in batches),
             "serial/parallel jobs or primary outputs differ")
@@ -550,6 +578,8 @@ def slots_command(spec, args, claim_id=None):
                "--cores", str(spec["cores_claimed"]), "--priority", "below_normal"]
     if claim_id:
         command += ["--id", claim_id]
+    if spec.get("core_pool"):
+        command += ["--core-pool", spec["core_pool"]]
     if spec.get("wait_for_cores"):
         command += ["--wait", "--wait-timeout", str(spec["wait_timeout_seconds"])]
     return command + ["--", sys.executable, "-B", str(Path(__file__).resolve()), "worker",

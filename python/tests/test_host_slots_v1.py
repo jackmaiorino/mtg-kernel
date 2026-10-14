@@ -290,6 +290,26 @@ class HostSlotsTests(unittest.TestCase):
         slots.write_json(root / "TESTHOST.slots/config.json", {"cores": ",".join(map(str, reversed(CPUS)))})
         self.host, self.tmp_path = root, tmp_path
 
+    @needs_two
+    def test_request_core_pool_is_contained_and_cannot_borrow_timed_cores(self):
+        chosen = CPUS[0]
+        probe = script(self.tmp_path, "pool.py", "print(json.dumps({'affinity': h.current_affinity()}))\n")
+        arguments = ["run", "--lane", "pool", "--work-id", "bounded", "--cores", "1",
+                     "--core-pool", str(chosen), "--", sys.executable, probe]
+        proc = cli(*arguments)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        rows = [json.loads(line) for line in out.splitlines()]
+        self.assertEqual(rows[0]["cores"], str(chosen))
+        self.assertEqual(rows[1]["affinity"], [chosen])
+        lock(self.host)
+        declare(self.host, [chosen])
+        proc = cli(*arguments)
+        _, err = proc.communicate(timeout=20)
+        self.assertEqual(proc.returncode, slots.EXIT_HELD, err)
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("claim-*.json")))
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("queue-*.json")))
+
     def test_timed_state_is_the_whole_host_unless_a_live_declaration_says_otherwise(self):
         host = self.host
         assert slots.timed_state()["held"] is False
