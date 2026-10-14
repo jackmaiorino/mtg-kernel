@@ -15490,6 +15490,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
         }
+        // The owned family resolver applies creation or the reflexive tap.
+        // A spell still performs its final ordinary departure afterward.
+        if finish_resolved_stack_item(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
         return ResolutionProgress::Complete;
     }
     if let Some(owner) = fishing_owner {
