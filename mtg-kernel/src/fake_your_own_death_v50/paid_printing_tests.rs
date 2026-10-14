@@ -499,10 +499,119 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                         .fake_validate_bound_decision_v50(e, owner.opponent().into(), &binding)
                         .is_err());
                     assert_eq!(backend.privileged_core_environment_hash(), before);
+                    // The separate Human V50 menu keeps both real mandatory
+                    // hosts while numeric execution references stay private.
+                    let mut human =
+                        crate::human_bo3_v1::fake_v50::HumanFakeSessionV50::from_session(
+                            backend.clone(),
+                            owner.into(),
+                        )
+                        .unwrap();
+                    let mut projector =
+                        crate::human_bo3_v1::fake_v50::HumanFakeProjectorV50::new(owner.into());
+                    let safe = projector.project_current(&human, e).unwrap();
+                    assert_eq!(safe.actions.len(), 2);
+                    let safe_menu = safe.state.extensions.fake.aura_menu.as_ref().unwrap();
+                    assert_eq!(safe_menu.owner, owner.into());
+                    assert!(safe_menu.mandatory && !safe_menu.targeted);
+                    assert_eq!(safe_menu.ordered_legal_hosts.len(), 2);
+                    let selected_position = observation
+                        .fake
+                        .aura_menu
+                        .as_ref()
+                        .unwrap()
+                        .legal_hosts
+                        .iter()
+                        .position(|host| host.arena_id == selected.0)
+                        .unwrap();
+                    let host = &safe_menu.ordered_legal_hosts[selected_position];
+                    let suffix = format!(
+                        "attached to {} [{}] (mandatory, not targeted)",
+                        host.name, host.handle
+                    );
+                    let safe_index = safe
+                        .actions
+                        .iter()
+                        .find(|action| action.label.contains(&suffix))
+                        .unwrap()
+                        .action_index;
+                    assert!(safe
+                        .actions
+                        .iter()
+                        .all(|action| action.label.contains("mandatory, not targeted")));
+                    let safe_json = serde_json::to_string(&safe).unwrap();
+                    for key in [
+                        "arena_id",
+                        "card_db_id",
+                        "zone_change_count",
+                        "history_index",
+                        "producer_sha256",
+                    ] {
+                        assert!(
+                            !safe_json.contains(&format!("\"{key}\"")),
+                            "unsafe Human V50 field {key}"
+                        );
+                    }
+                    let human_snapshot = human.snapshot_v50();
+                    let request = crate::human_bo3_v1::HumanActionRequestV1 {
+                        prompt_seq: safe.prompt_seq,
+                        action_index: safe_index,
+                    };
+                    projector.submit(&mut human, request.clone()).unwrap();
+                    let first_human_response = human.current_response();
+                    human.restore_v50(&human_snapshot).unwrap();
+                    assert_eq!(
+                        projector.submit(&mut human, request),
+                        Err(crate::human_bo3_v1::HumanDecisionErrorV1::StaleDecision)
+                    );
+                    let crate::rl_session::FastActorResponseV1::Decision(human_e) =
+                        human.current_response()
+                    else {
+                        panic!("actual restored Human Aura decision");
+                    };
+                    assert!(human_e.environment_revision > e.environment_revision);
+                    let replay_safe = projector.project_current(&human, human_e).unwrap();
+                    assert_eq!(replay_safe.state, safe.state);
+                    assert_eq!(replay_safe.actions, safe.actions);
+                    projector
+                        .submit(
+                            &mut human,
+                            crate::human_bo3_v1::HumanActionRequestV1 {
+                                prompt_seq: replay_safe.prompt_seq,
+                                action_index: safe_index,
+                            },
+                        )
+                        .unwrap();
+                    let crate::rl_session::FastActorResponseV1::Decision(first_human_e) =
+                        first_human_response
+                    else {
+                        panic!("actual post-attachment Human decision");
+                    };
+                    let crate::rl_session::FastActorResponseV1::Decision(replay_human_e) =
+                        human.current_response()
+                    else {
+                        panic!("actual replay post-attachment Human decision");
+                    };
+                    assert_eq!(
+                        (
+                            replay_human_e.step,
+                            replay_human_e.acting_player,
+                            replay_human_e.decision_kind
+                        ),
+                        (
+                            first_human_e.step,
+                            first_human_e.acting_player,
+                            first_human_e.decision_kind
+                        )
+                    );
                     let snapshot = backend.snapshot_v1();
                     let index = actions.iter().position(|action| matches!(action, crate::rl::ActionSemanticV1::ChooseEffectTarget { target: crate::rl::TargetRefV1::Object { object }, .. } if object.arena_id == selected.0)).unwrap();
                     backend.step(e.episode_id, e.step, index as u32).unwrap();
                     let final_state = serde_json::to_vec(backend.fake_fixture_state()).unwrap();
+                    assert_eq!(
+                        serde_json::to_vec(human.fake_human_fixture_state()).unwrap(),
+                        final_state
+                    );
                     backend.fake_restore_v50(&snapshot).unwrap();
                     let crate::rl_session::FastActorResponseV1::Decision(restored_e) =
                         backend.current_response()
@@ -1119,6 +1228,76 @@ fn actual_two_paid_fake_grants_hold_distinct_original_sources_and_return_once_wi
             .deaths
             .iter()
             .all(|death| death.phase == public_v50::DeathPhaseV50::Held));
+        let mut human = crate::human_bo3_v1::fake_v50::HumanFakeSessionV50::from_session(
+            crate::rl_session::FastActorSessionV1::from_fake_v50_fixture_state(state.clone()),
+            actor.into(),
+        )
+        .unwrap();
+        let mut projector = crate::human_bo3_v1::fake_v50::HumanFakeProjectorV50::new(actor.into());
+        let crate::rl_session::FastActorResponseV1::Decision(human_e) = human.current_response()
+        else {
+            panic!("actual two-grant Human ordering");
+        };
+        let safe = projector.project_current(&human, human_e).unwrap();
+        assert_eq!(safe.actions.len(), 2);
+        assert_eq!(safe.state.extensions.fake.deaths.len(), 2);
+        assert_eq!(safe.state.extensions.fake.trigger_order.len(), 2);
+        assert_ne!(safe.actions[0].label, safe.actions[1].label);
+        let selected_action = safe
+            .actions
+            .iter()
+            .find(|action| {
+                let later = action.label.find("Fake dies occurrence #2 from grant #2");
+                let earlier = action.label.find("Fake dies occurrence #1 from grant #1");
+                matches!((later, earlier), (Some(later), Some(earlier)) if later < earlier)
+            })
+            .unwrap()
+            .action_index;
+        let human_snapshot = human.snapshot_v50();
+        let request = crate::human_bo3_v1::HumanActionRequestV1 {
+            prompt_seq: safe.prompt_seq,
+            action_index: selected_action,
+        };
+        projector.submit(&mut human, request.clone()).unwrap();
+        let first_human_state = serde_json::to_vec(human.fake_human_fixture_state()).unwrap();
+        let mut ordered_reference = state.clone();
+        engine::step(&mut ordered_reference, Action::OrderTriggers(vec![1, 0])).unwrap();
+        let expected_decision = engine::advance_until_decision(&mut ordered_reference);
+        assert!(matches!(
+            expected_decision,
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert_eq!(
+            first_human_state,
+            serde_json::to_vec(&ordered_reference).unwrap()
+        );
+        human.restore_v50(&human_snapshot).unwrap();
+        assert_eq!(
+            projector.submit(&mut human, request),
+            Err(crate::human_bo3_v1::HumanDecisionErrorV1::StaleDecision)
+        );
+        let crate::rl_session::FastActorResponseV1::Decision(restored_human_e) =
+            human.current_response()
+        else {
+            panic!("actual restored two-grant Human ordering");
+        };
+        assert!(restored_human_e.environment_revision > human_e.environment_revision);
+        let restored_safe = projector.project_current(&human, restored_human_e).unwrap();
+        assert_eq!(restored_safe.state, safe.state);
+        assert_eq!(restored_safe.actions, safe.actions);
+        projector
+            .submit(
+                &mut human,
+                crate::human_bo3_v1::HumanActionRequestV1 {
+                    prompt_seq: restored_safe.prompt_seq,
+                    action_index: selected_action,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::to_vec(human.fake_human_fixture_state()).unwrap(),
+            first_human_state
+        );
         let bytes = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
         for game in [&mut state, &mut restored] {
