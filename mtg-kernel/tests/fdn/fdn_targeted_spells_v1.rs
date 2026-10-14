@@ -179,7 +179,7 @@ fn combat_damage(state: &mut GameState, source: ObjectId, target: ObjectId, amou
 }
 
 #[test]
-fn appended_spell_definitions_and_partial_planeswalker_admission_are_explicit() {
+fn appended_spell_definitions_and_registered_planeswalker_admission_are_explicit() {
     for (offset, name) in [
         "Bite Down",
         "Felling Blow",
@@ -196,11 +196,9 @@ fn appended_spell_definitions_and_partial_planeswalker_admission_are_explicit() 
     }
     let id = card_id_by_name(PW).unwrap();
     assert_eq!(id, 215);
-    assert_eq!(
-        CARD_DEFS[usize::from(id)].capability,
-        CardCapability::Partial
-    );
-    assert!(preflight_fully_supported_deck(&[id]).is_err());
+    assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
+    assert_eq!(CARD_DEFS[usize::from(id)].activated_abilities.len(), 3);
+    preflight_fully_supported_deck(&[id]).unwrap();
     assert_eq!(
         TargetSpec::ControlledCreatureThenOpponentCreature.stable_id(),
         38
@@ -571,8 +569,27 @@ fn public_projection_exposes_planeswalker_loyalty_without_hidden_state() {
     let victim = planeswalker(&mut state, PlayerId::P1);
     let mut surface = surface();
     priority(&mut surface, &mut state);
-    let observation = rl::observe_v2(&state, &surface, PlayerId::P0, 0).unwrap();
-    let projected = observation.projection.engine_context.planeswalkers.unwrap();
+    let before = serde_json::to_vec(&state).unwrap();
+    assert!(rl::observe_v2(&state, &surface, PlayerId::P0, 0).is_err());
+    assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    let policy_surface =
+        mtg_kernel::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1();
+    let observation = mtg_kernel::ajani_observation_v42::observe_v42(
+        &state,
+        &policy_surface,
+        PlayerId::P0,
+        0,
+        0,
+        (0, 1),
+    )
+    .unwrap();
+    observation.validate_artifact().unwrap();
+    let projected = observation
+        .projection
+        .surface
+        .engine_context
+        .planeswalkers
+        .unwrap();
     assert_eq!(projected.len(), 1);
     assert_eq!(projected[0].permanent.arena_id, victim.0);
     assert_eq!(projected[0].loyalty, 4);

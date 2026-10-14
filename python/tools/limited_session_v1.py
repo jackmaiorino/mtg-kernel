@@ -84,42 +84,7 @@ class LimitedClientV1:
             if len(line) > MAX_LINE_BYTES:
                 raise LimitedSessionError("engine response exceeds the line-size limit")
             reply = load_json(line)
-            if reply.get("protocol") != "kernel_limited_jsonl" or type(reply.get("schema_version")) is not int or reply["schema_version"] != self.schema_version:
-                raise LimitedSessionError("unexpected Limited protocol identity")
-            if self.schema_version >= 2 and reply.get("priority_mode") != "engine_windows_v1":
-                raise LimitedSessionError("unexpected Limited priority mode")
-            if self.schema_version == 1 and "priority_mode" in reply:
-                raise LimitedSessionError("unexpected priority mode in schema 1")
-            if self.schema_version >= 3 and reply.get("combat_rules") != "foundations_v1":
-                raise LimitedSessionError("unexpected Limited combat rules")
-            if self.schema_version < 3 and "combat_rules" in reply:
-                raise LimitedSessionError("unexpected combat rules in earlier schema")
-            if self.schema_version == 4 and reply.get("mulligan_rules") != "london_v1":
-                raise LimitedSessionError("unexpected Limited mulligan rules")
-            if self.schema_version < 4 and "mulligan_rules" in reply:
-                raise LimitedSessionError("unexpected mulligan rules in earlier schema")
-            if reply.get("request_id") != request["request_id"]:
-                raise LimitedSessionError("response request_id mismatch")
-            _uint(reply.get("card_db_hash"), "card_db_hash")
-            kind = reply.get("response_type")
-            if kind not in ("decision", "terminal", "error"):
-                raise LimitedSessionError("unknown response type")
-            if kind == "decision":
-                decision = reply.get("decision")
-                if not isinstance(decision, dict) or decision.get("schema_version") != 5:
-                    raise LimitedSessionError("expected a nested policy V5 decision")
-                _uint(decision.get("episode_id"), "episode_id")
-                _uint(decision.get("step"), "step")
-                actions = decision.get("legal_actions")
-                if not isinstance(actions, list) or not actions:
-                    raise LimitedSessionError("decision has no legal actions")
-                for index, action in enumerate(actions):
-                    if not isinstance(action, dict) or type(action.get("selected_index")) is not int or action["selected_index"] != index or not isinstance(action.get("stable_id"), str) or not action["stable_id"]:
-                        raise LimitedSessionError("invalid legal action identity")
-            elif kind == "terminal" and not isinstance(reply.get("terminal"), dict):
-                raise LimitedSessionError("missing terminal payload")
-            elif kind == "error" and (not isinstance(reply.get("error"), dict) or not isinstance(reply["error"].get("code"), str) or not isinstance(reply["error"].get("message"), str)):
-                raise LimitedSessionError("invalid error payload")
+            kind = self._validate_reply(reply, request)
         except queue.Empty as exc:
             self.close()
             raise LimitedSessionError("engine response timed out") from exc
@@ -129,10 +94,52 @@ class LimitedClientV1:
         self.transcript.update(raw)
         self.transcript.update(line)
         if kind == "error":
-            error = reply["error"]
-            raise LimitedSessionError(f"{error['code']}: {error['message']}")
+            raise LimitedSessionError(self._server_error(reply))
         self.last_reply = reply
         return reply
+
+    def _validate_reply(self, reply: dict[str, Any], request: dict[str, Any]) -> str:
+        if reply.get("protocol") != "kernel_limited_jsonl" or type(reply.get("schema_version")) is not int or reply["schema_version"] != self.schema_version:
+            raise LimitedSessionError("unexpected Limited protocol identity")
+        if self.schema_version >= 2 and reply.get("priority_mode") != "engine_windows_v1":
+            raise LimitedSessionError("unexpected Limited priority mode")
+        if self.schema_version == 1 and "priority_mode" in reply:
+            raise LimitedSessionError("unexpected priority mode in schema 1")
+        if self.schema_version >= 3 and reply.get("combat_rules") != "foundations_v1":
+            raise LimitedSessionError("unexpected Limited combat rules")
+        if self.schema_version < 3 and "combat_rules" in reply:
+            raise LimitedSessionError("unexpected combat rules in earlier schema")
+        if self.schema_version == 4 and reply.get("mulligan_rules") != "london_v1":
+            raise LimitedSessionError("unexpected Limited mulligan rules")
+        if self.schema_version < 4 and "mulligan_rules" in reply:
+            raise LimitedSessionError("unexpected mulligan rules in earlier schema")
+        if reply.get("request_id") != request["request_id"]:
+            raise LimitedSessionError("response request_id mismatch")
+        _uint(reply.get("card_db_hash"), "card_db_hash")
+        kind = reply.get("response_type")
+        if kind not in ("decision", "terminal", "error"):
+            raise LimitedSessionError("unknown response type")
+        if kind == "decision":
+            decision = reply.get("decision")
+            if not isinstance(decision, dict) or decision.get("schema_version") != 5:
+                raise LimitedSessionError("expected a nested policy V5 decision")
+            _uint(decision.get("episode_id"), "episode_id")
+            _uint(decision.get("step"), "step")
+            actions = decision.get("legal_actions")
+            if not isinstance(actions, list) or not actions:
+                raise LimitedSessionError("decision has no legal actions")
+            for index, action in enumerate(actions):
+                if not isinstance(action, dict) or type(action.get("selected_index")) is not int or action["selected_index"] != index or not isinstance(action.get("stable_id"), str) or not action["stable_id"]:
+                    raise LimitedSessionError("invalid legal action identity")
+        elif kind == "terminal" and not isinstance(reply.get("terminal"), dict):
+            raise LimitedSessionError("missing terminal payload")
+        elif kind == "error" and (not isinstance(reply.get("error"), dict) or not isinstance(reply["error"].get("code"), str) or not isinstance(reply["error"].get("message"), str)):
+            raise LimitedSessionError("invalid error payload")
+        return kind
+
+    def _server_error(self, reply: dict[str, Any]) -> str:
+        error = reply["error"]
+        return f"{error['code']}: {error['message']}"
 
     def reset(self, decks: tuple[ImportedDeck, ImportedDeck], *, episode_id: int = 0,
               env_seed: int = 1, max_steps: int = 4096) -> dict[str, Any]:

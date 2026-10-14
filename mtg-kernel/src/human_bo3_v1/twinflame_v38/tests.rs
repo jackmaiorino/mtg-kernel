@@ -215,12 +215,21 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
         let snapshot = session.snapshot_v38();
         let receipt = projector.submit(&mut session, input.clone()).unwrap();
         let after = session.inner.privileged_core_environment_hash();
+        let after_state = serde_json::to_vec(session.inner.game_state()).unwrap();
+        let after_counts = (
+            session.inner.policy_step_count(),
+            session.inner.physical_decision_count(),
+        );
         assert_eq!(
             projector.submit(&mut session, input.clone()).unwrap(),
             receipt
         );
         assert_eq!(session.inner.privileged_core_environment_hash(), after);
         session.restore_v38(&snapshot).unwrap();
+        assert_ne!(
+            expected(&session).environment_revision,
+            e.environment_revision
+        );
         let mut replay = HumanTwinflameProjectorV38::new(e.acting_player);
         assert_eq!(
             replay
@@ -229,7 +238,17 @@ fn inherited_registered_generic_ward_menu_is_preserved_and_submission_replays() 
             prompt
         );
         replay.submit(&mut session, input).unwrap();
-        assert_eq!(session.inner.privileged_core_environment_hash(), after);
+        assert_eq!(
+            serde_json::to_vec(session.inner.game_state()).unwrap(),
+            after_state
+        );
+        assert_eq!(
+            (
+                session.inner.policy_step_count(),
+                session.inner.physical_decision_count()
+            ),
+            after_counts
+        );
     }
 }
 

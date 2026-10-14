@@ -600,7 +600,8 @@ pub enum CommittedEvent {
         active_player: PlayerId,
         creature_died_this_turn: bool,
     },
-    /// Immediately precedes a departure whose printed abilities were absent.
+    /// Precedes a departure whose printed abilities were absent, before any
+    /// exact departure-color snapshot for the same incarnation.
     PrintedAbilitiesRemovedBeforeZoneChange {
         object: ObjectId,
         zone_change_count: u32,
@@ -5651,8 +5652,8 @@ mod arahbo_entry_tests {
     }
 }
 
+#[cfg(test)]
 #[cfg(all(
-    test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]

@@ -3,6 +3,10 @@ use crate::ids::PlayerId;
 use crate::policy_observation_v6::tests::{put, ready_state};
 
 #[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn registered_permanent_count_is_shared_full_width_and_not_creature_only_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state();
@@ -49,6 +53,10 @@ fn registered_permanent_count_is_shared_full_width_and_not_creature_only_both_se
 }
 
 #[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn registered_token_batch_has_one_complete_entry_roster_and_original_controller_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state();

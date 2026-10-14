@@ -5251,9 +5251,32 @@ fn triggers_from_events(
                     {
                         continue;
                     }
-                    if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
-                    continue;
-                }
+                    let previous = i.checked_sub(1).and_then(|index| events.get(index));
+                    let printed_removed = match previous {
+                        Some(CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                            object,
+                            ..
+                        }) => *object == id,
+                        Some(CommittedEvent::ProtectionSourceColorDepartureV1 {
+                            snapshot, ..
+                        }) if snapshot.source.source == id
+                            && snapshot.source.zone == Zone::Battlefield
+                            && matches!(ev, CommittedEvent::ZoneChange {
+                                object, from: Zone::Battlefield, to, controller_before
+                            } if *object == id && *to != Zone::Battlefield
+                                && *controller_before == snapshot.source.controller) =>
+                        {
+                            matches!(i.checked_sub(2).and_then(|index| events.get(index)),
+                                Some(CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                    object, zone_change_count
+                                }) if *object == id
+                                    && *zone_change_count == snapshot.source.zone_change_count)
+                        }
+                        _ => false,
+                    };
+                    if uses_leave_lki && printed_removed {
+                        continue;
+                    }
                     let event_controller = match ev {
                         CommittedEvent::ZoneChange {
                             object,

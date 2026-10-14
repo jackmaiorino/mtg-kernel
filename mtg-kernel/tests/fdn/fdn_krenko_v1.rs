@@ -338,6 +338,11 @@ fn real_witness_response_suppression_uses_current_members_without_cancelling_pai
             let source = cast(&mut state, actor);
             naturally_ready(&mut state, actor, source);
             if paid {
+                let trickster = put(&mut state, actor, "High Fae Trickster", Zone::Hand);
+                state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 4;
+                engine::step(&mut state, Action::CastSpell(trickster)).unwrap();
+                finish(&mut state);
+                assert_eq!(state.objects.get(trickster).zone, Zone::Battlefield);
                 activate(&mut state, actor, source);
             }
             let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);

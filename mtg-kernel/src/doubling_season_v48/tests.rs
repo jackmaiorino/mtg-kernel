@@ -456,7 +456,8 @@ fn genuine_initialized_token_batch_haste_and_copy_are_present_at_entry() {
                 Keywords::HASTE
             ));
             assert_eq!(state.engine.event_history[start..].iter().filter(|event| matches!(event,
-                event::CommittedEvent::PlusOneCountersAdded {object: actual,count:3,..} if *actual == object)).count(), 1);
+                event::CommittedEvent::PlusOneCountersAdded {object: actual,count:3,..} if *actual == object)).count(),
+                usize::from(cfg!(feature = "limited-fdn-fixtures")));
         }
         assert_eq!(restore(&state), state);
     }

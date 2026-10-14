@@ -76,13 +76,16 @@ pub(crate) fn grant_survives(state: &GameState, host: ObjectId, timestamp: u64) 
 }
 
 /// The active `CardDef::animation` of a battlefield incarnation and the
-/// timestamp of the ability that applied it (Mishra's Foundry). An Aura
+/// timestamp of the ability that applied it. An Aura
 /// creature override replaces it entirely while one applies.
 pub(crate) fn animation(
     state: &GameState,
     id: ObjectId,
 ) -> Option<(crate::card_def::AnimationDef, u64)> {
-    if !cfg!(feature = "standard-magezero-fixtures") {
+    if !cfg!(any(
+        feature = "standard-magezero-fixtures",
+        feature = "limited-fdn-fixtures"
+    )) {
         return None;
     }
     let object = state.objects.try_get(id)?;
