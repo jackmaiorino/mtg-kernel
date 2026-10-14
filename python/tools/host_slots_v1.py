@@ -809,7 +809,11 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     pid, creation = self_identity()
     base = {"schema": SCHEMA, "id": claim_id, "lane": lane, "work_id": work_id, "pid": pid,
             "creation_time": creation, "background": background}
-    ticket = slots_dir() / f"queue-{time.time_ns():020d}-{claim_id}.json"
+    # Legacy launchers use filename FIFO without reading the background flag.
+    # Sort background filenames after ordinary ones so both generations agree
+    # on who may enter. Otherwise each can wait for the other's first ticket.
+    queue_class = "z-" if background else ""
+    ticket = slots_dir() / f"queue-{queue_class}{time.time_ns():020d}-{claim_id}.json"
     claim = slots_dir() / f"claim-{claim_id}.json"
     deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
     with Mutex():

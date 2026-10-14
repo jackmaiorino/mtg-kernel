@@ -370,6 +370,39 @@ class HostSlotsTests(unittest.TestCase):
             release.write_text("go")
             first.wait(timeout=60)
 
+    def test_background_queue_does_not_deadlock_a_legacy_fifo_launcher(self):
+        host, tmp_path = self.host, self.tmp_path
+        lock(host)
+        mark = script(tmp_path, "mixed-mark.py", "open(sys.argv[1], 'a').write(sys.argv[2] + '\\n')\n")
+        legacy = script(tmp_path, "legacy-fifo.py", "class FilenameFIFO(list):\n"
+                        "    def sort(self, *args, **kwargs): pass\n"
+                        "read_tickets = h.live_tickets\n"
+                        "h.live_tickets = lambda: FilenameFIFO(read_tickets())\n"
+                        "raise SystemExit(h.main())\n")
+        order = tmp_path / "mixed-order"
+        ci = cli("run", "--wait", "--background", "--priority", "idle", "--lane", "ci",
+                 "--work-id", "older-ci", "--cores", str(len(CPUS)), "--",
+                 sys.executable, mark, str(order), "ci")
+        foreground = None
+        try:
+            self.assertTrue(wait_for(lambda: len(slots.status()["queue"]) == 1))
+            foreground = subprocess.Popen([sys.executable, legacy, "run", "--wait", "--lane", "build",
+                          "--work-id", "legacy-build", "--cores", str(len(CPUS)), "--",
+                          sys.executable, mark, str(order), "build"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertTrue(wait_for(lambda: len(slots.status()["queue"]) == 2))
+            (host / "TESTHOST.lock").unlink()
+            foreground.communicate(timeout=30)
+            ci.communicate(timeout=30)
+            self.assertEqual(foreground.returncode, 0)
+            self.assertEqual(ci.returncode, 0)
+            self.assertEqual(order.read_text().split(), ["build", "ci"])
+        finally:
+            (host / "TESTHOST.lock").unlink(missing_ok=True)
+            for process in (foreground, ci):
+                if process and process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=30)
+
     def test_claims_suspend_while_timed_work_leaves_no_room(self):
         host = self.host
         tmp_path = self.tmp_path
