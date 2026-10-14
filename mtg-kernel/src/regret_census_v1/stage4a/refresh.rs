@@ -164,6 +164,8 @@ struct Cursor {
 struct Hit {
     step: KeyStep,
     backups: Option<u64>,
+    /// The matched node's key (Supported or Unsupported lookups).
+    key: Option<super::tree::Key>,
 }
 
 impl Cursor {
@@ -207,7 +209,15 @@ impl Cursor {
         if found == Lookup::Miss {
             self.matching = false;
         }
-        Ok((found, Some(Hit { step: st, backups })))
+        let key = (found != Lookup::Miss).then_some(key);
+        Ok((
+            found,
+            Some(Hit {
+                step: st,
+                backups,
+                key,
+            }),
+        ))
     }
 
     /// The live candidate of storage edge `e` at a looked-up decision.
@@ -456,6 +466,8 @@ fn guide_inner(
     let mut c = Counters::default();
     let (mut actions, mut decisions) = (Vec::new(), Vec::new());
     let mut invalid: Option<String> = None;
+    // Passive (`pathlog.rs`): the actual history's nodes in each tree.
+    let mut actual = super::pathlog::dir().map(|_| super::pathlog::ActualLog::default());
     while let Some(d) = decision(&s) {
         #[cfg(feature = "viewer-recording-v1")]
         if max_step.is_some_and(|limit| d.step >= limit) {
@@ -499,6 +511,9 @@ fn guide_inner(
                         break;
                     }
                 }
+            }
+            if let (Some(log), Some(Hit { key: Some(k), .. })) = (actual.as_mut(), hit.as_ref()) {
+                log.hit(cursor.search, d.step, k);
             }
             let new_root = cursor.depth == 1 && !cursor.advanced;
             let mut edge_backups = None;
@@ -584,6 +599,22 @@ fn guide_inner(
         (Vec::new(), Vec::new())
     };
     let valid = invalid.is_none() && end.is_some_and(|e| e != "nonnatural");
+    if let (Some(log), Some(dir)) = (actual, super::pathlog::dir()) {
+        let roots: Vec<Value> = searches
+            .records
+            .iter()
+            .enumerate()
+            .map(|(k, r)| {
+                json!({"search":k,"step":r["step"],"reason":r["reason"],
+                    "tree_hash":r["tree"]["hash"],"budget":r["budget"]})
+            })
+            .collect();
+        let header = json!({"id":src.id,"lineage":sh.spec.lineage,"search_root":src.search_root,
+            "seat":src.seat,"opp":src.opp,"end":end,"valid":valid,"searches":roots});
+        if let Err(e) = log.write(&dir, header) {
+            eprintln!("S4A_PATH_LOG: guide log not written: {e}");
+        }
+    }
     Ok((
         json!({"valid":valid,"invalid_reason":invalid.or_else(|| (!valid).then(|| "non-natural guide".to_owned())),
             "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
@@ -948,6 +979,75 @@ mod tests {
             assert_eq!(x, y, "search changed a live sampling stream");
             a.step(d.episode_id, d.step, x).unwrap();
         }
+    }
+
+    /// The path log (`pathlog.rs`) is passive: the same search with it
+    /// leaves the tree and its transitions unchanged, and the logged attempts
+    /// rebuild every stored node's counts.
+    #[test]
+    #[ignore = "native qualification: fixture games and a small search"]
+    fn path_log_is_passive_and_rebuilds_the_tree() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut s = game(11);
+        advance(&mut s, |d| {
+            d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0
+        });
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "path-log".into(),
+        };
+        let limits = Limits {
+            select_cap: 6_000,
+            ..Limits::FORMAL
+        };
+        let ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+        let (plain, plain_tree) = roles(&policy).select_e(&ctx);
+        let dir = std::env::temp_dir().join(format!("s4a-path-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut diag = super::super::arms::SearchDiag::default();
+        diag.path_log = Some(super::super::pathlog::PathLog::new(dir.clone()));
+        let (sel, tree) =
+            roles(&policy).select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        assert_eq!(tree.hash(), plain_tree.hash());
+        assert_eq!(
+            (sel.transitions, sel.completed),
+            (plain.transitions, plain.completed)
+        );
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(files.len(), 1, "{files:?}");
+        let v: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+        assert_eq!(v["tree_hash"], tree.hash());
+        let nodes = v["nodes"].as_array().unwrap();
+        let sims = v["sims"].as_array().unwrap();
+        assert_eq!(nodes.len(), tree.nodes.len());
+        assert_eq!(sims.len() as u64, sel.completed);
+        let mut n: Vec<Vec<u64>> = nodes
+            .iter()
+            .map(|x| vec![0; x["k"].as_u64().unwrap() as usize])
+            .collect();
+        let mut w = n.clone();
+        for sim in sims {
+            let win = sim[1].as_u64().unwrap();
+            let flat = sim[4].as_array().unwrap();
+            for pair in flat.chunks(2) {
+                let (id, a) = (pair[0].as_i64().unwrap(), pair[1].as_u64().unwrap());
+                assert!(id >= 0, "broken path");
+                n[id as usize][a as usize] += 1;
+                w[id as usize][a as usize] += win;
+            }
+        }
+        for (i, x) in nodes.iter().enumerate() {
+            assert_eq!(x["n"], json!(n[i]), "node {i}");
+            assert_eq!(x["wins"], json!(w[i]), "node {i}");
+            let p = x["parent"].as_i64().unwrap();
+            assert!(p < i as i64, "parents precede children");
+        }
+        assert_eq!(nodes.iter().filter(|x| x["parent"] == -1).count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A refresh root at a nonzero substep samples only the actor's

@@ -35,6 +35,7 @@ pub(crate) mod e_supported;
 mod identity;
 mod interchange;
 mod labels;
+mod pathlog;
 mod play;
 mod process_cpu;
 mod profile_roots;
