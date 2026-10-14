@@ -627,7 +627,11 @@ impl PolicySurfaceV5 {
             }
             other => {
                 let origin = PolicyDecisionV5::Surface(other);
-                if self.hunter_order_enabled_v45 {
+                if self.hunter_order_enabled_v45
+                    && matches!(&origin, PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                        Decision::OrderTriggers { pending, .. }
+                    )) if pending.len() > crate::rl::MAX_TRIGGER_ORDER_OBJECTS)
+                {
                     let EnvironmentBindingModeV5::OwnedRevision(revision) = binding_mode else {
                         return Err("Hunter ordering opt-in requires owning surface".into());
                     };
