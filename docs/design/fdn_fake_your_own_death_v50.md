@@ -10,7 +10,15 @@ The second component installs the ordinary exact-incarnation +2/+0 modifier and 
 
 Next source work must bind the actual paid spell/target/turn and cleanup to those operands; own each mandatory trigger through collection, APNAP, publication, counter/removal, return/entry suspension and Treasure completion; and supply precise ordered meaning plus complete V50 public/backend/Human privacy and restore adapters. Legacy modes and samplers must refuse unsupported original or retained facts. Printing registration and native qualification follow those components.
 
-Fourteen authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. The Witness group needs pure Limited; the new death-binding groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are source verification; compilation, these groups and all genuine Fake printing/custody/consumer cases remain unrun.
+Fourteen authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. The Witness group needs pure Limited; the new death-binding groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the three new groups, modified copied-token group and all genuine Fake printing/custody/consumer cases remain unqualified.
+
+Prior d43 CI38542038812 default-workspace job115779334632 actually executes
+and passes ten predecessor primitive groups, including real cleanup, copied-token
+death and all five Treasure payments after restore. The retained full log is
+fdn110-cid43-115779334632.log in the issue110 C/E evidence stores. That entire
+job fails on six other cases. This is scoped predecessor evidence, not a current
+death-binder compilation pass or Fake printing qualification. The paid Witness
+group is absent from that default feature build.
 
 ## Committed death binding
 
