@@ -256,7 +256,7 @@ fn actual_fake_human_unknown_hand_invariance_safe_dto_wrong_seat_and_binding_ref
 }
 
 #[test]
-fn actual_paid_fake_human_masks_unknown_face_down_recipient_before_and_after_grant() {
+fn actual_paid_fake_human_masks_public_face_down_refs_and_separates_controller_knowledge() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let original = fixture(actor, "Lightning Bolt");
         let mut state = original.inner.fake_fixture_state().clone();
@@ -288,7 +288,34 @@ fn actual_paid_fake_human_masks_unknown_face_down_recipient_before_and_after_gra
             label.starts_with("Begin casting Fake Your Own Death")
         });
         let targets = menu(&session, &mut projector);
-        let json = serde_json::to_string(&targets).unwrap();
+        assert_eq!(targets.state.known_face_down_cards.len(), 1);
+        assert_eq!(
+            targets.state.known_face_down_cards[0].name,
+            "Llanowar Elves"
+        );
+        assert_eq!(
+            targets.state.known_face_down_cards[0].object.name,
+            "Face-down creature"
+        );
+        assert!(
+            session
+                .inner
+                .fake_fixture_state()
+                .objects
+                .get(target)
+                .v4
+                .face_down_v1
+                .unwrap()
+                .lookers
+                & (1 << actor.index())
+                != 0
+        );
+        let json = serde_json::to_string(&(
+            &targets.state.public,
+            &targets.state.extensions,
+            &targets.actions,
+        ))
+        .unwrap();
         assert!(
             !json.contains("Llanowar Elves"),
             "unknown recipient leaked: {json}"
@@ -311,7 +338,20 @@ fn actual_paid_fake_human_masks_unknown_face_down_recipient_before_and_after_gra
             crate::engine::effective_power(session.inner.fake_fixture_state(), target),
             4
         );
-        let json = serde_json::to_string(&finished).unwrap();
+        assert_eq!(
+            finished.state.known_face_down_cards[0].name,
+            "Llanowar Elves"
+        );
+        assert_eq!(
+            finished.state.known_face_down_cards[0].object.name,
+            "Face-down creature"
+        );
+        let json = serde_json::to_string(&(
+            &finished.state.public,
+            &finished.state.extensions,
+            &finished.actions,
+        ))
+        .unwrap();
         assert!(
             !json.contains("Llanowar Elves"),
             "unknown granted recipient leaked: {json}"
