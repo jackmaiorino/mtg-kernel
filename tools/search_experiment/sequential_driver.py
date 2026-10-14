@@ -118,6 +118,13 @@ def run(plan):
         for ladder in plan["ladders"]:
             manifest = Path(ladder["manifest"])
             require(runtime.digest(manifest) == ladder["manifest_sha256"], "approved manifest changed")
+            existing = ladder.get("existing_batches", {})
+            if existing:
+                require(ladder.get("certify_legacy") is True and set(existing) == {"1", "4"},
+                        "only approved same-pool serial/four-worker legacy reuse is supported")
+                invoke([plan["certifier"], "--manifest", str(manifest),
+                        *sum((["--batch", existing[n]] for n in ("1", "4")), []),
+                        "--out", str(root / "P14-THROUGHPUT-CERTIFICATION.json")])
             batches = []
             reference = None
             for index, workers in enumerate((1, 4, 8)):
@@ -127,14 +134,26 @@ def run(plan):
                             "projected qualification CPU exceeds phase bound")
                     require(accounted() + projection < 43200, "remaining aggregate CPU cannot fit projected stage")
                 label = f"{ladder['label_prefix']}-w{workers}-{plan['attempt']}"
-                path, previous = execute(manifest, "qualify", workers, label, ladder["cost_only"],
-                    already_issued=ladder.get("adopt_first") is True and index == 0)
+                if str(workers) in existing:
+                    path = Path(existing[str(workers)])
+                    previous = load(path)
+                    diagnostics = inspect(previous, load(manifest), ladder["cost_only"])
+                    state["stages"].append({"label": previous["label"], "workers": workers,
+                        "reused_existing_completion": True, "completion": str(path),
+                        "cpu_seconds": previous["cpu_seconds"], "wall_seconds": previous["wall_seconds"],
+                        "diagnostics": diagnostics})
+                    save()
+                else:
+                    path, previous = execute(manifest, "qualify", workers, label, ladder["cost_only"],
+                        already_issued=ladder.get("adopt_first") is True and index == 0)
                 reference = reference or previous
                 require([r["primary_sha256"] for r in previous["results"]] ==
                         [r["primary_sha256"] for r in reference["results"]], "serial/parallel primary and evaluation parity failed")
                 batches.append(path)
             output = root / ladder["qualification_filename"]
-            invoke([plan["launcher"], "qualify", *sum((["--batch", str(p)] for p in batches), []), "--out", str(output)])
+            qualifier = ([plan["certifier"], "--manifest", str(manifest)] if ladder.get("certify_legacy")
+                         else [plan["launcher"], "qualify"])
+            invoke([*qualifier, *sum((["--batch", str(p)] for p in batches), []), "--out", str(output)])
             receipt = load(output)
             fastest = int(max(receipt["rates"], key=lambda n: receipt["rates"][n]["completed_per_second"]))
             selections[ladder["name"]] = {"receipt": str(output), "fastest_workers": fastest, "serial_completion": str(batches[0])}
