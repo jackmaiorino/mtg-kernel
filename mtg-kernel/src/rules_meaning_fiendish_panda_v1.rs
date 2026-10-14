@@ -53,32 +53,36 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_fiendish_panda_v1.rs"),
-        include_str!("fiendish_panda_v1.rs"),
-        include_str!("fiendish_panda_v1/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("creature_death_capture_v1.rs"),
-        include_str!("life_gain_turn_v1.rs"),
-        include_str!("trigger.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update((source.len() as u64).to_le_bytes());
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("../build.rs"),
+        ] {
+            hash.update((source.len() as u64).to_le_bytes());
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn selector() -> SelectorV1 {
     SelectorV1 {

@@ -89,51 +89,55 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for (path, source) in [
-        (
-            "rules_meaning_inspiration_v1.rs",
-            include_str!("rules_meaning_inspiration_v1.rs"),
-        ),
-        ("build.rs", include_str!("../build.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("trigger.rs", include_str!("trigger.rs")),
-        ("effect.rs", include_str!("effect.rs")),
-        (
-            "effect/standard_selection_v1.rs",
-            include_str!("effect/standard_selection_v1.rs"),
-        ),
-        (
-            "effect/inspiration_resolution_v1.rs",
-            include_str!("effect/inspiration_resolution_v1.rs"),
-        ),
-        (
-            "effect/vampire_gourmand_resolution_v1.rs",
-            include_str!("effect/vampire_gourmand_resolution_v1.rs"),
-        ),
-        ("engine.rs", include_str!("engine.rs")),
-        ("event.rs", include_str!("event.rs")),
-        ("state.rs", include_str!("state.rs")),
-        ("spell_costs_v1.rs", include_str!("spell_costs_v1.rs")),
-        (
-            "continuous_characteristics_v1.rs",
-            include_str!("continuous_characteristics_v1.rs"),
-        ),
-        ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
-        (
-            "standard_statics_v1.rs",
-            include_str!("standard_statics_v1.rs"),
-        ),
-    ] {
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(source.as_bytes());
-        hash.update([0]);
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for (path, source) in [
+            (
+                "rules_meaning_inspiration_v1.rs",
+                include_str!("rules_meaning_inspiration_v1.rs"),
+            ),
+            ("build.rs", include_str!("../build.rs")),
+            ("card_def.rs", include_str!("card_def.rs")),
+            ("trigger.rs", include_str!("trigger.rs")),
+            ("effect.rs", include_str!("effect.rs")),
+            (
+                "effect/standard_selection_v1.rs",
+                include_str!("effect/standard_selection_v1.rs"),
+            ),
+            (
+                "effect/inspiration_resolution_v1.rs",
+                include_str!("effect/inspiration_resolution_v1.rs"),
+            ),
+            (
+                "effect/vampire_gourmand_resolution_v1.rs",
+                include_str!("effect/vampire_gourmand_resolution_v1.rs"),
+            ),
+            ("engine.rs", include_str!("engine.rs")),
+            ("event.rs", include_str!("event.rs")),
+            ("state.rs", include_str!("state.rs")),
+            ("spell_costs_v1.rs", include_str!("spell_costs_v1.rs")),
+            (
+                "continuous_characteristics_v1.rs",
+                include_str!("continuous_characteristics_v1.rs"),
+            ),
+            ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
+            (
+                "standard_statics_v1.rs",
+                include_str!("standard_statics_v1.rs"),
+            ),
+        ] {
+            hash.update(path.as_bytes());
+            hash.update([0]);
+            hash.update(source.as_bytes());
+            hash.update([0]);
+        }
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {

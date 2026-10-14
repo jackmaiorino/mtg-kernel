@@ -45,30 +45,34 @@ fn hash(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut h = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_strongbox_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("effect/exile_top_choose_v1.rs"),
-        include_str!("effect/strongbox_permission_v1.rs"),
-        include_str!("effect/squad_rallier_resolution_v1.rs"),
-        include_str!("raid_entry_v1.rs"),
-        include_str!("raid_entry_custody_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("extra_turn_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-    ] {
-        h.update([0]);
-        h.update(source.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_strongbox_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("effect/exile_top_choose_v1.rs"),
+            include_str!("effect/strongbox_permission_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
+            include_str!("raid_entry_v1.rs"),
+            include_str!("raid_entry_custody_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("extra_turn_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+        ] {
+            h.update([0]);
+            h.update(source.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, String> {
     if !cfg!(all(

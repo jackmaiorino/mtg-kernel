@@ -40,28 +40,32 @@ pub enum ErrorV1 {
 }
 
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("rules_meaning_high_society_hunter_v1.rs"),
-        include_str!("high_society_hunter_v1.rs"),
-        include_str!("high_society_hunter_custody_v45.rs"),
-        include_str!("creature_death_capture_v1.rs"),
-        include_str!("effect/standard_selection_v1.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("event.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        h.update([0]);
-        h.update(text.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("rules_meaning_high_society_hunter_v1.rs"),
+            include_str!("high_society_hunter_v1.rs"),
+            include_str!("high_society_hunter_custody_v45.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("effect/standard_selection_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("../build.rs"),
+        ] {
+            h.update([0]);
+            h.update(text.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(

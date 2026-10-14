@@ -54,20 +54,24 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    digest(
-        [
-            SCHEMA,
-            include_str!("rules_meaning_zul_ashur_v1.rs"),
-            include_str!("zul_ashur_v1.rs"),
-            include_str!("standard_cards_v1.rs"),
-            include_str!("engine.rs"),
-            include_str!("event.rs"),
-            include_str!("card_def.rs"),
-            include_str!("../build.rs"),
-        ]
-        .join("\0")
-        .as_bytes(),
-    )
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        digest(
+            [
+                SCHEMA,
+                include_str!("rules_meaning_zul_ashur_v1.rs"),
+                include_str!("zul_ashur_v1.rs"),
+                include_str!("standard_cards_v1.rs"),
+                include_str!("engine.rs"),
+                include_str!("event.rs"),
+                include_str!("card_def.rs"),
+                include_str!("../build.rs"),
+            ]
+            .join("\0")
+            .as_bytes(),
+        )
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, String> {
     if !cfg!(all(
