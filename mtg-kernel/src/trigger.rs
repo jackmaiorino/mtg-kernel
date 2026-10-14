@@ -4763,6 +4763,7 @@ pub(crate) fn collect_and_process_with_waiting(
                 || crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
+                || crate::fiendish_panda_v1::custody::unavailable(state, pending).is_err()
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

@@ -14337,7 +14337,10 @@ fn validated_stack_item_target_metadata(
     Ok(Some(spec))
 }
 
-fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool, String> {
+pub(crate) fn stack_targets_still_legal(
+    item: &StackItem,
+    state: &GameState,
+) -> Result<bool, String> {
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };

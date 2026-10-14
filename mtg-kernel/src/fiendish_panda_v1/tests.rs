@@ -166,6 +166,14 @@ mod printed {
             let mut erased = restored.clone();
             erased.stack.pop().unwrap();
             readonly_refusal(&erased);
+            let mut duplicated = restored.clone();
+            let mut duplicate = duplicated.stack.last().unwrap().clone();
+            duplicated.engine.next_stack_item_id =
+                duplicated.engine.next_stack_item_id.checked_add(1).unwrap();
+            duplicate.v4.stack_item_id =
+                crate::ids::StackItemId(duplicated.engine.next_stack_item_id);
+            duplicated.stack.push(duplicate);
+            readonly_refusal(&duplicated);
             let mut changed = restored;
             changed.stack.last_mut().unwrap().mode_chosen = 1;
             readonly_refusal(&changed);
@@ -272,11 +280,76 @@ mod printed {
                         settle_stack(&mut state);
                         assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
                         assert!(state.objects.get(target).summoning_sick);
+                        for field in 0..5 {
+                            let mut corrupted = state.clone();
+                            let after = corrupted
+                                .engine
+                                .event_history
+                                .iter_mut()
+                                .find_map(|e| match e {
+                                    CommittedEvent::FiendishPandaJournalV1 { journal } => {
+                                        match journal.as_mut() {
+                                            custody::JournalV1::Operation {
+                                                after: Some(after),
+                                                ..
+                                            } => Some(after),
+                                            _ => None,
+                                        }
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap();
+                            match field {
+                                0 => after.controller = actor.opponent(),
+                                1 => after.tapped = !after.tapped,
+                                2 => after.summoning_sick = false,
+                                3 => after.counters.plus1_plus1 = 99,
+                                _ => after.v4.is_token = true,
+                            }
+                            readonly_refusal(&corrupted);
+                        }
+                        let mut corrupted = state.clone();
+                        let before = corrupted
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| match e {
+                                CommittedEvent::FiendishPandaJournalV1 { journal } => {
+                                    match journal.as_mut() {
+                                        custody::JournalV1::OperationInput {
+                                            before: Some(before),
+                                            ..
+                                        } => Some(before),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        before.zone_change_count += 1;
+                        readonly_refusal(&corrupted);
                     }
                     1 => {
                         engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id)
                             .unwrap();
                         assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+                        let mut relabeled = state.clone();
+                        let kind = relabeled
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| match e {
+                                CommittedEvent::FiendishPandaJournalV1 { journal } => {
+                                    match journal.as_mut() {
+                                        custody::JournalV1::Removed { kind, .. } => Some(kind),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .unwrap();
+                        *kind = custody::RemovalV1::NoLegalTarget;
+                        readonly_refusal(&relabeled);
                     }
                     _ => {
                         event::propose_and_commit(
@@ -311,6 +384,76 @@ mod printed {
             assert!(state.stack.is_empty());
             validate_state(&state).unwrap();
             assert!(state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), custody::JournalV1::Unavailable { .. }))));
+        }
+    }
+    #[test]
+    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
+    fn legal_death_target_cannot_be_replaced_by_fabricated_unavailable_or_fizzle_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = panda(&mut state, actor);
+            let target = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            let pending = state.engine.pending_triggers[0].clone();
+            let EffectOp::FiendishPandaReturnFromCaptureV1 {
+                capture_history_index: capture,
+                ..
+            } = pending.effect
+            else {
+                panic!("genuine Panda death root expected")
+            };
+            let bytes = serde_json::to_vec(&state).unwrap();
+            assert!(custody::unavailable(&mut state, &pending).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+            let mut fabricated = state.clone();
+            fabricated.engine.pending_triggers.remove(0);
+            fabricated
+                .engine
+                .event_history
+                .push(CommittedEvent::FiendishPandaJournalV1 {
+                    journal: Box::new(custody::JournalV1::Unavailable {
+                        capture,
+                        pending: Box::new(pending),
+                        input: capture,
+                    }),
+                });
+            readonly_refusal(&fabricated);
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            let publication = state.engine.event_history.iter().position(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), custody::JournalV1::Published { .. }))).unwrap() as u64;
+            let item = state.stack.pop().unwrap();
+            let removal = state.engine.event_history.len() as u64;
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::FiendishPandaJournalV1 {
+                    journal: Box::new(custody::JournalV1::Removed {
+                        publication,
+                        item: Box::new(item),
+                        kind: custody::RemovalV1::NoLegalTarget,
+                        input: publication,
+                    }),
+                });
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::FiendishPandaJournalV1 {
+                    journal: Box::new(custody::JournalV1::Closed {
+                        removal,
+                        operation: None,
+                    }),
+                });
+            readonly_refusal(&state);
         }
     }
     fn settle_stack(state: &mut GameState) {
@@ -506,6 +649,9 @@ mod printed {
                     own[0].effect,
                     EffectOp::FiendishPandaReturnFromCaptureV1 { maximum: 4, .. }
                 ));
+                // The capture API returns a private batch. Install its genuine
+                // pending owners before checking the externally held state.
+                state.engine.pending_triggers.extend(pending);
                 assert!(validate_state(&state).is_ok());
             }
         }
