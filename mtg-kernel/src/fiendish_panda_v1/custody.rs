@@ -875,6 +875,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                         JournalV1::Published {
                             capture: original,
                             item,
+                            ..
                         } if *original == capture => Some(item.as_ref()),
                         _ => None,
                     },
