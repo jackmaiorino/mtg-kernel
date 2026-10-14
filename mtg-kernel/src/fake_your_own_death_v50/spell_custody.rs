@@ -575,6 +575,7 @@ pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), S
     {
         validate_grant_lifetime(state)?;
     }
+    super::death_custody::validate_retained_owners(state)?;
     Ok(())
 }
 

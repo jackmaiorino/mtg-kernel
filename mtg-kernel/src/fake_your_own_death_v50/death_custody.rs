@@ -9,7 +9,11 @@ use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind,
 use crate::trigger::PendingTrigger;
 
 fn binding(item: &StackItem) -> Option<u64> {
-    match item.inline_effect.as_ref()? {
+    item.inline_effect.as_ref().and_then(effect_capture)
+}
+
+fn effect_capture(effect: &EffectOp) -> Option<u64> {
+    match effect {
         EffectOp::FakeDeathFromCaptureV50 { capture } => Some(*capture),
         _ => None,
     }
@@ -109,6 +113,106 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
             item: Box::new(item.clone()),
         },
     );
+    Ok(())
+}
+
+fn validate_pending_shape(
+    state: &GameState,
+    pending: &PendingTrigger,
+    capture: u64,
+) -> Result<(), String> {
+    let source = source_at(state, capture)?;
+    let expected = PendingTrigger {
+        controller: source.controller,
+        source: source.source,
+        effect: EffectOp::FakeDeathFromCaptureV50 { capture },
+        is_madness_offer: false,
+        kicked: false,
+        target_spec: crate::card_def::TargetSpec::None,
+        targets: Vec::new(),
+        target_contracts: Vec::new(),
+        placement_ordered: pending.placement_ordered,
+        source_contract: Some(source),
+        granted_by: None,
+        optional_additional_cost_paid: None,
+        paid_cost_refs: Vec::new(),
+    };
+    if *pending != expected {
+        return Err(
+            "Fake held trigger changed its original source/controller or full pending row".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Check stable actor/advance boundaries, separately from synchronous collection
+/// and publication callbacks. Removal owners will later supply a closed state;
+/// until then every published gained trigger must retain its exact live row.
+pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> {
+    validate_mutable_capture_roster(state, &state.engine.event_log)?;
+    for pending in &state.engine.pending_triggers {
+        let Some(capture) = effect_capture(&pending.effect) else {
+            continue;
+        };
+        collection_at(state, capture)?;
+        validate_pending_shape(state, pending, capture)?;
+    }
+    for item in &state.stack {
+        let Some(capture) = binding(item) else {
+            continue;
+        };
+        if state.engine.event_history.iter().filter(|event|
+            matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
+                if *original == capture && row.as_ref() == item)).count() != 1
+        {
+            return Err("Fake live gained trigger lost its complete original publication".into());
+        }
+    }
+    for event in &state.engine.event_history {
+        match journal(event) {
+            Some(JournalV50::DeathCollected { capture, .. }) => {
+                let pending = state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .filter(|pending| effect_capture(&pending.effect) == Some(*capture))
+                    .collect::<Vec<_>>();
+                let published = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match journal(event) {
+                        Some(JournalV50::DeathPublished {
+                            capture: original,
+                            item,
+                            ..
+                        }) if original == capture => Some(item.as_ref()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                match (pending.as_slice(), published.as_slice()) {
+                    ([held], []) => validate_pending_shape(state, held, *capture)?,
+                    ([], [original]) => {
+                        let rows = state
+                            .stack
+                            .iter()
+                            .filter(|row| row.v4.stack_item_id == original.v4.stack_item_id)
+                            .collect::<Vec<_>>();
+                        if rows.as_slice() != [*original] {
+                            return Err("Fake published gained trigger changed or lost its unique live owner".into());
+                        }
+                    }
+                    _ => {
+                        return Err(
+                            "Fake collected gained trigger lost or duplicated its mandatory owner"
+                                .into(),
+                        )
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -233,36 +337,7 @@ pub(crate) fn collect(
         return Ok(Vec::new());
     }
     super::spell_custody::validate_grant_lifetime(state).map_err(|_| ObjectId(0))?;
-    let captures = captures_before(state, state.engine.event_history.len());
-    u32::try_from(captures.len()).map_err(|_| ObjectId(0))?;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
-        let needed = match journal(event) {
-            Some(JournalV50::DeathCaptured { .. }) => captures.contains(&(index as u64)),
-            Some(JournalV50::DeathInput { .. }) => captures.iter().any(|capture| {
-                matches!(state.engine.event_history.get(*capture as usize).and_then(journal),
-                    Some(JournalV50::DeathCaptured {input,..}) if *input==index as u64)
-            }),
-            _ => continue,
-        };
-        if events.iter().filter(|e| *e == event).count() != usize::from(needed) {
-            return Err(ObjectId(0));
-        }
-    }
-    for event in events.iter().filter(|e| journal(e).is_some()) {
-        if !matches!(
-            journal(event),
-            Some(JournalV50::DeathInput { .. } | JournalV50::DeathCaptured { .. })
-        ) || state
-            .engine
-            .event_history
-            .iter()
-            .filter(|e| *e == event)
-            .count()
-            != 1
-        {
-            return Err(ObjectId(0));
-        }
-    }
+    let captures = validate_mutable_capture_roster(state, events).map_err(|_| ObjectId(0))?;
     let mut pending = Vec::with_capacity(captures.len());
     for capture in &captures {
         let Some(JournalV50::DeathCaptured { lookback, .. }) = state
@@ -310,4 +385,41 @@ pub(crate) fn collect(
         emit(state, JournalV50::CollectionCompleted { input });
     }
     Ok(pending)
+}
+
+fn validate_mutable_capture_roster(
+    state: &GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<u64>, String> {
+    let captures = captures_before(state, state.engine.event_history.len());
+    u32::try_from(captures.len()).map_err(|_| "Fake capture roster exceeds u32")?;
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let needed = match journal(event) {
+            Some(JournalV50::DeathCaptured { .. }) => captures.contains(&(index as u64)),
+            Some(JournalV50::DeathInput { .. }) => captures.iter().any(|capture| {
+                matches!(state.engine.event_history.get(*capture as usize).and_then(journal),
+                    Some(JournalV50::DeathCaptured {input,..}) if *input==index as u64)
+            }),
+            _ => continue,
+        };
+        if events.iter().filter(|e| *e == event).count() != usize::from(needed) {
+            return Err("Fake mutable log changed its complete original uncollected roster".into());
+        }
+    }
+    for event in events.iter().filter(|e| journal(e).is_some()) {
+        if !matches!(
+            journal(event),
+            Some(JournalV50::DeathInput { .. } | JournalV50::DeathCaptured { .. })
+        ) || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|e| *e == event)
+            .count()
+            != 1
+        {
+            return Err("Fake mutable log contains a forged or non-capture journal".into());
+        }
+    }
+    Ok(captures)
 }

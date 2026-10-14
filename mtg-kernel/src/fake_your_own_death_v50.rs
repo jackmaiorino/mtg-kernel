@@ -225,6 +225,14 @@ mod tests {
                 assert!(death_custody::validate_trigger_identity(&state, &item).is_err());
                 assert!(death_custody::publish(&mut state, &item).is_err());
                 assert_eq!(state, before);
+                assert!(engine::step(&mut state, Action::Pass).is_err());
+                assert_eq!(state, before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::Halted { .. }
+                ));
+                state.engine.halted = None;
+                assert_eq!(state, before);
             }
             state
                 .engine
@@ -299,6 +307,7 @@ mod tests {
 
     #[test]
     fn forged_mutable_death_input_cannot_supply_collection_authority_both_seats() {
+        use crate::engine::{self, Action, Decision};
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
             let events = vec![crate::event::CommittedEvent::FakeJournalV50 {
@@ -311,6 +320,19 @@ mod tests {
                 state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                 let before = state.clone();
                 assert!(death_custody::collect(&mut state, &events).is_err());
+                assert_eq!(state, before);
+            }
+            state.engine.event_log = events;
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(engine::step(&mut state, Action::Pass).is_err());
+                assert_eq!(state, before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::Halted { .. }
+                ));
+                state.engine.halted = None;
                 assert_eq!(state, before);
             }
         }

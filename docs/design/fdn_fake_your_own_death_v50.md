@@ -98,10 +98,14 @@ gained ability instead of requiring its creature definition to print that abilit
 Retained publication checks preserve complete row equality, original source and
 controller, capture/collection order and uniqueness. A both-seat serialized
 negative requires forged roots and orphan publications to refuse without mutation.
-This publication component is uncompiled/unrun. It does not yet check every held
-pending or departed publication owner, execute the private death root, or complete
-removal/counter/return/entry/Treasure and consumer handling. Printing registration
-and genuine paid printing tests remain pending.
+Stable actor/advance ingress now checks the complete mutable uncollected roster,
+each held gained root and the exact unique live row of every publication. Erased,
+duplicated, orphaned or changed owners refuse before actor or automatic work.
+Synchronous collection/publication callbacks use their existing separate metadata
+checks, so these stable-boundary checks do not recurse into incomplete placement.
+These components are uncompiled/unrun. Departed-publication closure, private death
+execution, removal/counter/return/entry/Treasure and consumer handling remain
+unfinished. Printing registration and genuine paid printing tests remain pending.
 
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
