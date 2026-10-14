@@ -340,7 +340,10 @@ fn actual_own_hidden_recipient_uses_safe_mask_and_departed_visibility_not_new_hi
         let e = expected(&session);
         let menu = p.project_current(&session, e).unwrap();
         let json = serde_json::to_string(&menu).unwrap();
-        assert!(!json.contains("Llanowar Elves"));
+        assert!(
+            !json.contains("Llanowar Elves"),
+            "masked recipient leaked into Human menu: {json}"
+        );
         assert!(json.contains("Face-down creature"));
         submit(&mut session, &mut p, |s| s.contains(": select "));
         submit(&mut session, &mut p, |s| s.contains("finish with"));
