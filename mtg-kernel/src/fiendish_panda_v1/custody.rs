@@ -495,9 +495,22 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 .iter()
                 .filter_map(|s| s.resolution_play.as_ref())
                 .flat_map(|p| p.deferred_triggers.iter()),
-        )
-        .collect::<Vec<_>>();
+        );
     let captures = captures(state);
+    // Preserve predecessor paths without allocating a pending-owner vector.
+    // This checks retained root shape, never opposing hidden card identities.
+    if captures.is_empty()
+        && !state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { .. }))
+        && !waiting.clone().any(|p| binding(&p.effect).is_some())
+        && !state.stack.iter().any(|item| item_capture(item).is_some())
+    {
+        return Ok(());
+    }
+    let waiting = waiting.collect::<Vec<_>>();
     for capture in &captures {
         root_at(state, *capture as usize)?;
         let collection = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| matches!(e,
