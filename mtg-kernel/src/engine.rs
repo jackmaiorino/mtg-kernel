@@ -8780,6 +8780,35 @@ fn activate_mana_ability_for(
             return Err("mana ability result exceeds the pool capacity".to_string());
         }
 
+        // A counter in a mana-ability cost is not an effect counter. Only
+        // an actual other counter replacement can make Season applicable
+        // (614.16). Quote native storage before any payment or activation.
+        let minus_toughness_after = if rich.cost == ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        {
+            let count = if crate::doubling_season_v48::requires_successor(state) {
+                crate::doubling_season_v48::counter_amount(
+                    state,
+                    source,
+                    player,
+                    crate::doubling_season_v48::CounterOriginV48::Cost,
+                    1,
+                )?
+            } else {
+                1
+            };
+            Some(
+                state
+                    .objects
+                    .get(source)
+                    .counters
+                    .minus0_minus1
+                    .checked_add(i16::try_from(count).map_err(|_| "-0/-1 counter cost overflow")?)
+                    .ok_or("-0/-1 counter count overflow")?,
+            )
+        } else {
+            None
+        };
+
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
         }
@@ -8799,10 +8828,8 @@ fn activate_mana_ability_for(
                 );
             }
             ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-                let counters = &mut state.objects.get_mut(source).counters.minus0_minus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+                state.objects.get_mut(source).counters.minus0_minus1 =
+                    minus_toughness_after.expect("counter cost was preflighted");
             }
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));

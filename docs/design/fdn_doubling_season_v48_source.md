@@ -298,3 +298,12 @@ haste and copy identity over three identical restored executions. They are unrun
 No compatible printed Adeline/Role/Incubator catalog is admitted here. In
 particular, the existing attacking-token player destination does not qualify a
 future player-or-planeswalker owner-choice producer.
+
+
+The rich mana-ability -0/-1 counter cost now quotes the explicit Cost origin and
+native storage before paying or recording activation. An unmodified cost stays
+one; an actual Talent replacement can make it eligible under 614.16. Absent
+catalog behavior keeps its original one-counter amount. A real Default Wall of
+Roots both-seat fixture checks untapped payment, one green mana and three
+restored readonly native-overflow refusals. The unavailable joint
+Talent/Season/Wall-of-Roots printing catalog is not represented as qualified.

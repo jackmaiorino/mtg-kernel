@@ -1552,3 +1552,55 @@ fn retained_replacement_history_keeps_single_token_initialization_before_entry()
         }
     }
 }
+
+#[test]
+#[cfg(not(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+)))]
+fn genuine_wall_of_roots_cost_is_undoubled_and_overflow_is_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let roots = put(&mut state, actor, "Wall of Roots", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(roots, Zone::Battlefield),
+        );
+        assert!(!requires_successor(&state));
+        let before = state.players[actor.index()].mana_pool[ManaColor::G.pool_index()];
+        let original = restore(&state);
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            crate::engine::step(
+                &mut branch,
+                crate::engine::Action::ActivateManaAbility(roots),
+            )
+            .unwrap();
+            assert_eq!(branch.objects.get(roots).counters.minus0_minus1, 1);
+            assert_eq!(
+                branch.players[actor.index()].mana_pool[ManaColor::G.pool_index()],
+                before + 1
+            );
+            assert!(!branch.objects.get(roots).tapped);
+            assert!(!requires_successor(&branch));
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+        // Native storage boundary for the actual printed counter cost, not
+        // a synthetic counter ability or grant grafted on another printing.
+        state.objects.get_mut(roots).counters.minus0_minus1 = i16::MAX;
+        for _ in 0..3 {
+            let mut branch = restore(&state);
+            let before = bytes(&branch);
+            assert!(crate::engine::step(
+                &mut branch,
+                crate::engine::Action::ActivateManaAbility(roots)
+            )
+            .is_err());
+            assert_eq!(bytes(&branch), before);
+        }
+    }
+}
