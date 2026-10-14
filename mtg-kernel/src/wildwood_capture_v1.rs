@@ -487,7 +487,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         .ok_or("Wildwood operation source missing")?;
                     if !(*start < *added
                         && *added < *operation
-                        && matches!(state.engine.event_history.get(*added), Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }) if *object == source.source && *zone_change_count == source.zone_change_count && *player == source.controller && *count == 1))
+                        && matches!(state.engine.event_history.get(*added), Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }) if *object == source.source && *zone_change_count == source.zone_change_count && *player == source.controller && crate::doubling_season_v48::expected_plus_at(state,*added as u64,*object,*player,1).ok()==Some(*count)))
                     {
                         return Err("Wildwood operation counter occurrence changed".into());
                     }

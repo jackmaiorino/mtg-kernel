@@ -734,7 +734,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 } else if ability == 0 {
                     if boost.is_some()
                         || events.len() != 1
-                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count}) if Some(*object)==target.map(|t|t.object) && Some(*zone_change_count)==target.map(|t|t.expected_zone_change_count) && *player==item.controller && *count==1)
+                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count}) if Some(*object)==target.map(|t|t.object) && Some(*zone_change_count)==target.map(|t|t.expected_zone_change_count) && *player==item.controller && *count==crate::doubling_season_v48::expected_plus_at(state,events[0],*object,item.controller,1)?)
                     {
                         return Err("Ajani actual counter occurrence lost".into());
                     }
@@ -762,14 +762,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         return Err("Ajani temporary grant erased/resurrected".into());
                     }
                 } else {
-                    if boost.is_some()
-                        || events.len()
-                            != usize::try_from(life.unwrap().max(0))
-                                .map_err(|_| "Ajani count overflow")?
-                    {
+                    let token = super::token_definition()?;
+                    let original_count = usize::try_from(life.unwrap().max(0))
+                        .map_err(|_| "Ajani count overflow")?;
+                    let expected_count = crate::doubling_season_v48::expected_tokens(
+                        state,
+                        *input as usize,
+                        i as usize,
+                        token,
+                        item.controller,
+                        original_count,
+                    )?;
+                    if boost.is_some() || events.len() != expected_count {
                         return Err("Ajani life/token count changed".into());
                     }
-                    let token = super::token_definition()?;
                     for at in events {
                         if !matches!(state.engine.event_history.get(*at as usize),Some(CommittedEvent::CreateToken{token_def,controller,..}) if *token_def==token && *controller==item.controller)
                         {

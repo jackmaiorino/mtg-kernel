@@ -45,3 +45,41 @@ Season casting, effect entry, control transfer, multiple copies, restore and
 readonly overflow/refusal. Future printing groups are ignored until serial
 registration. All Rust tests are uncompiled/unrun. Pinned full formatting and
 diff checks are the only local Rust checks authorized in this lane.
+
+
+## Shared roster checkpoint
+
+Mage blob: 29542ba45c79761e312862564fc90a4087f654b5. Source SHA-256:
+72181a61bc8290fe500a73ffccd70f93a0b51c38c154be4e8b43f1c24ea23fe1.
+
+This checkpoint joins root1914's replacement-aware Panda verifier unchanged.
+Actual token proposals expand against one original board before the complete
+entry batch. Original requested templates and source/controller snapshots link
+all actual CreateToken occurrences in an appended private journal. Checked
+native-width counts and fallible roster allocation avoid an artificial token
+cap. Tapped dynamic creations initialize every expanded member before observers.
+Two new committed variants append after the complete Panda prefix; retained
+journals refuse frozen sampling and old observations after Season departure.
+No GameState field or mode is added. Ordinary proposal serialization omits the
+absent tapped extension.
+
+Shared +1/+1 placement records original effect amount, actual recipient
+incarnation/current controller, original balance and actual counter occurrence.
+Krenko, Faebloom and Ajani token proofs consult original creation rosters; Ajani,
+Librarian, Wildwood and Stromkirk counter proofs consult original counter inputs.
+They do not resample the later Season board or weaken count comparisons to
+merely positive. Loyalty payment has an explicitly named cost entry point while
+public/effect placement retains effect origin. Panda's independent world replay
+is unchanged.
+
+These are trusted original engine journals, not cryptographic protection against
+replacement of the whole history. Existing operation owners retain original
+payment/publication/input evidence. Registered absence/token-batch tests and
+future actual Season mixed-controller/tapped-roster/control-transfer/departure/
+serialized private-log and omitted-member negatives are prepared.
+
+This remains a partial source checkpoint. Special copy/attachment/attacking/
+haste/Incubate initialization still needs expanded roster semantics. Fishing
+bait, entry and counter-kind paths above remain assigned work. No actual Season
+printing is registered, enabled or claimed Full. A V48 safe producer is not yet
+implemented; predecessor paths retain explicit refusal.

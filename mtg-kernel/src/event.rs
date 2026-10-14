@@ -158,7 +158,12 @@ pub struct CreateTokenProposed {
     pub controller: PlayerId,
     /// Initialize a copied transformed face before entry replacements and observers.
     pub entry_face_index: Option<u8>,
+    #[serde(default, skip_serializing_if = "token_entry_untapped_v48")]
+    pub entry_tapped: bool,
     pub touched_by: Vec<ReplacementId>,
+}
+fn token_entry_untapped_v48(value: &bool) -> bool {
+    !*value
 }
 
 /// Flips a permanent's face in place, with no zone change: the same
@@ -351,6 +356,7 @@ impl ProposedEvent {
             token_def,
             controller,
             entry_face_index: None,
+            entry_tapped: false,
             touched_by: Vec::new(),
         })
     }
@@ -359,6 +365,7 @@ impl ProposedEvent {
             token_def,
             controller,
             entry_face_index: Some(1),
+            entry_tapped: false,
             touched_by: Vec::new(),
         })
     }
@@ -1359,6 +1366,12 @@ pub enum CommittedEvent {
     FiendishPandaJournalV1 {
         journal: Box<crate::fiendish_panda_v1::custody::JournalV1>,
     },
+    TokenCreationReplacementV48 {
+        creation: Box<crate::doubling_season_v48::TokenCreationV48>,
+    },
+    PlusCounterReplacementV48 {
+        placement: Box<crate::doubling_season_v48::PlusCounterPlacementV48>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1454,6 +1467,9 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
+    let original = count;
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller);
     let count = crate::doubling_season_v48::counter_amount(
         state,
         object,
@@ -1466,8 +1482,32 @@ pub(crate) fn add_plus_one_counters(
         .plus1_plus1
         .checked_add(count)
         .ok_or("+1/+1 counter overflow")?;
+    let before = live.counters.plus1_plus1;
+    let recipient = crate::state::ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
     state.objects.get_mut(object).counters.plus1_plus1 = total;
+    let counter_event = state.engine.event_history.len() as u64;
     log_plus_one_counters_added(state, object, player, count);
+    if original > 0 && !replacement.seasons.is_empty() {
+        let index = state.engine.event_history.len() as u64;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PlusCounterReplacementV48 {
+                placement: Box::new(crate::doubling_season_v48::PlusCounterPlacementV48 {
+                    index,
+                    recipient,
+                    actor: player,
+                    replacement,
+                    original,
+                    before,
+                    after: total,
+                    counter_event,
+                }),
+            });
+    }
     Ok(())
 }
 
@@ -2369,6 +2409,11 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
         return;
     }
+    if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
+    {
+        batch_without_linked_aura_v1(state, vec![event]);
+        return;
+    }
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
@@ -2912,7 +2957,8 @@ fn commit_with_entry_batch_and_source_color(
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
             }
             state.players[t.controller.index()].battlefield.push(object);
-            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller)
+            let enters_tapped = t.entry_tapped
+                || permanent_enters_battlefield_tapped(state, object, t.controller)
                 || authority_batch.as_ref().map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -3164,6 +3210,17 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
+    let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
+        Ok(expanded) => expanded,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let token_history_start = state.engine.event_history.len();
     // Validate the entire replacement roster before any shield or packet mutates.
     if let Some(source) = events.iter().find_map(|event| match event {
         ProposedEvent::Damage(damage)
@@ -3219,6 +3276,22 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             raid_history_start,
         },
     );
+    if state.engine.halted.is_none()
+        && state.engine.event_history[token_history_start..]
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::CreateToken { .. }))
+        && crate::doubling_season_v48::record_token_creation(
+            state,
+            token_history_start,
+            token_requests,
+        )
+        .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+    }
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.

@@ -83,6 +83,15 @@ pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
         state,
         object,
         delta,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    );
+}
+
+pub(crate) fn pay_loyalty_cost(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
         crate::doubling_season_v48::CounterOriginV48::Cost,
     );
 }

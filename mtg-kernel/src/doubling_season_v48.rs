@@ -79,7 +79,7 @@ pub enum CounterOriginV48 {
     Rule,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplacementInputV48 {
     pub controller: PlayerId,
@@ -104,6 +104,13 @@ impl ReplacementInputV48 {
                 .ok_or("token/counter replacement overflow")?;
         }
         Ok(result)
+    }
+    pub fn replaced_token_count(&self, original: usize) -> Result<usize, String> {
+        self.seasons.iter().try_fold(original, |count, _| {
+            count
+                .checked_mul(2)
+                .ok_or_else(|| "token roster count overflow".into())
+        })
     }
 }
 
@@ -138,6 +145,13 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .objects
         .iter()
         .any(|(_, o)| o.zone == Zone::Battlefield && owns_definition(o.card_def))
+        || state.engine.event_history.iter().any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                    | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+            )
+        })
         || state.stack.iter().any(|item| {
             item.v4
                 .source_contract
@@ -147,6 +161,266 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     .try_get(item.source)
                     .is_some_and(|o| owns_definition(o.card_def))
         })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenTemplateV48 {
+    pub definition: u16,
+    pub controller: PlayerId,
+    pub face: Option<u8>,
+    pub tapped: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenRequestV48 {
+    pub template: TokenTemplateV48,
+    pub replacement: ReplacementInputV48,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenCreationV48 {
+    pub index: u64,
+    pub original: Vec<TokenRequestV48>,
+    pub created: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlusCounterPlacementV48 {
+    pub index: u64,
+    pub recipient: crate::state::ObjectLinkV4,
+    pub actor: PlayerId,
+    pub replacement: ReplacementInputV48,
+    pub original: i32,
+    pub before: i32,
+    pub after: i32,
+    pub counter_event: u64,
+}
+
+pub(crate) fn expected_plus_at(
+    state: &GameState,
+    at: u64,
+    recipient: ObjectId,
+    actor: PlayerId,
+    original: i32,
+) -> Result<i32, String> {
+    let matches = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            crate::event::CommittedEvent::PlusCounterReplacementV48 { placement: p }
+                if p.counter_event == at =>
+            {
+                Some(p.as_ref())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(original),
+        [p] if p.recipient.object == recipient && p.actor == actor && p.original == original => {
+            p.replacement.replaced_count(original)
+        }
+        _ => Err("counter replacement original operation changed".into()),
+    }
+}
+
+/// Expand against one unchanged pre-event board. Entry of an additional
+/// replacement source cannot change later requests in this roster.
+pub(crate) fn expand_tokens(
+    state: &GameState,
+    events: Vec<crate::event::ProposedEvent>,
+) -> Result<(Vec<crate::event::ProposedEvent>, Vec<TokenRequestV48>), String> {
+    use crate::event::ProposedEvent;
+    let mut result = Vec::new();
+    let mut original = Vec::new();
+    for event in events {
+        if let ProposedEvent::CreateToken(t) = &event {
+            let replacement = ReplacementInputV48::capture(state, t.controller);
+            let count = replacement.replaced_token_count(1)?;
+            original.push(TokenRequestV48 {
+                template: TokenTemplateV48 {
+                    definition: t.token_def,
+                    controller: t.controller,
+                    face: t.entry_face_index,
+                    tapped: t.entry_tapped,
+                },
+                replacement,
+            });
+            result
+                .try_reserve(count)
+                .map_err(|_| "token roster allocation failed")?;
+            for _ in 0..count {
+                result.push(event.clone());
+            }
+        } else {
+            result.push(event);
+        }
+    }
+    if original
+        .iter()
+        .all(|request| request.replacement.seasons.is_empty())
+    {
+        original.clear();
+    }
+    Ok((result, original))
+}
+
+pub(crate) fn record_token_creation(
+    state: &mut GameState,
+    start: usize,
+    original: Vec<TokenRequestV48>,
+) -> Result<(), String> {
+    if original.is_empty() {
+        return Ok(());
+    }
+    let created = state.engine.event_history[start..]
+        .iter()
+        .enumerate()
+        .filter_map(|(i, event)| {
+            matches!(event, crate::event::CommittedEvent::CreateToken { .. })
+                .then_some((start + i) as u64)
+        })
+        .collect();
+    let index = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(crate::event::CommittedEvent::TokenCreationReplacementV48 {
+            creation: Box::new(TokenCreationV48 {
+                index,
+                original,
+                created,
+            }),
+        });
+    validate_token_journals(state)
+}
+
+pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
+    use crate::event::CommittedEvent;
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::TokenCreationReplacementV48 { .. }
+                | CommittedEvent::PlusCounterReplacementV48 { .. }
+        )
+    }) {
+        return Err("private replacement replayed as trigger input".into());
+    }
+    let mut counter_events = Vec::new();
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::PlusCounterReplacementV48 { placement: p } = event else {
+            continue;
+        };
+        let count = p.replacement.replaced_count(p.original)?;
+        if p.index != index as u64
+            || p.original <= 0
+            || p.replacement.seasons.is_empty()
+            || p.counter_event >= p.index
+            || p.before.checked_add(count) != Some(p.after)
+            || counter_events.contains(&p.counter_event)
+            || p.replacement.seasons.iter().enumerate().any(|(i, s)| {
+                s.zone != Zone::Battlefield
+                    || s.controller != p.replacement.controller
+                    || !owns_definition(s.card_def)
+                    || p.replacement.seasons[..i]
+                        .iter()
+                        .any(|other| other.source == s.source)
+            })
+            || !matches!(state.engine.event_history.get(p.counter_event as usize),Some(CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:actual}) if *object==p.recipient.object && *zone_change_count==p.recipient.zone_change_count && *player==p.actor && *actual==count)
+        {
+            return Err("actual effect counter replacement changed".into());
+        }
+        counter_events.push(p.counter_event);
+    }
+    let mut all_created = Vec::new();
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::TokenCreationReplacementV48 { creation: c } = event else {
+            continue;
+        };
+        if c.index != index as u64
+            || c.original.is_empty()
+            || c.original.iter().all(|r| r.replacement.seasons.is_empty())
+        {
+            return Err("token replacement original roster changed".into());
+        }
+        let mut cursor = 0;
+        for request in &c.original {
+            if request.replacement.controller != request.template.controller
+                || request
+                    .replacement
+                    .seasons
+                    .iter()
+                    .enumerate()
+                    .any(|(i, s)| {
+                        s.zone != Zone::Battlefield
+                            || s.controller != request.template.controller
+                            || !owns_definition(s.card_def)
+                            || request.replacement.seasons[..i]
+                                .iter()
+                                .any(|other| other.source == s.source)
+                    })
+            {
+                return Err("token replacement captured source changed".into());
+            }
+            let count = request.replacement.replaced_token_count(1)?;
+            for _ in 0..count {
+                let at = *c
+                    .created
+                    .get(cursor)
+                    .ok_or("token replacement omitted created member")?;
+                if at >= c.index
+                    || cursor > 0 && c.created[cursor - 1] >= at
+                    || all_created.contains(&at)
+                    || !matches!(state.engine.event_history.get(at as usize),Some(CommittedEvent::CreateToken {token_def,controller,..}) if *token_def==request.template.definition && *controller==request.template.controller)
+                {
+                    return Err("token replacement actual creation changed".into());
+                }
+                all_created.push(at);
+                cursor += 1;
+            }
+        }
+        if cursor != c.created.len() {
+            return Err("token replacement added unrequested member".into());
+        }
+    }
+    Ok(())
+}
+
+/// Operation owners use the original creation roster, not the later board.
+pub(crate) fn expected_tokens(
+    state: &GameState,
+    start: usize,
+    end: usize,
+    definition: u16,
+    controller: PlayerId,
+    original: usize,
+) -> Result<usize, String> {
+    validate_token_journals(state)?;
+    let mut expected = original;
+    let mut seen = 0;
+    for event in &state.engine.event_history[start..end] {
+        let crate::event::CommittedEvent::TokenCreationReplacementV48 { creation: c } = event
+        else {
+            continue;
+        };
+        for request in &c.original {
+            if request.template.definition == definition
+                && request.template.controller == controller
+            {
+                seen += 1;
+                expected = expected
+                    .checked_add(request.replacement.replaced_token_count(1)? - 1)
+                    .ok_or("token count overflow")?;
+            }
+        }
+    }
+    if seen > original {
+        return Err("token replacement original request count changed".into());
+    }
+    Ok(expected)
 }
 
 #[cfg(test)]

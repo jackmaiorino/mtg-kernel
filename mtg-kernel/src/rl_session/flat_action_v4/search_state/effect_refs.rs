@@ -1043,6 +1043,8 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
                 | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
                 | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
+                | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
         )
     }) {
         return true;
@@ -1392,7 +1394,7 @@ pub(super) fn conflicts(
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
                 | FiendishPandaCaptureCollectedV1 { .. }
-                | FiendishPandaJournalV1 { .. } => true,
+                | FiendishPandaJournalV1 { .. } | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } => true,
         }
     })
 }

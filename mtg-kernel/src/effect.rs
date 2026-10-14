@@ -18356,6 +18356,21 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             );
             let controller = ctx.resolve_player(*controller, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
+            if !crate::doubling_season_v48::sources(state, controller).is_empty()
+                || crate::doubling_season_v48::owns_definition(*token_def)
+            {
+                let events = (0..count)
+                    .map(|_| {
+                        let mut event = event::ProposedEvent::create_token(*token_def, controller);
+                        if let event::ProposedEvent::CreateToken(t) = &mut event {
+                            t.entry_tapped = *tapped;
+                        }
+                        event
+                    })
+                    .collect();
+                event::propose_and_commit_batch(state, events);
+                return;
+            }
             for _ in 0..count {
                 event::propose_and_commit(
                     state,

@@ -6132,7 +6132,7 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
-                crate::planeswalker_v1::change_loyalty(state, source, *delta);
+                crate::planeswalker_v1::pay_loyalty_cost(state, source, *delta);
             }
             CostComponent::SacrificeCreatureOrPayMana(_) => return None,
             CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
@@ -9287,6 +9287,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::doubling_season_v48::validate_token_journals(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::fiendish_panda_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -18321,6 +18327,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;

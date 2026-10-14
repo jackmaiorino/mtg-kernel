@@ -43,6 +43,146 @@ fn genuine_counter_primitive_has_no_new_absent_source_state_both_seats() {
     }
 }
 
+#[test]
+fn ordinary_token_proposal_and_real_batch_keep_absent_extension_bytes() {
+    let token = crate::card_def::CARD_DEFS
+        .iter()
+        .position(|d| d.is_token && d.has_full_support())
+        .unwrap() as u16;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let proposal = ProposedEvent::create_token(token, actor);
+        let value = serde_json::to_value(&proposal).unwrap();
+        assert!(value["CreateToken"].get("entry_tapped").is_none());
+        let original = vec![proposal.clone(), proposal];
+        let (expanded, receipt) = expand_tokens(&state, original.clone()).unwrap();
+        assert_eq!(expanded, original);
+        assert!(receipt.is_empty());
+        let start = state.engine.event_history.len();
+        event::propose_and_commit_batch(&mut state, expanded);
+        assert_eq!(
+            state.engine.event_history[start..]
+                .iter()
+                .filter(|e| matches!(e, event::CommittedEvent::CreateToken { .. }))
+                .count(),
+            2
+        );
+        assert!(!state.engine.event_history.iter().any(|e| matches!(
+            e,
+            event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                | event::CommittedEvent::PlusCounterReplacementV48 { .. }
+        )));
+        validate_token_journals(&restore(&state)).unwrap();
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_simultaneous_expanded_roster_original_control_and_private_receipt_refusal() {
+    use crate::engine::{self, Action};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for p in [actor, actor.opponent()] {
+            put(&mut state, p, "Forest", Zone::Battlefield);
+            put(&mut state, p, "Forest", Zone::Library);
+        }
+        let season = cast_season(&mut state, actor);
+        let token = crate::card_def::card_id_by_name("Cat Token").unwrap();
+        let mut original = ProposedEvent::create_token(token, actor);
+        if let ProposedEvent::CreateToken(t) = &mut original {
+            t.entry_tapped = true;
+        }
+        let start = state.engine.event_history.len();
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                original.clone(),
+                original,
+                ProposedEvent::create_token(token, actor.opponent()),
+            ],
+        );
+        validate_token_journals(&state).unwrap();
+        assert_eq!(
+            expected_tokens(
+                &state,
+                start,
+                state.engine.event_history.len(),
+                token,
+                actor,
+                2
+            )
+            .unwrap(),
+            4
+        );
+        let created = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|e| match e {
+                event::CommittedEvent::CreateToken {
+                    object, controller, ..
+                } => Some((*object, *controller)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(created.len(), 5);
+        assert!(created[..4]
+            .iter()
+            .all(|(id, p)| *p == actor && state.objects.get(*id).tapped));
+        assert_eq!(created[4].1, actor.opponent());
+        assert!(!state.objects.get(created[4].0).tapped);
+        crate::standard_cards_v1::gain_control(&mut state, season, actor.opponent());
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Graveyard),
+        );
+        let stable = restore(&state);
+        validate_token_journals(&stable).unwrap();
+        assert_eq!(
+            expected_tokens(
+                &stable,
+                start,
+                stable.engine.event_history.len(),
+                token,
+                actor,
+                2
+            )
+            .unwrap(),
+            4
+        );
+        for _ in 0..3 {
+            let mut forged = restore(&stable);
+            let marker = forged
+                .engine
+                .event_history
+                .iter()
+                .find(|e| matches!(e, event::CommittedEvent::TokenCreationReplacementV48 { .. }))
+                .unwrap()
+                .clone();
+            forged.engine.event_log.push(marker);
+            let before = bytes(&forged);
+            assert!(engine::step(&mut forged, Action::Pass).is_err());
+            assert_eq!(bytes(&forged), before);
+            let mut forged = restore(&stable);
+            let event::CommittedEvent::TokenCreationReplacementV48 { creation } = forged
+                .engine
+                .event_history
+                .iter_mut()
+                .find(|e| matches!(e, event::CommittedEvent::TokenCreationReplacementV48 { .. }))
+                .unwrap()
+            else {
+                unreachable!()
+            };
+            creation.created.pop();
+            let before = bytes(&forged);
+            assert!(engine::step(&mut forged, Action::Pass).is_err());
+            assert_eq!(bytes(&forged), before);
+        }
+    }
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

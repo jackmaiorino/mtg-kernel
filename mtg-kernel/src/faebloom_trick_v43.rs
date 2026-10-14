@@ -560,7 +560,16 @@ pub(crate) fn resolve(
                     .then_some(i as u64)
                 })
                 .collect::<Vec<_>>();
-            if token_events.len() != 2 {
+            if token_events.len()
+                != crate::doubling_season_v48::expected_tokens(
+                    state,
+                    start,
+                    state.engine.event_history.len(),
+                    token,
+                    owner.item.controller,
+                    2,
+                )?
+            {
                 return Err("Faebloom actual token creation count changed".into());
             }
             let creation = emit(
@@ -933,7 +942,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("Faebloom creation lost resolving input".into());
                 };
                 let token = token_definition()?;
-                if item.kind!=StackItemKind::Spell || *input>=index || token_events.len()!=2 || token_events[0]>=token_events[1]
+                if item.kind!=StackItemKind::Spell || *input>=index || token_events.len()!=crate::doubling_season_v48::expected_tokens(state,*input as usize,index as usize,token,item.controller,2)? || token_events.windows(2).any(|pair|pair[0]>=pair[1])
                     || token_events.iter().any(|at| *at<=*input || *at>=index || !matches!(state.engine.event_history.get(*at as usize),Some(CommittedEvent::CreateToken {token_def,controller,..}) if *token_def==token && *controller==item.controller))
                     || matching(state,|j|matches!(j,JournalV43::ReflexiveCaptured {creation,..} if *creation==index)).len()!=1 {
                     return Err("Faebloom completion lost actual two-token operation or reflexive capture".into())
