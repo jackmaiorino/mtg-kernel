@@ -222,7 +222,7 @@ pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, Rl
                 .stack
                 .iter()
                 .position(|row| row.v4.stack_item_id == item.v4.stack_item_id)
-                .map(|n| u32::try_from(n))
+                .map(u32::try_from)
                 .transpose()
                 .map_err(|_| RlContractError("stack ordinal overflow".into()))?;
             payments.push(PaymentV46 {

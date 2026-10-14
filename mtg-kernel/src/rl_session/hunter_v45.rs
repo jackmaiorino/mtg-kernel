@@ -506,15 +506,6 @@ impl FastActorSessionV1 {
     pub(crate) fn hunter_fixture_state(&self) -> &GameState {
         &self.state
     }
-    #[cfg(all(
-        test,
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    ))]
-    pub(crate) fn hunter_fixture_state_mut(&mut self) -> &mut GameState {
-        &mut self.state
-    }
-
     /// Actor-visible Divine plus a complete ordered executable binding.
     /// No predecessor cache or observation constructor is consulted.
     pub(crate) fn hunter_current_decision_input_v45(

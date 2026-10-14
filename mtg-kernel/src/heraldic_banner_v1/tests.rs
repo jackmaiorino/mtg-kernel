@@ -239,13 +239,15 @@ mod future_printed {
                         .unwrap()
                         .answers
                         .push(crate::linked_aura_operation_v1::GeneralAnswerV36::Color {
-                            choice: choice(
-                                &state,
-                                &ProposedEvent::zone_change(banner, Zone::Battlefield),
-                                0,
-                            )
-                            .unwrap()
-                            .unwrap(),
+                            choice: Box::new(
+                                choice(
+                                    &state,
+                                    &ProposedEvent::zone_change(banner, Zone::Battlefield),
+                                    0,
+                                )
+                                .unwrap()
+                                .unwrap(),
+                            ),
                             color: ManaColor::C,
                         }),
                     _ => bad.engine.event_history.retain(|e| {

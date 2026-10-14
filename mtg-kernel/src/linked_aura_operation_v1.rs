@@ -55,7 +55,7 @@ pub struct CheckpointV1 {
 pub enum GeneralAnswerV36 {
     Host(AnswerV1),
     Color {
-        choice: crate::heraldic_banner_v1::ChoiceV1,
+        choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
         color: crate::mana::ManaColor,
     },
 }
@@ -66,7 +66,7 @@ pub enum GeneralChoiceV36 {
         capture: u64,
     },
     Color {
-        choice: crate::heraldic_banner_v1::ChoiceV1,
+        choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
         capture: u32,
     },
 }
@@ -1012,7 +1012,9 @@ pub(crate) fn prepare_entry_colors(
             let GeneralAnswerV36::Color { choice, color } = answer else {
                 return Err("Banner replay changed its confirmed choice kind".into());
             };
-            if choice != plan.choice || !crate::heraldic_banner_v1::COLORS.contains(&color) {
+            if choice.as_ref() != &plan.choice
+                || !crate::heraldic_banner_v1::COLORS.contains(&color)
+            {
                 return Err("Banner replay changed an actual entry/color answer".into());
             }
             let at = u32::try_from(state.engine.event_history.len())
@@ -1069,7 +1071,7 @@ pub(crate) fn prepare_entry_colors(
                 .checkpoint = Some((
                 Box::new(snapshot),
                 GeneralChoiceV36::Color {
-                    choice: plan.choice,
+                    choice: Box::new(plan.choice),
                     capture: plan.capture,
                 },
             ));

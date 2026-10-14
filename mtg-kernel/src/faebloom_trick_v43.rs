@@ -446,12 +446,11 @@ pub(crate) fn record_target_input(
         return Err("Faebloom target visibility has foreign target".into());
     };
     let snapshot = state.objects.get(*target).clone();
-    if matching(
+    if !matching(
         state,
         |j| matches!(j,JournalV43::TargetInput {item:original,..} if original.v4.stack_item_id==id),
     )
-    .len()
-        != 0
+    .is_empty()
     {
         return Err("Faebloom target visibility input duplicated".into());
     }

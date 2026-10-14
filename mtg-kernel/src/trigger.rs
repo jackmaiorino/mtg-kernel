@@ -1609,6 +1609,10 @@ const FISHING_POLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(fishing_pole_untap)
 }];
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn arahbo_cat_entry() -> EffectOp {
     EffectOp::BindArahboCatEntryV1
 }

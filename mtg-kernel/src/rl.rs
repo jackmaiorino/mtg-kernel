@@ -2040,29 +2040,35 @@ fn build_observation_v2(
     )
 }
 
+// Existing ordered capability tuples retain their exact positions and widths.
+type FamilyCapabilitiesV40 = (
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+);
+type FamilyCapabilitiesWithFishingV40 = (FamilyCapabilitiesV40, bool);
+type AcceptedPlanesV48 = (bool, bool, bool, bool, bool, bool, bool, bool);
+type HistoricalSourcesV47 = (bool, bool, bool, bool);
+
 fn build_observation_common_v2(
     state: &GameState,
     surface: &crate::surface_v2::HarnessSurfaceV2,
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-    ),
+    capabilities: FamilyCapabilitiesV40,
 ) -> Result<ObservationV2> {
     build_observation_common_v2_fishing_v39(
         state,
@@ -2081,26 +2087,7 @@ fn build_observation_common_v2_fishing_v39(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
+    capabilities: FamilyCapabilitiesWithFishingV40,
     accept_akroma: bool,
 ) -> Result<ObservationV2> {
     build_observation_common_v2_fishing_v39_ajani_v42(
@@ -2129,27 +2116,8 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool, bool, bool),
+    capabilities: FamilyCapabilitiesWithFishingV40,
+    accepted_planes: AcceptedPlanesV48,
 ) -> Result<ObservationV2> {
     let (
         accept_akroma,
@@ -2600,23 +2568,7 @@ fn build_policy_observation_parts_common(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-    ),
+    capabilities: FamilyCapabilitiesV40,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     build_policy_observation_parts_common_fishing_v39(
         state,
@@ -2635,26 +2587,7 @@ fn build_policy_observation_parts_common_fishing_v39(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
+    capabilities: FamilyCapabilitiesWithFishingV40,
     accept_akroma: bool,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     build_policy_observation_parts_common_fishing_v39_ajani_v42(
@@ -2683,27 +2616,8 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
     acting_player: PlayerId,
     step_index: u64,
     text_mode: ObservationTextModeV2,
-    capabilities: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool, bool, bool),
+    capabilities: FamilyCapabilitiesWithFishingV40,
+    accepted_planes: AcceptedPlanesV48,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (
         accept_akroma,
@@ -3905,23 +3819,7 @@ fn build_policy_observation_storage_common(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-        bool,
-    ),
+    accepted_statics: FamilyCapabilitiesV40,
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39(
         (request, false),
@@ -3941,26 +3839,7 @@ fn build_policy_observation_storage_common_fishing_v39(
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
+    accepted_statics: FamilyCapabilitiesWithFishingV40,
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
@@ -3977,35 +3856,13 @@ fn build_policy_observation_storage_common_fishing_v39(
 }
 
 fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
-    request: (
-        PolicyObservationBuildV5<'_>,
-        (bool, bool, bool, bool, bool, bool, bool, bool),
-    ),
+    request: (PolicyObservationBuildV5<'_>, AcceptedPlanesV48),
     accept_life_ward: bool,
     accept_cant_block: bool,
     accept_wildwood: bool,
     accept_temporary_control: bool,
     accept_cerberus: bool,
-    accepted_statics: (
-        (
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-        ),
-        bool,
-    ),
+    accepted_statics: FamilyCapabilitiesWithFishingV40,
 ) -> Result<PolicyObservationStorageV6> {
     let (
         request,
@@ -4158,10 +4015,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
         text_mode,
         accept_life_ward,
         accept_fishing,
-        accept_akroma,
-        accept_faebloom,
-        accept_hunter,
-        accept_panda,
+        (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
     )?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts_common_fishing_v39_ajani_v42(
@@ -4386,10 +4240,7 @@ pub(crate) fn policy_observation_extensions_fishing_union_v40(
         ObservationTextModeV2::FlatForbiddenElided,
         true,
         true,
-        true,
-        false,
-        false,
-        false,
+        (true, false, false, false),
     )
 }
 pub(crate) fn policy_observation_extensions_faebloom_v43(
@@ -4402,10 +4253,7 @@ pub(crate) fn policy_observation_extensions_faebloom_v43(
         ObservationTextModeV2::FlatForbiddenElided,
         true,
         true,
-        true,
-        true,
-        false,
-        false,
+        (true, true, false, false),
     )
 }
 pub(crate) fn policy_observation_extensions_eaten_v46(
@@ -4428,10 +4276,7 @@ pub(crate) fn policy_observation_extensions_panda_v47(
         ObservationTextModeV2::FlatForbiddenElided,
         true,
         true,
-        true,
-        true,
-        true,
-        true,
+        (true, true, true, true),
     )
 }
 pub(crate) fn policy_observation_extensions_hunter_v45(
@@ -4445,10 +4290,7 @@ pub(crate) fn policy_observation_extensions_hunter_v45(
         ObservationTextModeV2::FlatForbiddenElided,
         true,
         true,
-        true,
-        true,
-        true,
-        false,
+        (true, true, true, false),
     )
 }
 
@@ -4487,10 +4329,7 @@ fn policy_observation_extensions_common_v6_fishing_v39(
         text_mode,
         accept_life_ward,
         accept_fishing,
-        false,
-        false,
-        false,
-        false,
+        (false, false, false, false),
     )
 }
 fn policy_observation_extensions_union_inner_v40(
@@ -4499,11 +4338,9 @@ fn policy_observation_extensions_union_inner_v40(
     text_mode: ObservationTextModeV2,
     accept_life_ward: bool,
     accept_fishing: bool,
-    accept_akroma: bool,
-    accept_faebloom: bool,
-    accept_hunter: bool,
-    accept_panda: bool,
+    accepted_sources: HistoricalSourcesV47,
 ) -> Result<PolicyObservationExtensionsV6> {
+    let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let pending = state
         .engine
         .pending_effect
@@ -9157,7 +8994,7 @@ fn engine_context_v2_akroma_inner(
     state: &GameState,
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
-    accepted_sources: (bool, bool, bool, bool),
+    accepted_sources: HistoricalSourcesV47,
 ) -> Result<EngineContextV2> {
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
@@ -10235,7 +10072,7 @@ fn stack_public_union_v40(
     state: &GameState,
     acting_player: PlayerId,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool, bool),
+    accepted_sources: HistoricalSourcesV47,
     accept_divine: bool,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
@@ -10262,7 +10099,7 @@ fn stack_item_public_v2(
     stack_index: u32,
     item: &StackItem,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool, bool),
+    accepted_sources: HistoricalSourcesV47,
     accept_divine: bool,
 ) -> Result<StackItemPublicV2> {
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
@@ -10525,7 +10362,7 @@ fn stack_source_ref_union_v40(
     state: &GameState,
     item: &StackItem,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool, bool),
+    accepted_sources: HistoricalSourcesV47,
 ) -> Result<CardStableRefV1> {
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     if accept_panda {

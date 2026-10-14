@@ -188,7 +188,18 @@ mod tests {
     #[test]
     fn selected_catalog_and_genuine_definition_required_before_lookup() {
         let foreign = crate::card_def::card_id_by_name("Forest").unwrap();
-        if let Ok(selector) = live_selector() {
+        let selected = live_selector();
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        assert!(selected.is_ok());
+        #[cfg(not(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )))]
+        assert!(selected.is_err());
+        if let Ok(selector) = selected {
             for root in [RootV43::SpellCreation, RootV43::ReflexiveTap] {
                 assert!(meaning(&selector, foreign, root).is_err());
                 let mut wrong = selector.clone();
@@ -198,11 +209,6 @@ mod tests {
                 wrong.producer_sha256.clear();
                 assert!(meaning(&wrong, foreign, root).is_err());
             }
-        } else {
-            assert!(!cfg!(all(
-                feature = "limited-fdn-fixtures",
-                not(feature = "standard-magezero-fixtures")
-            )))
         }
     }
     #[cfg(all(

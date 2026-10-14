@@ -4,6 +4,11 @@ use super::*;
     not(feature = "standard-magezero-fixtures")
 ))]
 use crate::engine::{self, Action, Decision};
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+use crate::ids::ObjectId;
 use crate::ids::PlayerId;
 use crate::policy_observation_v6::tests::put;
 

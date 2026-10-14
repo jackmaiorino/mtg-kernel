@@ -218,8 +218,8 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
     if !(entered.operation < entered.capture
         && entered.capture < entered.answer
         && entered.answer < entered.entry
-        && (entered.entry as usize) < at)
-        || !COLORS.contains(&entered.color)
+        && (entered.entry as usize) < at
+        && COLORS.contains(&entered.color))
     {
         return Err("Banner entry authority order changed".into());
     }

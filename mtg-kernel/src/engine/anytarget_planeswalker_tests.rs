@@ -1,4 +1,4 @@
-//! Recipient primitive tests. Ajani remains Partial; these do not admit its gameplay.
+//! Recipient primitive tests for registered Ajani; these do not qualify its loyalty gameplay.
 use super::*;
 use crate::policy_observation_v6::tests::{put, ready_state};
 
@@ -33,12 +33,15 @@ fn anytarget_recipient_scope_matches_catalog_precedence_and_existing_order() {
     }
     for actor in [PlayerId::P0, PlayerId::P1] {
         let offered = legal_targets_for_controller(TargetSpec::AnyTarget, &[], actor, &state);
-        // Account for existing opponent hexproof filtering in every feature configuration.
+        // Account for existing object and player hexproof in every feature configuration.
         let expected: Vec<_> = expected
             .iter()
             .copied()
             .filter(|target| match target {
-                Target::Player(_) => true,
+                Target::Player(player) => {
+                    *player == actor
+                        || !crate::crystal_barricade_v1::controller_has_hexproof(&state, *player)
+                }
                 Target::StackItem(_) => false,
                 Target::Object(object) => {
                     state.objects.get(*object).controller == actor
@@ -85,11 +88,14 @@ mod fdn {
 
     fn ready(actor: PlayerId) -> GameState {
         let island = card_def::card_id_by_name("Island").unwrap();
-        let mut state =
-            GameState::new_from_libraries(&[island; 40], &[island; 40], |_| "Island".into(), 110);
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &[island; 40],
+            &[island; 40],
+            |_| "Island".into(),
+            110,
+            actor,
+        );
         state.step = Step::Main1;
-        state.active_player = actor;
-        state.priority_player = actor;
         // Both seats retain an actual castable decision after resolution.
         for player in [PlayerId::P0, PlayerId::P1] {
             put(&mut state, player, "Mountain", Zone::Battlefield);
@@ -101,10 +107,10 @@ mod fdn {
     fn ajani_recipient(state: &mut GameState, owner: PlayerId) -> ObjectId {
         let ajani = put(state, owner, "Ajani, Caller of the Pride", Zone::Hand);
         let definition = &card_def::CARD_DEFS[state.objects.get(ajani).card_def as usize];
-        assert_eq!(definition.capability, CardCapability::Partial);
-        // Partial is executable, but full-deck admission still refuses its missing printed abilities.
+        assert_eq!(definition.capability, CardCapability::Full);
+        // The wider catalog has the actual Full recipe; recipient checks remain separate.
         assert!(definition.is_executable());
-        assert!(!definition.has_full_support());
+        assert!(definition.has_full_support());
         // Actual zone event initializes registered starting loyalty; no casting/admission bypass.
         event::propose_and_commit(state, ProposedEvent::zone_change(ajani, Zone::Battlefield));
         assert_eq!(planeswalker_v1::loyalty(state, ajani), Some(4));
@@ -340,8 +346,7 @@ mod fdn {
     }
 
     #[test]
-    fn partial_planeswalker_protection_blocks_announcement_rechecks_resolution_and_prevents_damage()
-    {
+    fn planeswalker_protection_blocks_announcement_rechecks_resolution_and_prevents_damage() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for added_after_announcement in [false, true] {
                 let mut state = ready(actor);

@@ -2707,7 +2707,11 @@ mod tests {
                 192
             }
         );
-        if cfg!(feature = "limited-fdn-fixtures") {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        {
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
             assert_eq!(card_id_by_name("Soulstone Sanctuary"), Some(428));
@@ -2886,8 +2890,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v81_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x88c0_d510_de5b_6cea;
+    fn card_db_hash_v82_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0xa4f6_4a2d_54aa_6c8b;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 

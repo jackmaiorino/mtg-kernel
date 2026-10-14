@@ -264,7 +264,7 @@ fn prior_entry_colors(state: &GameState) -> Result<Vec<PriorEntryColorV36>, RlCo
                         operation,
                         choice: captured,
                     } if *operation == pending.operation_history_index
-                        && captured.as_ref() == choice =>
+                        && captured.as_ref() == choice.as_ref() =>
                     {
                         Some(index)
                     }

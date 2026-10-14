@@ -2,7 +2,11 @@
 
 use super::*;
 use crate::faebloom_observation_v43::FaebloomObservationV43;
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 use crate::state::GameState;
 
 // No Debug/Serialize: executable candidates and the transport observation
@@ -360,7 +364,11 @@ impl FastActorSessionV1 {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_faebloom_v43_fixture_state(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
@@ -391,11 +399,19 @@ impl FastActorSessionV1 {
         session
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn faebloom_fixture_state(&self) -> &GameState {
         &self.state
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn faebloom_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }

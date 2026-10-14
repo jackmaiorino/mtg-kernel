@@ -315,15 +315,7 @@ pub(super) fn project_base_with_handles(
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
-) -> Result<
-    (
-        HumanVisibleStateV1<HumanAkromaExtensionsV40>,
-        Vec<HumanLegalActionV1>,
-        Vec<u32>,
-        Handles,
-    ),
-    Error,
-> {
+) -> Result<ProjectionWithHandles, Error> {
     project_with_handles(observation, actions, human, families, false)
 }
 

@@ -1255,12 +1255,11 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             if old.choice.as_ref() != Some(&menu(answer.before.clone())) {
                 return Err("Crystal answer changed its independent prior menu".into());
             }
-            if crate::twinflame_tyrant_v1::ordering::has_multiplier(&answer.before) {
-                if !matches!(state.engine.event_history.get(index-1),Some(CommittedEvent::TwinflameReplacementOperationV38{operation})
+            if crate::twinflame_tyrant_v1::ordering::has_multiplier(&answer.before)
+                && !matches!(state.engine.event_history.get(index-1),Some(CommittedEvent::TwinflameReplacementOperationV38{operation})
                     if operation.after.as_ref()==b.pending.as_deref().ok_or("multiplier answer closed interpreter prematurely")?)
-                {
-                    return Err("multiplier answer lost actual owning operation".into());
-                }
+            {
+                return Err("multiplier answer lost actual owning operation".into());
             }
             let mut expected = answer.before.clone();
             match expected

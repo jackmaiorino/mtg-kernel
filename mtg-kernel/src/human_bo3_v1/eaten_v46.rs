@@ -883,7 +883,7 @@ fn project_with_handles(
     }
     let initial = state(observation, &mut handles, human, families)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
-    for row in &initial.extensions.eaten.pending {
+    if let Some(row) = &initial.extensions.eaten.pending {
         unary
             .entry(row.source.handle.clone())
             .or_default()
