@@ -106,7 +106,7 @@ fn drive_order(mut session: HumanHunterSessionV45, actor: PlayerId, count: usize
     for (item, index) in state.stack.iter().zip(complete_order) {
         let pending = &original.engine.pending_triggers[index];
         assert_eq!(item.source, pending.source);
-        assert_eq!(item.source_contract, pending.source_contract);
+        assert_eq!(item.v4.ability_source_contract, pending.source_contract);
         assert_eq!(item.inline_effect.as_ref(), Some(&pending.effect));
     }
     assert!(state.engine.pending_triggers.is_empty());

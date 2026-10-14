@@ -396,7 +396,7 @@ pub(crate) fn linked_paid_incarnation(
         else {
             continue;
         };
-        if original != pending || !linked_cost_checkpoint(state, at as u64, original)? {
+        if original.as_ref() != pending || !linked_cost_checkpoint(state, at as u64, original)? {
             continue;
         }
         let [crate::effect::EffectFrame::ApplySelectedObjectsV1 { selected, .. }] =

@@ -526,7 +526,12 @@ fn label(
         order,
     } = action
     {
-        if let Some(stage) = observation.trigger_order.as_ref() {
+        if observation
+            .hunter
+            .trigger_order
+            .iter()
+            .any(|row| row.controller == *actor)
+        {
             if *actor != human {
                 return Err(Error::NotHumanTurn);
             }
@@ -554,12 +559,7 @@ fn label(
         pending_count,
     } = action
     {
-        if observation
-            .hunter
-            .trigger_order
-            .iter()
-            .any(|row| row.controller == *actor)
-        {
+        if let Some(stage) = observation.trigger_order.as_ref() {
             if *actor != human {
                 return Err(Error::NotHumanTurn);
             }
