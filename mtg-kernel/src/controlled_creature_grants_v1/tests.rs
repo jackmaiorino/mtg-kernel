@@ -495,7 +495,8 @@ mod future_printed {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn prebatch_color_lki_preserves_green_original_after_reentry_and_missing_receipts_refuse() {
+    fn prebatch_color_lki_preserves_green_white_original_after_reentry_and_missing_receipts_refuse()
+    {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for witness_first in [false, true] {
                 let mut state = ready(actor);
@@ -520,7 +521,8 @@ mod future_printed {
                         state.objects.get(source).zone_change_count,
                     )
                     .unwrap();
-                assert_eq!(engine::object_color_mask(&state, source), 16);
+                // Pinned XMage WitnessProtection sets both green and white.
+                assert_eq!(engine::object_color_mask(&state, source), 17);
                 // Genuine simultaneous zone producer; this is a color-LKI
                 // primitive setup, not a claimed mass-removal printed spell.
                 let ids = if witness_first {
@@ -542,7 +544,7 @@ mod future_printed {
                         original.zone_change_count
                     )
                     .unwrap(),
-                    16
+                    17
                 );
                 let clean = serde_json::to_vec(&state).unwrap();
                 for mode in 0..6 {
