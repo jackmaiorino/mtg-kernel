@@ -3196,6 +3196,13 @@ fn commit_with_entry_batch_and_source_color(
                 }
             }
             initialize_entry_counters(state, object, false, counter_input.as_ref());
+            if season_entry_active {
+                crate::standard_cards_v1::initialize_entry_counters(
+                    state,
+                    object,
+                    counter_input.as_ref(),
+                );
+            }
             if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3407,7 +3414,13 @@ fn commit_with_entry_batch_and_source_color(
     // Panda uses its original index and can then append its own markers.
     crate::fiendish_panda_v1::record_gain(state, entry_history_index);
     if let Some(object) = entry_counter_object {
-        crate::standard_cards_v1::initialize_entry_counters(state, object, counter_input.as_ref());
+        if !season_entry_active {
+            crate::standard_cards_v1::initialize_entry_counters(
+                state,
+                object,
+                counter_input.as_ref(),
+            );
+        }
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;
         let controller = live.controller;
@@ -4421,6 +4434,11 @@ fn commit_zone_change(
                 id,
             ));
             return;
+        }
+        if crate::doubling_season_v48::requires_successor(state)
+            || counter_input.is_some_and(|input| !input.seasons.is_empty())
+        {
+            crate::standard_cards_v1::initialize_entry_counters(state, id, counter_input);
         }
         if let Some(stun) = entering_characteristics.and_then(|entry| entry.stun_counters_v48) {
             state.objects.get_mut(id).counters.stun = stun;

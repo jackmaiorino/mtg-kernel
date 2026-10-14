@@ -4402,6 +4402,12 @@ pub(crate) fn initialize_entry_counters(
     if live.v4.face_index != 0 || !matches!(name, "Braided Net" | "Reckoner Bankbuster") {
         return;
     }
+    if (crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty()))
+        && !crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
+        return;
+    }
     let count = match crate::doubling_season_v48::entry_amount(state, input, live.controller, 3) {
         Ok(count) => count,
         Err(_) => {

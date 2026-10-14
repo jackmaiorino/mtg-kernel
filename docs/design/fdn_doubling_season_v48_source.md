@@ -262,3 +262,6 @@ Return-with-stun now carries its already checked, pre-return effect quote in an 
 
 
 The direct shared X-entry leaves now carry their original X/actual host through a distinct optional proposal into the same preflight and entry initializer as an owned permanent spell. Under the new component they combine independently requested fixed and X placements before observation; the old absent-component leaves stay byte-compatible. Prepared typed physical Forest/Pacifism primitive cases cover zero, two and full u16 X, native counts beyond i16, exact host relation before Garruk snapshot, unique real counter occurrence and repeated serialized restore. These do not claim fictional printed X costs or a compatible Standard Bestow catalog.
+
+
+The native Net/Bankbuster entry initializer moves before entry observations only under the new component, using the same frozen original recipient quote and current printed-ability availability. Its late predecessor hook is skipped for that entry to prevent double initialization. The old absent-component placement remains at its original position. These Standard-specific descriptors have no current compatible selected Season catalog, so this is an explicit source adapter with runtime qualification still unavailable, rather than a claimed current printing test.
