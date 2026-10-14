@@ -1,0 +1,9 @@
+{
+  "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "reference_path": "Mage.Sets/src/mage/cards/f/FakeYourOwnDeath.java",
+  "git_blob": "d7ddbc373e59419469cf360bb93da917e9dc2d49",
+  "bytes": 1876,
+  "sha256": "ec4548ab129db2449fb94686baf77060fec9115996c8ad838b3950ea228b063a",
+  "status": "unregistered_source_primitive_only",
+  "printing_native_qualification": "unrun"
+}

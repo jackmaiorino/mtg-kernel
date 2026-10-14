@@ -54,6 +54,7 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
 pub mod game_outcome_observation_v41;
 pub mod game_outcome_protection_public_v1;
