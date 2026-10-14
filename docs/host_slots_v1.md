@@ -62,6 +62,10 @@ On the compute host, its owner's use comes first. Set `keep_free` so the owner a
 
 Records whose process has exited are removed as they are read.
 
+Background queue filenames sort after ordinary queue filenames. This keeps
+legacy filename-FIFO launchers compatible with the priority-aware CI allocator
+and avoids an admission deadlock when both generations share a registry.
+
 ## Limits
 
 - On Linux (WSL runners, tests), containment is a process group. A process that leaves the group escapes affinity bookkeeping and suspension.
