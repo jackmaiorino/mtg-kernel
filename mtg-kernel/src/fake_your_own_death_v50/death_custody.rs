@@ -560,15 +560,7 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                     let counter = counter_inputs(state, *publication);
                     let resolution = resolution_inputs(state, *publication);
                     let departures = counter.len() + resolution.len();
-                    if (departures == 0 && rows.as_slice() != [*original])
-                        || (departures == 1 && !rows.is_empty())
-                        || departures > 1
-                    {
-                        return Err(
-                            "Fake published gained trigger changed or lost its unique live owner"
-                                .into(),
-                        );
-                    }
+                    let mut entry_borrowed_row = false;
                     if let [input] = resolution.as_slice() {
                         let completions = resolution_completions(state, *input);
                         if completions.is_empty() {
@@ -586,10 +578,35 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                             {
                                 return Err("Fake entry checkpoint did not produce the original death resolution".into());
                             }
+                            if !matches!(
+                                usize::try_from(*input).ok()
+                                    .and_then(|index| state.engine.event_history.get(index))
+                                    .and_then(journal),
+                                Some(JournalV50::DeathResolutionInput {
+                                    publication: retained, original_stack, ..
+                                }) if retained == publication
+                                    && original_stack.last() == Some(*original)
+                                    && before.stack == *original_stack
+                            ) {
+                                return Err("Fake entry checkpoint changed the original full resolution input".into());
+                            }
+                            // The existing entry owner restores exactly the original
+                            // resolving row while its choice borrows this operation.
+                            // Reconstruct the complete checkpoint before admitting it.
                             crate::linked_aura_operation_v1::validate(state)?;
+                            entry_borrowed_row = true;
                         } else if completions.len() != 1 {
                             return Err("Fake death resolution completed more than once".into());
                         }
+                    }
+                    if ((departures == 0 || entry_borrowed_row) && rows.as_slice() != [*original])
+                        || (departures == 1 && !entry_borrowed_row && !rows.is_empty())
+                        || departures > 1
+                    {
+                        return Err(
+                            "Fake published gained trigger changed or lost its unique live owner"
+                                .into(),
+                        );
                     }
                 }
                 _ => {

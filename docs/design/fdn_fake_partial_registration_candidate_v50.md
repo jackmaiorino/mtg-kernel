@@ -35,3 +35,13 @@ complete V50 public/backend/Human/meaning/model consumers, sampling and fair
 search/training integration, and current-head qualification. This intermediate
 registration enables real paid correctness checks while those requirements remain
 open. No training, paid compute or model admission is authorized by it.
+
+The returning animated Banner checkpoint now authenticates its enclosing
+Step/Advance, original resolution input and complete pre-pop stack, then
+reconstructs the existing entry checkpoint before admitting exactly the restored
+original publication row. Countered and completed resolutions still require
+absence. A genuine paid Banner/Fake fixture checks both seats, serialization at
+the color choice, answer completion, one Treasure, expired animation and refusal
+of changed, duplicated, absent or ownerless rows. Its animation is the existing
+captured-target primitive operand, not a paid Tough Cookie printing. Compilation
+and runtime remain pending.
