@@ -609,3 +609,55 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
         }
     }
 }
+
+#[test]
+fn actual_paid_fake_returns_opponent_owned_card_but_treasure_belongs_to_death_controller() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let owner = actor.opponent();
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Mountain", Zone::Battlefield);
+        }
+        let target = put(&mut state, owner, "Llanowar Elves", Zone::Hand);
+        // A real owner/controller-separated entry initializes the fixture.
+        // This does not claim an additional paid control-changing printing.
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change_to_battlefield_under_controller(target, actor),
+        );
+        assert_eq!(
+            (
+                state.objects.get(target).owner,
+                state.objects.get(target).controller
+            ),
+            (owner, actor)
+        );
+        let (mut state, _, _) = paid_on(state, actor, target);
+        drain(&mut state);
+        death(&mut state, target);
+        assert_eq!(state.stack.last().unwrap().controller, actor);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            drain(game);
+            spell_custody::validate_retained_grant_history(game).unwrap();
+            let returned = game.objects.get(target);
+            assert_eq!(
+                (
+                    returned.zone,
+                    returned.owner,
+                    returned.controller,
+                    returned.tapped
+                ),
+                (Zone::Battlefield, owner, owner, true)
+            );
+            assert_eq!(treasures(game, actor), 1);
+            assert_eq!(treasures(game, owner), 0);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}

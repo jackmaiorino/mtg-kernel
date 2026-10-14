@@ -53,3 +53,10 @@ tapped entry through the existing attachment batch, private actual relation loan
 checkpoint replay and explicit no-host closure. Its paid fixture is written;
 compilation, runtime and complete-consumer qualification remain pending. The
 printing remains Partial and current PR266442 coverage is unchanged.
+
+A sixth genuine paid Fake fixture separates physical owner from death controller:
+an opponent-owned Elf starts under the actor through the actual entry-controller
+constructor, receives the paid grant, dies and restores. Return belongs to the
+owner; Treasure belongs to the captured death controller. The initial entry is a
+fixture operand, not a claim of a paid control-changing printing. Runtime remains
+pending.
