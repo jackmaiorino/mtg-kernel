@@ -693,7 +693,11 @@ fn binary_games_exercise_casts_and_damage_choices_and_replay_identically() {
     let first = play();
     let second = play();
     assert_eq!(first, second);
-    assert_eq!(first.1["terminal"]["terminal_classification"], "natural");
+    assert_eq!(
+        first.1["terminal"]["terminal_classification"], "natural",
+        "terminal: {}; action counts: {:?}",
+        first.1, first.2
+    );
     assert!(
         first.2.get("cast_spell").copied().unwrap_or(0) >= 4,
         "{:?}",
