@@ -680,3 +680,5 @@ pub mod rules_meaning_eaten_alive_v1;
 
 pub mod doubling_season_public_v48;
 pub mod season_observation_v48;
+
+pub mod season_token_attachment_v48;

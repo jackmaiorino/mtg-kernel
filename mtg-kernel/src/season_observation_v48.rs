@@ -55,6 +55,9 @@ pub fn producer_sha256() -> String {
     for s in [
         SCHEMA,
         include_str!("season_observation_v48.rs"),
+        include_str!("state.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
+        include_str!("season_token_attachment_v48.rs"),
         include_str!("divine_public_v44.rs"),
         include_str!("rules_meaning_divine_v44.rs"),
         include_str!("engine.rs"),

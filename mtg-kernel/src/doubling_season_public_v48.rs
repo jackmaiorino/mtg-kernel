@@ -38,6 +38,21 @@ pub struct CounterPlacementV48 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct AttachmentMenuV48 {
+    pub equipment: CardStableRefV1,
+    pub chooser: PlayerSeatV1,
+    pub ordered_created: Vec<CardStableRefV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachmentV48 {
+    pub occurrence: usize,
+    pub original_equipment: CardStableRefV1,
+    pub created_controller: PlayerSeatV1,
+    pub selected: IncarnationV48,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactsV48 {
     pub schema: String,
     pub producer_sha256: String,
@@ -46,6 +61,8 @@ pub struct FactsV48 {
     pub active_sources: Vec<CardStableRefV1>,
     pub creations: Vec<CreationV48>,
     pub counter_placements: Vec<CounterPlacementV48>,
+    pub attachment_menu: Option<AttachmentMenuV48>,
+    pub attachments: Vec<AttachmentV48>,
 }
 fn original_source(source: AbilitySourceContractV4) -> CardStableRefV1 {
     CardStableRefV1 {
@@ -63,6 +80,8 @@ pub fn producer_sha256() -> String {
         SCHEMA,
         include_str!("doubling_season_public_v48.rs"),
         include_str!("doubling_season_v48.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
+        include_str!("season_token_attachment_v48.rs"),
         include_str!("event.rs"),
         include_str!("state.rs"),
         include_str!("engine.rs"),
@@ -106,6 +125,7 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
         .collect();
     let mut creations = Vec::new();
     let mut counter_placements = Vec::new();
+    let mut attachments = Vec::new();
     for event in &state.engine.event_history {
         match event {
             CommittedEvent::TokenCreationReplacementV48 { creation } => {
@@ -166,9 +186,72 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
                         .collect(),
                 })
             }
+            CommittedEvent::TokenAttachmentJournalV48 { journal } => {
+                if let crate::season_token_attachment_v48::JournalV48::Completed {
+                    input,
+                    selected,
+                    ..
+                } = journal.as_ref()
+                {
+                    let Some(CommittedEvent::TokenAttachmentJournalV48 { journal }) =
+                        state.engine.event_history.get(*input as usize)
+                    else {
+                        unreachable!("validated original attachment input")
+                    };
+                    let crate::season_token_attachment_v48::JournalV48::Input { input } =
+                        journal.as_ref()
+                    else {
+                        unreachable!("validated original attachment input kind")
+                    };
+                    attachments.push(AttachmentV48 {
+                        occurrence: attachments.len(),
+                        original_equipment: original_source(input.choice.source),
+                        created_controller: input.choice.controller.into(),
+                        selected: IncarnationV48 {
+                            object: selected.object.0,
+                            generation: selected.expected_zone_change_count,
+                        },
+                    });
+                }
+            }
             _ => {}
         }
     }
+    let attachment_menu = if let Some(pending) = crate::season_token_attachment_v48::pending(state)
+    {
+        crate::linked_aura_operation_v1::validate(state).map_err(RlContractError)?;
+        if let crate::linked_aura_operation_v1::GeneralChoiceV36::TokenEquipmentV48 {
+            choice, ..
+        } = &pending.choice
+        {
+            crate::season_token_attachment_v48::validate_choice(state, choice)
+                .map_err(RlContractError)?;
+            let current = |id| {
+                let live = state.objects.get(id);
+                CardStableRefV1 {
+                    arena_id: id.0,
+                    card_db_id: live.card_def,
+                    owner: live.owner.into(),
+                    controller: live.controller.into(),
+                    zone: live.zone,
+                    zone_change_count: live.zone_change_count,
+                }
+            };
+            Some(AttachmentMenuV48 {
+                equipment: current(choice.source.source),
+                chooser: choice.controller.into(),
+                ordered_created: choice
+                    .candidates
+                    .iter()
+                    .map(|c| current(c.object))
+                    .collect(),
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     Ok(FactsV48 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
@@ -177,5 +260,7 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
         active_sources,
         creations,
         counter_placements,
+        attachment_menu,
+        attachments,
     })
 }

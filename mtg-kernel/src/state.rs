@@ -2868,7 +2868,20 @@ impl GameState {
         if changed_host {
             crate::standard_cards_v1::aegis_attached(self, source, host_link);
         }
-        self.validate_attachment_relations()
+        self.validate_attachment_relations()?;
+        if crate::doubling_season_v48::requires_successor(self) {
+            crate::season_token_attachment_v48::record(
+                self,
+                crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {
+                    source: ObjectLinkV4 {
+                        object: source,
+                        zone_change_count: source_zone_change_count,
+                    },
+                    host: host_link,
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Returns the acting observer's currently valid, position-sorted facts

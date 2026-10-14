@@ -229,3 +229,54 @@ fn genuine_printed_cast_and_replacement_facts_fixed_seat_owned_restore_both_seat
         }
     }
 }
+
+#[test]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_created_token_attachment_human_exact_choice_private_binding_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, equipment) =
+            crate::season_token_attachment_v48::tests::actual_primitive_checkpoint(actor);
+        let mut session = session(state, actor);
+        let mut projector = HumanSeasonProjectorV48::new(actor.into());
+        let first = expected(&session);
+        let menu = projector.project_current(&session, first).unwrap();
+        assert_eq!(menu.schema, "mtg-kernel-human-season-decision/v48");
+        assert_eq!(menu.actions.len(), 2);
+        assert!(menu
+            .actions
+            .iter()
+            .all(|action| action.label.starts_with("Attach Longbow")));
+        let snapshot = session.snapshot_v48();
+        for _ in 0..3 {
+            session.restore_v48(&snapshot).unwrap();
+            let before = session.inner.season_fixture_state().clone();
+            assert!(projector
+                .submit(
+                    &mut session,
+                    HumanActionRequestV1 {
+                        prompt_seq: menu.prompt_seq,
+                        action_index: menu.actions[0].action_index
+                    }
+                )
+                .is_err());
+            assert_eq!(session.inner.season_fixture_state(), &before);
+        }
+        let e = expected(&session);
+        let menu = projector.project_current(&session, e).unwrap();
+        projector
+            .submit(
+                &mut session,
+                HumanActionRequestV1 {
+                    prompt_seq: menu.prompt_seq,
+                    action_index: menu.actions[0].action_index,
+                },
+            )
+            .unwrap();
+        let state = session.inner.season_fixture_state();
+        assert!(state.objects.get(equipment).v4.attached_to.is_some());
+        let facts = crate::doubling_season_public_v48::capture(state).unwrap();
+        assert!(facts.attachment_menu.is_none());
+        assert_eq!(facts.attachments.len(), 1);
+        assert_eq!(facts.creations[0].created.len(), 2);
+    }
+}

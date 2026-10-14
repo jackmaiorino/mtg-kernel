@@ -482,6 +482,35 @@ fn label(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<String, Error> {
+    if let Some(menu) = &observation.season.attachment_menu {
+        if let ActionSemanticV1::ChooseEffectTarget {
+            actor,
+            source,
+            target: crate::rl::TargetRefV1::Object { object },
+            selected_count,
+            min_targets,
+            max_targets,
+        } = action
+        {
+            if source == &menu.equipment {
+                if *actor != human || *actor != menu.chooser {
+                    return Err(Error::NotHumanTurn);
+                }
+                if *selected_count != 0
+                    || *min_targets != 1
+                    || *max_targets != 1
+                    || !menu.ordered_created.contains(object)
+                {
+                    return Err(Error::InvalidVisibleReference);
+                }
+                return Ok(format!(
+                    "Attach {} to newly created {}",
+                    handles.name(source)?,
+                    handles.name(object)?
+                ));
+            }
+        }
+    }
     if let Some(label) = panda_label(action, observation, handles, human)? {
         return Ok(label);
     }
@@ -1165,7 +1194,7 @@ impl HumanSeasonProjectorV48 {
         let (state, actions, engine_indexes) =
             project_base(&observation, &actions, self.human_seat, &binding.families)?;
         let visible = HumanDecisionSeasonV48 {
-            schema: "mtg-kernel-human-panda-decision/v47".into(),
+            schema: "mtg-kernel-human-season-decision/v48".into(),
             human_seat: self.human_seat,
             prompt_seq: self.next_prompt_seq,
             state,

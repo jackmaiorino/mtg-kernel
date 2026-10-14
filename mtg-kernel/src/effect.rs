@@ -18360,6 +18360,167 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let start = state.engine.event_history.len();
+                event::propose_and_commit_batch(
+                    state,
+                    vec![event::ProposedEvent::create_token(
+                        *token_def,
+                        ctx.controller,
+                    )],
+                );
+                if state.engine.halted.is_some() {
+                    return;
+                }
+                let Some(source) = ctx.ability_source_contract else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                let source_live = state.objects.try_get(source.source).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.v4.face_down_v1.is_none()
+                        && crate::engine::object_has_type(
+                            state,
+                            source.source,
+                            crate::card_def::CardType::Artifact,
+                        )
+                        && !crate::engine::object_has_type(
+                            state,
+                            source.source,
+                            crate::card_def::CardType::Creature,
+                        )
+                        && live.zone_change_count == source.zone_change_count
+                        && live.owner == source.owner
+                        && live.card_def == source.card_def
+                        && crate::card_def::CARD_DEFS[usize::from(live.card_def)]
+                            .equipment
+                            .is_some()
+                });
+                if !source_live {
+                    return;
+                }
+                let creations = state.engine.event_history[start..]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(offset, event)| match event {
+                        event::CommittedEvent::CreateToken {
+                            object,
+                            token_def: actual,
+                            controller,
+                        } if actual == token_def && *controller == ctx.controller => Some((
+                            (start + offset) as u64,
+                            EffectObjectBinding {
+                                object: *object,
+                                expected_zone: Zone::Battlefield,
+                                expected_zone_change_count: state
+                                    .objects
+                                    .get(*object)
+                                    .zone_change_count,
+                            },
+                        )),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if creations.iter().all(|(_, candidate)| {
+                    !crate::engine::object_has_type(
+                        state,
+                        candidate.object,
+                        crate::card_def::CardType::Creature,
+                    )
+                }) {
+                    return;
+                }
+                if creations.iter().all(|(_, candidate)| {
+                    crate::engine::damage_is_prevented_by_protection(
+                        state,
+                        source.source,
+                        Target::Object(candidate.object),
+                    )
+                }) {
+                    return;
+                }
+                let choice = crate::season_token_attachment_v48::ChoiceV48 {
+                    source,
+                    controller: ctx.controller,
+                    candidates: creations.iter().map(|(_, c)| *c).collect(),
+                    creations: creations.iter().map(|(at, _)| *at).collect(),
+                };
+                let selected = match crate::linked_aura_operation_v1::choose_created_token_v48(
+                    state, choice,
+                ) {
+                    Ok(Some(selected)) => selected,
+                    Ok(None) => return,
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                };
+                let input = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(at, event)| match event {
+                        event::CommittedEvent::TokenAttachmentJournalV48 { journal }
+                            if matches!(
+                                journal.as_ref(),
+                                crate::season_token_attachment_v48::JournalV48::Input { .. }
+                            ) =>
+                        {
+                            Some(at as u64)
+                        }
+                        _ => None,
+                    })
+                    .expect("genuine token attachment choice emits its input");
+                // Untargeted attachment still respects protection, but Shroud
+                // and the Equipment's present controller do not target-filter it.
+                if crate::engine::damage_is_prevented_by_protection(
+                    state,
+                    source.source,
+                    Target::Object(selected.object),
+                ) {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                let attachment_start = state.engine.event_history.len();
+                if state
+                    .attach_object_exact(
+                        source.source,
+                        source.zone_change_count,
+                        selected.object,
+                        selected.expected_zone_change_count,
+                    )
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                let attachment=state.engine.event_history[attachment_start..].iter().enumerate().find_map(|(offset,event)| match event {
+                    event::CommittedEvent::TokenAttachmentJournalV48 {journal} if matches!(journal.as_ref(),crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {source:actual,host} if actual.object==source.source && actual.zone_change_count==source.zone_change_count && host.object==selected.object && host.zone_change_count==selected.expected_zone_change_count) => Some((attachment_start+offset) as u64), _=>None,
+                }).expect("actual attachment helper emits independent occurrence");
+                crate::season_token_attachment_v48::record(
+                    state,
+                    crate::season_token_attachment_v48::JournalV48::Completed {
+                        input,
+                        selected,
+                        attachment,
+                    },
+                );
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(*token_def, ctx.controller),

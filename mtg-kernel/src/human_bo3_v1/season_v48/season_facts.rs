@@ -20,10 +20,25 @@ pub struct HumanSeasonCounterV48 {
     pub replacement_sources: Vec<HumanCardRefV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanSeasonAttachmentV48 {
+    pub occurrence: usize,
+    pub original_equipment: HumanCardRefV1,
+    pub created_controller: PlayerSeatV1,
+    pub selected: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanSeasonAttachmentMenuV48 {
+    pub equipment: HumanCardRefV1,
+    pub chooser: PlayerSeatV1,
+    pub ordered_created: Vec<HumanCardRefV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanSeasonFactsV48 {
     pub active_sources: Vec<HumanCardRefV1>,
     pub creations: Vec<HumanSeasonCreationV48>,
     pub counter_placements: Vec<HumanSeasonCounterV48>,
+    pub attachment_menu: Option<HumanSeasonAttachmentMenuV48>,
+    pub attachments: Vec<HumanSeasonAttachmentV48>,
 }
 pub(super) fn register_season(
     facts: &public::FactsV48,
@@ -46,6 +61,15 @@ pub(super) fn register_season(
         )
     {
         handles.insert(source)?;
+    }
+    for row in &facts.attachments {
+        handles.insert(&row.original_equipment)?;
+    }
+    if let Some(menu) = &facts.attachment_menu {
+        handles.insert(&menu.equipment)?;
+        for token in &menu.ordered_created {
+            handles.insert(token)?;
+        }
     }
     Ok(())
 }
@@ -111,9 +135,38 @@ pub(super) fn project_season(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    let attachments = facts
+        .attachments
+        .iter()
+        .map(|row| {
+            Ok(HumanSeasonAttachmentV48 {
+                occurrence: row.occurrence,
+                original_equipment: handles.get(&row.original_equipment)?.clone(),
+                created_controller: row.created_controller,
+                selected: role(row.selected),
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let attachment_menu = facts
+        .attachment_menu
+        .as_ref()
+        .map(|menu| {
+            Ok(HumanSeasonAttachmentMenuV48 {
+                equipment: handles.get(&menu.equipment)?.clone(),
+                chooser: menu.chooser,
+                ordered_created: menu
+                    .ordered_created
+                    .iter()
+                    .map(|token| handles.get(token).cloned())
+                    .collect::<Result<Vec<_>, Error>>()?,
+            })
+        })
+        .transpose()?;
     Ok(HumanSeasonFactsV48 {
         active_sources: sources(&facts.active_sources)?,
         creations,
         counter_placements,
+        attachment_menu,
+        attachments,
     })
 }

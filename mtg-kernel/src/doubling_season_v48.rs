@@ -387,6 +387,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
                 | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
                 | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+                | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
         )
     }) || state.stack.iter().any(|item| {
         item.v4
@@ -671,6 +672,8 @@ pub(crate) fn record_token_creation(
 }
 
 pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
+    crate::season_token_attachment_v48::validate_journals(state)?;
+
     use crate::event::CommittedEvent;
     if state.engine.event_log.iter().any(|event| {
         matches!(
