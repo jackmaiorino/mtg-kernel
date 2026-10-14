@@ -351,6 +351,8 @@ pub struct TokenEntryV48 {
     pub attacking: bool,
     pub attached_to: Option<crate::state::ObjectLinkV4>,
     pub plus_one_counters: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sacrifice_at_end_step: Option<AbilitySourceContractV4>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

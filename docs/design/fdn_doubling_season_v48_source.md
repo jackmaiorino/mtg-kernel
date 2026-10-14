@@ -202,3 +202,14 @@ source-to-created attachment selection, special delayed copy tails, remaining
 kind paths and comprehensive attachment/entry qualifications remain active.
 All new actual printing/cross-family groups are ignored/unrun; only pinned
 formatting and diff checks have run.
+
+
+## Delayed copy tail checkpoint
+
+Replacement-enabled hasty copies initialize every member's haste and real
+end-step sacrifice/retained source binding during creation, before observers.
+The ordinary absent branch is unchanged. Generic accepted copy under Season
+also selects the genuine neutral blueprint for a face-down original before
+creation; its hidden underlying printing is not placed in the creation request,
+token definition or any public template relation. Actual definition/source
+transport qualification remains pending, including delayed Standard paths.

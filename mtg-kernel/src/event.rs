@@ -3078,6 +3078,17 @@ fn commit_with_entry_batch_and_source_color(
                         },
                     );
                 }
+                if let Some(source) = init.sacrifice_at_end_step {
+                    let binding = crate::effect::EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: 0,
+                    };
+                    let standard = state.standard_v1.get_or_insert_with(Default::default);
+                    standard.reflection_delayed_bindings.push((binding, source));
+                    standard.hasty_copies.push((object, 0));
+                    standard.end_step_sacrifices.push((object, 0, source));
+                }
                 if init.attacking
                     && state.engine.combat.attackers_declared
                     && state.active_player == t.controller
