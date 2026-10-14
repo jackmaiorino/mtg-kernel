@@ -8,8 +8,6 @@
 //! ordered pair; every other id fails before an active session is created or
 //! replaced.
 
-pub(crate) mod eaten_v46;
-
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::{CastMode, CostKind, Decision, OptionalCostChoice};
 use crate::flat_action_contract_v2::FLAT_ACTION_CANDIDATE_COMMITMENT_DOMAIN_V2;
@@ -50,6 +48,7 @@ pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
 pub(crate) mod crystal_v22;
 pub(crate) mod divine_v44;
+pub(crate) mod eaten_v46;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod faebloom_v43;
@@ -59,6 +58,7 @@ pub(crate) mod frenzied_v15;
 pub(crate) mod game_outcome_v41;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod hunter_v45;
 pub(crate) mod inspiration_v37;
 pub(crate) mod krenko_v34;
 mod limited_common_v1;
@@ -1958,10 +1958,10 @@ fn flat_validate_origin_decision_common_scoped_v42(
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if (if scope == crate::rl::CommonProjectionScopeV42::EatenV46 {
-        crate::eaten_observation_v46::validate_state(state)
-    } else if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
+    if (if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
         crate::faebloom_observation_v43::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::HunterV45 {
+        crate::hunter_observation_v45::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::DivineV44 {
         crate::divine_observation_v44::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
@@ -3378,6 +3378,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                 session.flat_action_contract_mode,
                 FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             ))
     {
@@ -3403,6 +3404,28 @@ fn flat_validate_current_binding_header_akroma_inner(
     }
     if current.candidates.is_empty() {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    if accept_akroma
+        && matches!(
+            session.flat_action_contract_mode,
+            FlatActionContractModeV1::HunterV45 | FlatActionContractModeV1::EatenV46
+        )
+        && session
+            .surface
+            .validate_hunter_order_header_v45(
+                &session.state,
+                session.environment_revision,
+                &current.origin_decision,
+                (current.substep_index, current.substep_count),
+            )
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    {
+        if current.origin_decision.actor(&session.state) != Some(current.actor)
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        return Ok(());
     }
     flat_validate_current_decision_relations_v1(current, &session.state)
 }
@@ -4468,6 +4491,7 @@ fn flat_validate_expected_decision_akroma_inner(
                 | FlatActionContractModeV1::AjaniV42
                 | FlatActionContractModeV1::FaebloomV43
                 | FlatActionContractModeV1::DivineV44
+                | FlatActionContractModeV1::HunterV45
                 | FlatActionContractModeV1::EatenV46
         )
     {
@@ -4491,7 +4515,7 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::EatenV46),
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4627,6 +4651,7 @@ enum FlatActionContractModeV1 {
     AjaniV42,
     FaebloomV43,
     DivineV44,
+    HunterV45,
     EatenV46,
 }
 
@@ -7352,6 +7377,8 @@ impl FastActorSessionV1 {
             let mut rederived = current.clone();
             if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
                 eaten_v46::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                hunter_v45::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
                 divine_v44::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
@@ -7549,11 +7576,13 @@ impl FastActorSessionV1 {
             ));
             return;
         }
+
         if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
             && !matches!(
                 self.flat_action_contract_mode,
                 FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
@@ -7576,6 +7605,7 @@ impl FastActorSessionV1 {
                 FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
@@ -7601,6 +7631,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
@@ -7635,6 +7666,8 @@ impl FastActorSessionV1 {
         if (if self.is_common_v40() {
             if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
                 crate::eaten_observation_v46::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                crate::hunter_observation_v45::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
                 crate::divine_observation_v44::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
@@ -7757,6 +7790,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             )
         {
@@ -7814,6 +7848,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::AjaniV42
                     | FlatActionContractModeV1::FaebloomV43
                     | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
                     | FlatActionContractModeV1::EatenV46
             )
         {
@@ -7856,7 +7891,29 @@ impl FastActorSessionV1 {
             }
             _ => {}
         }
-        let (substep_index, substep_count) = surfaced.substep();
+        let (substep_index, substep_count) =
+            match self.surface.hunter_order_substeps_v45(&self.state) {
+                Ok(Some(substeps))
+                    if matches!(
+                        self.flat_action_contract_mode,
+                        FlatActionContractModeV1::HunterV45 | FlatActionContractModeV1::EatenV46
+                    ) =>
+                {
+                    substeps
+                }
+                Ok(None) => surfaced.substep(),
+                _ => {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        "fail_closed:Hunter trigger ordering".into(),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            };
         if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
             let _ = self.surface.discard_unanswered_scan();
             self.terminal = Some(truncated_terminal(
@@ -7898,7 +7955,11 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
+            eaten_v46::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+            hunter_v45::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
             divine_v44::actual_candidates(&surfaced, &self.state, &self.surface)
         } else if self.is_common_v40() {
             akroma_v40::actual_candidates(&surfaced, &self.state)
@@ -8167,6 +8228,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:faebloom_v43:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HunterV45 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = hunter_v45::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:hunter_v45:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

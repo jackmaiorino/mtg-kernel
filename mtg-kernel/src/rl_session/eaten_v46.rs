@@ -1,8 +1,12 @@
-//! Private Eaten Alive/common binding, separate from predecessor modes.
+//! Private Hunter V45 binding, separate from predecessor session modes.
 
 use super::*;
 use crate::eaten_observation_v46::EatenObservationV46;
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 use crate::state::GameState;
 
 // No Debug/Serialize: executable candidates and the transport observation
@@ -43,6 +47,15 @@ fn visible_semantic(
         Ok(captured.clone())
     };
     match &mut semantic {
+        #[cfg(feature = "limited-fdn-fixtures")]
+        A::ChooseTriggerOrderNext {
+            actor,
+            source,
+            trigger_index,
+            ..
+        } => {
+            *source = pending_source(*trigger_index, source, *actor)?;
+        }
         A::OrderTriggers {
             actor,
             pending_sources,
@@ -99,7 +112,20 @@ fn visible_semantic(
 pub(super) fn actual_candidates(
     origin: &PolicyDecisionV5,
     state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
+    if let Some(candidates) =
+        crate::divine_actions_v44::candidates_hunter_scoped_v45(origin, state, surface, true)?
+    {
+        return Ok(candidates);
+    }
     if crate::twinflame_tyrant_v1::combat::has_pending(state) {
         return super::twinflame_v38::actual_candidates(origin, state);
     }
@@ -110,14 +136,72 @@ pub(super) fn actual_candidates(
         ))
     ) {
         super::banner_v36::actual_candidates(origin, state)
+    } else if super::inspiration_v37::is_mill(state) {
+        super::inspiration_v37::actual_candidates(origin, state)
     } else {
-        super::faebloom_v43::actual_candidates(origin, state)
+        crate::rl::core_policy_action_candidates_hunter_scoped_v45(origin, state, true)
     }
 }
 fn validate_additional_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<bool, FlatActionDecisionSliceErrorV1> {
+    if session
+        .surface
+        .validate_hunter_order_header_v45(
+            &session.state,
+            session.environment_revision,
+            &current.origin_decision,
+            (current.substep_index, current.substep_count),
+        )
+        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    {
+        return Ok(true);
+    }
+    if crate::linked_aura_operation_v1::has_pending(&session.state) {
+        let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
+        else {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        };
+        let mut probe = session.state.clone();
+        let actual = crate::engine::advance_until_decision(&mut probe);
+        if &actual != origin
+            || probe != session.state
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+            || current.substep_index != 0
+            || current.substep_count != 1
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        return Ok(true);
+    }
+    if crate::policy_observation_variable_cast_v1::variable_cast_context(
+        &session.state,
+        &current.origin_decision,
+    )
+    .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    .is_some()
+        || matches!(&current.origin_decision,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::CastSpellOrPass { castable_spells, .. }))
+            if castable_spells.iter().any(|source| session.state.objects.try_get(*source).is_some_and(|object|
+                crate::card_def::CARD_DEFS[usize::from(object.card_def)].target_spec == crate::card_def::TargetSpec::KickerControlledCreatures)))
+    {
+        let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
+        else {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        };
+        let mut probe = session.state.clone();
+        let actual = crate::engine::advance_until_decision(&mut probe);
+        if &actual != origin
+            || probe != session.state
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+            || current.substep_index != 0
+            || current.substep_count != 1
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        return Ok(true);
+    }
     let PolicyDecisionV5::Surface(SurfaceDecision::Decision(origin)) = &current.origin_decision
     else {
         return Ok(false);
@@ -212,8 +296,9 @@ pub(super) fn normalized_origin(
     original.flat_action_cache_error = None;
     original.flat_action_cache_v2 = None;
     original.flat_action_cache_error_v2 = None;
-    original.candidates = actual_candidates(&current.origin_decision, &session.state)
-        .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
+    original.candidates =
+        actual_candidates(&current.origin_decision, &session.state, &session.surface)
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
     flat_validate_current_binding_header_akroma_inner(session, &original, true)?;
     if !validate_additional_origin(session, &original)?
         && !crate::twinflame_tyrant_v1::combat::has_pending(&session.state)
@@ -227,16 +312,18 @@ pub(super) fn normalized_origin(
     }
     let common = crate::rl::policy_observation_extensions_eaten_v46(&session.state, current.actor)
         .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?;
-    super::flat_action_v3::normalize_candidates(
-        &mut original.candidates,
-        &common,
-        session,
-        &original.origin_decision,
-    )?;
+    if !crate::linked_aura_operation_v1::has_pending(&session.state) {
+        super::flat_action_v3::normalize_candidates(
+            &mut original.candidates,
+            &common,
+            session,
+            &original.origin_decision,
+        )?;
+    }
     let projection = crate::eaten_observation_v46::observe_v46(
         &session.state,
         &session.surface,
-        current.actor,
+        (current.actor, &current.origin_decision),
         session.policy_step_count,
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
@@ -264,7 +351,7 @@ pub(super) fn prepare_current(
     crate::eaten_observation_v46::observe_v46(
         &session.state,
         &session.surface,
-        current.actor,
+        (current.actor, &current.origin_decision),
         session.policy_step_count,
         current.physical_decision_id,
         (current.substep_index, current.substep_count),
@@ -288,7 +375,7 @@ impl FastActorSessionV1 {
         )) {
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
-                "Eaten Alive V46 requires the Foundations catalog",
+                "Eaten V46 requires the Foundations catalog",
             ));
         }
         if !matches!(starting_player, PlayerId::P0 | PlayerId::P1)
@@ -300,7 +387,7 @@ impl FastActorSessionV1 {
         {
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
-                "invalid Eaten Alive V46 reset",
+                "invalid Eaten V46 reset",
             ));
         }
         let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
@@ -341,6 +428,7 @@ impl FastActorSessionV1 {
             flat_action_cache_spare_v2: None,
             terminal: None,
         };
+        session.surface.enable_hunter_order_v45();
         session.advance_to_decision_or_terminal();
         Ok(session)
     }
@@ -354,21 +442,18 @@ impl FastActorSessionV1 {
             || restored.flat_action_contract_mode != self.flat_action_contract_mode
             || restored.episode_id != self.episode_id
         {
-            return Err(RlContractError("wrong Eaten Alive snapshot owner".into()));
+            return Err(RlContractError("wrong Eaten snapshot owner".into()));
         }
         crate::eaten_observation_v46::validate_state(&restored.state).map_err(RlContractError)?;
         let next_revision = self
             .environment_revision
             .max(restored.environment_revision)
             .checked_add(1)
-            .ok_or_else(|| {
-                RlContractError("Eaten Alive mixed restore revision exhausted".into())
-            })?;
+            .ok_or_else(|| RlContractError("Eaten mixed restore revision exhausted".into()))?;
         if let Some(mut current) = restored.current.take() {
             // Authenticate the original snapshot relation before rebinding its owner.
-            prepare_current(&restored, &mut current).map_err(|_| {
-                RlContractError("invalid original Eaten Alive restored menu".into())
-            })?;
+            prepare_current(&restored, &mut current)
+                .map_err(|_| RlContractError("invalid original Eaten restored menu".into()))?;
             restored
                 .surface
                 .rebind_owned_revision_after_restore_v1(
@@ -382,7 +467,7 @@ impl FastActorSessionV1 {
             restored.environment_revision = next_revision;
             current.environment_revision = next_revision;
             prepare_current(&restored, &mut current)
-                .map_err(|_| RlContractError("invalid rebound Eaten Alive restored menu".into()))?;
+                .map_err(|_| RlContractError("invalid rebound Eaten restored menu".into()))?;
             restored.current = Some(current);
         } else {
             restored.environment_revision = next_revision;
@@ -390,7 +475,7 @@ impl FastActorSessionV1 {
         *self = restored;
         Ok(())
     }
-    /// Explicit backend opt-in for the separate Eaten Alive projector.
+    /// Explicit backend opt-in for the separate Divine projector.
     /// It consumes the session; predecessor adapters keep their old mode.
     pub fn into_eaten_v46(mut self) -> Result<Self, RlContractError> {
         // Validate before any advancement can expire a malformed active marker.
@@ -398,7 +483,23 @@ impl FastActorSessionV1 {
         self.flat_action_contract_mode = FlatActionContractModeV1::EatenV46;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
+        self.surface.enable_hunter_order_v45();
         if let Some(mut current) = self.current.take() {
+            self.surface
+                .initialize_hunter_order_v45(
+                    &self.state,
+                    &current.origin_decision,
+                    self.environment_revision,
+                )
+                .map_err(RlContractError)?;
+            if let Some((index, count)) = self
+                .surface
+                .hunter_order_substeps_v45(&self.state)
+                .map_err(RlContractError)?
+            {
+                current.substep_index = index;
+                current.substep_count = count;
+            }
             prepare_current(&self, &mut current)
                 .map_err(|error| RlContractError(format!("eaten_v46:{error:?}")))?;
             self.current = Some(current);
@@ -406,7 +507,11 @@ impl FastActorSessionV1 {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_eaten_v46_fixture_state(state: GameState) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
@@ -414,6 +519,7 @@ impl FastActorSessionV1 {
             crate::surface_v2::PriorityModeV1::EngineWindowsV1,
             SuppressionAuditMode::Off,
         );
+        session.surface.enable_hunter_order_v45();
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
@@ -437,16 +543,24 @@ impl FastActorSessionV1 {
         session
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn eaten_fixture_state(&self) -> &GameState {
         &self.state
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn eaten_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }
 
-    /// Actor-visible akroma plus a complete ordered executable binding.
+    /// Actor-visible Divine plus a complete ordered executable binding.
     /// No predecessor cache or observation constructor is consulted.
     pub(crate) fn eaten_current_decision_input_v46(
         &self,
@@ -478,7 +592,7 @@ impl FastActorSessionV1 {
         let (observation, mut families) = crate::eaten_observation_v46::observe_parts_v46(
             &self.state,
             &self.surface,
-            current.actor,
+            (current.actor, &current.origin_decision),
             self.policy_step_count,
             current.physical_decision_id,
             (current.substep_index, current.substep_count),
@@ -528,7 +642,6 @@ impl FastActorSessionV1 {
         Ok(())
     }
 }
-
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",

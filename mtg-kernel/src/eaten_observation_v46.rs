@@ -1,4 +1,4 @@
-//! Distinct authenticated Full-Ajani/common-family transport.
+//! Distinct Hunter V45 mixed-family transport. Predecessor schemas retain refusal.
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -36,10 +36,13 @@ pub struct EatenObservationV46 {
     pub color_departures: Vec<crate::akroma_public_v1::ColorDepartureV1>,
     pub roots: Vec<crate::akroma_public_v1::RootV1>,
     pub projection_sha256: String,
+    pub divine: crate::divine_public_v44::FactsV44,
+    pub hunter: crate::high_society_hunter_public_v45::FactsV45,
+    pub eaten: crate::eaten_public_v46::FactsV46,
+    pub trigger_order: Option<crate::policy_surface_v5::TriggerOrderContextV45>,
     pub ajani: crate::ajani_public_v42::FactsV42,
     pub faebloom: crate::faebloom_public_v43::FactsV43,
-    pub eaten: crate::eaten_public_v46::FactsV46,
-    pub creature_target_traits: Vec<CreatureTargetTraitsV43>,
+    pub creature_target_traits: Vec<crate::faebloom_observation_v43::CreatureTargetTraitsV43>,
 }
 pub(crate) type EatenPublicPartsV46 = (
     EatenObservationV46,
@@ -50,30 +53,37 @@ pub fn producer_sha256() -> String {
     for s in [
         SCHEMA,
         include_str!("eaten_observation_v46.rs"),
+        include_str!("divine_public_v44.rs"),
+        include_str!("rules_meaning_divine_v44.rs"),
+        include_str!("engine.rs"),
+        include_str!("spell_costs_v1.rs"),
         include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/limited_common_v1.rs"),
-        include_str!("surface.rs"),
-        include_str!("surface_v2.rs"),
-        include_str!("policy_observation_v8.rs"),
         include_str!("akroma_family_public_v40.rs"),
         include_str!("planeswalker_v1.rs"),
         include_str!("rl_session/eaten_v46.rs"),
-        include_str!("human_bo3_v1/eaten_v46.rs"),
+        include_str!("rl_session.rs"),
         include_str!("rl_session/flat_action_v3.rs"),
         include_str!("rl_session/flat_action_v4.rs"),
         include_str!("policy_surface_v5.rs"),
+        include_str!("policy_surface_v5/hunter_order_v45.rs"),
+        include_str!("surface_v2.rs"),
+        include_str!("human_bo3_v1/eaten_v46.rs"),
         include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
+        include_str!("human_bo3_v1/akroma_families_v40.rs"),
+        include_str!("divine_actions_v44.rs"),
+        include_str!("rl_variable_cast_v1.rs"),
+        include_str!("policy_observation_variable_cast_v1.rs"),
+        include_str!("faebloom_observation_v43.rs"),
     ] {
         h.update([0]);
         h.update(s.as_bytes());
     }
     for s in [
         crate::ajani_public_v42::producer_sha256(),
-        crate::faebloom_public_v43::producer_sha256(),
-        crate::eaten_public_v46::producer_sha256(),
         crate::akroma_public_v1::producer_sha256_v1(),
+        crate::faebloom_public_v43::producer_sha256(),
+        crate::high_society_hunter_public_v45::producer_sha256(),
+        crate::eaten_public_v46::producer_sha256(),
     ] {
         h.update([1]);
         h.update(s.as_bytes());
@@ -94,35 +104,35 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     )) {
-        return Err("Faebloom V43 requires the Foundations catalog".into());
+        return Err("Eaten V46 requires the actual Foundations catalog".into());
     }
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     crate::akroma_public_v1::roots().map_err(|e| e.0)?;
-    crate::akroma_family_public_v40::validate_state_for_ajani_v42(state)?;
+    crate::akroma_family_public_v40::validate_state_for_divine_v44(state)?;
+    crate::high_society_hunter_custody_v45::validate(state)?;
     crate::ajani_public_v42::facts(state).map_err(|e| e.0)?;
-    crate::faebloom_trick_v43::validate_state(state)?;
     crate::eaten_public_v46::validate_state(state)?;
     Ok(())
 }
 pub fn observe_v46(
     state: &GameState,
     surface: &PolicySurfaceV5,
-    actor: PlayerId,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
     step: u64,
     physical: u64,
     substep: (u32, u32),
 ) -> Result<EatenObservationV46, RlContractError> {
-    observe_parts_v46(state, surface, actor, step, physical, substep).map(|(o, _)| o)
+    observe_parts_v46(state, surface, actor_and_origin, step, physical, substep).map(|(o, _)| o)
 }
 pub(crate) fn observe_parts_v46(
     state: &GameState,
     surface: &PolicySurfaceV5,
-    actor: PlayerId,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
     step: u64,
     physical: u64,
     substep: (u32, u32),
 ) -> Result<EatenPublicPartsV46, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
+    let (actor, origin) = actor_and_origin;
     let (substep_index, substep_count) = substep;
     let roots = crate::akroma_public_v1::roots()?;
     let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
@@ -175,8 +185,13 @@ pub(crate) fn observe_parts_v46(
         projection_sha256: String::new(),
         ajani: crate::ajani_public_v42::facts(state)?,
         faebloom: crate::faebloom_public_v43::capture(state)?,
+        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
+        divine: crate::divine_public_v44::facts(state, origin, actor)?,
+        hunter: crate::high_society_hunter_public_v45::capture(state)?,
         eaten: crate::eaten_public_v46::capture(state, actor)?,
-        creature_target_traits: target_traits(state)?,
+        trigger_order: surface
+            .hunter_order_context_v45(state)
+            .map_err(RlContractError)?,
     };
     observation.projection_sha256 = commitment(&observation)?;
     for part in &mut parts {
@@ -191,25 +206,34 @@ impl EatenObservationV46 {
             || self.producer_sha256 != producer_sha256()
             || self.kernel_version != crate::KERNEL_VERSION
             || self.roots != crate::akroma_public_v1::roots()?
+            || self.divine.meanings != crate::divine_public_v44::meanings()?
             || self.ajani.meanings != crate::ajani_public_v42::meanings()?
-            || self.eaten.schema != crate::eaten_public_v46::SCHEMA
-            || self.eaten.producer_sha256 != crate::eaten_public_v46::producer_sha256()
-            || self.eaten.meanings != crate::eaten_public_v46::meanings()?
             || self.faebloom.schema != crate::faebloom_public_v43::SCHEMA
             || self.faebloom.producer_sha256 != crate::faebloom_public_v43::producer_sha256()
             || self.faebloom.card_db_hash != self.card_db_hash
+            || self.eaten.schema != crate::eaten_public_v46::SCHEMA
+            || self.eaten.producer_sha256 != crate::eaten_public_v46::producer_sha256()
+            || self.eaten.meanings != crate::eaten_public_v46::meanings()?
+            || self.hunter.schema != crate::high_society_hunter_public_v45::SCHEMA
+            || self.hunter.producer_sha256
+                != crate::high_society_hunter_public_v45::producer_sha256()
+            || self.hunter.card_db_hash != self.card_db_hash
             || self.substep_count == 0
             || self.substep_index >= self.substep_count
             || self.card_db_hash != crate::card_def::KERNEL_CARDDB_HASH
             || self.projection_sha256 != commitment(self)?
         {
             return Err(RlContractError(
-                "Ajani observation identity mismatch".into(),
+                "Eaten V46 observation identity mismatch".into(),
             ));
         }
         for meaning in &self.ajani.meanings {
             crate::rules_meaning_ajani_v42::validate(meaning)
                 .map_err(|_| RlContractError("Ajani precise root differs".into()))?;
+        }
+        for meaning in &self.hunter.meanings {
+            crate::rules_meaning_high_society_hunter_v1::validate(meaning)
+                .map_err(|_| RlContractError("Hunter precise root changed".into()))?;
         }
         let selector =
             crate::rules_meaning_faebloom_v43::live_selector().map_err(RlContractError)?;
@@ -220,38 +244,9 @@ impl EatenObservationV46 {
         Ok(())
     }
 }
-
-/// Extra targeting facts absent from the frozen keyword DTO, bound in the whole observation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreatureTargetTraitsV43 {
-    pub creature: crate::rl::CardStableRefV1,
-    pub shroud: bool,
-    pub hexproof: bool,
-    pub protection_from_monocolored: bool,
-}
-pub(crate) fn target_traits(
-    state: &GameState,
-) -> Result<Vec<CreatureTargetTraitsV43>, RlContractError> {
-    use crate::card_def::{CardType, Keywords};
-    state
-        .objects
-        .iter()
-        .filter(|(id, object)| {
-            object.zone == crate::state::Zone::Battlefield
-                && crate::engine::object_has_type(state, *id, CardType::Creature)
-        })
-        .map(|(id, object)| {
-            Ok(CreatureTargetTraitsV43 {
-                creature: crate::sower_restriction_capture_v1::masked_ref(id, object)?,
-                shroud: crate::engine::has_effective_keyword(state, id, Keywords::SHROUD),
-                hexproof: crate::engine::has_effective_keyword(state, id, Keywords::HEXPROOF),
-                protection_from_monocolored: crate::engine::has_effective_keyword(
-                    state,
-                    id,
-                    Keywords::PROTECTION_FROM_MONOCOLORED,
-                ),
-            })
-        })
-        .collect()
-}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;

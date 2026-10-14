@@ -1,4 +1,4 @@
-//! Sealed Full Ajani successor. Complete typed authority stays backend-only.
+//! Sealed Hunter V45 mixed successor. Complete executable authority stays backend-only.
 use super::visible::{self, Handles};
 use super::*;
 use crate::eaten_observation_v46::EatenObservationV46;
@@ -75,13 +75,13 @@ impl HumanEatenSessionV46 {
     ) -> Result<crate::eaten_observation_v46::EatenObservationV46, crate::rl::RlContractError> {
         if expected.acting_player != self.human_seat {
             return Err(crate::rl::RlContractError(
-                "Faebloom Human view is fixed to its selected seat".into(),
+                "Hunter Human view is fixed to its selected seat".into(),
             ));
         }
         self.inner
             .eaten_current_decision_input_v46(expected, self.human_seat)
             .map(|(observation, _, _)| observation)
-            .map_err(|_| crate::rl::RlContractError("stale Faebloom public decision".into()))
+            .map_err(|_| crate::rl::RlContractError("stale Hunter public decision".into()))
     }
     /// Host-only policy callback. Opponent private rosters never enter a Human DTO.
     pub fn step_opponent_with<F>(
@@ -130,16 +130,111 @@ pub struct HumanDecisionEatenV46 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanEatenExtensionsV46 {
     pub predecessor: HumanExtensionsV9,
-    pub grants: Vec<HumanEatenGrantV46>,
+    pub grants: Vec<HumanDivineGrantV44>,
     pub families: Vec<super::akroma_families_v40::HumanFamilyV40>,
-    pub color_departures: Vec<HumanColorDepartureV46>,
+    pub color_departures: Vec<HumanColorDepartureV44>,
     pub ajani: HumanAjaniFactsV42,
-    pub faebloom: HumanFaebloomPartsV46,
-    pub creature_target_traits: Vec<HumanCreatureTargetTraitsV46>,
+    pub faebloom: HumanFaebloomFactsV43,
+    pub divine: HumanDivineFactsV44,
+    pub hunter: HumanHunterFactsV45,
     pub eaten: HumanEatenFactsV46,
+    pub trigger_order: Option<crate::policy_surface_v5::TriggerOrderContextV45>,
+    pub creature_target_traits: Vec<HumanCreatureTargetTraitsV43>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanEatenGrantV46 {
+pub struct HumanHunterOccurrenceV45 {
+    pub occurrence: usize,
+    pub original_source: HumanCardRefV1,
+    pub current_original_source: Option<HumanCardRefV1>,
+    pub original_controller: PlayerSeatV1,
+    pub root: crate::rules_meaning_high_society_hunter_v1::RootV1,
+    pub phase: crate::high_society_hunter_public_v45::PhaseV45,
+    pub deceased: Option<String>,
+    pub sacrificed: Option<String>,
+    pub sacrifice_paid: bool,
+    pub source_counter_added: bool,
+    pub draw_attempted: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanHunterMenuV45 {
+    pub occurrence: usize,
+    pub chooser: PlayerSeatV1,
+    pub original_source: HumanCardRefV1,
+    pub ordered_legal: Vec<HumanCardRefV1>,
+    pub may_decline: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanHunterFactsV45 {
+    pub occurrences: Vec<HumanHunterOccurrenceV45>,
+    pub menu: Option<HumanHunterMenuV45>,
+    pub trigger_order: Vec<crate::high_society_hunter_public_v45::TriggerOrderV45>,
+}
+fn project_hunter(
+    facts: &crate::high_society_hunter_public_v45::FactsV45,
+    handles: &Handles,
+) -> Result<HumanHunterFactsV45, Error> {
+    let mut incarnations = Vec::new();
+    let mut role = |original: Option<crate::high_society_hunter_public_v45::IncarnationV45>| {
+        original.map(|original| {
+            let n = incarnations
+                .iter()
+                .position(|row| *row == original)
+                .unwrap_or_else(|| {
+                    let n = incarnations.len();
+                    incarnations.push(original);
+                    n
+                });
+            format!("hunter_incarnation{}", n + 1)
+        })
+    };
+    let occurrences = facts
+        .occurrences
+        .iter()
+        .map(|row| {
+            Ok(HumanHunterOccurrenceV45 {
+                occurrence: row.occurrence,
+                original_source: handles.get(&row.source)?.clone(),
+                current_original_source: row
+                    .current_original_source
+                    .as_ref()
+                    .map(|source| handles.get(source).cloned())
+                    .transpose()?,
+                original_controller: row.original_controller,
+                root: row.root,
+                phase: row.phase,
+                deceased: role(row.deceased),
+                sacrificed: role(row.sacrificed),
+                sacrifice_paid: row.sacrifice_paid,
+                source_counter_added: row.source_counter_added,
+                draw_attempted: row.draw_attempted,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let menu = facts
+        .menu
+        .as_ref()
+        .map(|row| -> Result<HumanHunterMenuV45, Error> {
+            Ok(HumanHunterMenuV45 {
+                occurrence: row.occurrence,
+                chooser: row.chooser,
+                original_source: handles.get(&row.source)?.clone(),
+                ordered_legal: row
+                    .ordered_legal
+                    .iter()
+                    .map(|source| handles.get(source).cloned())
+                    .collect::<Result<Vec<_>, Error>>()?,
+                may_decline: row.may_finish,
+            })
+        })
+        .transpose()?;
+    Ok(HumanHunterFactsV45 {
+        occurrences,
+        menu,
+        trigger_order: facts.trigger_order.clone(),
+    })
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDivineGrantV44 {
     pub source: HumanCardRefV1,
     pub controller: PlayerSeatV1,
     pub recipients: Vec<HumanCardRefV1>,
@@ -147,7 +242,7 @@ pub struct HumanEatenGrantV46 {
     pub protection_color_mask: u8,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanColorDepartureV46 {
+pub struct HumanColorDepartureV44 {
     pub source_at_departure: HumanCardRefV1,
     pub event_order: u64,
     pub original_face_index: u8,
@@ -273,7 +368,7 @@ fn state(
                 .map(|card| handles.get(card).cloned())
                 .collect::<Result<Vec<_>, Error>>()?;
             recipients.sort_by(|a, b| a.handle.cmp(&b.handle));
-            Ok(HumanEatenGrantV46 {
+            Ok(HumanDivineGrantV44 {
                 source: handles.get(&row.source)?.clone(),
                 controller: row.controller,
                 recipients,
@@ -287,7 +382,7 @@ fn state(
         .color_departures
         .iter()
         .map(|row| {
-            Ok(HumanColorDepartureV46 {
+            Ok(HumanColorDepartureV44 {
                 source_at_departure: handles.get(&row.source_at_departure)?.clone(),
                 event_order: row.event_order,
                 original_face_index: row.original_face_index,
@@ -312,12 +407,15 @@ fn state(
             color_departures,
             ajani: project_ajani_facts(&observation.ajani, handles)?,
             faebloom: project_faebloom(&observation.faebloom, handles)?,
+            divine: project_divine(&observation.divine, handles)?,
+            hunter: project_hunter(&observation.hunter, handles)?,
             eaten: project_eaten(&observation.eaten, handles)?,
+            trigger_order: observation.trigger_order.clone(),
             creature_target_traits: observation
                 .creature_target_traits
                 .iter()
                 .map(|row| {
-                    Ok(HumanCreatureTargetTraitsV46 {
+                    Ok(HumanCreatureTargetTraitsV43 {
                         creature: handles.get(&row.creature)?.clone(),
                         shroud: row.shroud,
                         hexproof: row.hexproof,
@@ -375,6 +473,195 @@ fn label(
 ) -> Result<String, Error> {
     if let Some(label) = eaten_label(action, observation, handles, human)? {
         return Ok(label);
+    }
+    if let ActionSemanticV1::CastSpell { actor, source } = action {
+        if crate::high_society_hunter_v1::owns_definition(source.card_db_id) {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            return Ok(format!("Cast {} ({{3}}{{B}}{{B}}): 5/3 flying; on attack optionally sacrifice another creature for its +1/+1 counter; each other nontoken death draws",handles.name(source)?));
+        }
+    }
+    if let Some(menu) = &observation.hunter.menu {
+        match action {
+            ActionSemanticV1::ChooseEffectTarget {
+                actor,
+                source,
+                target: crate::rl::TargetRefV1::Object { object },
+                selected_count,
+                min_targets,
+                max_targets,
+            } if source == &menu.source => {
+                if *actor != human || *actor != menu.chooser {
+                    return Err(Error::NotHumanTurn);
+                }
+                if *selected_count != 0
+                    || *min_targets != 0
+                    || *max_targets != 1
+                    || !menu.ordered_legal.contains(object)
+                {
+                    return Err(Error::InvalidVisibleReference);
+                }
+                return Ok(format!("{} attack trigger #{}: sacrifice {} to put a +1/+1 counter on the original Hunter if it remains",handles.name(source)?,menu.occurrence+1,handles.name(object)?));
+            }
+            ActionSemanticV1::FinishEffectSelection {
+                actor,
+                source,
+                selected_count,
+            } if source == &menu.source => {
+                if *actor != human || *actor != menu.chooser {
+                    return Err(Error::NotHumanTurn);
+                }
+                if *selected_count != 0 || !menu.may_finish {
+                    return Err(Error::InvalidVisibleReference);
+                }
+                return Ok(format!(
+                    "{} attack trigger #{}: do not sacrifice another creature",
+                    handles.name(source)?,
+                    menu.occurrence + 1
+                ));
+            }
+            _ => {}
+        }
+    }
+    if let ActionSemanticV1::OrderTriggers {
+        actor,
+        pending_sources,
+        order,
+    } = action
+    {
+        if observation
+            .hunter
+            .trigger_order
+            .iter()
+            .any(|row| row.controller == *actor)
+        {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            let labels=order.iter().map(|position| {
+                let source=pending_sources.get(*position).ok_or(Error::InvalidVisibleReference)?;
+                let name=handles.name(source)?;
+                if let Some(row)=observation.hunter.trigger_order.iter().find(|row|row.controller==*actor && row.group_position==*position) {
+                    let occurrence=observation.hunter.occurrences.get(row.occurrence).ok_or(Error::InvalidVisibleReference)?;
+                    let instruction=match occurrence.root {crate::rules_meaning_high_society_hunter_v1::RootV1::Attack=>"optional sacrifice for counter",crate::rules_meaning_high_society_hunter_v1::RootV1::OtherNontokenDeath=>"draw one",_=>return Err(Error::InvalidVisibleReference)};
+                    Ok(format!("{name} {instruction} occurrence #{}",row.occurrence+1))
+                } else {Ok(format!("{name} trigger #{}",position+1))}
+            }).collect::<Result<Vec<_>,Error>>()?;
+            return Ok(format!(
+                "Put triggers on the stack in this order: {}",
+                labels.join(", ")
+            ));
+        }
+    }
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let ActionSemanticV1::ChooseTriggerOrderNext {
+        actor,
+        source,
+        trigger_index,
+        ordered_prefix,
+        pending_count,
+    } = action
+    {
+        if let Some(stage) = observation.trigger_order.as_ref() {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            if *trigger_index >= *pending_count || ordered_prefix.contains(trigger_index) {
+                return Err(Error::InvalidVisibleReference);
+            }
+            if stage.controller != *actor
+                || stage.pending_count != *pending_count
+                || stage.ordered_prefix != *ordered_prefix
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let suffix = observation
+                .hunter
+                .trigger_order
+                .iter()
+                .find(|row| row.controller == *actor && row.group_position == *trigger_index)
+                .map(|row| {
+                    let instruction = match observation.hunter.occurrences[row.occurrence].root {
+                        crate::rules_meaning_high_society_hunter_v1::RootV1::Attack => {
+                            "optional sacrifice for counter"
+                        }
+                        crate::rules_meaning_high_society_hunter_v1::RootV1::OtherNontokenDeath => {
+                            "draw one"
+                        }
+                        _ => "printed trigger",
+                    };
+                    format!("Hunter {instruction} occurrence #{}", row.occurrence + 1)
+                })
+                .unwrap_or_else(|| format!("trigger #{}", trigger_index + 1));
+            return Ok(format!(
+                "Place {} {suffix} next ({} already ordered; last placed resolves first)",
+                handles.name(source)?,
+                ordered_prefix.len()
+            ));
+        }
+    }
+    match action {
+        ActionSemanticV1::ChooseDivineKickerV44 { actor, source, pay } => {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            return Ok(format!(
+                "{}: {}",
+                handles.name(source)?,
+                if *pay {
+                    "pay kicker {2}{W}; choose any finite number of your creatures, including zero"
+                } else {
+                    "do not kick; choose exactly one of your creatures"
+                }
+            ));
+        }
+        ActionSemanticV1::ChooseDivineTargetV44 {
+            actor,
+            source,
+            kicked,
+            selected_count,
+            target,
+        } => {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            return Ok(format!(
+                "{}: select {} as target #{}{}",
+                handles.name(source)?,
+                handles.name(target)?,
+                selected_count
+                    .checked_add(1)
+                    .ok_or(Error::UnsupportedPrompt)?,
+                if *kicked { "; kicked" } else { "" }
+            ));
+        }
+        ActionSemanticV1::FinishDivineTargetsV44 {
+            actor,
+            source,
+            selected_count,
+        } => {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            return Ok(format!(
+                "{}: finish with {selected_count} targets and pay the captured kicked cost",
+                handles.name(source)?
+            ));
+        }
+        ActionSemanticV1::CastSpell { actor, source, .. }
+            if crate::card_def::CARD_DEFS
+                .get(usize::from(source.card_db_id))
+                .is_some_and(|d| {
+                    d.target_spec == crate::card_def::TargetSpec::KickerControlledCreatures
+                }) =>
+        {
+            if *actor != human {
+                return Err(Error::NotHumanTurn);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{W}}, kicker {{2}}{{W}}): indestructible until end of turn",handles.name(source)?));
+        }
+        _ => {}
     }
     if let ActionSemanticV1::CastSpell { source, actor, .. } = action {
         if crate::faebloom_trick_v43::selected_definition(source.card_db_id) {
@@ -468,7 +755,7 @@ fn label(
     super::labels::label_parts_v8(action, &parts(observation), handles, human)
 }
 
-type ProjectedEatenV46 = (
+type ProjectedFaebloomV43 = (
     HumanVisibleStateV1<HumanEatenExtensionsV46>,
     Vec<HumanLegalActionV1>,
     Vec<u32>,
@@ -479,7 +766,7 @@ pub(super) fn project_base(
     actions: &[ActionSemanticV1],
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
-) -> Result<ProjectedEatenV46, Error> {
+) -> Result<ProjectedFaebloomV43, Error> {
     project_base_with_handles(observation, actions, human, families)
         .map(|(state, actions, indexes, _)| (state, actions, indexes))
 }
@@ -529,6 +816,17 @@ fn project_with_handles(
     for row in &observation.extensions.historical_public_sources {
         handles.insert(&row.source)?;
     }
+    for row in &observation.hunter.occurrences {
+        handles.insert(&row.source)?;
+        if let Some(source) = &row.current_original_source {
+            handles.insert(source)?;
+        }
+    }
+    if let Some(menu) = &observation.hunter.menu {
+        for source in &menu.ordered_legal {
+            handles.insert(source)?;
+        }
+    }
     for row in &observation.grants {
         handles.insert(&row.source)?;
         for recipient in &row.recipients {
@@ -570,6 +868,7 @@ fn project_with_handles(
     for row in &observation.creature_target_traits {
         handles.insert(&row.creature)?;
     }
+    register_divine(&observation.divine, &mut handles)?;
     for row in observation.eaten.pending.iter() {
         handles.insert(&row.source)?;
         for card in &row.sacrifice_candidates {
@@ -701,6 +1000,31 @@ fn project_with_handles(
                         ));
                 }
             }
+        }
+    }
+    divine_unary(&initial.extensions.divine, &mut unary)?;
+    for row in &initial.extensions.hunter.occurrences {
+        unary
+            .entry(row.original_source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        if let Some(source) = &row.current_original_source {
+            unary
+                .entry(source.handle.clone())
+                .or_default()
+                .push(format!("hunter_original_current_source_{}", row.occurrence));
+        }
+    }
+    if let Some(menu) = &initial.extensions.hunter.menu {
+        unary
+            .entry(menu.original_source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(menu)?);
+        for (position, source) in menu.ordered_legal.iter().enumerate() {
+            unary
+                .entry(source.handle.clone())
+                .or_default()
+                .push(format!("hunter_sacrifice_{}_{}", menu.occurrence, position));
         }
     }
     for rows in unary.values_mut() {
@@ -866,7 +1190,7 @@ impl HumanEatenProjectorV46 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanFaebloomSpellPartsV46 {
+pub struct HumanFaebloomSpellV43 {
     pub ordinal: u32,
     pub original_source: HumanCardRefV1,
     pub caster: PlayerSeatV1,
@@ -876,7 +1200,7 @@ pub struct HumanFaebloomSpellPartsV46 {
     pub current_tokens: Vec<Option<HumanCardRefV1>>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanFaebloomReflexivePartsV46 {
+pub struct HumanFaebloomReflexiveV43 {
     pub ordinal: u32,
     pub original_source: HumanCardRefV1,
     pub controller: PlayerSeatV1,
@@ -886,12 +1210,12 @@ pub struct HumanFaebloomReflexivePartsV46 {
     pub current_target: Option<HumanCardRefV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanFaebloomPartsV46 {
-    pub spells: Vec<HumanFaebloomSpellPartsV46>,
-    pub reflexives: Vec<HumanFaebloomReflexivePartsV46>,
+pub struct HumanFaebloomFactsV43 {
+    pub spells: Vec<HumanFaebloomSpellV43>,
+    pub reflexives: Vec<HumanFaebloomReflexiveV43>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HumanCreatureTargetTraitsV46 {
+pub struct HumanCreatureTargetTraitsV43 {
     pub creature: HumanCardRefV1,
     pub shroud: bool,
     pub hexproof: bool,
@@ -900,12 +1224,12 @@ pub struct HumanCreatureTargetTraitsV46 {
 fn project_faebloom(
     facts: &crate::faebloom_public_v43::FactsV43,
     handles: &Handles,
-) -> Result<HumanFaebloomPartsV46, Error> {
+) -> Result<HumanFaebloomFactsV43, Error> {
     let spells = facts
         .spells
         .iter()
         .map(|row| {
-            Ok(HumanFaebloomSpellPartsV46 {
+            Ok(HumanFaebloomSpellV43 {
                 ordinal: row.ordinal,
                 original_source: handles.get(&row.original_source)?.clone(),
                 caster: row.caster,
@@ -924,7 +1248,7 @@ fn project_faebloom(
         .reflexives
         .iter()
         .map(|row| {
-            Ok(HumanFaebloomReflexivePartsV46 {
+            Ok(HumanFaebloomReflexiveV43 {
                 ordinal: row.ordinal,
                 original_source: handles.get(&row.original_source)?.clone(),
                 controller: row.controller,
@@ -943,8 +1267,187 @@ fn project_faebloom(
             })
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    Ok(HumanFaebloomPartsV46 { spells, reflexives })
+    Ok(HumanFaebloomFactsV43 { spells, reflexives })
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDivineQuoteV44 {
+    pub floating_mana_used: [u8; 6],
+    pub tapped_sources: Vec<(HumanCardRefV1, crate::mana::ManaColor)>,
+    pub restricted_mana_units_used: u64,
+    pub life_paid: i32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDivinePendingV44 {
+    pub source: HumanCardRefV1,
+    pub controller: PlayerSeatV1,
+    pub kicked: Option<bool>,
+    pub selected: Vec<HumanCardRefV1>,
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+    pub legal_choices: Vec<HumanCardRefV1>,
+    pub legal_kicker_choices: Vec<bool>,
+    pub can_finish: bool,
+    pub unkicked_quote: Option<HumanDivineQuoteV44>,
+    pub kicked_quote: Option<HumanDivineQuoteV44>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDivineFinalizedV44 {
+    pub stack_ordinal: u32,
+    pub source: HumanCardRefV1,
+    pub controller: PlayerSeatV1,
+    pub kicked: bool,
+    pub targets: Vec<HumanCardRefV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanDivineFactsV44 {
+    pub pending: Option<HumanDivinePendingV44>,
+    pub finalized: Vec<HumanDivineFinalizedV44>,
+}
+fn register_divine(
+    facts: &crate::divine_public_v44::FactsV44,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    if let Some(p) = &facts.pending {
+        handles.insert(&p.source)?;
+        for target in &p.selected {
+            handles.insert(target)?;
+        }
+        if let Some(crate::policy_observation_variable_cast_v1::VariableCastContextV1::Targets {
+            legal_choices,
+            ..
+        }) = &p.context
+        {
+            for target in legal_choices {
+                handles.insert(target)?;
+            }
+        }
+        for q in p.unkicked_quote.iter().chain(&p.kicked_quote) {
+            for (source, _) in &q.tapped_sources {
+                handles.insert(source)?;
+            }
+        }
+    }
+    for p in &facts.finalized {
+        handles.insert(&p.source)?;
+        for target in &p.targets {
+            handles.insert(target)?;
+        }
+    }
+    Ok(())
+}
+fn project_divine(
+    facts: &crate::divine_public_v44::FactsV44,
+    h: &Handles,
+) -> Result<HumanDivineFactsV44, Error> {
+    let refs = |rows: &[crate::rl::CardStableRefV1]| {
+        rows.iter()
+            .map(|r| h.get(r).cloned())
+            .collect::<Result<Vec<_>, Error>>()
+    };
+    let quote = |q: &crate::divine_public_v44::QuoteV44| -> Result<HumanDivineQuoteV44, Error> {
+        Ok(HumanDivineQuoteV44 {
+            floating_mana_used: q.floating_mana_used,
+            tapped_sources: q
+                .tapped_sources
+                .iter()
+                .map(|(r, c)| Ok((h.get(r)?.clone(), *c)))
+                .collect::<Result<Vec<_>, Error>>()?,
+            restricted_mana_units_used: q.restricted_mana_units_used,
+            life_paid: q.life_paid,
+        })
+    };
+    let pending = facts
+        .pending
+        .as_ref()
+        .map(|p| -> Result<HumanDivinePendingV44, Error> {
+            let (legal_choices, legal_kicker_choices, can_finish) = match &p.context {
+                Some(
+                    crate::policy_observation_variable_cast_v1::VariableCastContextV1::Targets {
+                        legal_choices,
+                        can_finish,
+                        ..
+                    },
+                ) => (refs(legal_choices)?, Vec::new(), *can_finish),
+                Some(
+                    crate::policy_observation_variable_cast_v1::VariableCastContextV1::Kicker {
+                        legal_pay_choices,
+                        ..
+                    },
+                ) => (Vec::new(), legal_pay_choices.clone(), false),
+                None => (Vec::new(), Vec::new(), false),
+            };
+            Ok(HumanDivinePendingV44 {
+                source: h.get(&p.source)?.clone(),
+                controller: p.controller,
+                kicked: p.kicked,
+                selected: refs(&p.selected)?,
+                minimum: p.minimum,
+                maximum: p.maximum,
+                legal_choices,
+                legal_kicker_choices,
+                can_finish,
+                unkicked_quote: p.unkicked_quote.as_ref().map(quote).transpose()?,
+                kicked_quote: p.kicked_quote.as_ref().map(quote).transpose()?,
+            })
+        })
+        .transpose()?;
+    let finalized = facts
+        .finalized
+        .iter()
+        .map(|p| {
+            Ok(HumanDivineFinalizedV44 {
+                stack_ordinal: p.stack_ordinal,
+                source: h.get(&p.source)?.clone(),
+                controller: p.controller,
+                kicked: p.kicked,
+                targets: refs(&p.targets)?,
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    Ok(HumanDivineFactsV44 { pending, finalized })
+}
+fn divine_unary(
+    facts: &HumanDivineFactsV44,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    if let Some(p) = &facts.pending {
+        unary
+            .entry(p.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(p)?);
+        for (i, t) in p.selected.iter().enumerate() {
+            unary
+                .entry(t.handle.clone())
+                .or_default()
+                .push(format!("divine_selected_{i}"));
+        }
+        for (i, t) in p.legal_choices.iter().enumerate() {
+            unary
+                .entry(t.handle.clone())
+                .or_default()
+                .push(format!("divine_legal_{i}"));
+        }
+    }
+    for p in &facts.finalized {
+        unary
+            .entry(p.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(p)?);
+        for (i, t) in p.targets.iter().enumerate() {
+            unary
+                .entry(t.handle.clone())
+                .or_default()
+                .push(format!("divine_stack_{}_target_{i}", p.stack_ordinal));
+        }
+    }
+    Ok(())
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanEatenPendingV46 {

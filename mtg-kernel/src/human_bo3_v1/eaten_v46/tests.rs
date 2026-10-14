@@ -40,7 +40,7 @@ fn default_and_standard_refuse_v46_without_mutating_predecessor_state() {
         put(&mut state, actor, "Forest", Zone::Hand);
         let session = FastActorSessionV1::from_v3_fixture_state(state);
         let before = session.privileged_core_environment_hash();
-        assert!(session.clone().into_faebloom_v43().is_err());
+        assert!(session.clone().into_eaten_v46().is_err());
         assert_eq!(session.privileged_core_environment_hash(), before);
     }
 }
@@ -721,6 +721,144 @@ mod limited {
                     session.inner.eaten_fixture_state(),
                 )
                 .unwrap();
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires serial Eaten Alive registration and native qualification"]
+    fn actual_paid_eaten_history_and_typed_kicked_divine_share_full_mixed_owning_input_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, spell, target, _) = eaten_state(actor);
+            let divine = put(&mut state, actor, "Divine Resilience", Zone::Hand);
+            for _ in 0..2 {
+                let creature = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::zone_change(creature, Zone::Battlefield),
+                );
+            }
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 2;
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 5;
+            let mut session = HumanEatenSessionV46::from_session(
+                FastActorSessionV1::from_eaten_v46_fixture_state(state),
+                actor.into(),
+            )
+            .unwrap();
+            let mut projector = HumanEatenProjectorV46::new(actor.into());
+            select_contains(&mut session, &mut projector, "Begin casting Eaten Alive");
+            // Choose the original opponent recipient from the complete private candidate binding.
+            let current = expected(&session);
+            let (observation, actions, binding) = session
+                .inner
+                .eaten_current_decision_input_v46(current, actor.into())
+                .unwrap();
+            let index = actions.iter().position(|a| matches!(a, ActionSemanticV1::ChooseTarget { target: crate::rl::TargetRefV1::Object { object }, .. } if object.arena_id == target.0)).unwrap();
+            let (_, _, engine_indexes) =
+                project_base(&observation, &actions, actor.into(), &binding.families).unwrap();
+            let human_index = engine_indexes
+                .iter()
+                .position(|candidate| *candidate == index as u32)
+                .unwrap();
+            let menu = projector.project_current(&session, current).unwrap();
+            projector
+                .submit(
+                    &mut session,
+                    HumanActionRequestV1 {
+                        prompt_seq: menu.prompt_seq,
+                        action_index: human_index as u32,
+                    },
+                )
+                .unwrap();
+            select_contains(
+                &mut session,
+                &mut projector,
+                "additional cost: choose printed {3}{B}",
+            );
+            for _ in 0..24 {
+                if !session
+                    .inner
+                    .eaten_fixture_state()
+                    .stack
+                    .iter()
+                    .any(|item| item.source == spell)
+                {
+                    break;
+                }
+                pass(&mut session, &mut projector, actor);
+            }
+            assert_eq!(
+                session.inner.eaten_fixture_state().objects.get(target).zone,
+                Zone::Exile
+            );
+            select_contains(
+                &mut session,
+                &mut projector,
+                "Begin casting Divine Resilience",
+            );
+            select_contains(&mut session, &mut projector, ": pay kicker");
+            for _ in 0..3 {
+                let menu = projector
+                    .project_current(&session, expected(&session))
+                    .unwrap();
+                let option = menu
+                    .actions
+                    .iter()
+                    .find(|a| a.label.contains(": select "))
+                    .unwrap();
+                projector
+                    .submit(
+                        &mut session,
+                        HumanActionRequestV1 {
+                            prompt_seq: menu.prompt_seq,
+                            action_index: option.action_index,
+                        },
+                    )
+                    .unwrap();
+            }
+            let current = expected(&session);
+            let public = session.public_observation(current).unwrap();
+            assert_eq!(public.divine.pending.as_ref().unwrap().selected.len(), 3);
+            assert_eq!(public.eaten.payments.len(), 1);
+            assert!(public.eaten.payments[0].original_spell_departed);
+            let save = session.snapshot_v46();
+            session.restore_v46(&save).unwrap();
+            let restored = session.public_observation(expected(&session)).unwrap();
+            assert_eq!(restored.eaten, public.eaten);
+            assert_eq!(restored.divine, public.divine);
+            select_contains(&mut session, &mut projector, "finish with 3");
+            for _ in 0..24 {
+                if !session
+                    .inner
+                    .eaten_fixture_state()
+                    .stack
+                    .iter()
+                    .any(|item| item.source == divine)
+                {
+                    break;
+                }
+                pass(&mut session, &mut projector, actor);
+            }
+            assert_eq!(
+                session.inner.eaten_fixture_state().objects.get(divine).zone,
+                Zone::Graveyard
+            );
+            for id in session.inner.eaten_fixture_state().players[actor.index()]
+                .battlefield
+                .iter()
+                .copied()
+            {
+                if crate::engine::object_has_type(
+                    session.inner.eaten_fixture_state(),
+                    id,
+                    crate::card_def::CardType::Creature,
+                ) {
+                    assert!(crate::engine::has_effective_keyword(
+                        session.inner.eaten_fixture_state(),
+                        id,
+                        crate::card_def::Keywords::INDESTRUCTIBLE
+                    ));
+                }
             }
         }
     }

@@ -330,6 +330,10 @@ pub use ajani_v42::{
 };
 
 pub mod divine_v44;
+pub mod hunter_v45;
+pub use hunter_v45::{
+    HumanDecisionHunterV45, HumanHunterProjectorV45, HumanHunterSessionV45, HumanHunterSnapshotV45,
+};
 pub mod faebloom_v43;
 pub use divine_v44::{
     HumanDecisionDivineV44, HumanDivineProjectorV44, HumanDivineSessionV44, HumanDivineSnapshotV44,
