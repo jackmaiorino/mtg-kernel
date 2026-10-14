@@ -1,4 +1,4 @@
-//! Finalized spell and removal ownership for the still-unregistered printing.
+//! Finalized spell and removal ownership for the Partial printing candidate.
 //! Installation records supply the future death owner's grant inventory.
 //! Cleanup binds expiry to an original complete ending-turn roster. Death
 //! custody and full consumer admission remain separate, unfinished work.
@@ -21,8 +21,12 @@ pub(crate) fn selected_definition(id: u16) -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
-    )) && CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
-        d.name == "Fake Your Own Death"
+    )) && CARD_DEFS.get(usize::from(id)).is_some_and(owns_definition)
+        && crate::trigger::triggers_for(id).is_empty()
+}
+
+pub(crate) fn owns_definition(d: &crate::card_def::CardDef) -> bool {
+    d.name == "Fake Your Own Death"
             && d.object_name == d.name
             // Partial registration exposes genuine paid correctness fixtures
             // while full-deck/model preflight still rejects the incomplete card.
@@ -40,7 +44,6 @@ pub(crate) fn selected_definition(id: u16) -> bool {
             && d.target_spec == TargetSpec::Creature
             && (d.spell_effect)() == Some(recipe())
             && d.activated_abilities.is_empty()
-            && crate::trigger::triggers_for(id).is_empty()
             && d.subtypes.is_empty()
             && d.supertypes.is_empty()
             && d.power.is_none()
@@ -67,7 +70,36 @@ pub(crate) fn selected_definition(id: u16) -> bool {
             && d.generic_cost_reduction.is_none()
             && !d.spell_cannot_be_countered
             && !d.records_mana_spent
-    })
+            && d.plot_cost.is_none()
+            && d.madness_cost.is_none()
+            && d.kicked_target_spec.is_none()
+            && d.escape.is_none()
+            && !d.enters_battlefield_tapped
+            && d.mana_ability_def.is_none()
+            && d.minimum_blockers == 1
+            && d.omen.is_none()
+            && !d.mana_ability_includes_chosen_color
+            && d.as_enters_choose_color_other_than.is_none()
+            && d.additional_mana_abilities.is_empty()
+            && d.enters_battlefield_tapped_unless.is_none()
+            && d.transform_face.is_none()
+            && d.saga.is_none()
+            && !d.changeling
+            && d.bestow.is_none()
+            && !d.delve
+            && d.adventure.is_none()
+            && !d.cant_be_blocked_by_monarchs_creatures
+            && d.conditional_tap_yield.is_none()
+            && d.enters_tapped_unless_controller.is_none()
+            && d.additional_mana_ability_conditions.is_empty()
+            && d.restricted_mana_abilities.is_empty()
+            && d.animation.is_none()
+            && d.activated_ability_generic_reductions.is_empty()
+            && d.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE
+            && d.as_enters_color_choice_v1.is_none()
+            && d.chosen_color_creature_boost_v1.is_none()
+            && d.damage_replacement_v1.is_none()
+            && d.token_counter_replacement_v48.is_none()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -92,6 +92,13 @@ pub fn producer_sha256() -> String {
             include_str!("state.rs"),
             include_str!("card_def.rs"),
             include_str!("continuous_characteristics_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("linked_aura_return_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
             include_str!("doubling_season_v48.rs"),
             include_str!("../build.rs"),
         ] {

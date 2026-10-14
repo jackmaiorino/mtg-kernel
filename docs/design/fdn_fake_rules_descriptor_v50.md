@@ -34,3 +34,10 @@ printing, while requiring Partial capability and no model admission. They still
 exercise paid mana, cast/target/actual engine execution and complete restores.
 Those checks are written, uncompiled and unrun. Complete V50 public projections,
 backend/Human clients, model representation and fair search/training remain open.
+
+Source consultation found missing exclusions for extra rule descriptors and
+missing direct death/color-protection callees in the producer fingerprint. The
+printing selector now checks every current CardDef field, including alternate
+cast forms, additional abilities, replacements and entry/combat rules. The
+fingerprint now includes the actual trigger, death-capture and controlled-grant
+implementations and shared return helpers. Runtime remains pending.
