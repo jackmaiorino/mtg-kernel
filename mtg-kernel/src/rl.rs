@@ -2102,7 +2102,7 @@ fn build_observation_common_v2_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false),
+        (accept_akroma, false, false, false, false, false),
     )
 }
 
@@ -2132,14 +2132,19 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
-    crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
+    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten) =
+        accepted_planes;
     crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
-    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter) =
-        accepted_planes;
+    if accept_eaten {
+        crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
+    } else {
+        crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+
     if accept_hunter {
         crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
     } else {
@@ -2624,7 +2629,7 @@ fn build_policy_observation_parts_common_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false),
+        (accept_akroma, false, false, false, false, false),
     )
 }
 
@@ -2654,12 +2659,19 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
-    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter) =
+    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten) =
         accepted_planes;
+    crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
+        .map_err(RlContractError)?;
+    if accept_eaten {
+        crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
+    } else {
+        crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+
     let (capabilities, accept_fishing) = capabilities;
     if accept_faebloom {
         crate::faebloom_trick_v43::validate_state(state).map_err(RlContractError)?;
@@ -2767,6 +2779,7 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
             accept_faebloom,
             accept_divine,
             accept_hunter,
+            accept_eaten,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -3410,6 +3423,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     FullFaebloomV43,
     DivineV44,
     HunterV45,
+    EatenV46,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3436,6 +3450,7 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::DivineV44 => {
             crate::akroma_family_public_v40::validate_state_for_divine_v44(state)
         }
+        CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::HunterV45 => crate::hunter_observation_v45::validate_state(state),
         CommonProjectionScopeV42::ExistingV40 => {
             return Err(RlContractError("unexpected frozen common scope".into()))
@@ -3447,6 +3462,7 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::FullFaebloomV43
             | CommonProjectionScopeV42::DivineV44
             | CommonProjectionScopeV42::HunterV45
+            | CommonProjectionScopeV42::EatenV46
     );
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
@@ -3466,9 +3482,15 @@ pub(crate) fn common_family_observation_storage_scoped(
                 accept_faebloom,
                 matches!(
                     scope,
-                    CommonProjectionScopeV42::DivineV44 | CommonProjectionScopeV42::HunterV45
+                    CommonProjectionScopeV42::DivineV44
+                        | CommonProjectionScopeV42::HunterV45
+                        | CommonProjectionScopeV42::EatenV46
                 ),
-                scope == CommonProjectionScopeV42::HunterV45,
+                matches!(
+                    scope,
+                    CommonProjectionScopeV42::HunterV45 | CommonProjectionScopeV42::EatenV46
+                ),
+                scope == CommonProjectionScopeV42::EatenV46,
             ),
         ),
         true,
@@ -3856,7 +3878,7 @@ fn build_policy_observation_storage_common_fishing_v39(
     ),
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
-        (request.0, (request.1, false, false, false, false)),
+        (request.0, (request.1, false, false, false, false, false)),
         accept_life_ward,
         accept_cant_block,
         accept_wildwood,
@@ -3867,7 +3889,10 @@ fn build_policy_observation_storage_common_fishing_v39(
 }
 
 fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
-    request: (PolicyObservationBuildV5<'_>, (bool, bool, bool, bool, bool)),
+    request: (
+        PolicyObservationBuildV5<'_>,
+        (bool, bool, bool, bool, bool, bool),
+    ),
     accept_life_ward: bool,
     accept_cant_block: bool,
     accept_wildwood: bool,
@@ -3894,8 +3919,10 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
         bool,
     ),
 ) -> Result<PolicyObservationStorageV6> {
-    let (request, (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter)) =
-        request;
+    let (
+        request,
+        (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten),
+    ) = request;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
             request.state,
@@ -4071,6 +4098,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
                 accept_faebloom,
                 accept_divine,
                 accept_hunter,
+                accept_eaten,
             ),
         )?;
     if let Some(search) = &extensions.decision_local_library {
@@ -4277,6 +4305,13 @@ pub(crate) fn policy_observation_extensions_faebloom_v43(
         true,
         false,
     )
+}
+pub(crate) fn policy_observation_extensions_eaten_v46(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_hunter_v45(state, actor)
 }
 pub(crate) fn policy_observation_extensions_hunter_v45(
     state: &GameState,

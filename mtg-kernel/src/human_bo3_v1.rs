@@ -61,6 +61,8 @@ pub use raid_v9::*;
 pub use soul_shackled_zombie_v13::*;
 pub use visible::*;
 
+pub mod eaten_v46;
+
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1, FlatActionDecisionBindingV3};
 use serde::{Deserialize, Serialize};
@@ -343,3 +345,7 @@ pub use faebloom_v43::{
 
 #[cfg(test)]
 mod tests;
+
+pub use eaten_v46::{
+    HumanDecisionEatenV46, HumanEatenProjectorV46, HumanEatenSessionV46, HumanEatenSnapshotV46,
+};
