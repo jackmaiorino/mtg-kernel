@@ -1357,6 +1357,14 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
         let input_index = original_placement.input as usize;
         let counter_index = original_placement.counter_event as usize;
         assert!(input_index < counter_index && counter_index < placement_index);
+        assert_eq!(
+            expected_plus_at(&state, counter_index as u64, recipient, actor.opponent(), 3).unwrap(),
+            6
+        );
+        assert!(expected_plus_at(&state, counter_index as u64, recipient, actor, 3).is_err());
+        assert!(
+            expected_plus_at(&state, counter_index as u64, recipient, actor.opponent(), 4).is_err()
+        );
         for _ in 0..3 {
             let valid = restore(&state);
             validate_token_journals(&valid).unwrap();
@@ -1405,6 +1413,16 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
                     _ => unreachable!(),
                 }
                 let before = bytes(&forged);
+                if forgery < 3 {
+                    assert!(expected_plus_at(
+                        &forged,
+                        counter_index as u64,
+                        recipient,
+                        actor.opponent(),
+                        3
+                    )
+                    .is_err());
+                }
                 assert!(validate_token_journals(&forged).is_err());
                 assert!(engine::step(&mut forged, Action::Pass).is_err());
                 assert_eq!(bytes(&forged), before);

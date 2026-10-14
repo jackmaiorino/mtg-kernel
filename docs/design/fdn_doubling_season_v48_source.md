@@ -325,3 +325,13 @@ joint Standard Talent/Saga/Impending/Role/Incubator/Equipment issuers, attacking
 token planeswalker destination agency for a future compatible Adeline producer,
 and broad mixed-family gameplay/model/sampler qualification. New source proofs
 and counter/tail adapters still require named source review and real execution.
+
+
+Owned counter-operation adapters now reconstruct the actual count from the
+original actor/recipient world and exact counter occurrence, rather than
+multiplying the printed amount by Season alone. This preserves a real earlier
+actor-relative modifier in a future joint catalog and independently rejects
+coherent rewritten amount/actor/output or removed original input while the owner
+is recording its result. It does not recursively invoke whole-family validation.
+The genuine paid Season counter fixture adds exact adapter assertions; joint
+Talent printing runtime remains unavailable and unclaimed.

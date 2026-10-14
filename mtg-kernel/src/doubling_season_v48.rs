@@ -805,7 +805,46 @@ pub(crate) fn expected_plus_at(
     match matches.as_slice() {
         [] => Ok(original),
         [p] if p.recipient.object == recipient && p.actor == actor && p.original == original => {
-            p.replacement.replaced_count(original)
+            let Some(crate::event::CommittedEvent::PlusCounterInputV48 { input }) =
+                state.engine.event_history.get(p.input as usize)
+            else {
+                return Err("owned counter placement lacks original actor world".into());
+            };
+            let Some(live) = input.world.objects.try_get(recipient) else {
+                return Err("owned counter original recipient absent".into());
+            };
+            if input.index != p.input
+                || p.input >= at
+                || at >= p.index
+                || input.actor != actor
+                || input.original != original
+                || input.recipient != p.recipient
+                || live.zone != Zone::Battlefield
+                || live.zone_change_count != p.recipient.zone_change_count
+                || live.counters.plus1_plus1 != p.before
+                || p.replacement != ReplacementInputV48::capture(&input.world, live.controller)
+            {
+                return Err("owned counter original placement changed".into());
+            }
+            // The original actor-relative modifier runs before the recipient's
+            // Season replacements. Reapplying only Season to the printed amount
+            // would lose an authenticated Talent multiplier in a joint catalog.
+            let count = counter_amount(
+                &input.world,
+                recipient,
+                actor,
+                CounterOriginV48::Effect,
+                original,
+            )?;
+            if p.before.checked_add(count) != Some(p.after)
+                || !matches!(state.engine.event_history.get(at as usize),
+                    Some(crate::event::CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count: actual })
+                    if *object == recipient && *zone_change_count == p.recipient.zone_change_count
+                        && *player == actor && *actual == count)
+            {
+                return Err("owned counter actual placement changed".into());
+            }
+            Ok(count)
         }
         _ => Err("counter replacement original operation changed".into()),
     }
