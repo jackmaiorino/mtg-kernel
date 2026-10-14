@@ -1,6 +1,11 @@
 use super::*;
-use crate::engine::{self, Action, Decision};
-use crate::policy_observation_v6::tests::{put, ready_state};
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+use crate::engine::Decision;
+use crate::engine::{self, Action};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_with_turn_authority};
 
 #[test]
 fn registered_absence_retains_original_linked_state_bytes_and_gate_semantics() {
@@ -16,9 +21,7 @@ fn registered_absence_retains_original_linked_state_bytes_and_gate_semantics() {
         }
     }
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_with_turn_authority(actor);
         let land = put(&mut state, actor, "Forest", Zone::Hand);
         let mut original = state.clone();
         engine::step(&mut state, Action::PlayLand(land)).unwrap();
@@ -85,7 +88,7 @@ mod future_printed {
                     assert_eq!(authenticated_color(branch, banner).unwrap(), color);
                     validate_state(branch).unwrap();
                     assert_eq!(branch.players[actor.index()].mana_pool, [0; 6]);
-                    branch.players[actor.index()].mana_pool[color.pool_index()] = u16::MAX;
+                    branch.players[actor.index()].mana_pool[color.pool_index()] = u8::MAX;
                     assert!(
                         engine::available_mana_ability_choices(actor, banner, branch).is_empty()
                     );

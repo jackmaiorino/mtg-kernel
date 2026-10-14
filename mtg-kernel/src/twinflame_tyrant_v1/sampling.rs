@@ -36,6 +36,10 @@ pub(crate) fn selected(op: &EffectOp) -> bool {
 }
 fn recipe(op: &EffectOp) -> Result<(TargetRef, DynamicValueDef, i32), String> {
     match op {
+        EffectOp::DealDamageDynamic {
+            amount: DynamicValueDef::ControllerLifeTotal,
+            ..
+        } => Err("life-total damage requires a distinct scalar sampling contract".into()),
         EffectOp::DealDamageDynamic { target, amount } => Ok((*target, *amount, 1)),
         EffectOp::DealDamageByControlledCreatureCount { target, multiplier } => Ok((
             *target,
@@ -48,6 +52,9 @@ fn recipe(op: &EffectOp) -> Result<(TargetRef, DynamicValueDef, i32), String> {
 fn sampled_amount(sample: &SampleV38) -> Result<i32, String> {
     use DynamicValueDef as V;
     let count = match sample.value {
+        V::ControllerLifeTotal => {
+            return Err("life-total damage requires a distinct scalar sampling contract".into())
+        }
         V::Fixed(n) => {
             return n
                 .checked_mul(sample.multiplier)
@@ -84,10 +91,17 @@ fn sampled_amount(sample: &SampleV38) -> Result<i32, String> {
         .checked_mul(sample.multiplier)
         .ok_or_else(|| "dynamic damage exceeds i32 representation".into())
 }
-fn operands(state: &GameState, ctx: &ExecCtx, value: DynamicValueDef) -> Vec<OperandV38> {
+fn operands(
+    state: &GameState,
+    ctx: &ExecCtx,
+    value: DynamicValueDef,
+) -> Result<Vec<OperandV38>, String> {
     use DynamicValueDef as V;
+    if matches!(value, V::ControllerLifeTotal) {
+        return Err("life-total damage requires a distinct scalar sampling contract".into());
+    }
     if matches!(value, V::Fixed(_)) {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let candidates: Vec<_> = if matches!(value, V::ControllerGraveyardCardsWithType(_)) {
         state.players[ctx.controller.index()].graveyard.clone()
@@ -98,13 +112,15 @@ fn operands(state: &GameState, ctx: &ExecCtx, value: DynamicValueDef) -> Vec<Ope
             .filter_map(|(id, o)| (o.zone == Zone::Battlefield).then_some(id))
             .collect()
     };
-    candidates
+    Ok(candidates
         .into_iter()
         .map(|id| {
             let object = state.objects.get(id);
             let controlled = object.controller == ctx.controller;
             let (first, second, mana_value) = match value {
-                V::Fixed(_) => unreachable!(),
+                V::Fixed(_) | V::ControllerLifeTotal => {
+                    unreachable!("scalar values have no permanent operands")
+                }
                 V::BattlefieldPermanentsWithSubtype(subtype) => (
                     crate::engine::has_effective_subtype(state, id, subtype),
                     false,
@@ -158,7 +174,7 @@ fn operands(state: &GameState, ctx: &ExecCtx, value: DynamicValueDef) -> Vec<Ope
                 mana_value,
             }
         })
-        .collect()
+        .collect())
 }
 pub(crate) fn capture(
     state: &mut GameState,
@@ -184,7 +200,7 @@ pub(crate) fn capture(
         path: path.to_vec(),
         value,
         multiplier,
-        operands: operands(state, ctx, value),
+        operands: operands(state, ctx, value)?,
         amount: 0,
     };
     sample.amount = sampled_amount(&sample)?;

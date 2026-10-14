@@ -339,12 +339,10 @@ mod tests {
     use crate::model_guided_search_core_v1::{
         ModelGuidedSearchLeafEvaluatorV1, ModelGuidedSearchLeafSiteV1,
     };
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::{put, ready_state, ready_state_with_turn_authority};
     use crate::sideboard_play_policy_v1::FrozenPlayPolicyV1;
     pub(super) fn state(actor: PlayerId) -> GameState {
-        let mut s = ready_state();
-        s.active_player = actor;
-        s.priority_player = actor;
+        let mut s = ready_state_with_turn_authority(actor);
         put(&mut s, actor, "Lightning Bolt", Zone::Hand);
         s.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 3;
         put(&mut s, actor.opponent(), "Gut Shot", Zone::Hand);

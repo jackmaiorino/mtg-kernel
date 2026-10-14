@@ -1601,10 +1601,6 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gutless_plunderer_effect)
 }];
-#[cfg(all(
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
 fn fishing_pole_untap() -> EffectOp {
     EffectOp::BindFishingPoleUntapV39
 }
