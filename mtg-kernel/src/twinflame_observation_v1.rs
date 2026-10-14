@@ -484,6 +484,8 @@ pub(crate) fn parts_for_common_scope(
                     crate::rl::CommonProjectionScopeV42::FullFaebloomV43
                         | crate::rl::CommonProjectionScopeV42::DivineV44
                         | crate::rl::CommonProjectionScopeV42::HunterV45
+                        | crate::rl::CommonProjectionScopeV42::EatenV46
+                        | crate::rl::CommonProjectionScopeV42::PandaV47
                 ),
             ),
             Some(scope),

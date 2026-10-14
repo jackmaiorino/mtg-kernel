@@ -893,6 +893,7 @@ pub(crate) fn build_for_scope(
         crate::rl::CommonProjectionScopeV42::DivineV44
         | crate::rl::CommonProjectionScopeV42::HunterV45
         | crate::rl::CommonProjectionScopeV42::EatenV46 => {}
+        crate::rl::CommonProjectionScopeV42::PandaV47 => {}
     }
     let base = crate::rl::common_family_observation_storage_scoped(
         (scope, state),

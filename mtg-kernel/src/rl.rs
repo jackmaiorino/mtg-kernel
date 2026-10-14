@@ -2102,7 +2102,7 @@ fn build_observation_common_v2_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false, false),
+        (accept_akroma, false, false, false, false, false, false),
     )
 }
 
@@ -2132,12 +2132,23 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
-    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten) =
-        accepted_planes;
-    crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
+    let (
+        accept_akroma,
+        accept_ajani,
+        accept_faebloom,
+        accept_divine,
+        accept_hunter,
+        accept_eaten,
+        accept_panda,
+    ) = accepted_planes;
+    if accept_panda {
+        crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if accept_eaten {
         crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
     } else {
@@ -2282,7 +2293,7 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
             state,
             acting_player,
             accept_fishing,
-            (accept_akroma, accept_faebloom, accept_hunter),
+            (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
             accept_divine,
         )?,
         combat: combat_public_v2(state, acting_player)?,
@@ -2300,7 +2311,7 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
                 state,
                 acting_player,
                 (accept_banishing, accept_inspiration, accept_fishing),
-                (true, accept_faebloom, accept_hunter),
+                (true, accept_faebloom, accept_hunter, accept_panda),
             )?
         } else {
             engine_context_v2(
@@ -2629,7 +2640,7 @@ fn build_policy_observation_parts_common_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false, false),
+        (accept_akroma, false, false, false, false, false, false),
     )
 }
 
@@ -2659,12 +2670,23 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
-    let (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten) =
-        accepted_planes;
-    crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
-        .map_err(RlContractError)?;
+    let (
+        accept_akroma,
+        accept_ajani,
+        accept_faebloom,
+        accept_divine,
+        accept_hunter,
+        accept_eaten,
+        accept_panda,
+    ) = accepted_planes;
+    if accept_panda {
+        crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if accept_eaten {
         crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
     } else {
@@ -2780,6 +2802,7 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
             accept_divine,
             accept_hunter,
             accept_eaten,
+            accept_panda,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -3424,6 +3447,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     DivineV44,
     HunterV45,
     EatenV46,
+    PandaV47,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3451,6 +3475,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             crate::akroma_family_public_v40::validate_state_for_divine_v44(state)
         }
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
+        CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::HunterV45 => crate::hunter_observation_v45::validate_state(state),
         CommonProjectionScopeV42::ExistingV40 => {
             return Err(RlContractError("unexpected frozen common scope".into()))
@@ -3463,6 +3488,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::DivineV44
             | CommonProjectionScopeV42::HunterV45
             | CommonProjectionScopeV42::EatenV46
+            | CommonProjectionScopeV42::PandaV47
     );
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
@@ -3485,12 +3511,19 @@ pub(crate) fn common_family_observation_storage_scoped(
                     CommonProjectionScopeV42::DivineV44
                         | CommonProjectionScopeV42::HunterV45
                         | CommonProjectionScopeV42::EatenV46
+                        | CommonProjectionScopeV42::PandaV47
                 ),
                 matches!(
                     scope,
-                    CommonProjectionScopeV42::HunterV45 | CommonProjectionScopeV42::EatenV46
+                    CommonProjectionScopeV42::HunterV45
+                        | CommonProjectionScopeV42::EatenV46
+                        | CommonProjectionScopeV42::PandaV47
                 ),
-                scope == CommonProjectionScopeV42::EatenV46,
+                matches!(
+                    scope,
+                    CommonProjectionScopeV42::EatenV46 | CommonProjectionScopeV42::PandaV47
+                ),
+                scope == CommonProjectionScopeV42::PandaV47,
             ),
         ),
         true,
@@ -3878,7 +3911,10 @@ fn build_policy_observation_storage_common_fishing_v39(
     ),
 ) -> Result<PolicyObservationStorageV6> {
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
-        (request.0, (request.1, false, false, false, false, false)),
+        (
+            request.0,
+            (request.1, false, false, false, false, false, false),
+        ),
         accept_life_ward,
         accept_cant_block,
         accept_wildwood,
@@ -3891,7 +3927,7 @@ fn build_policy_observation_storage_common_fishing_v39(
 fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
     request: (
         PolicyObservationBuildV5<'_>,
-        (bool, bool, bool, bool, bool, bool),
+        (bool, bool, bool, bool, bool, bool, bool),
     ),
     accept_life_ward: bool,
     accept_cant_block: bool,
@@ -3921,7 +3957,15 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
 ) -> Result<PolicyObservationStorageV6> {
     let (
         request,
-        (accept_akroma, accept_ajani, accept_faebloom, accept_divine, accept_hunter, accept_eaten),
+        (
+            accept_akroma,
+            accept_ajani,
+            accept_faebloom,
+            accept_divine,
+            accept_hunter,
+            accept_eaten,
+            accept_panda,
+        ),
     ) = request;
     if !accept_akroma {
         crate::game_outcome_protection_v1::require_legacy_consumer_supported(
@@ -4064,6 +4108,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
         accept_akroma,
         accept_faebloom,
         accept_hunter,
+        accept_panda,
     )?;
     let (mut base, policy_surface_context) =
         build_policy_observation_parts_common_fishing_v39_ajani_v42(
@@ -4099,6 +4144,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
                 accept_divine,
                 accept_hunter,
                 accept_eaten,
+                accept_panda,
             ),
         )?;
     if let Some(search) = &extensions.decision_local_library {
@@ -4289,6 +4335,7 @@ pub(crate) fn policy_observation_extensions_fishing_union_v40(
         true,
         false,
         false,
+        false,
     )
 }
 pub(crate) fn policy_observation_extensions_faebloom_v43(
@@ -4304,6 +4351,7 @@ pub(crate) fn policy_observation_extensions_faebloom_v43(
         true,
         true,
         false,
+        false,
     )
 }
 pub(crate) fn policy_observation_extensions_eaten_v46(
@@ -4312,6 +4360,25 @@ pub(crate) fn policy_observation_extensions_eaten_v46(
 ) -> Result<PolicyObservationExtensionsV6> {
     crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
     policy_observation_extensions_hunter_v45(state, actor)
+}
+pub(crate) fn policy_observation_extensions_panda_v47(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::eaten_public_v46::validate_state(state).map_err(RlContractError)?;
+    crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
+    crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
+    policy_observation_extensions_union_inner_v40(
+        state,
+        actor,
+        ObservationTextModeV2::FlatForbiddenElided,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+    )
 }
 pub(crate) fn policy_observation_extensions_hunter_v45(
     state: &GameState,
@@ -4327,6 +4394,7 @@ pub(crate) fn policy_observation_extensions_hunter_v45(
         true,
         true,
         true,
+        false,
     )
 }
 
@@ -4368,6 +4436,7 @@ fn policy_observation_extensions_common_v6_fishing_v39(
         false,
         false,
         false,
+        false,
     )
 }
 fn policy_observation_extensions_union_inner_v40(
@@ -4379,6 +4448,7 @@ fn policy_observation_extensions_union_inner_v40(
     accept_akroma: bool,
     accept_faebloom: bool,
     accept_hunter: bool,
+    accept_panda: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
     let pending = state
         .engine
@@ -4516,7 +4586,7 @@ fn policy_observation_extensions_union_inner_v40(
                 state,
                 item,
                 accept_fishing,
-                (accept_akroma, accept_faebloom, accept_hunter),
+                (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
@@ -4549,7 +4619,7 @@ fn policy_observation_extensions_union_inner_v40(
                     state,
                     item,
                     accept_fishing,
-                    (accept_akroma, accept_faebloom, accept_hunter),
+                    (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 )?,
                 stack_item_kind: item.kind.into(),
             });
@@ -4577,7 +4647,7 @@ fn policy_observation_extensions_union_inner_v40(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
-                (accept_akroma, accept_faebloom, accept_hunter),
+                (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -4876,15 +4946,27 @@ pub(crate) fn core_policy_action_candidates_hunter_scoped_v45(
     state: &GameState,
     accept_hunter: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    core_policy_action_candidates_panda_scoped_v47(decision, state, accept_hunter, false)
+}
+pub(crate) fn core_policy_action_candidates_panda_scoped_v47(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    if accept_panda {
+        crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
+    }
     if accept_hunter {
         crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
     }
     let out: Vec<CorePolicyActionCandidateV1> = match decision {
         PolicyDecisionV5::Surface(surface_decision) => {
-            core_surface_action_candidates_hunter_scoped_v45(
+            core_surface_action_candidates_panda_scoped_v47(
                 surface_decision,
                 state,
                 accept_hunter,
+                accept_panda,
             )?
             .into_iter()
             .map(|candidate| CorePolicyActionCandidateV1 {
@@ -5054,7 +5136,19 @@ fn core_surface_action_candidates_hunter_scoped_v45(
     state: &GameState,
     accept_hunter: bool,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
-    crate::fiendish_panda_v1::require_legacy_supported(state, None).map_err(RlContractError)?;
+    core_surface_action_candidates_panda_scoped_v47(decision, state, accept_hunter, false)
+}
+fn core_surface_action_candidates_panda_scoped_v47(
+    decision: &SurfaceDecision,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    if accept_panda {
+        crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::fiendish_panda_v1::require_legacy_supported(state, None).map_err(RlContractError)?;
+    }
     if accept_hunter {
         crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
     } else {
@@ -5073,8 +5167,10 @@ fn core_surface_action_candidates_hunter_scoped_v45(
                 plot_actions,
             } => {
                 let actor = (*player).into();
-                crate::fiendish_panda_v1::require_legacy_supported(state, Some(*player))
-                    .map_err(RlContractError)?;
+                if !accept_panda {
+                    crate::fiendish_panda_v1::require_legacy_supported(state, Some(*player))
+                        .map_err(RlContractError)?;
+                }
                 if !accept_hunter {
                     crate::high_society_hunter_v1::require_legacy_supported(state, Some(*player))
                         .map_err(RlContractError)?;
@@ -8996,15 +9092,20 @@ fn engine_context_v2(
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
 ) -> Result<EngineContextV2> {
-    engine_context_v2_akroma_inner(state, acting_player, capabilities, (false, false, false))
+    engine_context_v2_akroma_inner(
+        state,
+        acting_player,
+        capabilities,
+        (false, false, false, false),
+    )
 }
 fn engine_context_v2_akroma_inner(
     state: &GameState,
     acting_player: PlayerId,
     capabilities: (bool, bool, bool),
-    accepted_sources: (bool, bool, bool),
+    accepted_sources: (bool, bool, bool, bool),
 ) -> Result<EngineContextV2> {
-    let (accept_akroma, accept_faebloom, accept_hunter) = accepted_sources;
+    let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
         state
@@ -9220,7 +9321,7 @@ fn engine_context_v2_akroma_inner(
                     acting_player,
                     pending,
                     (accept_inspiration, accept_fishing),
-                    (true, accept_hunter),
+                    (true, accept_hunter, accept_panda),
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -9258,8 +9359,15 @@ fn engine_context_v2_akroma_inner(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
+                let panda_source = if accept_panda {
+                    crate::panda_public_v47::pending_source_reference(state, p)?
+                } else {
+                    None
+                };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if accept_hunter
+                    source: if let Some(source) = panda_source {
+                        Some(source)
+                    } else if accept_hunter
                         && crate::high_society_hunter_custody_v45::binding(&p.effect).is_some()
                     {
                         crate::high_society_hunter_public_v45::pending_source_reference(state, p)?
@@ -9308,7 +9416,7 @@ fn pending_effect_semantic_v4(
         acting_player,
         pending,
         capabilities,
-        (false, false),
+        (false, false, false),
     )
 }
 fn pending_effect_semantic_v4_akroma_inner(
@@ -9316,9 +9424,9 @@ fn pending_effect_semantic_v4_akroma_inner(
     acting_player: PlayerId,
     pending: &crate::effect::EffectContinuation,
     capabilities: (bool, bool),
-    accepted_sources: (bool, bool),
+    accepted_sources: (bool, bool, bool),
 ) -> Result<PendingEffectSemanticV4> {
-    let (accept_akroma, accept_hunter) = accepted_sources;
+    let (accept_akroma, accept_hunter, accept_panda) = accepted_sources;
     let (accept_inspiration, accept_fishing) = capabilities;
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
     // Every private batch stage, including an accepted answer waiting for
@@ -9347,7 +9455,7 @@ fn pending_effect_semantic_v4_akroma_inner(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
-                (accept_akroma, false, accept_hunter),
+                (accept_akroma, false, accept_hunter, accept_panda),
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -9676,7 +9784,7 @@ fn pending_effect_semantic_v4_akroma_inner(
             state,
             &pending.resolving_item,
             accept_fishing,
-            (accept_akroma, false, accept_hunter),
+            (accept_akroma, false, accept_hunter, accept_panda),
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -10073,7 +10181,7 @@ fn stack_public_union_v40(
     state: &GameState,
     acting_player: PlayerId,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool),
+    accepted_sources: (bool, bool, bool, bool),
     accept_divine: bool,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
@@ -10100,7 +10208,7 @@ fn stack_item_public_v2(
     stack_index: u32,
     item: &StackItem,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool),
+    accepted_sources: (bool, bool, bool, bool),
     accept_divine: bool,
 ) -> Result<StackItemPublicV2> {
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
@@ -10108,14 +10216,22 @@ fn stack_item_public_v2(
             "spell stack items require a cast method and abilities must not carry one".to_string(),
         ));
     }
-    let targets = if accept_divine
+    let panda_target = if accepted_sources.3 {
+        crate::panda_public_v47::original_target_reference(state, item)?
+    } else {
+        None
+    };
+    let targets = if let Some(object) = panda_target {
+        vec![TargetRefV1::Object { object }]
+    } else if accept_divine
         && item.v4.source_contract.is_some_and(|source| {
             CARD_DEFS
                 .get(usize::from(source.card_def))
                 .is_some_and(|def| {
                     def.target_spec == crate::card_def::TargetSpec::KickerControlledCreatures
                 })
-        }) {
+        })
+    {
         crate::divine_public_v44::finalized_target_refs_v44(state, item)?
     } else if accepted_sources.1 {
         match crate::faebloom_public_v43::original_target_reference(state, item)? {
@@ -10347,7 +10463,7 @@ pub(crate) fn akroma_historical_source_ref_v40(
             "V40 historical source requires its genuine complete live row".into(),
         ));
     }
-    stack_source_ref_union_v40(state, item, true, (true, false, false))
+    stack_source_ref_union_v40(state, item, true, (true, false, false, false))
 }
 
 /// Select each genuine source family independently; no transport rewrites another family's rows.
@@ -10355,9 +10471,14 @@ fn stack_source_ref_union_v40(
     state: &GameState,
     item: &StackItem,
     accept_fishing: bool,
-    accepted_sources: (bool, bool, bool),
+    accepted_sources: (bool, bool, bool, bool),
 ) -> Result<CardStableRefV1> {
-    let (accept_akroma, accept_faebloom, accept_hunter) = accepted_sources;
+    let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
+    if accept_panda {
+        if let Some(source) = crate::panda_public_v47::stack_source_reference(state, item)? {
+            return Ok(source);
+        }
+    }
     if accept_hunter {
         if let Some(source) =
             crate::high_society_hunter_public_v45::stack_source_reference(state, item)?
