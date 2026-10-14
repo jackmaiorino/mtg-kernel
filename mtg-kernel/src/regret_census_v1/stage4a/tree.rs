@@ -425,6 +425,66 @@ pub(crate) struct Node {
     /// Edges merged into an interchangeable sibling (`interchange.rs`), never
     /// selected or executed; empty when merging is off.
     pub(crate) skip: Vec<bool>,
+    /// Best-line values (`BestLine`); None under the formal mean backup.
+    pub(crate) bl: Option<Box<BestLine>>,
+}
+
+/// Opt-in best-line backup (collab LANES/bestline-step0-20261013; proposal
+/// "score our own choices by their best line"): an edge's value averages what
+/// followed it in the world, our own later choices count by their best edge.
+///
+/// - An edge's value is the try-weighted mean of the values of the stored
+///   nodes it led to and of the results no rollout-policy choice of ours
+///   touched after the tree path. Results the rollout policy played after the
+///   tree path count only while the edge has fewer than `m` such outcomes.
+/// - A node's value is the greatest value among its edges with at least `m`
+///   tries (merged edges excluded), or its mean result when none has `m`.
+///
+/// Selection and frozen execution use an edge's value where the formal rule
+/// uses its mean; the UCB bonus, untried rule and eight-backup execution
+/// floor are unchanged. Counts, keys and the tree hash are the formal ones.
+#[derive(Clone, Debug)]
+pub(crate) struct BestLine {
+    pub(crate) m: u64,
+    /// Value per edge (meaningful once the edge has a try).
+    pub(crate) q: Vec<f64>,
+    /// The node's value.
+    pub(crate) v: f64,
+    /// Per edge: the sum of visits times value over the stored nodes it led
+    /// to (kept incrementally: an attempt changes only its path's nodes), and
+    /// the sum of their visits.
+    kid_sum: Vec<f64>,
+    kid_visits: Vec<u64>,
+    /// Per edge: (tries, wins) ending with no rollout-policy choice of ours
+    /// after the tree path, and ending after one.
+    clean: Vec<(u64, u64)>,
+    rollout: Vec<(u64, u64)>,
+}
+
+impl BestLine {
+    pub(crate) fn new(k: usize, m: u64) -> Self {
+        Self {
+            m,
+            q: vec![0.0; k],
+            v: 0.0,
+            kid_sum: vec![0.0; k],
+            kid_visits: vec![0; k],
+            clean: vec![(0, 0); k],
+            rollout: vec![(0, 0); k],
+        }
+    }
+
+    /// Edge `a`'s value from its children's sums and its direct results.
+    fn edge_value(&self, a: usize, kid_sum: f64, kid_visits: u64) -> f64 {
+        let (ct, cw) = self.clean[a];
+        let (sum, cnt) = (kid_sum + cw as f64, kid_visits + ct);
+        if cnt >= self.m {
+            sum / cnt as f64
+        } else {
+            let (rt, rw) = self.rollout[a];
+            (sum + rw as f64) / (cnt + rt) as f64
+        }
+    }
 }
 
 pub(crate) fn permutation(len: usize, seed: u64) -> Vec<usize> {
@@ -477,6 +537,16 @@ impl Node {
             wins: vec![0; k],
             depth,
             skip: Vec::new(),
+            bl: None,
+        }
+    }
+
+    /// An edge's value: its best-line value when that backup is on, else its
+    /// mean (exactly the formal arithmetic).
+    fn value(&self, a: usize) -> f64 {
+        match &self.bl {
+            Some(b) => b.q[a],
+            None => self.wins[a] as f64 / self.n[a] as f64,
         }
     }
 
@@ -511,7 +581,7 @@ impl Node {
     }
 
     fn select_receipt(&self, urgency: Option<f64>, scores: Option<&mut Vec<Option<f64>>>) -> usize {
-        self.select_evidence_receipt(urgency, self.visits, &self.n, &self.wins, scores)
+        self.select_evidence_receipt(urgency, self.visits, &self.n, &self.wins, true, scores)
     }
 
     /// UCT guidance from separately accounted natural evidence. This only
@@ -524,7 +594,7 @@ impl Node {
         n: &[u64],
         wins: &[u64],
     ) -> usize {
-        self.select_evidence_receipt(urgency, visits, n, wins, None)
+        self.select_evidence_receipt(urgency, visits, n, wins, false, None)
     }
 
     fn select_evidence_receipt(
@@ -533,10 +603,18 @@ impl Node {
         visits: u64,
         counts: &[u64],
         wins: &[u64],
+        own: bool,
         mut scores: Option<&mut Vec<Option<f64>>>,
     ) -> usize {
         debug_assert_eq!(counts.len(), self.n.len());
         debug_assert_eq!(wins.len(), self.wins.len());
+        // An edge's mean, or its best-line value when that backup is on and
+        // the counts are the node's own (borrowed evidence has no values).
+        let best_line = self.bl.as_deref().filter(|_| own);
+        let mean = |a: usize, n: f64| match best_line {
+            Some(b) => b.q[a],
+            None => wins[a] as f64 / n,
+        };
         if let Some(u) = urgency {
             let ln = (visits.max(2) as f64).ln();
             let mut best = self.perm[0];
@@ -546,7 +624,7 @@ impl Node {
                     u
                 } else {
                     let n = counts[a] as f64;
-                    wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt()
+                    mean(a, n) + (UCB_C2 * ln / n).sqrt()
                 };
                 if let Some(out) = scores.as_deref_mut() {
                     out[a] = Some(v);
@@ -570,7 +648,7 @@ impl Node {
         let mut best_v = f64::NEG_INFINITY;
         for &a in self.perm.iter().filter(|&&a| !self.skipped(a)) {
             let n = counts[a] as f64;
-            let v = wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt();
+            let v = mean(a, n) + (UCB_C2 * ln / n).sqrt();
             if let Some(out) = scores.as_deref_mut() {
                 out[a] = Some(v);
             }
@@ -582,15 +660,16 @@ impl Node {
         best
     }
 
-    /// Frozen execution: greatest mean among edges with at least eight
-    /// natural terminal backups, ties to the seeded order.
+    /// Frozen execution: greatest mean (best-line value when that backup is
+    /// on) among edges with at least eight natural terminal backups, ties to
+    /// the seeded order.
     pub(crate) fn frozen_choice(&self) -> Option<usize> {
         let mut best: Option<(usize, f64)> = None;
         for &a in &self.perm {
             if self.n[a] < MIN_EXEC_BACKUPS || self.skipped(a) {
                 continue;
             }
-            let m = self.wins[a] as f64 / self.n[a] as f64;
+            let m = self.value(a);
             if best.is_none_or(|(_, b)| m > b) {
                 best = Some((a, m));
             }
@@ -635,7 +714,15 @@ impl Tree {
     /// Backs up one natural terminal result over a completed simulation's
     /// path, inserting its new nodes (one under B1; with depth retention, the
     /// first expansion and its retained tail).
-    pub(crate) fn backup(&mut self, path: &[(Key, usize)], new: Vec<(Key, Node)>, win: bool) {
+    /// `world_only` says no rollout-policy choice of ours followed the tree
+    /// path (read only by best-line nodes).
+    pub(crate) fn backup_observed(
+        &mut self,
+        path: &[(Key, usize)],
+        new: Vec<(Key, Node)>,
+        win: bool,
+        world_only: bool,
+    ) {
         for (k, n) in new {
             self.nodes.insert(k, n);
         }
@@ -645,6 +732,118 @@ impl Tree {
             n.n[*a] += 1;
             n.wins[*a] += u64::from(win);
         }
+        self.best_line_backup(path, win, world_only);
+    }
+
+    /// Best-line values along a backed-up path, bottom up: only the path's
+    /// nodes change, and each passes its change of visits times value to its
+    /// parent's edge. Nothing for formal nodes.
+    fn best_line_backup(&mut self, path: &[(Key, usize)], win: bool, world_only: bool) {
+        // The child's contribution to its parent's edge before and after.
+        let mut carry: Option<(f64, f64)> = None;
+        for (j, (k, a)) in path.iter().enumerate().rev() {
+            let Some(Node {
+                visits,
+                n: tries,
+                wins,
+                skip,
+                bl: Some(b),
+                ..
+            }) = self.nodes.get_mut(k)
+            else {
+                carry = None;
+                continue;
+            };
+            if j + 1 == path.len() {
+                let x = if world_only {
+                    &mut b.clean[*a]
+                } else {
+                    &mut b.rollout[*a]
+                };
+                x.0 += 1;
+                x.1 += u64::from(win);
+            } else if let Some((before, after)) = carry {
+                b.kid_sum[*a] += after - before;
+                b.kid_visits[*a] += 1;
+            }
+            b.q[*a] = b.edge_value(*a, b.kid_sum[*a], b.kid_visits[*a]);
+            let old = b.v;
+            let best = (0..tries.len())
+                .filter(|&e| tries[e] >= b.m && !skip.get(e).copied().unwrap_or(false))
+                .map(|e| b.q[e])
+                .fold(None, |x: Option<f64>, q| Some(x.map_or(q, |x| x.max(q))));
+            b.v = best.unwrap_or_else(|| wins.iter().sum::<u64>() as f64 / *visits as f64);
+            carry = Some(((*visits - 1) as f64 * old, *visits as f64 * b.v));
+        }
+    }
+
+    /// Test check of the incremental best-line values: every best-line node's
+    /// values recomputed from scratch, bottom up over parent links, equal the
+    /// stored ones.
+    #[cfg(test)]
+    pub(crate) fn best_line_mismatches(&self) -> Vec<String> {
+        let mut kids: HashMap<(Key, usize), Vec<Key>> = HashMap::new();
+        for (k, n) in &self.nodes {
+            if let Some(p) = self.nodes.get(&n.parent) {
+                let e = p.canon.edges.iter().position(|x| *x == n.edge);
+                kids.entry((n.parent, e.expect("edge in parent")))
+                    .or_default()
+                    .push(*k);
+            }
+        }
+        fn value(
+            t: &Tree,
+            kids: &HashMap<(Key, usize), Vec<Key>>,
+            k: &Key,
+            memo: &mut HashMap<Key, (Vec<f64>, f64)>,
+        ) -> f64 {
+            if let Some((_, v)) = memo.get(k) {
+                return *v;
+            }
+            let n = &t.nodes[k];
+            let b = n.bl.as_deref().expect("best-line node");
+            let mut q = vec![0.0; n.n.len()];
+            for (a, x) in q.iter_mut().enumerate() {
+                if n.n[a] == 0 {
+                    continue;
+                }
+                let (mut sum, mut visits) = (0.0, 0u64);
+                for c in kids.get(&(*k, a)).into_iter().flatten() {
+                    sum += t.nodes[c].visits as f64 * value(t, kids, c, memo);
+                    visits += t.nodes[c].visits;
+                }
+                *x = b.edge_value(a, sum, visits);
+            }
+            let best = (0..q.len())
+                .filter(|&e| n.n[e] >= b.m && !n.skipped(e))
+                .map(|e| q[e])
+                .fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
+            let v = best.unwrap_or(n.wins.iter().sum::<u64>() as f64 / n.visits as f64);
+            memo.insert(*k, (q, v));
+            v
+        }
+        let mut memo = HashMap::new();
+        let mut out = Vec::new();
+        for (k, n) in &self.nodes {
+            let Some(b) = n.bl.as_deref() else {
+                out.push(format!("{k:?}: no best-line values"));
+                continue;
+            };
+            if n.visits == 0 {
+                continue;
+            }
+            value(self, &kids, k, &mut memo);
+            let (q, v) = &memo[k];
+            let tried = |a: &usize| n.n[*a] > 0;
+            if (v - b.v).abs() > 1e-9
+                || (0..q.len())
+                    .filter(tried)
+                    .any(|a| (q[a] - b.q[a]).abs() > 1e-9)
+            {
+                out.push(format!("{k:?}: stored {:?}/{} vs {q:?}/{v}", b.q, b.v));
+            }
+        }
+        out
     }
 
     /// Order-independent hash of the frozen tree.
@@ -772,6 +971,114 @@ mod tests {
         let a = d.select();
         visit(&mut d, a, true);
         assert_ne!(d.select(), a, "baseline tries every action first");
+    }
+
+    /// A tree of three nodes: root edge 0 leads to our choice node C, where
+    /// edge 0 always wins with no rollout choice after it and edge 1 always
+    /// loses through the rollout policy; root edge 1 leads to node D, which
+    /// wins 6 of 10 by rollout. `bl` turns the best-line backup on.
+    fn three_node_tree(bl: Option<u64>, attempts: usize) -> (Tree, [Key; 3]) {
+        let keys = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let make = |parent: Key, edge: Vec<u8>, k: usize| {
+            let menu: Vec<Vec<u8>> = (0..k).map(|i| vec![i as u8]).collect();
+            let canon = Canon {
+                obs: vec![],
+                edges: menu.clone(),
+                menu,
+            };
+            let mut n = Node::with_perm(parent, edge, canon, 1, (0..k).collect());
+            n.bl = bl.map(|m| Box::new(BestLine::new(k, m)));
+            n
+        };
+        let mut nodes = [
+            Some((keys[0], make([0; 32], b"root".to_vec(), 2))),
+            Some((keys[1], make(keys[0], vec![0], 2))),
+            Some((keys[2], make(keys[0], vec![1], 1))),
+        ];
+        let mut t = Tree::default();
+        let mut sims = Vec::new();
+        for i in 0..10 {
+            sims.push((vec![(keys[0], 0), (keys[1], 0)], true, true));
+            sims.push((vec![(keys[0], 0), (keys[1], 1)], false, false));
+            sims.push((vec![(keys[0], 1), (keys[2], 0)], i < 6, false));
+        }
+        for (path, win, world_only) in sims.into_iter().take(attempts) {
+            let new: Vec<(Key, Node)> = path
+                .iter()
+                .filter_map(|(k, _)| {
+                    let i = keys.iter().position(|x| x == k)?;
+                    nodes[i].take()
+                })
+                .collect();
+            t.backup_observed(&path, new, win, world_only);
+        }
+        (t, keys)
+    }
+
+    /// The best-line backup scores our own choices by their best edge and
+    /// keeps the world's results: losses from our exploratory edge do not
+    /// count against the root edge that leads to a proven win.
+    #[test]
+    fn best_line_backup_scores_our_choices_by_their_best_edge() {
+        let (formal, keys) = three_node_tree(None, 30);
+        let (bl, _) = three_node_tree(Some(3), 30);
+        assert_eq!(
+            formal.hash(),
+            bl.hash(),
+            "counts and hash are the formal ones"
+        );
+        assert_eq!(
+            formal.nodes[&keys[0]].frozen_choice(),
+            Some(1),
+            "means 0.5 vs 0.6"
+        );
+        let root = &bl.nodes[&keys[0]];
+        let b = root.bl.as_deref().unwrap();
+        assert!(
+            (b.q[0] - 1.0).abs() < 1e-12 && (b.q[1] - 0.6).abs() < 1e-12,
+            "{:?}",
+            b.q
+        );
+        assert!((b.v - 1.0).abs() < 1e-12);
+        assert_eq!(root.frozen_choice(), Some(0));
+        assert!(bl.best_line_mismatches().is_empty());
+        let c = bl.nodes[&keys[1]].bl.as_deref().unwrap();
+        assert!((c.v - 1.0).abs() < 1e-12 && c.q[1].abs() < 1e-12);
+        // Selection uses the value plus the unchanged bonus: the proven edge.
+        assert_eq!(root.select_with(Some(1.5)), 0);
+        assert_eq!(formal.nodes[&keys[0]].select_with(Some(1.5)), 1);
+    }
+
+    /// Rollout results count while an edge has fewer than m clean outcomes,
+    /// and a node with no edge of m tries is worth its mean result.
+    #[test]
+    fn best_line_falls_back_to_rollouts_and_means_below_the_threshold() {
+        let (t, keys) = three_node_tree(Some(3), 3);
+        let c = t.nodes[&keys[1]].bl.as_deref().unwrap();
+        assert!((c.q[0] - 1.0).abs() < 1e-12 && c.q[1].abs() < 1e-12);
+        assert!((c.v - 0.5).abs() < 1e-12, "{}", c.v);
+        let r = t.nodes[&keys[0]].bl.as_deref().unwrap();
+        // Root edge 0 has two tries reaching C (value 0.5): mean 0.5; root has
+        // no edge with three tries, so its value is its mean result 2/3.
+        assert!((r.q[0] - 0.5).abs() < 1e-12 && (r.q[1] - 1.0).abs() < 1e-12);
+        assert!((r.v - 2.0 / 3.0).abs() < 1e-12, "{}", r.v);
+    }
+
+    /// With the backup off, a node's value is exactly the formal mean, so
+    /// selection and execution are the formal ones.
+    #[test]
+    fn formal_nodes_use_the_formal_mean() {
+        let mut n = node(4);
+        for (a, (t, w)) in [(3u64, 1u64), (5, 4), (2, 0), (7, 7)]
+            .into_iter()
+            .enumerate()
+        {
+            n.n[a] = t;
+            n.wins[a] = w;
+            n.visits += t;
+            assert_eq!(n.value(a).to_bits(), (w as f64 / t as f64).to_bits());
+        }
+        assert!(n.bl.is_none());
     }
 
     /// Merged edges (`interchange.rs`) are never tried, selected or executed,

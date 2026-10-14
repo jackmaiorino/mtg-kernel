@@ -23,6 +23,9 @@
 //! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
+//! In `s4a-budget` and `s4a-diag`, `S4A_BACKUP=bestline-m<m>` (m = 3 or 8)
+//! uses the opt-in best-line backup (`stage4a/tree.rs` `BestLine`); unset or
+//! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
 
 mod allocation_experiment;
 mod arms;
@@ -150,6 +153,8 @@ struct Shared {
     /// E's selection rule (`S4A_SELECT`): None is the formal untried-first
     /// rule; `fpu-1.5` the finite-urgency candidate.
     select_urgency: Option<f64>,
+    /// E's backup (`S4A_BACKUP`): None is the formal mean backup.
+    bestline: Option<u64>,
 }
 
 fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
@@ -166,6 +171,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
     };
     let runtime_rules = parse_runtime_rules(&cfg.mode, runtime_setting.as_deref())?;
     let select_urgency = parse_select_rule(&cfg.mode, std::env::var("S4A_SELECT"))?;
+    let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     let entries: Vec<(String, String)> = std::env::var("OPPONENTS")
         .map_err(|_| "OPPONENTS is required")?
         .split(',')
@@ -221,6 +227,7 @@ fn load_shared(cfg: &CensusConfigV1) -> Result<Shared, String> {
         fast_forward,
         runtime_rules,
         select_urgency,
+        bestline,
     })
 }
 
@@ -237,6 +244,26 @@ fn parse_select_rule(
         "" | "untried-first" => Ok(None),
         "fpu-1.5" if mode == "s4a-diag" || mode == "s4a-bank-parity" => Ok(Some(1.5)),
         other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
+    }
+}
+
+/// `S4A_BACKUP`: `bestline-m3` or `bestline-m8` in the modes that support it;
+/// `mean` or unset is the formal mean backup.
+fn parse_backup(
+    mode: &str,
+    setting: Result<String, std::env::VarError>,
+) -> Result<Option<u64>, String> {
+    let value = match setting {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(format!("invalid S4A_BACKUP: {error}")),
+    };
+    let supported = mode == "s4a-budget" || mode == "s4a-diag";
+    match value.as_str() {
+        "mean" => Ok(None),
+        "bestline-m3" if supported => Ok(Some(3)),
+        "bestline-m8" if supported => Ok(Some(8)),
+        other => Err(format!("unsupported S4A_BACKUP {other:?} for {mode}")),
     }
 }
 
@@ -621,6 +648,7 @@ fn run_root(
         urgency: None,
         key_mode: canon2::KeyMode::Legacy,
         interchange: false,
+        bestline: None,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -774,6 +802,7 @@ fn run_root_diag(
         urgency: shared.select_urgency,
         key_mode: canon2::KeyMode::Legacy,
         interchange: false,
+        bestline: shared.bestline,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
@@ -870,6 +899,10 @@ fn run_root_diag(
     }
     diag_info["root_wall_with_trace_io"] = json!(started.elapsed().as_secs_f64());
     row["diag"] = diag_info;
+    // Present only when the best-line backup was on, so default rows are unchanged.
+    if let Some(m) = shared.bestline {
+        row["backup"] = json!(refresh::bestline_rule(m));
+    }
     Ok(row)
 }
 
@@ -1201,6 +1234,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // Opt-in interchangeable-choice merging (`stage4a/interchange.rs`);
         // off unless set, so existing budget runs are unchanged.
         let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
+        let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1209,7 +1243,16 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
-                        refresh::budget_case(&sh, policy, src, total, mode, interchange, &binding)
+                        refresh::budget_case(
+                            &sh,
+                            policy,
+                            src,
+                            total,
+                            mode,
+                            interchange,
+                            bestline,
+                            &binding,
+                        )
                     })
                     .map_err(|e| e.to_string())?
                     .join()
