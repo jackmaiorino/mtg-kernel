@@ -338,6 +338,23 @@ pub(crate) fn resolve_owned(
     item: &StackItem,
     battlefield_context: &ExecCtx,
 ) -> Result<(), String> {
+    // Reauthenticate retained inputs after the actual pop. The stable ingress
+    // validator requires the live row, so use metadata and the private loan's
+    // exact remaining-stack check at this synchronous callback.
+    validate_trigger_identity(state, item)?;
+    let (retained_context, retained_token) = death_context(state, item)?;
+    if retained_context != owner.context
+        || super::primitive_death_program_from_input_v50(
+            &retained_context,
+            retained_token,
+            owner.original_source.as_deref(),
+            owner.in_original_graveyard,
+        )? != owner.program
+    {
+        return Err(
+            "Fake resolution loan lost its original captured context or ordered program".into(),
+        );
+    }
     let mut original_context = owner.context.clone();
     original_context.ability_source_contract = item.v4.ability_source_contract;
     let mut remaining = owner.loan.original_stack.clone();
