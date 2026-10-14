@@ -936,10 +936,14 @@ pub(crate) fn advance(state: &mut GameState) -> Decision {
             *state = next;
             result.unwrap_or_else(|| decision(state).expect("new exact owner checkpoint"))
         }
-        Err(_) => Decision::Halted {
-            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-            source: crate::ids::ObjectId(0),
-        },
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Linked operation advance rejected: {_error}");
+            Decision::Halted {
+                mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source: crate::ids::ObjectId(0),
+            }
+        }
     }
 }
 pub(crate) fn needs_event_owner(state: &GameState) -> bool {

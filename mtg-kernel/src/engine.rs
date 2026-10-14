@@ -12986,7 +12986,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
 
         let pending = state.engine.pending_triggers[0].clone();
-        if validate_pending_trigger(state, &pending).is_err() {
+        if let Err(_error) = validate_pending_trigger(state, &pending) {
+            #[cfg(test)]
+            eprintln!("Pending trigger validation rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -15097,7 +15099,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Hunter resolution acquisition rejected: {_error}");
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
