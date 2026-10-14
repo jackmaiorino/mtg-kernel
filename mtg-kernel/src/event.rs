@@ -122,6 +122,9 @@ pub struct ZoneChangeProposed {
     /// Already quoted effect stun placement, installed as this permanent enters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_stun_v48: Option<i16>,
+    /// Original X placement and optional actual host of an effect entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_x_v48: Option<crate::doubling_season_v48::EffectXEntryV48>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -223,6 +226,7 @@ impl ProposedEvent {
             battlefield_controller: None,
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -238,6 +242,7 @@ impl ProposedEvent {
             battlefield_controller: None,
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -253,6 +258,7 @@ impl ProposedEvent {
             battlefield_controller: None,
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -271,6 +277,7 @@ impl ProposedEvent {
             battlefield_controller: None,
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -299,6 +306,7 @@ impl ProposedEvent {
             battlefield_controller: None,
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -330,6 +338,7 @@ impl ProposedEvent {
             battlefield_controller: Some(controller),
             counter_origin_v48: None,
             battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -2671,7 +2680,40 @@ fn commit_with_entry_batch_and_source_color(
     ),
     entry_context: EntryContextWithSourceColorV1,
 ) {
-    let (entry_context, frozen_source_color, frozen_counter_input) = entry_context;
+    let (mut entry_context, frozen_source_color, frozen_counter_input) = entry_context;
+    if let ProposedEvent::ZoneChange(change) = &event {
+        if let Some(request) = change.battlefield_x_v48.as_ref() {
+            if change.to_zone != Zone::Battlefield || request.original < 0 {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+            let entry = entry_context
+                .0
+                .get_or_insert_with(|| (change.object, Default::default()));
+            if entry.0 != change.object
+                || entry
+                    .1
+                    .x_counters
+                    .is_some_and(|count| count != request.original)
+                || entry
+                    .1
+                    .attached_to
+                    .is_some_and(|host| Some(host) != request.host)
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+            entry.1.x_counters = Some(request.original);
+            entry.1.attached_to = request.host;
+            entry.1.bestowed = request.host.is_some();
+        }
+    }
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
     let season_entry_active = crate::doubling_season_v48::requires_successor(state)
@@ -4420,7 +4462,29 @@ fn commit_zone_change(
                     return;
                 }
             };
-            state.objects.get_mut(id).counters.plus1_plus1 = count;
+            let total = if crate::doubling_season_v48::requires_successor(state)
+                || counter_input.is_some_and(|input| !input.seasons.is_empty())
+            {
+                match state
+                    .objects
+                    .get(id)
+                    .counters
+                    .plus1_plus1
+                    .checked_add(count)
+                {
+                    Some(total) => total,
+                    None => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            id,
+                        ));
+                        return;
+                    }
+                }
+            } else {
+                count
+            };
+            state.objects.get_mut(id).counters.plus1_plus1 = total;
         }
     }
     crate::planeswalker_v1::after_zone_change(state, id, counter_input);

@@ -19904,6 +19904,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
+                if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                    change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
+                        original: i32::from(ctx.x_value),
+                        host: None,
+                    });
+                }
+                event::propose_and_commit(state, proposal);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
@@ -19941,6 +19952,20 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+                return;
+            }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
+                if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                    change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
+                        original: i32::from(ctx.x_value),
+                        host: Some(ObjectLinkV4 {
+                            object: target,
+                            zone_change_count: state.objects.get(target).zone_change_count,
+                        }),
+                    });
+                }
+                event::propose_and_commit(state, proposal);
                 return;
             }
             event::propose_and_commit(

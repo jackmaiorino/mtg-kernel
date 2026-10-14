@@ -1035,3 +1035,86 @@ fn genuine_stun_return_overflow_leaves_original_graveyard_incarnation_unchanged(
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_and_host() {
+    use crate::effect::{ExecCtx, ObjectRef};
+    use crate::state::{StackTargetContractV4, Target};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for attached in [false, true] {
+            for original in [0, 2, u16::MAX] {
+                let mut state = ready_state_for(actor);
+                let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(season, Zone::Battlefield),
+                );
+                let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+                let source = put(
+                    &mut state,
+                    actor,
+                    if attached { "Pacifism" } else { "Forest" },
+                    Zone::Stack,
+                );
+                let mut ctx = ExecCtx::no_targets(source, actor);
+                ctx.x_value = original;
+                let op = if attached {
+                    ctx.targets = vec![Target::Object(host)];
+                    ctx.target_contracts =
+                        vec![StackTargetContractV4::capture(&state, Target::Object(host))];
+                    EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters {
+                        target: ObjectRef::Target(0),
+                    }
+                } else {
+                    EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters
+                };
+                // Real physical objects execute the shared typed primitive. This
+                // does not grant Forest/Pacifism a fictional printed X spell.
+                let original_state = restore(&state);
+                for _ in 0..3 {
+                    let mut branch = restore(&original_state);
+                    crate::effect::execute(&op, &ctx, &mut branch);
+                    assert!(branch.engine.halted.is_none());
+                    let actual = i32::from(original) * 2;
+                    let live = branch.objects.get(source);
+                    assert_eq!(live.zone, Zone::Battlefield);
+                    assert_eq!(live.counters.plus1_plus1, actual);
+                    if attached {
+                        assert_eq!(
+                            live.v4.attached_to,
+                            Some(crate::state::ObjectLinkV4 {
+                                object: host,
+                                zone_change_count: branch.objects.get(host).zone_change_count
+                            })
+                        );
+                        assert!(branch.objects.get(host).attachments.contains(&source));
+                        branch.validate_attachment_relations().unwrap();
+                    }
+                    let observed: Vec<_> =
+                        branch
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|event| match event {
+                                event::CommittedEvent::GarrukEntryObservationV1 {
+                                    entry, ..
+                                } if entry.object == source => Some(entry),
+                                _ => None,
+                            })
+                            .collect();
+                    assert_eq!(observed.len(), 1);
+                    assert_eq!(observed[0].snapshot.counters.plus1_plus1, actual);
+                    assert_eq!(observed[0].snapshot.v4.attached_to, live.v4.attached_to);
+                    assert_eq!(branch.engine.event_history.iter().filter(|event| matches!(event, event::CommittedEvent::PlusOneCountersAdded { object, count, .. } if *object == source && *count == actual)).count(), usize::from(original != 0));
+                    validate_token_journals(&branch).unwrap();
+                    assert_eq!(restore(&branch), branch);
+                }
+            }
+        }
+    }
+}

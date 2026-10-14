@@ -165,6 +165,14 @@ pub enum CounterOriginV48 {
     Rule,
 }
 
+/// Original effect placement, sampled by the genuine entry driver before entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectXEntryV48 {
+    pub original: i32,
+    pub host: Option<crate::state::ObjectLinkV4>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplacementInputV48 {
