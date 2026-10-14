@@ -24,7 +24,9 @@ pub(crate) fn selected_definition(id: u16) -> bool {
     )) && CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         d.name == "Fake Your Own Death"
             && d.object_name == d.name
-            && d.capability == CardCapability::Full
+            // Partial registration exposes genuine paid correctness fixtures
+            // while full-deck/model preflight still rejects the incomplete card.
+            && matches!(d.capability, CardCapability::Partial | CardCapability::Full)
             && d.is_executable()
             && d.types == [CardType::Instant]
             && d.cost.generic == 1

@@ -16,6 +16,13 @@ pub mod death_custody;
 pub mod grant_primitive;
 pub mod spell_custody;
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod paid_printing_tests;
+
 fn treasure_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Treasure Token")
         .ok_or("Fake Your Own Death needs the existing Treasure blueprint")?;
