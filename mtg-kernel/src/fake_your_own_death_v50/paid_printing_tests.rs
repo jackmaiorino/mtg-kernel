@@ -401,6 +401,7 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                         Zone::Battlefield,
                     )
                 });
+                let selected = ward_host.unwrap_or(original_host);
                 if host_count == 0 {
                     event::propose_and_commit(
                         &mut state,
@@ -648,7 +649,6 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                 }
                 let bytes = serde_json::to_vec(&state).unwrap();
                 let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
-                let selected = ward_host.unwrap_or(original_host);
                 for game in [&mut state, &mut restored] {
                     if host_count == 2 {
                         let before = serde_json::to_vec(game).unwrap();
