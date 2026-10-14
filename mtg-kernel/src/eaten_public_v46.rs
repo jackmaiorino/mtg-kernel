@@ -105,28 +105,32 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("eaten_public_v46.rs"),
-        include_str!("engine/mandatory_cast_cost_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("spell_costs_v1.rs"),
-        include_str!("state.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-    ] {
-        h.update([0]);
-        h.update(text.as_bytes());
-    }
-    h.update(crate::rules_meaning_eaten_alive_v1::producer_sha256().as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("eaten_public_v46.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("spell_costs_v1.rs"),
+            include_str!("state.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+        ] {
+            h.update([0]);
+            h.update(text.as_bytes());
+        }
+        h.update(crate::rules_meaning_eaten_alive_v1::producer_sha256().as_bytes());
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, RlContractError> {
     validate_state(state).map_err(RlContractError)?;

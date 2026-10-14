@@ -55,28 +55,32 @@ pub struct FactsV42 {
     pub meanings: Vec<MeaningV42>,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for s in [
-        SCHEMA,
-        include_str!("ajani_public_v42.rs"),
-        include_str!("ajani_full_v42.rs"),
-        include_str!("ajani_full_v42/lifecycle.rs"),
-        include_str!("rules_meaning_ajani_v42.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("state.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("controlled_creature_grants_v1.rs"),
-        include_str!("card_def.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for s in [
+            SCHEMA,
+            include_str!("ajani_public_v42.rs"),
+            include_str!("ajani_full_v42.rs"),
+            include_str!("ajani_full_v42/lifecycle.rs"),
+            include_str!("rules_meaning_ajani_v42.rs"),
+            include_str!("planeswalker_v1.rs"),
+            include_str!("rl.rs"),
+            include_str!("state.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("card_def.rs"),
+        ] {
+            h.update([0]);
+            h.update(s.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn current(
     state: &GameState,
