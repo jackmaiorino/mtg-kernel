@@ -82,6 +82,10 @@ def prepare(args):
     if args.resource_profile:
         spec["resource_profile"] = {"path": str(Path(args.resource_profile).resolve()), "sha256": digest(args.resource_profile)}
         spec["inputs"].append(spec["resource_profile"])
+    if args.lease_state:
+        require(args.pod_id and args.lease_name and args.lease_deadline, "leased manifest requires exact Pod identity and deadline")
+        spec["lease_progress"] = {"state": args.lease_state, "pod_id": args.pod_id, "name": args.lease_name,
+                                  "deadline_epoch": args.lease_deadline, "recovery_seconds": 600}
     if args.qualification:
         spec["qualification"] = {"path": str(Path(args.qualification).resolve()), "sha256": digest(args.qualification)}
     publish(args.out, spec)
@@ -98,6 +102,10 @@ if __name__ == "__main__":
     parser.add_argument("--host-reservation", default=str(Path(__file__).resolve().parents[2] / "python/tools/host_reservation_v1.py"))
     parser.add_argument("--host-lock-root", help="on Linux use /var/lib/mtg-node/host-lock for both supported helpers")
     parser.add_argument("--resource-profile", help="pin the owned Pod's observed CPU/quota/memory/storage profile")
+    parser.add_argument("--lease-state")
+    parser.add_argument("--pod-id")
+    parser.add_argument("--lease-name")
+    parser.add_argument("--lease-deadline", type=float)
     parser.add_argument("--phase", choices=("qualify", "measure"), default="qualify")
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)

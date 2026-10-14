@@ -168,6 +168,15 @@ calibration asset. Do not carry a Windows receipt across host, binary, source
 path or storage changes. Generate full formal queues only when the measured
 projection fits the lead's remaining CPU/dollar/lease/output ceilings. The
 runtime carries no API key and has no provider creation or spending path.
+For the approved leased Pod, add `--lease-state STATE --pod-id ID --lease-name
+NAME --lease-deadline EPOCH` when preparing each queue. The launcher consumes
+fresh resident `allow_new_dispatch`, its STOP files and the recovery deadline
+before dispatch and during execution. Its detached supervisor takes over the
+single progress writer only after the previous controller's work ends, observes
+actual native CPU deltas and completed outputs, and writes the resident guard's
+existing progress record. Idle review/preservation updates keep observations
+current without inventing productive activity or setting `finished`. The next
+controller takes over that writer; the existing idle and lease bounds remain.
 
 New matched groups are assigned to currently available cores, then keep that
 affinity for A/B/C. When workers do not exceed claimed cores, only one job runs

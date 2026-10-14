@@ -137,6 +137,7 @@ def validate(spec, workers, phase):
     require(0 < spec["cpu_cap_seconds"] <= CPU_CAP, "CPU cap exceeds authorized 12 aggregate hours")
     require(spec["projected_output_bytes"] >= 0, "negative output projection")
     require(spec.get("external_cpu_seconds", 0) >= 0, "negative external CPU accounting")
+    lease_guard_check(spec)
     storage_guard(spec, spec["projected_output_bytes"])
     checked(spec["binary"])
     for asset in spec["inputs"]:
@@ -156,6 +157,59 @@ def validate(spec, workers, phase):
         qualification_guard(spec, workers)
     else:
         require(0 < spec["qualification_cpu_cap_seconds"] <= 1200, "small qualification CPU cap exceeds 20 minutes")
+
+
+def lease_guard_check(spec):
+    lease = spec.get("lease_progress")
+    if not lease:
+        return
+    state = Path(lease["state"])
+    guard = load(state / "guard.json")
+    require(guard["pod_id"] == lease["pod_id"] and guard["name"] == lease["name"], "resident guard belongs to another lease")
+    require(0 <= time.time() - guard["epoch"] <= 60 and guard.get("allow_new_dispatch") is True
+            and guard.get("latched") is None, "fresh resident lease permission unavailable")
+    require(time.time() < lease["deadline_epoch"] - lease["recovery_seconds"], "lease recovery deadline reached")
+    require(not (Path(spec["root"]) / "STOP").exists() and not (state / "STOP").exists(), "lease STOP file present")
+
+
+def lease_progress_write(spec, productive, alive, phase):
+    lease = spec.get("lease_progress")
+    if not lease:
+        return
+    state = Path(lease["state"])
+    existing = load(state / "progress.json") if (state / "progress.json").exists() else {}
+    stamp = time.time()
+    prior = existing.get("last_productive_epoch", stamp)
+    activity = stamp if productive else prior
+    publish(state / "progress.json", {"pod_id": lease["pod_id"], "epoch": stamp,
+            "last_productive_epoch": activity, "last_activity_epoch": activity,
+            "native_alive": alive, "queued_work": False, "finished": False,
+            "phase": phase, "controller_pid": os.getpid()})
+
+
+def lease_progress_takeover(spec):
+    lease = spec.get("lease_progress")
+    if not lease:
+        return
+    path = Path(lease["state"]) / "progress.json"
+    previous = load(path) if path.exists() else {}
+    old_pid = previous.get("controller_pid")
+    if old_pid and old_pid != os.getpid():
+        try:
+            old = psutil.Process(old_pid)
+            require(not old.children(recursive=True), "previous lease controller still owns active work")
+        except psutil.NoSuchProcess:
+            pass
+    lease_progress_write(spec, False, False, "runtime-ready")
+    (Path(spec["root"]) / "PROGRESS-HANDOFF").touch()
+    if old_pid and old_pid != os.getpid():
+        try:
+            old = psutil.Process(old_pid)
+            # This is the existing lane build observer, not arbitrary work.
+            if any("build_driver" in part or "prereq_driver" in part for part in old.cmdline()):
+                old.wait(timeout=20)
+        except psutil.NoSuchProcess:
+            pass
 
 
 @contextmanager
@@ -285,6 +339,7 @@ def execute(spec, workers, phase, label):
     last_checkpoint = 0.0
     try:
         while active or pending:
+            lease_guard_check(spec)
             now_cpu = sum(row["cpu_seconds"] for row in results if row) + sum(p["clock"].read() for p in active.values())
             overhead = time.process_time() - manager_start
             # Stop early enough for at most one poll interval on every active worker.
@@ -459,7 +514,10 @@ def supervise_run(spec, args):
               "method": "wmi" if os.name == "nt" else "setsid", "independent_session": True,
               "manifest": {"path": str(args.manifest), "sha256": digest(args.manifest)}, "state": "starting"}
     publish(receipt, record)
+    lease_progress_takeover(spec)
     own_start = time.process_time()
+    previous_cpu = {}
+    previous_completed = 0
     with log.open("ab") as stream:
         child = subprocess.Popen(slots_command(spec, args, args.claim_id), env=slot_environment(spec),
                                  cwd=root, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT)
@@ -467,6 +525,26 @@ def supervise_run(spec, args):
         record.update(state="queued-or-running", slots_pid=child.pid)
         publish(receipt, record)
         while clock.poll() is None:
+            lease_guard_check(spec)
+            current = {}
+            alive = False
+            try:
+                for proc in psutil.Process(child.pid).children(recursive=True):
+                    try:
+                        if Path(proc.exe()).resolve() == Path(spec["binary"]["path"]).resolve():
+                            alive = True
+                            current[(proc.pid, proc.create_time())] = sum(proc.cpu_times()[:2])
+                    except psutil.Error:
+                        pass
+            except psutil.Error:
+                pass
+            inner_path = root / args.label / "completion.json"
+            completed = 0
+            if inner_path.exists():
+                completed = sum(bool(row) for row in load(inner_path).get("results", []))
+            productive = any(value > previous_cpu.get(pid, 0) for pid, value in current.items()) or completed > previous_completed
+            lease_progress_write(spec, productive, alive, "native-runtime" if alive else "runtime-dispatch-or-handoff")
+            previous_cpu, previous_completed = current, completed
             time.sleep(1)
         slots_cpu = clock.read()
         clock.close()
@@ -485,6 +563,15 @@ def supervise_run(spec, args):
                   slots_exit_code=child.returncode, guard_cpu_seconds=guard_cpu,
                   completion=str(inner), claim_release_verified=released)
     publish(receipt, record)
+    if spec.get("lease_progress"):
+        # Keep observations current while the lead preserves/reviews. This
+        # does not refresh productive time or extend the existing idle bound.
+        while True:
+            current = load(Path(spec["lease_progress"]["state"]) / "progress.json")
+            if current.get("controller_pid") != os.getpid():
+                break
+            lease_progress_write(spec, False, False, "awaiting-lead-preservation-or-review")
+            time.sleep(15)
     return child.returncode if released else 2
 
 
@@ -579,6 +666,7 @@ def main(argv=None):
         shutil.copy2(spec["binary"]["path"], target)
     require(digest(target) == spec["binary"]["sha256"], "cold binary pin differs")
     if args.foreground:
+        require(not spec.get("lease_progress"), "leased runtime requires detached progress supervision")
         return subprocess.call(slots_command(spec, args), env=slot_environment(spec))
     print(json.dumps(dispatch_detached(spec, args)))
     return 0
