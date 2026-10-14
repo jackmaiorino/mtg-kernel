@@ -1454,8 +1454,13 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let count = crate::standard_cards_v1::scale_counters(state, player, count);
+    let count = crate::doubling_season_v48::counter_amount(
+        state,
+        object,
+        player,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+        count,
+    )?;
     let total = live
         .counters
         .plus1_plus1

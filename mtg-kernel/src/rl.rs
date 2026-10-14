@@ -1866,6 +1866,11 @@ fn refuse_unrepresented_shroud(state: &GameState) -> Result<()> {
     refuse_unrepresented_shroud_for_akroma(state, false)
 }
 fn refuse_unrepresented_shroud_for_akroma(state: &GameState, accept_akroma: bool) -> Result<()> {
+    if crate::doubling_season_v48::requires_successor(state) {
+        return Err(RlContractError(
+            "effect token and counter replacement requires a distinct safe producer".into(),
+        ));
+    }
     if accept_akroma {
         crate::controlled_creature_grants_v1::validate_color_history(state)
             .map_err(RlContractError)?;

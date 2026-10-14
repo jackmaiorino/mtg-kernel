@@ -18113,20 +18113,30 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let scaled = {
-                let scale = |count: i16| {
-                    i16::try_from(crate::standard_cards_v1::scale_counters(
-                        state,
-                        ctx.controller,
-                        i32::from(count),
-                    ))
-                    .unwrap_or(i16::MAX)
-                };
-                (scale(*plus1_plus1), scale(*lifelink), scale(*stun))
+            let scale = |count: i16| -> Result<i16, String> {
+                let amount = crate::doubling_season_v48::counter_amount(
+                    state,
+                    object,
+                    ctx.controller,
+                    crate::doubling_season_v48::CounterOriginV48::Effect,
+                    i32::from(count),
+                )?;
+                if crate::doubling_season_v48::requires_successor(state) {
+                    i16::try_from(amount)
+                        .map_err(|_| "counter amount does not fit recipient storage".into())
+                } else {
+                    Ok(i16::try_from(amount).unwrap_or(i16::MAX))
+                }
             };
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let (plus1_plus1, lifelink, stun) = (&scaled.0, &scaled.1, &scaled.2);
+            let scaled = (scale(*plus1_plus1), scale(*lifelink), scale(*stun));
+            let (Ok(placed_plus), Ok(placed_lifelink), Ok(placed_stun)) = scaled else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let (plus1_plus1, lifelink, stun) = (&placed_plus, &placed_lifelink, &placed_stun);
             let next = (
                 live.counters
                     .plus1_plus1

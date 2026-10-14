@@ -79,18 +79,62 @@ pub(crate) fn damage(state: &mut GameState, object: ObjectId, amount: i32) {
 /// planeswalker. Removal stops at zero; the state-based action then puts it
 /// into its owner's graveyard.
 pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
+        crate::doubling_season_v48::CounterOriginV48::Cost,
+    );
+}
+
+pub(crate) fn change_loyalty_effect(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    );
+}
+
+fn change_loyalty_with_origin(
+    state: &mut GameState,
+    object: ObjectId,
+    delta: i32,
+    origin: crate::doubling_season_v48::CounterOriginV48,
+) {
     let Some(counters) = loyalty(state, object) else {
         return;
     };
     let counters = if delta >= 0 {
-        counters.saturating_add(
-            crate::standard_cards_v1::scale_counters(
-                state,
-                state.objects.get(object).controller,
-                delta,
-            )
-            .max(0) as u32,
-        )
+        let amount = match crate::doubling_season_v48::counter_amount(
+            state,
+            object,
+            state.objects.get(object).controller,
+            origin,
+            delta,
+        ) {
+            Ok(amount) => amount as u32,
+            Err(_) => {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
+        };
+        // Retain the legacy saturation only on catalogs without the new source.
+        if crate::doubling_season_v48::requires_successor(state) {
+            let Some(total) = counters.checked_add(amount) else {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            };
+            total
+        } else {
+            counters.saturating_add(amount)
+        }
     } else {
         counters.saturating_sub(delta.unsigned_abs())
     };
@@ -135,7 +179,7 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
                 },
             );
     }
-    change_loyalty(state, object, amount);
+    change_loyalty_effect(state, object, amount);
 }
 
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.

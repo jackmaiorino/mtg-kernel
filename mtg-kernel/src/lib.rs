@@ -658,7 +658,9 @@ pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
 pub mod controlled_creature_grants_v1;
+pub mod doubling_season_v48;
 pub mod rules_meaning_akroma_v1;
+pub mod rules_meaning_doubling_season_v48;
 pub mod twinflame_observation_v1;
 pub mod twinflame_tyrant_v1;
 

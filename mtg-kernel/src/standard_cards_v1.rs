@@ -1054,7 +1054,11 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::ExileTargetCardWithSource => exile_card_with_source(ctx, state),
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
-                crate::planeswalker_v1::change_loyalty(state, ctx.source, i32::from(*amount));
+                crate::planeswalker_v1::change_loyalty_effect(
+                    state,
+                    ctx.source,
+                    i32::from(*amount),
+                );
             }
         }
         StandardOpV1::ShuffleNonlandPermanentsIntoLibraries { player } => {

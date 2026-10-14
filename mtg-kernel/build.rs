@@ -10296,6 +10296,16 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        token_counter_replacement_v48: {},",
+            if executable && c.name == "Doubling Season" {
+                "Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)"
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10508,6 +10518,11 @@ fn codegen(cards: &[CardJson]) -> String {
         );
         canon.push('|');
         // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
+            canon.push_str(
+                "token_counter_replacement_v48=DoubleEffectTokensAndControlledPermanentCounters|",
+            );
+        }
         if c.engine_capability != EngineCapabilityJson::NoEffect
             && as_enters_color_choice_v1(&c.name) != "None"
         {
