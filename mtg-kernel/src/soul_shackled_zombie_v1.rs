@@ -137,6 +137,7 @@ pub(crate) fn validate_source(
             object,
             token_def,
             controller,
+            ..
         }) => {
             *object == source.source
                 && *token_def == source.card_def
@@ -250,6 +251,7 @@ mod tests {
                     object,
                     token_def,
                     controller,
+                    ..
                 } = entry
                 {
                     match rewrite {

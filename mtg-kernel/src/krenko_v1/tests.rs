@@ -67,6 +67,7 @@ fn registered_token_batch_has_one_complete_entry_roster_and_original_controller_
                     object,
                     token_def,
                     controller,
+                    ..
                 } => {
                     assert_eq!((*token_def, *controller), (token, actor));
                     Some(*object)

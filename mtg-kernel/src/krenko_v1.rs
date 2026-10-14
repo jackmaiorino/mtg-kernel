@@ -655,6 +655,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                                 object,
                                 token_def,
                                 controller,
+                                ..
                             }) = state.engine.event_history.get(*index as usize)
                             else {
                                 return Err("Krenko actual token occurrence lost".into());

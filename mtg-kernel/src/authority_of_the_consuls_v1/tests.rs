@@ -165,6 +165,7 @@ mod printed {
                             object,
                             token_def: created,
                             controller,
+                            ..
                         } if *created == token_def && *controller == actor.opponent() => {
                             Some(*object)
                         }

@@ -1114,6 +1114,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                                 object,
                                 token_def,
                                 controller,
+                                ..
                             } if *token_def == fish && *controller == item.controller => {
                                 Some(*object)
                             }

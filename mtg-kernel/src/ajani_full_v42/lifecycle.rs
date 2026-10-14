@@ -233,11 +233,12 @@ pub(crate) fn acquire_payment(state: &GameState) -> Result<Option<PaymentOwner>,
     let before =
         crate::planeswalker_v1::loyalty(state, p.source).ok_or("Ajani loyalty ledger absent")?;
     let after = match p.ability_index {
-        0 => before
-            .checked_add(
-                crate::standard_cards_v1::scale_counters(state, p.controller, 1).max(0) as u32,
-            )
-            .ok_or("Ajani loyalty overflow")?,
+        0 => crate::planeswalker_v1::quote_loyalty_change_v48(
+            state,
+            p.source,
+            1,
+            crate::doubling_season_v48::CounterOriginV48::Cost,
+        )?,
         1 => before.checked_sub(3).ok_or("Ajani -3 unpaid")?,
         2 => before.checked_sub(8).ok_or("Ajani -8 unpaid")?,
         _ => return Err("Ajani unknown loyalty root".into()),
@@ -734,7 +735,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 } else if ability == 0 {
                     if boost.is_some()
                         || events.len() != 1
-                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count}) if Some(*object)==target.map(|t|t.object) && Some(*zone_change_count)==target.map(|t|t.expected_zone_change_count) && *player==item.controller && *count==crate::doubling_season_v48::expected_plus_at(state,events[0],*object,item.controller,1)?)
+                        || !matches!(state.engine.event_history.get(events[0] as usize),Some(CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count, ..}) if Some(*object)==target.map(|t|t.object) && Some(*zone_change_count)==target.map(|t|t.expected_zone_change_count) && *player==item.controller && *count==crate::doubling_season_v48::expected_plus_at(state,events[0],*object,item.controller,1)?)
                     {
                         return Err("Ajani actual counter occurrence lost".into());
                     }

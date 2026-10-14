@@ -280,6 +280,7 @@ pub(crate) fn facts(
                     object,
                     token_def,
                     controller,
+                    ..
                 }) = state.engine.event_history.get(index as usize)
                 else {
                     return Err(RlContractError(

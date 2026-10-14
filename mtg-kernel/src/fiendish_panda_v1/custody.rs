@@ -569,6 +569,7 @@ fn validate_operation(state: &GameState, operation: u64) -> Result<(), String> {
                         zone_change_count,
                         player,
                         count,
+                        ..
                     } if *object == item.source
                         && *zone_change_count == source.zone_change_count
                         && *player == source.controller =>

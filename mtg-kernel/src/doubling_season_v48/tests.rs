@@ -551,9 +551,48 @@ fn actual_original_world_rejects_rewritten_replacement_roster_after_source_depar
         );
         validate_token_journals(&restore(&state)).unwrap();
         let original = state.engine.event_history.clone();
-        for erase_input in [false, true] {
+        let input_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| matches!(event, event::CommittedEvent::TokenCreationInputV48 { .. }))
+            .unwrap();
+        let completion_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                )
+            })
+            .unwrap();
+        let original_creations = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                matches!(event, event::CommittedEvent::CreateToken { .. })
+                    .then_some((index, event.clone()))
+            })
+            .collect::<Vec<_>>();
+        for forgery in 0..3 {
             let mut forged = restore(&state);
-            if erase_input {
+            if forgery == 2 {
+                forged.engine.event_history[input_index] =
+                    event::CommittedEvent::Tap { object: season };
+                forged.engine.event_history[completion_index] =
+                    event::CommittedEvent::Tap { object: season };
+                for (index, original) in &original_creations {
+                    assert_eq!(&forged.engine.event_history[*index], original);
+                }
+                assert!(
+                    requires_successor(&forged),
+                    "actual marked token retains the component after source departure"
+                );
+            } else if forgery == 1 {
                 let input = forged
                     .engine
                     .event_history
@@ -583,6 +622,13 @@ fn actual_original_world_rejects_rewritten_replacement_roster_after_source_depar
                 let before = bytes(&branch);
                 assert!(engine::step(&mut branch, Action::Pass).is_err());
                 assert_eq!(bytes(&branch), before);
+                let mut automatic = restore(&forged);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut automatic),
+                    engine::Decision::Halted { .. }
+                ));
+                automatic.engine.halted = None;
+                assert_eq!(bytes(&automatic), before);
             }
         }
         assert_eq!(state.engine.event_history, original);
@@ -936,6 +982,7 @@ fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_
                     object,
                     token_def,
                     controller,
+                    ..
                 } if *token_def == state.objects.get(source).card_def && *controller == actor => {
                     Some(*object)
                 }
@@ -1119,6 +1166,134 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
     }
 }
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn assert_genuine_permanent_spell_copy_entry(
+    actor: PlayerId,
+    copy_controller: PlayerId,
+    season_mode: Option<bool>,
+) {
+    use crate::engine::{self, Action, Decision};
+    let mut state = ready_state_for(actor);
+    for player in [actor, actor.opponent()] {
+        put(&mut state, player, "Forest", Zone::Hand);
+        put(&mut state, player, "Forest", Zone::Library);
+    }
+    if let Some(departed) = season_mode {
+        let season = cast_season(&mut state, actor);
+        if departed {
+            let goblin = crate::card_def::card_id_by_name("Goblin Token").unwrap();
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![ProposedEvent::create_token(goblin, actor)],
+            );
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Graveyard),
+            );
+            assert!(sources(&state, actor).is_empty());
+            assert!(requires_successor(&state));
+            validate_token_journals(&state).unwrap();
+        }
+    } else {
+        assert!(!requires_successor(&state));
+    }
+    let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+    engine::step(&mut state, Action::CastSpell(source)).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+    let (copy, copy_stack) = engine::copy_spell_for(&mut state, source, copy_controller).unwrap();
+    assert_ne!(copy, source);
+    assert_eq!(state.objects.get(copy).zone, Zone::Stack);
+    assert!(
+        !state.objects.get(copy).v4.is_token,
+        "a spell copy is not yet a token"
+    );
+    assert!(!state.objects.get(source).v4.is_token);
+    assert!(state
+        .stack
+        .iter()
+        .any(|row| row.source == copy && row.v4.stack_item_id == copy_stack && row.is_copy));
+    let start = state.engine.event_history.len();
+    let original = restore(&state);
+    for _ in 0..3 {
+        let mut branch = restore(&original);
+        for _ in 0..32 {
+            let decision = engine::advance_until_decision(&mut branch);
+            assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+            if branch.objects.get(copy).zone == Zone::Battlefield {
+                break;
+            }
+            match decision {
+                Decision::CastSpellOrPass { .. } => {
+                    engine::step(&mut branch, Action::Pass).unwrap()
+                }
+                Decision::OrderTriggers { pending, .. } => engine::step(
+                    &mut branch,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                )
+                .unwrap(),
+                other => panic!("unexpected permanent copy entry {other:?}"),
+            }
+        }
+        let live = branch.objects.get(copy);
+        assert_eq!(live.zone, Zone::Battlefield);
+        assert_eq!(live.controller, copy_controller);
+        assert!(live.v4.is_token);
+        assert_eq!(branch.objects.get(source).zone, Zone::Stack);
+        assert_eq!(branch.engine.event_history[start..].iter().filter(|event| matches!(event, event::CommittedEvent::CreateToken { token_def, .. } if *token_def == live.card_def)).count(), 0);
+        let entries: Vec<_> = branch.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                    if entry.object == copy =>
+                {
+                    Some(entry)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].snapshot.v4.is_token);
+        assert_eq!(entries[0].snapshot.controller, copy_controller);
+        let captures: Vec<_> = branch.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::ArahboTokenCaptureV1 { capture }
+                    if capture.source.source == copy =>
+                {
+                    Some(capture)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].root, crate::arahbo_v1::RootV1::OwnEntry);
+        assert_eq!(captures[0].source.controller, copy_controller);
+        crate::arahbo_v1::validate_state(&branch).unwrap();
+        validate_token_journals(&branch).unwrap();
+        assert_eq!(restore(&branch), branch);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn genuine_no_season_paid_permanent_copy_is_nontoken_on_stack_and_token_at_entry() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for copy_controller in [actor, actor.opponent()] {
+            assert_genuine_permanent_spell_copy_entry(actor, copy_controller, None);
+        }
+    }
+}
+
 #[test]
 #[cfg(all(
     feature = "limited-fdn-fixtures",
@@ -1126,88 +1301,10 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
 ))]
 #[ignore = "future actual Doubling Season registration required"]
 fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() {
-    use crate::card_def::ManaColor;
-    use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
         for copy_controller in [actor, actor.opponent()] {
-            let mut state = ready_state_for(actor);
-            for player in [actor, actor.opponent()] {
-                put(&mut state, player, "Forest", Zone::Hand);
-                put(&mut state, player, "Forest", Zone::Library);
-            }
-            cast_season(&mut state, actor);
-            let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
-            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
-            engine::step(&mut state, Action::CastSpell(source)).unwrap();
-            assert!(
-                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
-            );
-            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
-            let (copy, copy_stack) =
-                engine::copy_spell_for(&mut state, source, copy_controller).unwrap();
-            assert_ne!(copy, source);
-            assert!(state.stack.iter().any(|row| row.source == copy
-                && row.v4.stack_item_id == copy_stack
-                && row.is_copy));
-            let start = state.engine.event_history.len();
-            let original = restore(&state);
-            for _ in 0..3 {
-                let mut branch = restore(&original);
-                for _ in 0..32 {
-                    let decision = engine::advance_until_decision(&mut branch);
-                    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
-                    if branch.objects.get(copy).zone == Zone::Battlefield {
-                        break;
-                    }
-                    match decision {
-                        Decision::CastSpellOrPass { .. } => {
-                            engine::step(&mut branch, Action::Pass).unwrap()
-                        }
-                        Decision::OrderTriggers { pending, .. } => engine::step(
-                            &mut branch,
-                            Action::OrderTriggers((0..pending.len()).collect()),
-                        )
-                        .unwrap(),
-                        other => panic!("unexpected permanent copy entry {other:?}"),
-                    }
-                }
-                let live = branch.objects.get(copy);
-                assert_eq!(live.zone, Zone::Battlefield);
-                assert_eq!(live.controller, copy_controller);
-                assert!(live.v4.is_token);
-                assert_eq!(branch.objects.get(source).zone, Zone::Stack);
-                assert_eq!(branch.engine.event_history[start..].iter().filter(|event| matches!(event, event::CommittedEvent::CreateToken { token_def, .. } if *token_def == live.card_def)).count(), 0);
-                let entries: Vec<_> = branch.engine.event_history[start..]
-                    .iter()
-                    .filter_map(|event| match event {
-                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
-                            if entry.object == copy =>
-                        {
-                            Some(entry)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(entries.len(), 1);
-                assert!(entries[0].snapshot.v4.is_token);
-                assert_eq!(entries[0].snapshot.controller, copy_controller);
-                let captures: Vec<_> = branch.engine.event_history[start..]
-                    .iter()
-                    .filter_map(|event| match event {
-                        event::CommittedEvent::ArahboTokenCaptureV1 { capture }
-                            if capture.source.source == copy =>
-                        {
-                            Some(capture)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(captures.len(), 1);
-                assert_eq!(captures[0].root, crate::arahbo_v1::RootV1::OwnEntry);
-                assert_eq!(captures[0].source.controller, copy_controller);
-                crate::arahbo_v1::validate_state(&branch).unwrap();
-                validate_token_journals(&branch).unwrap();
-                assert_eq!(restore(&branch), branch);
+            for departed in [false, true] {
+                assert_genuine_permanent_spell_copy_entry(actor, copy_controller, Some(departed));
             }
         }
     }
@@ -1357,11 +1454,19 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
         let input_index = original_placement.input as usize;
         let counter_index = original_placement.counter_event as usize;
         assert!(input_index < counter_index && counter_index < placement_index);
+        assert_eq!(
+            expected_plus_at(&state, counter_index as u64, recipient, actor.opponent(), 3).unwrap(),
+            6
+        );
+        assert!(expected_plus_at(&state, counter_index as u64, recipient, actor, 3).is_err());
+        assert!(
+            expected_plus_at(&state, counter_index as u64, recipient, actor.opponent(), 4).is_err()
+        );
         for _ in 0..3 {
             let valid = restore(&state);
             validate_token_journals(&valid).unwrap();
             assert_eq!(bytes(&valid), bytes(&state));
-            for forgery in 0..5 {
+            for forgery in 0..6 {
                 let mut forged = restore(&state);
                 match forgery {
                     0 => {
@@ -1402,12 +1507,50 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
                         .engine
                         .event_log
                         .push(forged.engine.event_history[input_index].clone()),
+                    5 => {
+                        forged.engine.event_history[input_index] =
+                            event::CommittedEvent::Tap { object: recipient };
+                        forged.engine.event_history[placement_index] =
+                            event::CommittedEvent::Tap { object: recipient };
+                        // Preserve the actual issued six-counter occurrence,
+                        // including its intrinsic original-input reference.
+                        assert_eq!(
+                            forged.engine.event_history[counter_index],
+                            state.engine.event_history[counter_index]
+                        );
+                        assert_eq!(forged.objects.get(recipient).counters.plus1_plus1, 6);
+                        assert!(expected_plus_at(
+                            &forged,
+                            counter_index as u64,
+                            recipient,
+                            actor.opponent(),
+                            3
+                        )
+                        .is_err());
+                    }
                     _ => unreachable!(),
                 }
                 let before = bytes(&forged);
+                if forgery < 3 {
+                    assert!(expected_plus_at(
+                        &forged,
+                        counter_index as u64,
+                        recipient,
+                        actor.opponent(),
+                        3
+                    )
+                    .is_err());
+                }
                 assert!(validate_token_journals(&forged).is_err());
                 assert!(engine::step(&mut forged, Action::Pass).is_err());
                 assert_eq!(bytes(&forged), before);
+                let mut automatic = restore(&forged);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut automatic),
+                    engine::Decision::Halted { .. }
+                ));
+                automatic.engine.halted = None;
+                assert_eq!(bytes(&automatic), before);
             }
         }
         let before = bytes(&state);
@@ -1467,6 +1610,7 @@ fn retained_replacement_history_keeps_single_token_initialization_before_entry()
                         object,
                         token_def: actual,
                         controller,
+                        ..
                     } if *actual == token_def && *controller == actor => Some(*object),
                     _ => None,
                 })
@@ -1601,6 +1745,281 @@ fn genuine_wall_of_roots_cost_is_undoubled_and_overflow_is_readonly() {
             )
             .is_err());
             assert_eq!(bytes(&branch), before);
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn ordinary_real_counter_occurrence_keeps_legacy_bytes_and_derived_hash() {
+    use std::hash::{Hash, Hasher};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        event::add_plus_one_counters(&mut state, recipient, actor, 3).unwrap();
+        let occurrence = state.engine.event_history.iter().find(|event|
+            matches!(event, event::CommittedEvent::PlusOneCountersAdded { object, .. } if *object == recipient)).unwrap();
+        let event::CommittedEvent::PlusOneCountersAdded {
+            object,
+            zone_change_count,
+            player,
+            count,
+            replacement_input_v48,
+        } = occurrence
+        else {
+            unreachable!()
+        };
+        assert!(replacement_input_v48.is_none());
+        let mut predecessor = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(occurrence).hash(&mut predecessor);
+        object.hash(&mut predecessor);
+        zone_change_count.hash(&mut predecessor);
+        player.hash(&mut predecessor);
+        count.hash(&mut predecessor);
+        let mut current = std::collections::hash_map::DefaultHasher::new();
+        occurrence.hash(&mut current);
+        assert_eq!(predecessor.finish(), current.finish());
+        let value = serde_json::to_value(occurrence).unwrap();
+        assert!(value["PlusOneCountersAdded"]
+            .get("replacement_input_v48")
+            .is_none());
+        assert_eq!(value["PlusOneCountersAdded"].as_object().unwrap().len(), 4);
+        let legacy: event::CommittedEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(&legacy, occurrence);
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+fn ordinary_actual_token_occurrence_keeps_legacy_bytes_and_derived_hash() {
+    use std::hash::{Hash, Hasher};
+    let token_def = CARD_DEFS
+        .iter()
+        .position(|d| d.is_token && d.has_full_support())
+        .unwrap() as u16;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![ProposedEvent::create_token(token_def, actor)],
+        );
+        let occurrence = state
+            .engine
+            .event_history
+            .iter()
+            .find(|event| matches!(event, event::CommittedEvent::CreateToken { .. }))
+            .unwrap();
+        let event::CommittedEvent::CreateToken {
+            object,
+            token_def,
+            controller,
+            replacement_input_v48,
+        } = occurrence
+        else {
+            unreachable!()
+        };
+        assert!(replacement_input_v48.is_none());
+        let mut predecessor = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(occurrence).hash(&mut predecessor);
+        object.hash(&mut predecessor);
+        token_def.hash(&mut predecessor);
+        controller.hash(&mut predecessor);
+        let mut current = std::collections::hash_map::DefaultHasher::new();
+        occurrence.hash(&mut current);
+        assert_eq!(predecessor.finish(), current.finish());
+        let value = serde_json::to_value(occurrence).unwrap();
+        assert!(value["CreateToken"].get("replacement_input_v48").is_none());
+        assert_eq!(value["CreateToken"].as_object().unwrap().len(), 3);
+        let legacy: event::CommittedEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(&legacy, occurrence);
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_full_ajani_zero_target_cost_uses_same_quote_as_payment_before_resolution() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let ajani = put(&mut state, actor, "Ajani, Caller of the Pride", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+        engine::step(&mut state, Action::CastSpell(ajani)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        for _ in 0..24 {
+            if state.objects.get(ajani).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(crate::planeswalker_v1::loyalty(&state, ajani), Some(8));
+        let cost = crate::planeswalker_v1::quote_loyalty_change_v48(
+            &state,
+            ajani,
+            1,
+            CounterOriginV48::Cost,
+        )
+        .unwrap();
+        let effect = crate::planeswalker_v1::quote_loyalty_change_v48(
+            &state,
+            ajani,
+            1,
+            CounterOriginV48::Effect,
+        )
+        .unwrap();
+        assert_eq!(cost, 9, "unmodified printed +1 cost is not doubled");
+        assert_eq!(effect, 10, "effect counter placement is doubled");
+        let original = restore(&state);
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            engine::step(&mut branch, Action::ActivateAbility(ajani, 0)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut branch), Decision::ChooseEffectTargets { source, can_finish: true, min_targets: 0, max_targets: 1, .. } if source == ajani)
+            );
+            engine::step(&mut branch, Action::FinishEffectSelection).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut branch),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(crate::planeswalker_v1::loyalty(&branch, ajani), Some(cost));
+            assert!(branch
+                .stack
+                .iter()
+                .any(|item| item.source == ajani && item.targets.is_empty()));
+            crate::ajani_full_v42::lifecycle::validate_state(&branch).unwrap();
+            for _ in 0..24 {
+                if branch.stack.is_empty() {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut branch),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut branch, Action::Pass).unwrap();
+            }
+            assert!(branch.stack.is_empty());
+            assert_eq!(crate::planeswalker_v1::loyalty(&branch, ajani), Some(cost));
+            crate::ajani_full_v42::lifecycle::validate_state(&branch).unwrap();
+            assert_eq!(restore(&branch), branch);
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "standard-magezero-fixtures")]
+fn genuine_talent_level_order_changes_cost_rule_and_effect_quotes_without_joint_catalog() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        let recipient = put(&mut state, actor.opponent(), "Forest", Zone::Battlefield);
+        let talent = put(&mut state, actor, "Innkeeper's Talent", Zone::Hand);
+        assert!(
+            !requires_successor(&state),
+            "this is the real Standard catalog without Season"
+        );
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(talent)).unwrap();
+        engine::advance_until_decision(&mut state);
+        for _ in 0..24 {
+            if state.objects.get(talent).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(crate::standard_cards_v1::class_level(&state, talent), 1);
+        for origin in [
+            CounterOriginV48::Cost,
+            CounterOriginV48::Rule,
+            CounterOriginV48::Effect,
+        ] {
+            assert_eq!(
+                counter_amount(&state, recipient, actor, origin, 1).unwrap(),
+                1
+            );
+        }
+        for (ability, mana, level) in [(0, 1, 2), (1, 4, 3)] {
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = mana;
+            engine::step(&mut state, Action::ActivateAbility(talent, ability)).unwrap();
+            engine::advance_until_decision(&mut state);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            for _ in 0..24 {
+                if state.stack.is_empty() {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(crate::standard_cards_v1::class_level(&state, talent), level);
+        }
+        for _ in 0..3 {
+            let mut branch = restore(&state);
+            for origin in [
+                CounterOriginV48::Cost,
+                CounterOriginV48::Rule,
+                CounterOriginV48::Effect,
+            ] {
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor, origin, 1).unwrap(),
+                    2
+                );
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor.opponent(), origin, 1).unwrap(),
+                    1
+                );
+            }
+            event::propose_and_commit(&mut branch, ProposedEvent::zone_change(talent, Zone::Hand));
+            for origin in [
+                CounterOriginV48::Cost,
+                CounterOriginV48::Rule,
+                CounterOriginV48::Effect,
+            ] {
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor, origin, 1).unwrap(),
+                    1
+                );
+            }
+            assert!(!requires_successor(&branch));
         }
     }
 }

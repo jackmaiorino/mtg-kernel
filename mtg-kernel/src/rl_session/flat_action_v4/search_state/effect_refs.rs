@@ -1487,6 +1487,7 @@ mod tests {
                 zone_change_count: state.objects.get(object).zone_change_count,
                 player: PlayerId::P1,
                 count: 1,
+                replacement_input_v48: Default::default(),
             });
         assert!(conflicts(&state, &[object], None));
         assert!(!conflicts(&state, &[other], None));

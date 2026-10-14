@@ -325,3 +325,66 @@ joint Standard Talent/Saga/Impending/Role/Incubator/Equipment issuers, attacking
 token planeswalker destination agency for a future compatible Adeline producer,
 and broad mixed-family gameplay/model/sampler qualification. New source proofs
 and counter/tail adapters still require named source review and real execution.
+
+
+Owned counter-operation adapters now reconstruct the actual count from the
+original actor/recipient world and exact counter occurrence, rather than
+multiplying the printed amount by Season alone. This preserves a real earlier
+actor-relative modifier in a future joint catalog and independently rejects
+coherent rewritten amount/actor/output or removed original input while the owner
+is recording its result. It does not recursively invoke whole-family validation.
+The genuine paid Season counter fixture adds exact adapter assertions; joint
+Talent printing runtime remains unavailable and unclaimed.
+
+
+## Intrinsic counter occurrence custody
+
+The actual issued positive +1/+1 occurrence now carries its original V48 input
+reference whenever Season replaced that event. Validation requires that marked
+occurrence retain exactly one independent input and matching completion, even
+when both private receipts are replaced by index-preserving ordinary events.
+The owned-count adapter likewise refuses a marked occurrence with missing proof.
+Ordinary counters omit the optional field, and the typed absent reference hashes
+zero bytes so the old derived occurrence hash and enum ordinal remain exact.
+The real absent counter fixture checks both serialization and the predecessor
+hash sequence; the genuine paid Season fixture retains its actual six-counter
+occurrence through both-record erasure and repeated Step readonly/Advance
+halt-only refusals. Original event journal provenance remains trusted, rather
+than a cryptographic guarantee against replacing that original occurrence too.
+
+
+A resolving permanent spell copy now receives its token flag at the actual
+Stack-to-battlefield transition in every catalog path, independently of the
+Season component. The Stack object remains a nontoken virtual spell copy until
+that transition. It is never a CreateToken request and is never expanded by
+Season. Shared genuine paid Arahbo copy fixtures cover no Season plus active
+and departed Seasons, both original/copy controllers and three serialized
+restores, exact before/entry flags, original spell remaining on Stack, genuine
+Garruk token snapshots and captured Arahbo self-entry. The no-Season group uses
+already registered printing metadata; Season groups remain ignored/unrun.
+
+
+Token creation has the corresponding intrinsic original-input binding on each
+actual created member of a replaced batch. The private entry commit context
+carries the genuine already-recorded input index through complete entry; it is
+never a deserializable proposal permission. Marked actual members require their
+unique original world and matching complete roster even if both proof records
+are erased after Season departs. Old unmarked creations preserve their exact
+three-field serde shape and original derived Hash sequence. Prepared both-seat
+source-departure/serialized both-record erasure negatives keep every original
+CreateToken occurrence and live token, and assert Step readonly/Advance halt-only.
+
+
+## Shared owned quotes
+
+Ajani's acquired payment and actual loyalty mutation share one readonly native
+quote, including the other-replacement qualification for positive Cost counters.
+The activation planner preflights that quote before any payment under V48.
+The real future paid Season/Full Ajani zero-target +1 fixture checks the same
+nine-counter result before resolution and complete no-op ownership over three
+restores. A separate actual Standard Talent fixture pays both printed Class
+levels in order, tests actor-relative Effect/Cost/Rule quotes before and after
+level 3 and real departure, and never inserts a fake Season definition or joint
+catalog. Crystal's counter-bearing chosen-power adapter uses the authenticated
+actual placement amount for its source snapshot and counter occurrence, then
+retains the original subsequent sampled-power/damage validation.

@@ -5837,6 +5837,7 @@ fn trigger_matches(
                 zone_change_count,
                 player,
                 count,
+                ..
             },
         ) => {
             *object == source
