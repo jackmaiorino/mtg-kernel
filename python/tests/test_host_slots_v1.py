@@ -434,5 +434,105 @@ class HostSlotsTests(unittest.TestCase):
         assert len(slots.parse_cores(status["free"])) == len(CPUS)
 
 
+class BackgroundPolicyTests(unittest.TestCase):
+    def test_ordinary_claims_can_reclaim_background_cores(self):
+        config = {"cores": [0, 1, 2, 3], "keep_free": 0}
+        timed = {"held": True, "cores": [0]}
+        claims = [{"cores": [1, 2], "background": True}, {"cores": [3]}]
+        self.assertEqual(slots.available(config, timed, claims), [])
+        self.assertEqual(slots.available(config, timed, claims, background=False), [1, 2])
+
+    def test_background_conflicts_with_live_ordinary_claims_even_before_start(self):
+        with patch.object(slots, "conflicts", return_value=False), \
+                patch.object(slots, "live_claims", return_value=[{"cores": [1], "state": "suspended"}]):
+            self.assertTrue(slots.claim_conflicts([1], True))
+            self.assertFalse(slots.claim_conflicts([2], True))
+            self.assertFalse(slots.claim_conflicts([1], False))
+
+    def test_partial_suspension_cannot_admit_foreground_work(self):
+        with patch.object(slots, "live_claims", return_value=[
+                {"id": "ci", "cores": [1], "background": True, "state": "running"}]):
+            self.assertTrue(slots.background_busy([1], "build"))
+        with patch.object(slots, "live_claims", return_value=[
+                {"id": "ci", "cores": [1], "background": True, "state": "suspended"}]):
+            self.assertFalse(slots.background_busy([1], "build"))
+
+
+class BackgroundProcessTests(unittest.TestCase):
+    setUp = HostSlotsTests.setUp
+    tearDown = HostSlotsTests.tearDown
+    def test_ci_suspends_for_ordinary_work_and_resumes_after_release(self):
+        count = self.tmp_path / "background-count"
+        release = self.tmp_path / "foreground-release"
+        active = self.tmp_path / "foreground-active"
+        ticker = script(self.tmp_path, "background-tick.py", "n = 0\nwhile True:\n    n += 1\n"
+                        "    open(sys.argv[1], 'w').write(str(n))\n    time.sleep(0.02)\n")
+        hold = script(self.tmp_path, "foreground-hold.py", "from pathlib import Path\n"
+                      "Path(sys.argv[1]).write_text('up')\n"
+                      "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
+        ci = cli("run", "--background", "--priority", "idle", "--lane", "ci", "--work-id", "ci",
+                 "--cores", "1", "--", sys.executable, ticker, str(count))
+        foreground = None
+        try:
+            self.assertTrue(wait_for(lambda: counter(count) > 5))
+            foreground = cli("run", "--lane", "build", "--work-id", "build", "--cores", str(len(CPUS)),
+                             "--", sys.executable, hold, str(active), str(release))
+            self.assertTrue(wait_for(active.exists))
+            ci_claim = next(c for c in slots.status()["claims"] if c["lane"] == "ci")
+            self.assertEqual(ci_claim["state"], "suspended")
+            frozen = counter(count)
+            time.sleep(0.2)
+            self.assertEqual(counter(count), frozen)
+            release.write_text("go")
+            self.assertEqual(foreground.wait(timeout=30), 0)
+            self.assertTrue(wait_for(lambda: counter(count) > frozen + 5))
+        finally:
+            release.write_text("go")
+            if foreground:
+                foreground.wait(timeout=30)
+            ci.terminate()
+            ci.wait(timeout=30)
+
+    @unittest.skipUnless(os.name == "nt", "existing process adoption uses Windows jobs")
+    def test_existing_worker_is_pinned_idle_and_claim_releases_at_exit(self):
+        from ctypes import wintypes
+        started, release, ready = (self.tmp_path / name for name in ("worker-started", "worker-release", "adopt-ready"))
+        body = script(self.tmp_path, "existing-worker.py", "from pathlib import Path\n"
+                      "Path(sys.argv[1]).write_text('up')\n"
+                      "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
+        worker = subprocess.Popen([sys.executable, body, str(started), str(release)])
+        controller = None
+        try:
+            self.assertTrue(wait_for(started.exists))
+            stamp = slots.creation_time(worker.pid)
+            identity = self.tmp_path / "worker.json"
+            slots.write_json(identity, {"pid": worker.pid, "creation": stamp, "descendants": []})
+            controller = cli("adopt", "--background", "--priority", "idle", "--lane", "ci", "--work-id", "adopt",
+                             "--cores", "1", "--worker", str(identity), "--ready", str(ready))
+            self.assertTrue(wait_for(ready.exists))
+            admitted = slots.read_json(ready)
+            self.assertEqual(admitted["worker_creation"], stamp)
+            handle = slots._OpenProcess(slots.PROCESS_QUERY_LIMITED_INFORMATION, False, worker.pid)
+            try:
+                affinity, system = slots.ctypes.c_size_t(0), slots.ctypes.c_size_t(0)
+                self.assertTrue(slots._GetProcessAffinityMask(handle, slots.ctypes.byref(affinity), slots.ctypes.byref(system)))
+                self.assertEqual(affinity.value, 1 << CPUS[-1])
+                get_priority = slots._fn(slots._k32, "GetPriorityClass", wintypes.DWORD, wintypes.HANDLE)
+                self.assertEqual(get_priority(handle), slots.PRIORITY_CLASS["idle"])
+            finally:
+                slots._CloseHandle(handle)
+            release.write_text("go")
+            self.assertEqual(worker.wait(timeout=30), 0)
+            self.assertEqual(controller.wait(timeout=30), 0)
+            self.assertEqual(slots.status()["claims"], [])
+            self.assertFalse(ready.exists())
+        finally:
+            release.write_text("go")
+            worker.wait(timeout=30)
+            if controller and controller.poll() is None:
+                controller.terminate()
+                controller.wait(timeout=30)
+
+
 if __name__ == "__main__":
     unittest.main()
