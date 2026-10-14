@@ -389,8 +389,7 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                         },
                         0,
                         0,
-                        crate::card_def::Keywords::HEXPROOF
-                            .union(crate::card_def::Keywords::SHROUD),
+                        crate::card_def::Keywords::HEXPROOF | crate::card_def::Keywords::SHROUD,
                     );
                 }
                 death(&mut state, aura);
@@ -654,6 +653,182 @@ fn actual_paid_fake_returns_opponent_owned_card_but_treasure_belongs_to_death_co
             );
             assert_eq!(treasures(game, actor), 1);
             assert_eq!(treasures(game, owner), 0);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_lost_target_does_not_follow_its_returned_incarnation() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for reenter in [false, true] {
+            let (mut state, spell, target) = paid(actor, actor.opponent());
+            let original = state.objects.get(target).zone_change_count;
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Exile));
+            if reenter {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(target, Zone::Battlefield),
+                );
+                assert!(state.objects.get(target).zone_change_count > original);
+            }
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            for game in [&mut state, &mut restored] {
+                drain(game);
+                assert_eq!(game.objects.get(spell).zone, Zone::Graveyard);
+                assert!(spell_custody::installed_grants(game).unwrap().is_empty());
+                assert_eq!(treasures(game, actor), 0);
+                assert_eq!(treasures(game, actor.opponent()), 0);
+                assert!(game.engine.event_history.iter().any(|event| matches!(
+                    spell_custody::journal(event),
+                    Some(spell_custody::JournalV50::RemovalInput {
+                        removal: spell_custody::RemovalV50::Resolving {
+                            target_legal: false
+                        },
+                        ..
+                    })
+                )));
+                spell_custody::validate_retained_grant_history(game).unwrap();
+                if reenter {
+                    assert_eq!(engine::effective_power(game, target), 1);
+                }
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn actual_paid_fake_graveyard_response_prevents_return_but_preserves_treasure() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, target) = paid(actor, actor.opponent());
+        drain(&mut state);
+        death(&mut state, target);
+        let original = state.stack.last().unwrap().clone();
+        // The response operand uses the real zone-change path. It does not
+        // claim another paid graveyard-exile printing.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Exile));
+        assert_eq!(state.stack.last(), Some(&original));
+        let generation = state.objects.get(target).zone_change_count;
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            drain(game);
+            assert_eq!(game.objects.get(target).zone, Zone::Exile);
+            assert_eq!(game.objects.get(target).zone_change_count, generation);
+            assert_eq!(treasures(game, actor.opponent()), 1);
+            assert_eq!(treasures(game, actor), 0);
+            assert!(game.engine.event_history.iter().any(|event| matches!(
+                spell_custody::journal(event),
+                Some(spell_custody::JournalV50::DeathResolutionClosed { returned: None, created, .. })
+                    if created.len() == 1
+            )));
+            spell_custody::validate_retained_grant_history(game).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_copied_token_death_creates_treasure_without_returning_token() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Mountain", Zone::Battlefield);
+        }
+        let original = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        // The existing token-copy constructor initializes the operand and
+        // records actual creation. No paid token-maker printing is claimed.
+        let token =
+            crate::standard_cards_v1::create_token_copy(&mut state, original, actor).unwrap();
+        assert!(state.objects.get(token).v4.is_token);
+        let (mut state, _, _) = paid_on(state, actor, token);
+        drain(&mut state);
+        death(&mut state, token);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            drain(game);
+            assert!(!game.players[actor.index()].battlefield.contains(&token));
+            assert!(!game.players[actor.opponent().index()]
+                .battlefield
+                .contains(&token));
+            assert_eq!(treasures(game, actor), 1);
+            assert_eq!(treasures(game, actor.opponent()), 0);
+            assert!(game.engine.event_history.iter().any(|event| matches!(
+                spell_custody::journal(event),
+                Some(spell_custody::JournalV50::DeathCaptured { lookback, .. })
+                    if lookback.was_token_at_death
+            )));
+            assert!(game.engine.event_history.iter().any(|event| matches!(
+                spell_custody::journal(event),
+                Some(spell_custody::JournalV50::DeathResolutionClosed { returned: None, created, .. })
+                    if created.len() == 1
+            )));
+            spell_custody::validate_retained_grant_history(game).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_power_and_gained_death_ability_expire_at_real_cleanup() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, target) = paid(actor, actor);
+        drain(&mut state);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for _ in 0..40 {
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+        }
+        let grant = spell_custody::installed_grants(&state).unwrap()[0];
+        assert!(grant.active(&state).unwrap());
+        assert_eq!(engine::effective_power(&state, target), 3);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            crate::policy_observation_v6::tests::advance_to_next_main_for(game, actor.opponent());
+            assert!(!grant.active(game).unwrap());
+            assert!(!grant.temporary_modifier_retained(game).unwrap());
+            assert_eq!(engine::effective_power(game, target), 1);
+            assert_eq!(
+                game.engine
+                    .event_history
+                    .iter()
+                    .filter(|event| matches!(
+                        spell_custody::journal(event),
+                        Some(spell_custody::JournalV50::CleanupCompleted { .. })
+                    ))
+                    .count(),
+                1
+            );
+            event::propose_and_commit(game, ProposedEvent::zone_change(target, Zone::Graveyard));
+            assert!(matches!(
+                engine::advance_until_decision(game),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(game.stack.is_empty());
+            assert_eq!(game.objects.get(target).zone, Zone::Graveyard);
+            assert_eq!(treasures(game, actor), 0);
+            assert!(!game.engine.event_history.iter().any(|event| matches!(
+                spell_custody::journal(event),
+                Some(spell_custody::JournalV50::DeathCaptured { .. })
+            )));
+            spell_custody::validate_retained_grant_history(game).unwrap();
         }
         assert_eq!(
             serde_json::to_vec(&state).unwrap(),

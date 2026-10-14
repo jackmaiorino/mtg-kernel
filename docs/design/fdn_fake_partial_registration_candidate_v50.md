@@ -60,3 +60,15 @@ constructor, receives the paid grant, dies and restores. Return belongs to the
 owner; Treasure belongs to the captured death controller. The initial entry is a
 fixture operand, not a claim of a paid control-changing printing. Runtime remains
 pending.
+
+Four additional genuine paid fixture groups now cover a target leaving or
+departing and reentering before spell resolution, the captured card leaving the
+graveyard in response to the gained ability, copied-token death, and expiration
+through the real cleanup phase. Each compares a complete serialized/restored
+execution. They distinguish a fizzle with no grant from a failed return with
+Treasure, preserve token identity, and require both the power modifier and death
+ability to expire. Response and token-copy initialization use existing engine
+operands, not additional paid-printing claims. Together with the previous six
+groups these remain uncompiled and unrun. The isolated source includes the
+published bfb immutable-cache changes; Native125 still uses its exact original
+published source and reservation.
