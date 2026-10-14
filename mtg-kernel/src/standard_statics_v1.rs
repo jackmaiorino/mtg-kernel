@@ -71,12 +71,25 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
 
 /// Counters a permanent enters with beyond `CardDef::enters_with_plus_one_counters`,
 /// applied in the same entry step before triggers and state-based actions.
-pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: ObjectId) {
+pub(crate) fn apply_conditional_entry_counters(
+    state: &mut GameState,
+    id: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let Some(name) = battlefield_definition_name(state, id) else {
         return;
     };
     let controller = state.objects.get(id).controller;
-    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
+    let count = match crate::doubling_season_v48::entry_amount(state, input, controller, 1) {
+        Ok(count) => count,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                id,
+            ));
+            return;
+        }
+    };
     match name {
         // "This creature enters with a +1/+1 counter on it if you control a
         // permanent with mana value 4 or greater."

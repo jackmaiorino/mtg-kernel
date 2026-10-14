@@ -83,3 +83,26 @@ haste/Incubate initialization still needs expanded roster semantics. Fishing
 bait, entry and counter-kind paths above remain assigned work. No actual Season
 printing is registered, enabled or claimed Full. A V48 safe producer is not yet
 implemented; predecessor paths retain explicit refusal.
+
+
+## Initial entry and strict printing checkpoint
+
+Every complete entry batch now freezes recipient-controller Season inputs before
+any member moves. Fixed entry counters, initialized X/Bestow counters, Raid
+entry counters and starting loyalty use those frozen inputs; Standard Net,
+charge and conditional oil/+1 entry hooks share the same source snapshot.
+Genuine both-order Season+Mossborn entry and later/opponent entry tests preserve
+one counter in the simultaneous group, two in the later own entry, and one on
+the opponent entry. A real Ajani cast/zero-target +1 fixture requires entry8 then
+paid9 with true optional Finish and serialized replay, retaining source ledgers.
+
+The exact definition gate now excludes every foreign rule descriptor, secondary
+mode/cost, ability/grant/mana/entry/face/animation/combat rule and altered public
+name. Meaning's producer binds the actual trigger-table callee and entry helpers.
+Its real-printing ignored metadata-negative group mutates only validation inputs,
+never CARD_DEFS or an executed fictional printing.
+
+Still unfinished: checked pre-entry overflow before any moves, rule-origin lore
+and played-land distinction, all non-entry counter kinds/transfer inputs, Hunter
+and Fishing original counter operation adapters, and special token tails. These
+requirements remain explicit and no Full executor/consumer qualification is made.

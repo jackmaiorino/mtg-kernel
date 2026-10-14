@@ -20,7 +20,12 @@ pub fn owns_definition(id: u16) -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
-    )) && d.name == "Doubling Season"
+    )) && exact_definition(d)
+        && crate::trigger::triggers_for(id).is_empty()
+}
+
+pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
+    d.name == "Doubling Season"
         && d.capability == CardCapability::Full
         && d.types == [CardType::Enchantment]
         && d.subtypes.is_empty()
@@ -42,8 +47,53 @@ pub fn owns_definition(id: u16) -> bool {
         && d.flashback.is_none()
         && d.ward_cost.is_none()
         && d.starting_loyalty.is_none()
+        && d.object_name == "Doubling Season"
+        && !d.spell_cannot_be_countered
+        && !d.records_mana_spent
+        && d.generic_cost_reduction.is_none()
+        && d.equipment.is_none()
+        && d.enters_with_plus_one_counters.is_none()
+        && d.controlled_counter_keyword.is_none()
+        && d.game_outcome_protection_v1.is_none()
+        && d.controlled_creature_grant.is_none()
+        && (d.mana_ability)().is_none()
+        && d.produces_mana.is_empty()
+        && d.plot_cost.is_none()
+        && d.madness_cost.is_none()
+        && d.escape.is_none()
+        && d.mode2.is_none()
+        && d.mode3.is_none()
+        && d.additional_modes.is_empty()
+        && d.kicked_target_spec.is_none()
+        && d.mana_ability_choices.is_empty()
+        && !d.enters_battlefield_tapped
+        && d.enters_battlefield_tapped_unless.is_none()
+        && d.mana_ability_def.is_none()
+        && d.minimum_blockers == 1
+        && d.omen.is_none()
+        && d.bestow.is_none()
+        && d.adventure.is_none()
+        && !d.mana_ability_includes_chosen_color
+        && d.as_enters_choose_color_other_than.is_none()
+        && d.additional_mana_abilities.is_empty()
+        && d.additional_mana_ability_conditions.is_empty()
+        && d.attachment.is_none()
+        && d.transform_face.is_none()
+        && d.saga.is_none()
+        && d.optional_additional_cost.is_none()
+        && !d.changeling
+        && !d.delve
+        && !d.cant_be_blocked_by_monarchs_creatures
+        && d.conditional_tap_yield.is_none()
+        && d.enters_tapped_unless_controller.is_none()
+        && d.restricted_mana_abilities.is_empty()
+        && d.animation.is_none()
+        && d.activated_ability_generic_reductions.is_empty()
+        && d.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE
+        && d.as_enters_color_choice_v1.is_none()
+        && d.chosen_color_creature_boost_v1.is_none()
+        && d.damage_replacement_v1.is_none()
         && d.activated_abilities.is_empty()
-        && crate::trigger::triggers_for(id).is_empty()
         && d.token_counter_replacement_v48
             == Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)
         && (d.spell_effect)()
@@ -68,6 +118,38 @@ pub(crate) fn sources(state: &GameState, controller: PlayerId) -> Vec<AbilitySou
         })
         .map(|(id, _)| AbilitySourceContractV4::capture(state, id))
         .collect()
+}
+
+pub(crate) fn entry_input(
+    state: &GameState,
+    event: &crate::event::ProposedEvent,
+) -> Option<ReplacementInputV48> {
+    match event {
+        crate::event::ProposedEvent::CreateToken(t) => {
+            Some(ReplacementInputV48::capture(state, t.controller))
+        }
+        crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
+            Some(ReplacementInputV48::capture(
+                state,
+                z.battlefield_controller
+                    .unwrap_or_else(|| state.objects.get(z.object).owner),
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn entry_amount(
+    state: &GameState,
+    input: Option<&ReplacementInputV48>,
+    controller: PlayerId,
+    amount: i32,
+) -> Result<i32, String> {
+    let original = crate::standard_cards_v1::scale_counters(state, controller, amount);
+    match input {
+        Some(input) => input.replaced_count(original),
+        None => ReplacementInputV48::capture(state, controller).replaced_count(original),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,26 +223,22 @@ pub(crate) fn counter_amount(
 }
 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
-    state
-        .objects
-        .iter()
-        .any(|(_, o)| o.zone == Zone::Battlefield && owns_definition(o.card_def))
-        || state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
-                    | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
-            )
-        })
-        || state.stack.iter().any(|item| {
-            item.v4
-                .source_contract
-                .is_some_and(|s| owns_definition(s.card_def))
-                || state
-                    .objects
-                    .try_get(item.source)
-                    .is_some_and(|o| owns_definition(o.card_def))
-        })
+    state.objects.iter().any(|(_, o)| {
+        o.zone == Zone::Battlefield && o.v4.face_down_v1.is_none() && owns_definition(o.card_def)
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+        )
+    }) || state.stack.iter().any(|item| {
+        item.v4
+            .source_contract
+            .is_some_and(|source| source.zone == Zone::Stack && owns_definition(source.card_def))
+            || state.objects.try_get(item.source).is_some_and(|object| {
+                object.zone == Zone::Stack && owns_definition(object.card_def)
+            })
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -183,6 +183,112 @@ fn actual_simultaneous_expanded_roster_original_control_and_private_receipt_refu
     }
 }
 
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_simultaneous_season_entry_does_not_depend_on_member_order() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for source_first in [false, true] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            let hydra = put(&mut state, actor, "Mossborn Hydra", Zone::Hand);
+            let season_entry = ProposedEvent::zone_change(season, Zone::Battlefield);
+            let hydra_entry = ProposedEvent::zone_change(hydra, Zone::Battlefield);
+            event::propose_and_commit_batch(
+                &mut state,
+                if source_first {
+                    vec![season_entry, hydra_entry]
+                } else {
+                    vec![hydra_entry, season_entry]
+                },
+            );
+            assert!(state.engine.halted.is_none());
+            assert_eq!(state.objects.get(hydra).counters.plus1_plus1, 1);
+            let later = put(&mut state, actor, "Mossborn Hydra", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(later, Zone::Battlefield),
+            );
+            assert_eq!(state.objects.get(later).counters.plus1_plus1, 2);
+            let opponent = put(&mut state, actor.opponent(), "Mossborn Hydra", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(opponent, Zone::Battlefield),
+            );
+            assert_eq!(state.objects.get(opponent).counters.plus1_plus1, 1);
+            assert_eq!(restore(&state), state);
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_ajani_entry_eight_and_genuine_zero_target_plus_cost_one() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for p in [actor, actor.opponent()] {
+            put(&mut state, p, "Forest", Zone::Battlefield);
+            put(&mut state, p, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let creature = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(creature, Zone::Battlefield),
+        );
+        let ajani = put(&mut state, actor, "Ajani, Caller of the Pride", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+        engine::step(&mut state, Action::CastSpell(ajani)).unwrap();
+        for _ in 0..32 {
+            let d = engine::advance_until_decision(&mut state);
+            assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
+            if state.objects.get(ajani).zone == Zone::Battlefield {
+                break;
+            }
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(crate::planeswalker_v1::loyalty(&state, ajani), Some(8));
+        let mut restored = restore(&state);
+        for branch in [&mut state, &mut restored] {
+            assert!(
+                matches!(engine::advance_until_decision(branch),Decision::CastSpellOrPass {player,..} if player==actor)
+            );
+            engine::step(branch, Action::ActivateAbility(ajani, 0)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(branch),
+                Decision::ChooseEffectTargets { .. }
+            ));
+            engine::step(branch, Action::FinishEffectSelection).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(branch),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert!(branch.engine.pending_activation.is_none());
+            assert_eq!(branch.stack.last().unwrap().targets.len(), 0);
+            assert_eq!(crate::planeswalker_v1::loyalty(branch, ajani), Some(9));
+            while !branch.stack.is_empty() {
+                assert!(matches!(
+                    engine::advance_until_decision(branch),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(branch, Action::Pass).unwrap();
+            }
+            crate::ajani_full_v42::lifecycle::validate_state(branch).unwrap();
+            assert_eq!(crate::planeswalker_v1::loyalty(branch, ajani), Some(9));
+        }
+        assert_eq!(state, restored);
+    }
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")

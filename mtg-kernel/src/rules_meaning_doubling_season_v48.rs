@@ -54,6 +54,12 @@ pub fn producer_sha256() -> String {
         include_str!("doubling_season_v48.rs"),
         include_str!("card_def.rs"),
         include_str!("event.rs"),
+        include_str!("trigger.rs"),
+        include_str!("engine.rs"),
+        include_str!("state.rs"),
+        include_str!("fdn_raid_v1.rs"),
+        include_str!("standard_statics_v1.rs"),
+        include_str!("standard_creatures_v1.rs"),
         include_str!("effect.rs"),
         include_str!("planeswalker_v1.rs"),
         include_str!("continuous_characteristics_v1.rs"),
@@ -163,6 +169,65 @@ mod tests {
             let mut forged = original;
             forged.selector.catalog_hash ^= 1;
             assert!(validate(&forged).is_err());
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn genuine_compiled_definition_rejects_foreign_rule_descriptors() {
+        use crate::card_def::{CardDef, Keywords, ModeDef, OptionalAdditionalCostDef};
+        let id = crate::card_def::card_id_by_name("Doubling Season").unwrap();
+        let original = &crate::card_def::CARD_DEFS[usize::from(id)];
+        assert!(crate::doubling_season_v48::owns_definition(id));
+        // Negative metadata inputs only. None of these forged definitions is
+        // inserted in CARD_DEFS or executed as a fabricated printed card.
+        let copy = || CardDef {
+            flashback: None,
+            mode2: None,
+            mode3: None,
+            escape: None,
+            omen: None,
+            bestow: None,
+            adventure: None,
+            transform_face: None,
+            saga: None,
+            ..*original
+        };
+        let mut forged = copy();
+        forged.optional_additional_cost = Some(OptionalAdditionalCostDef::Bargain);
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        let donor = &crate::card_def::CARD_DEFS
+            [usize::from(crate::card_def::card_id_by_name("Pyroblast").unwrap())];
+        let mode = donor.mode2.as_ref().unwrap();
+        let mut forged = copy();
+        forged.mode2 = Some(ModeDef {
+            target_spec: mode.target_spec,
+            effect: mode.effect,
+        });
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        let mut forged = copy();
+        forged.keywords = Keywords::HASTE;
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        let mut forged = copy();
+        forged.object_name = "different public rules name";
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        let mut forged = copy();
+        forged.damage_replacement_v1 =
+            Some(crate::card_def::DamageReplacementDefV1::DoubleControlledSourceToOpponent);
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        let mut forged = copy();
+        forged.changeling = true;
+        assert!(!crate::doubling_season_v48::exact_definition(&forged));
+        for root in [
+            RootV48::EnchantmentSpell,
+            RootV48::EffectTokenCreation,
+            RootV48::EffectCounterPlacement,
+        ] {
+            validate(&printed_meaning(id, root).unwrap()).unwrap();
         }
     }
 }

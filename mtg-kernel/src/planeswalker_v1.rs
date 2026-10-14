@@ -34,7 +34,11 @@ pub fn loyalty(state: &GameState, object: ObjectId) -> Option<u32> {
         .map(|entry| entry.counters)
 }
 
-pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
+pub(crate) fn after_zone_change(
+    state: &mut GameState,
+    object: ObjectId,
+    counter_input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     if let Some(planeswalkers) = &mut state.planeswalkers_v1 {
         planeswalkers.loyalty.remove(&object);
         if planeswalkers.loyalty.is_empty() {
@@ -50,12 +54,21 @@ pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
                 .starting_loyalty
                 .unwrap_or(0),
         );
-        let counters = crate::standard_cards_v1::scale_counters(
+        let counters = match crate::doubling_season_v48::entry_amount(
             state,
+            counter_input,
             live.controller,
             counters as i32,
-        )
-        .max(0) as u32;
+        ) {
+            Ok(count) => count.max(0) as u32,
+            Err(_) => {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
+        };
         let entry = LoyaltyV1 {
             permanent: ObjectLinkV4 {
                 object,

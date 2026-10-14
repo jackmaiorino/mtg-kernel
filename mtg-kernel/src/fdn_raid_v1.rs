@@ -10,7 +10,11 @@ pub(crate) fn entry_counter_count_for(name: &str) -> Option<u8> {
     }
 }
 
-pub(crate) fn apply_entry_counters(state: &mut GameState, id: ObjectId) {
+pub(crate) fn apply_entry_counters(
+    state: &mut GameState,
+    id: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let object = state.objects.get(id);
     let definition = &CARD_DEFS[object.card_def as usize];
     if object.zone != Zone::Battlefield || !definition.is_executable() {
@@ -22,7 +26,35 @@ pub(crate) fn apply_entry_counters(state: &mut GameState, id: ObjectId) {
     if state.player_attacked_this_turn_v1(object.controller)
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
-        state.objects.get_mut(id).counters.plus1_plus1 += i32::from(count);
+        let count = match crate::doubling_season_v48::entry_amount(
+            state,
+            input,
+            object.controller,
+            i32::from(count),
+        ) {
+            Ok(count) => count,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    id,
+                ));
+                return;
+            }
+        };
+        let Some(total) = state
+            .objects
+            .get(id)
+            .counters
+            .plus1_plus1
+            .checked_add(count)
+        else {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                id,
+            ));
+            return;
+        };
+        state.objects.get_mut(id).counters.plus1_plus1 = total;
     }
 }
 

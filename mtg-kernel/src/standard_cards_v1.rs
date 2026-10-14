@@ -4321,13 +4321,26 @@ pub(crate) fn begin_turn(state: &mut GameState) {
 }
 
 /// These counters are placed as the permanent enters, before its ETB trigger.
-pub(crate) fn initialize_entry_counters(state: &mut GameState, object: ObjectId) {
+pub(crate) fn initialize_entry_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let live = state.objects.get(object);
     let name = CARD_DEFS[live.card_def as usize].name;
     if live.v4.face_index != 0 {
         return;
     }
-    let count = scale_counters(state, live.controller, 3);
+    let count = match crate::doubling_season_v48::entry_amount(state, input, live.controller, 3) {
+        Ok(count) => count,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    };
     match name {
         "Braided Net" => state.objects.get_mut(object).counters.net = count,
         "Reckoner Bankbuster" => state.objects.get_mut(object).counters.charge = count,

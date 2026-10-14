@@ -1416,24 +1416,39 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
 }
 
-fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
+fn initialize_entry_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    kicked: bool,
+    counter_input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let live = state.objects.get(object);
     let definition = &crate::card_def::CARD_DEFS[live.card_def as usize];
     if definition.is_executable() {
         if let Some(entry) = definition.enters_with_plus_one_counters {
             if !entry.if_kicked || kicked {
-                #[cfg(feature = "standard-magezero-fixtures")]
-                let entry_count =
-                    crate::standard_cards_v1::scale_counters(state, live.controller, entry.count);
-                #[cfg(not(feature = "standard-magezero-fixtures"))]
-                let entry_count = entry.count;
+                let entry_count = match crate::doubling_season_v48::entry_amount(
+                    state,
+                    counter_input,
+                    live.controller,
+                    entry.count,
+                ) {
+                    Ok(count) => count,
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
+                        return;
+                    }
+                };
                 state.objects.get_mut(object).counters.plus1_plus1 = entry_count;
             }
         }
     }
-    crate::fdn_raid_v1::apply_entry_counters(state, object);
+    crate::fdn_raid_v1::apply_entry_counters(state, object, counter_input);
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_statics_v1::apply_conditional_entry_counters(state, object);
+    crate::standard_statics_v1::apply_conditional_entry_counters(state, object, counter_input);
 }
 
 pub(crate) fn log_plus_one_counters_added(
@@ -2578,7 +2593,7 @@ fn commit_with_ability_lki_and_entry_batch(
         frozen_death_captures,
         authority_batch,
         entry_batches,
-        (entry_context, None),
+        (entry_context, None, None),
     );
 }
 type EntryContextWithSourceColorV1 = (
@@ -2587,6 +2602,7 @@ type EntryContextWithSourceColorV1 = (
         bool,
     ),
     Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
+    Option<crate::doubling_season_v48::ReplacementInputV48>,
 );
 fn commit_with_entry_batch_and_source_color(
     state: &mut GameState,
@@ -2600,7 +2616,9 @@ fn commit_with_entry_batch_and_source_color(
     ),
     entry_context: EntryContextWithSourceColorV1,
 ) {
-    let (entry_context, frozen_source_color) = entry_context;
+    let (entry_context, frozen_source_color, frozen_counter_input) = entry_context;
+    let counter_input =
+        frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
     match crate::linked_aura_operation_v1::prepare_entry_colors(state, std::slice::from_ref(&event))
     {
         Ok(true) => {}
@@ -2831,6 +2849,7 @@ fn commit_with_entry_batch_and_source_color(
                         .as_ref()
                         .filter(|(object, _)| *object == z.object)
                         .map(|(_, face)| *face),
+                    counter_input.as_ref(),
                 ),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -2977,9 +2996,9 @@ fn commit_with_entry_batch_and_source_color(
                     },
                 );
             state.objects.get_mut(object).tapped = enters_tapped;
-            initialize_entry_counters(state, object, false);
+            initialize_entry_counters(state, object, false, counter_input.as_ref());
             if crate::ajani_full_v42::selected_definition(t.token_def) {
-                crate::planeswalker_v1::after_zone_change(state, object);
+                crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
             }
             CommittedEvent::CreateToken {
@@ -3165,7 +3184,7 @@ fn commit_with_entry_batch_and_source_color(
     // Panda uses its original index and can then append its own markers.
     crate::fiendish_panda_v1::record_gain(state, entry_history_index);
     if let Some(object) = entry_counter_object {
-        crate::standard_cards_v1::initialize_entry_counters(state, object);
+        crate::standard_cards_v1::initialize_entry_counters(state, object, counter_input.as_ref());
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;
         let controller = live.controller;
@@ -3425,6 +3444,11 @@ fn commit_batch_survivors(
             .collect::<Vec<_>>()
             .into_iter()
     });
+    let mut counter_inputs = survivors
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>()
+        .into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
@@ -3440,6 +3464,9 @@ fn commit_batch_survivors(
             })
             .collect::<Vec<_>>();
         for (event, removed) in survivors.into_iter().zip(ability_removals) {
+            let counter_input = counter_inputs
+                .next()
+                .expect("one entry counter input per batch member");
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
@@ -3452,11 +3479,14 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color),
+                ((None, true), frozen_color, counter_input),
             );
         }
     } else {
         for event in survivors {
+            let counter_input = counter_inputs
+                .next()
+                .expect("one entry counter input per batch member");
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
@@ -3469,7 +3499,7 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color),
+                ((None, true), frozen_color, counter_input),
             );
         }
     }
@@ -3564,7 +3594,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 Some(captures),
                 None,
                 (None, None),
-                ((None, false), frozen_color),
+                ((None, false), frozen_color, None),
             );
         }
     }
@@ -3611,7 +3641,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     None,
                     None,
                     (None, None),
-                    ((None, false), frozen_color),
+                    ((None, false), frozen_color, None),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -3637,7 +3667,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             Some(captures),
             None,
             (None, None),
-            ((None, false), frozen_color),
+            ((None, false), frozen_color, None),
         );
     }
     crate::linked_aura_operation_v1::end_batch(state);
@@ -3897,9 +3927,10 @@ fn commit_zone_change(
     entry_context: (
         Option<&[crate::state::AbilitySourceContractV4]>,
         Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
+        Option<&crate::doubling_season_v48::ReplacementInputV48>,
     ),
 ) {
-    let (authority_observers, entering_characteristics) = entry_context;
+    let (authority_observers, entering_characteristics, counter_input) = entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -4098,13 +4129,29 @@ fn commit_zone_change(
         }
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
-            initialize_entry_counters(state, id, kicked);
+            initialize_entry_counters(state, id, kicked, counter_input);
         }
         if let Some(count) = entering_characteristics.and_then(|entry| entry.x_counters) {
+            let controller = state.objects.get(id).controller;
+            let count = match crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input,
+                controller,
+                count,
+            ) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            };
             state.objects.get_mut(id).counters.plus1_plus1 = count;
         }
     }
-    crate::planeswalker_v1::after_zone_change(state, id);
+    crate::planeswalker_v1::after_zone_change(state, id, counter_input);
     if to_zone == Zone::Battlefield {
         crate::ajani_full_v42::lifecycle::initialize_entry(state, id);
     }
