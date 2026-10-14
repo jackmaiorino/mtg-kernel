@@ -9328,7 +9328,9 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
-    if crate::fiendish_panda_v1::validate_state(state).is_err() {
+    if let Err(_error) = crate::fiendish_panda_v1::validate_state(state) {
+        #[cfg(test)]
+        eprintln!("Panda prework validation rejected: {_error}");
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -13080,7 +13082,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
 
         let pending = state.engine.pending_triggers.remove(0);
-        if push_trigger_onto_stack(state, pending.clone()).is_err() {
+        if let Err(_error) = push_trigger_onto_stack(state, pending.clone()) {
+            #[cfg(test)]
+            eprintln!("Trigger placement rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,

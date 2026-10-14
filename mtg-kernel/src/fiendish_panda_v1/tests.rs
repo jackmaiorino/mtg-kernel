@@ -570,6 +570,7 @@ mod printed {
                 Zone::Battlefield,
             );
             let aura = put(&mut state, actor, "Banishing Light", Zone::Hand);
+            crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor);
             state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
             state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
             engine::step(&mut state, Action::CastSpell(aura)).unwrap();
