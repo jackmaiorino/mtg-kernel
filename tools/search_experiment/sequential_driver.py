@@ -124,7 +124,7 @@ def run(plan):
                         "only approved same-pool serial/four-worker legacy reuse is supported")
                 invoke([plan["certifier"], "--manifest", str(manifest),
                         *sum((["--batch", existing[n]] for n in ("1", "4")), []),
-                        "--out", str(root / "P14-THROUGHPUT-CERTIFICATION.json")])
+                        "--out", str(root / f"P14-THROUGHPUT-CERTIFICATION-{plan['attempt']}.json")])
             batches = []
             reference = None
             for index, workers in enumerate((1, 4, 8)):

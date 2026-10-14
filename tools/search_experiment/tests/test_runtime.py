@@ -189,6 +189,9 @@ class QualificationTests(unittest.TestCase):
                 self.assertEqual(receipt["compatible"], launch.compatibility(target))
                 self.assertEqual([launch.digest(path) for path in paths], originals)
                 self.assertTrue(all(row["legacy_metadata_added"] for row in receipt["certification_provenance"]))
+                with self.assertRaisesRegex(ValueError, "destination already exists"):
+                    certify_qualification.certify(manifest, paths, paths[0])
+                self.assertEqual([launch.digest(path) for path in paths], originals)
                 log.write_text(json.dumps({"claimed": "legacy2", "cores": "2-3"}))
                 with self.assertRaisesRegex(ValueError, "outer claim differs"):
                     certify_qualification.certify(manifest, paths, root / "bad.json")

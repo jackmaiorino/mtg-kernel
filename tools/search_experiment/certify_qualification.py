@@ -9,6 +9,7 @@ from launch import (allocation, allocator, checked, compatibility, digest, load,
 
 
 def certify(manifest, paths, out):
+    require(not Path(out).exists(), "certification destination already exists; preserve its evidence")
     target = load(manifest)
     validate(target, 1, "qualify")
     require(target.get("core_pool"), "certification needs an exact requested pool")
@@ -77,6 +78,7 @@ def certify(manifest, paths, out):
     receipt.update(certification="missing-legacy-core-pool-metadata-only",
                    target_manifest={"path": str(manifest), "sha256": digest(manifest)},
                    certification_provenance=provenance)
+    require(not Path(out).exists(), "certification destination appeared during processing")
     publish(out, receipt)
     return receipt
 
