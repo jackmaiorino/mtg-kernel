@@ -257,6 +257,49 @@ mod printed {
                 published.occurrences[0].original_target,
                 Some(original.clone())
             );
+            // A public projection cannot depend on the identity assigned to a
+            // newer hidden incarnation by an information-set reconstruction.
+            // The genuine engine state below still follows its real fizzle.
+            for name in ["Forest", "Island"] {
+                let mut hidden = state.clone();
+                let changed = hidden.objects.get_mut(target);
+                changed.card_def = crate::card_def::card_id_by_name(name).unwrap();
+                changed.name = name.into();
+                let before = serde_json::to_vec(&hidden).unwrap();
+                assert_eq!(capture(&hidden).unwrap(), published);
+                assert_eq!(
+                    original_target_reference(&hidden, &item).unwrap(),
+                    Some(original.clone())
+                );
+                assert_eq!(
+                    stack_source_reference(&hidden, &item).unwrap().unwrap(),
+                    published.occurrences[0].source
+                );
+                assert_eq!(serde_json::to_vec(&hidden).unwrap(), before);
+            }
+            // Changing both the live row and the retained publication cannot
+            // forge the identity that belonged to the original input world.
+            let mut forged = state.clone();
+            let replacement = crate::card_def::card_id_by_name("Forest").unwrap();
+            for contract in &mut forged.stack.last_mut().unwrap().v4.target_contracts {
+                if let StackTargetContractV4::Object { card_def, .. } = contract {
+                    *card_def = replacement;
+                }
+            }
+            for entry in &mut forged.engine.event_history {
+                if let CommittedEvent::FiendishPandaJournalV1 { journal } = entry {
+                    if let JournalV1::Published { item, .. } = journal.as_mut() {
+                        for contract in &mut item.v4.target_contracts {
+                            if let StackTargetContractV4::Object { card_def, .. } = contract {
+                                *card_def = replacement;
+                            }
+                        }
+                    }
+                }
+            }
+            let before = serde_json::to_vec(&forged).unwrap();
+            assert!(capture(&forged).is_err());
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(
