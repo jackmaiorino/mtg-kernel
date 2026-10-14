@@ -67,6 +67,7 @@ def prepare(args):
             "inputs": index["assets"], "collab_input_ref": index["collab_ref"],
             "eligible_workers": args.eligible_workers, "cores_claimed": args.cores_claimed, "cpu_cap_seconds": args.cpu_cap,
             "external_cpu_seconds": args.external_cpu, "qualification_cpu_cap_seconds": args.qualification_cpu_cap,
+            "representative_qualification": args.representative_qualification,
             "output_cap_bytes": 4 * GIB, "projected_output_bytes": 64 * 1024**2,
             "ledger": str(root / "CPU-LEDGER.jsonl"), "cold_binary_root": args.cold_binary_root,
             "storage": {"hot_volume": args.hot_volume, "hot_disk": args.hot_disk, "cold_volume": args.cold_volume},
@@ -123,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--cpu-cap", type=float, default=CPU_CAP)
     parser.add_argument("--external-cpu", type=float, default=0)
     parser.add_argument("--qualification-cpu-cap", type=float, default=1200)
+    parser.add_argument("--representative-qualification", action="store_true", help="explicit ABC completed-work qualification, up to 2400 CPU seconds")
     parser.add_argument("--wait-timeout", type=float, default=43200)
     parser.add_argument("--calibration")
     parser.add_argument("--qualification")

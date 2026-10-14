@@ -64,6 +64,22 @@ class QualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             spec = self.calibrated_spec(directory)
             launch.qualification_guard(spec, 2)
+
+    def test_representative_cap_requires_explicit_abc_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            spec["qualification_cpu_cap_seconds"] = 2400
+            with patch.object(launch, "storage_guard"):
+                with self.assertRaisesRegex(ValueError, "qualification CPU cap"):
+                    launch.validate(spec, 1, "qualify")
+                spec["representative_qualification"] = True
+                with self.assertRaisesRegex(ValueError, "requires ABC"):
+                    launch.validate(spec, 1, "qualify")
+                spec["workload"] = {"arms": "ABC", "evaluation": {"enabled": True}}
+                launch.validate(spec, 1, "qualify")
+                spec["qualification_cpu_cap_seconds"] = 2401
+                with self.assertRaisesRegex(ValueError, "qualification CPU cap"):
+                    launch.validate(spec, 1, "qualify")
             model = Path(spec["inputs"][0]["path"])
             model.write_bytes(b"changed model")
             spec["inputs"][0]["sha256"] = launch.digest(model)

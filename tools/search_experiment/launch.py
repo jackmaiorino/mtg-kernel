@@ -189,7 +189,13 @@ def validate(spec, workers, phase):
                         "calibration must complete actual baseline anchors without quality evaluation")
         qualification_guard(spec, workers)
     else:
-        require(0 < spec["qualification_cpu_cap_seconds"] <= 1200, "small qualification CPU cap exceeds 20 minutes")
+        representative = spec.get("representative_qualification") is True
+        if representative:
+            require(spec["workload"]["arms"] == "ABC"
+                    and spec["workload"]["evaluation"]["enabled"] is True,
+                    "representative qualification requires ABC frozen evaluation")
+        require(0 < spec["qualification_cpu_cap_seconds"] <= (2400 if representative else 1200),
+                "qualification CPU cap exceeds declared small or representative bound")
 
 
 def lease_guard_check(spec):

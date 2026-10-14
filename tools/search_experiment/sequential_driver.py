@@ -123,7 +123,8 @@ def run(plan):
             for index, workers in enumerate((1, 4, 8)):
                 if index:
                     projection = max(previous["cpu_seconds"], reference["cpu_seconds"]) * 1.5
-                    require(projection <= 1200, "projected qualification CPU exceeds phase bound")
+                    require(projection <= load(manifest)["qualification_cpu_cap_seconds"],
+                            "projected qualification CPU exceeds phase bound")
                     require(accounted() + projection < 43200, "remaining aggregate CPU cannot fit projected stage")
                 label = f"{ladder['label_prefix']}-w{workers}-{plan['attempt']}"
                 path, previous = execute(manifest, "qualify", workers, label, ladder["cost_only"],
