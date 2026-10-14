@@ -1391,6 +1391,12 @@ pub enum CommittedEvent {
     TokenAttachmentJournalV48 {
         journal: Box<crate::season_token_attachment_v48::JournalV48>,
     },
+    BaitTransferInputV48 {
+        input: Box<crate::doubling_season_v48::BaitTransferInputV48>,
+    },
+    BaitTransferAppliedV48 {
+        placement: Box<crate::doubling_season_v48::BaitTransferAppliedV48>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

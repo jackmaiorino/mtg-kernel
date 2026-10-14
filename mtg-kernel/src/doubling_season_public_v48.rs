@@ -24,10 +24,16 @@ pub struct CreationV48 {
     pub created: Vec<IncarnationV48>,
     pub replacement_sources: Vec<CardStableRefV1>,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CounterKindV48 {
+    PlusOnePlusOne,
+    Bait,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CounterPlacementV48 {
     pub occurrence: usize,
+    pub kind: CounterKindV48,
     /// Historical recipient incarnation only, never its later hidden printing.
     pub recipient: IncarnationV48,
     pub actor: PlayerSeatV1,
@@ -166,6 +172,7 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
             CommittedEvent::PlusCounterReplacementV48 { placement } => {
                 counter_placements.push(CounterPlacementV48 {
                     occurrence: counter_placements.len(),
+                    kind: CounterKindV48::PlusOnePlusOne,
                     recipient: IncarnationV48 {
                         object: placement.recipient.object.0,
                         generation: placement.recipient.zone_change_count,
@@ -185,6 +192,37 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
                         .map(original_source)
                         .collect(),
                 })
+            }
+            CommittedEvent::BaitTransferAppliedV48 { placement } => {
+                let Some(CommittedEvent::BaitTransferInputV48 { input }) =
+                    state.engine.event_history.get(placement.input as usize)
+                else {
+                    unreachable!("validated original bait input")
+                };
+                let original = season::ReplacementInputV48::capture(
+                    &input.world,
+                    input.world.objects.get(input.recipient.object).controller,
+                );
+                counter_placements.push(CounterPlacementV48 {
+                    occurrence: counter_placements.len(),
+                    kind: CounterKindV48::Bait,
+                    recipient: IncarnationV48 {
+                        object: input.recipient.object.0,
+                        generation: input.recipient.zone_change_count,
+                    },
+                    actor: input.actor.into(),
+                    recipient_controller: original.controller.into(),
+                    original: input.original,
+                    placed: placement
+                        .after
+                        .checked_sub(placement.before)
+                        .ok_or_else(|| RlContractError("bait placed count overflow".into()))?,
+                    replacement_sources: original
+                        .seasons
+                        .into_iter()
+                        .map(original_source)
+                        .collect(),
+                });
             }
             CommittedEvent::TokenAttachmentJournalV48 { journal } => {
                 if let crate::season_token_attachment_v48::JournalV48::Completed {

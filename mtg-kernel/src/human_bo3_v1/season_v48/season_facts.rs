@@ -12,6 +12,7 @@ pub struct HumanSeasonCreationV48 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanSeasonCounterV48 {
     pub occurrence: usize,
+    pub kind: public::CounterKindV48,
     pub recipient: String,
     pub actor: PlayerSeatV1,
     pub recipient_controller: PlayerSeatV1,
@@ -126,6 +127,7 @@ pub(super) fn project_season(
         .map(|row| {
             Ok(HumanSeasonCounterV48 {
                 occurrence: row.occurrence,
+                kind: row.kind,
                 recipient: role(row.recipient),
                 actor: row.actor,
                 recipient_controller: row.recipient_controller,

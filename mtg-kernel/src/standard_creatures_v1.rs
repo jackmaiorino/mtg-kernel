@@ -193,6 +193,7 @@ fn apply_counter_transfer(
     let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
+    let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
     let loyalty = snapshot.extras.loyalty;
     if loyalty > 0
         && (crate::doubling_season_v48::requires_successor(state) || loyalty > i32::MAX as u32)
@@ -213,6 +214,13 @@ fn apply_counter_transfer(
         .as_ref()
         .map_or(0, |u| u.finality)
         .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))?).ok()?)?;
+    let bait_input = crate::doubling_season_v48::record_bait_transfer_input(
+        state,
+        target,
+        player,
+        counters.bait,
+    )
+    .ok()?;
     crate::event::add_plus_one_counters(state, target, player, counters.plus1_plus1).ok()?;
     let keyword_timestamp =
         (snapshot.extras.lifelink > 0).then(|| crate::engine::next_timestamp(state));
@@ -224,6 +232,7 @@ fn apply_counter_transfer(
     live.counters.oil = oil;
     live.counters.charge = charge;
     live.counters.net = net;
+    live.counters.bait = bait;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -236,6 +245,7 @@ fn apply_counter_transfer(
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
     crate::planeswalker_v1::add_loyalty_counters_u32_v48(state, target, loyalty).ok()?;
+    crate::doubling_season_v48::record_bait_transfer_applied(state, bait_input).ok()?;
     Some(())
 }
 
@@ -1006,6 +1016,73 @@ mod doubling_season_transfer_tests_v48 {
         state::Zone,
     };
     #[test]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn actual_bait_transfer_original_world_balance_and_restore_refuse_counter_forgery_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let recipient = put(&mut state, actor, "Fishing Pole", Zone::Battlefield);
+            let original = CounterTransferV1 {
+                counters: crate::state::Counters {
+                    bait: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            // Actual shared counter-transfer primitive, not an invented Pole ability.
+            for _ in 0..2 {
+                apply_counter_transfer(&mut state, recipient, actor, original).unwrap();
+            }
+            assert_eq!(state.objects.get(recipient).counters.bait, 4);
+            let other = put(&mut state, actor, "Forest", Zone::Battlefield);
+            apply_counter_transfer(&mut state, other, actor, original).unwrap();
+            assert_eq!(state.objects.get(other).counters.bait, 2);
+            let mut zeroed = state.clone();
+            zeroed.objects.get_mut(other).counters.bait = 0;
+            let before = zeroed.clone();
+            assert!(crate::engine::step(&mut zeroed, crate::engine::Action::Pass).is_err());
+            assert_eq!(zeroed, before);
+            crate::doubling_season_v48::validate_token_journals(&state).unwrap();
+            crate::fishing_pole_v39::lifecycle::validate_state(&state).unwrap();
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                crate::doubling_season_v48::validate_token_journals(&state).unwrap();
+                crate::fishing_pole_v39::lifecycle::validate_state(&state).unwrap();
+            }
+            let mut changed = state.clone();
+            let at = changed
+                .engine
+                .event_history
+                .iter()
+                .position(|e| matches!(e, event::CommittedEvent::BaitTransferAppliedV48 { .. }))
+                .unwrap();
+            changed.engine.event_history[at] = event::CommittedEvent::Tap { object: recipient };
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+            let mut changed = state.clone();
+            changed.objects.get_mut(recipient).counters.bait = 0;
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+            let mut changed = state.clone();
+            for event in &mut changed.engine.event_history {
+                if let event::CommittedEvent::BaitTransferAppliedV48 { placement } = event {
+                    placement.after -= 1;
+                    break;
+                }
+            }
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+        }
+    }
+
+    #[test]
     fn genuine_unsigned_loyalty_transfer_preserves_full_width_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1061,6 +1138,7 @@ mod doubling_season_transfer_tests_v48 {
                     oil: 1,
                     charge: 1,
                     net: 1,
+                    bait: 1,
                     ..Default::default()
                 },
                 extras: CounterExtrasV1 {
@@ -1083,10 +1161,13 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.oil, 2);
                 assert_eq!(o.counters.charge, 2);
                 assert_eq!(o.counters.net, 2);
+                assert_eq!(o.counters.bait, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);
                 assert_eq!(crate::planeswalker_v1::loyalty(branch, target), Some(2));
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                crate::fishing_pole_v39::lifecycle::validate_state(branch).unwrap();
             }
             assert_eq!(state, restored);
             let original = (i32::MAX as u32) / 2 + 1;

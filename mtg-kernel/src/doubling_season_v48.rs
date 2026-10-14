@@ -388,6 +388,8 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
                 | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
                 | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
         )
     }) || state.stack.iter().any(|item| {
         item.v4
@@ -397,6 +399,162 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 object.zone == Zone::Stack && owns_definition(object.card_def)
             })
     })
+}
+
+/// Original low-level effect input for the previously omitted bait family.
+/// It is private, sampled before any transferred family changes the board.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaitTransferInputV48 {
+    pub index: u64,
+    pub world: Box<GameState>,
+    pub recipient: crate::state::ObjectLinkV4,
+    pub actor: PlayerId,
+    pub original: i32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaitTransferAppliedV48 {
+    pub input: u64,
+    pub before: i32,
+    pub after: i32,
+}
+pub(crate) fn record_bait_transfer_input(
+    state: &mut GameState,
+    recipient: ObjectId,
+    actor: PlayerId,
+    original: i32,
+) -> Result<Option<u64>, String> {
+    if original == 0 {
+        return Ok(None);
+    }
+    let live = state.objects.get(recipient);
+    let placed = counter_amount(state, recipient, actor, CounterOriginV48::Effect, original)?;
+    live.counters
+        .bait
+        .checked_add(placed)
+        .ok_or("bait transfer overflow")?;
+    let link = crate::state::ObjectLinkV4 {
+        object: recipient,
+        zone_change_count: live.zone_change_count,
+    };
+    let mut world = state.clone();
+    world.engine.event_history.clear();
+    world.engine.event_log.clear();
+    let world: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&world).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let index = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(crate::event::CommittedEvent::BaitTransferInputV48 {
+            input: Box::new(BaitTransferInputV48 {
+                index,
+                world: Box::new(world),
+                recipient: link,
+                actor,
+                original,
+            }),
+        });
+    Ok(Some(index))
+}
+pub(crate) fn record_bait_transfer_applied(
+    state: &mut GameState,
+    input: Option<u64>,
+) -> Result<(), String> {
+    let Some(index) = input else { return Ok(()) };
+    let Some(crate::event::CommittedEvent::BaitTransferInputV48 { input }) =
+        state.engine.event_history.get(index as usize)
+    else {
+        return Err("bait transfer lost original input".into());
+    };
+    let before = input
+        .world
+        .objects
+        .get(input.recipient.object)
+        .counters
+        .bait;
+    let after = state.objects.get(input.recipient.object).counters.bait;
+    state
+        .engine
+        .event_history
+        .push(crate::event::CommittedEvent::BaitTransferAppliedV48 {
+            placement: Box::new(BaitTransferAppliedV48 {
+                input: index,
+                before,
+                after,
+            }),
+        });
+    Ok(())
+}
+pub(crate) fn bait_transfer_balance(
+    state: &GameState,
+    index: usize,
+) -> Result<Option<(crate::state::ObjectLinkV4, i32, i32)>, String> {
+    let Some(crate::event::CommittedEvent::BaitTransferAppliedV48 { placement }) =
+        state.engine.event_history.get(index)
+    else {
+        return Ok(None);
+    };
+    let Some(crate::event::CommittedEvent::BaitTransferInputV48 { input }) =
+        state.engine.event_history.get(placement.input as usize)
+    else {
+        return Err("bait transfer lacks independent original world".into());
+    };
+    let live = input
+        .world
+        .objects
+        .try_get(input.recipient.object)
+        .ok_or("bait transfer original recipient absent")?;
+    let amount = counter_amount(
+        &input.world,
+        input.recipient.object,
+        input.actor,
+        CounterOriginV48::Effect,
+        input.original,
+    )?;
+    let after = live
+        .counters
+        .bait
+        .checked_add(amount)
+        .ok_or("bait transfer total overflow")?;
+    if input.index != placement.input
+        || placement.input >= index as u64
+        || input.original <= 0
+        || !input.world.engine.event_history.is_empty()
+        || !input.world.engine.event_log.is_empty()
+        || live.zone != Zone::Battlefield
+        || live.zone_change_count != input.recipient.zone_change_count
+        || live.counters.bait != placement.before
+        || after != placement.after
+    {
+        return Err("bait transfer changed original board, recipient, or effect count".into());
+    }
+    Ok(Some((input.recipient, placement.before, placement.after)))
+}
+fn validate_bait_transfers(state: &GameState) -> Result<(), String> {
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        match event {
+            crate::event::CommittedEvent::BaitTransferInputV48 {input} => {
+                if input.index!=at as u64 || state.engine.event_history.iter().filter(|event|matches!(event,crate::event::CommittedEvent::BaitTransferAppliedV48 {placement} if placement.input==at as u64)).count()!=1 {
+                    return Err("bait transfer input lost unique actual placement".into());
+                }
+            }
+            crate::event::CommittedEvent::BaitTransferAppliedV48 {..} => {bait_transfer_balance(state,at)?;}
+            _=>{}
+        }
+    }
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+        )
+    }) {
+        return Err("private bait transfer injected as trigger input".into());
+    }
+    Ok(())
 }
 
 /// Properties of the creation effect, installed on every expanded token
@@ -673,6 +831,7 @@ pub(crate) fn record_token_creation(
 
 pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
     crate::season_token_attachment_v48::validate_journals(state)?;
+    validate_bait_transfers(state)?;
 
     use crate::event::CommittedEvent;
     if state.engine.event_log.iter().any(|event| {

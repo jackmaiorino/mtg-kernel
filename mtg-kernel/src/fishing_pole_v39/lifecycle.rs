@@ -1157,23 +1157,38 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if live.counters.bait < 0 {
             return Err("Fishing bait count negative".into());
         }
-        if live.zone != Zone::Battlefield || (live.counters.bait==0 && !selected_definition(live.card_def) && !rows(state).any(|(_,row)|matches!(row,JournalV39::BaitChanged {pole,..} if pole.source==object && pole.zone_change_count==live.zone_change_count))) {
+        let transferred = state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::BaitTransferInputV48 {input} if input.recipient.object==object && input.recipient.zone_change_count==live.zone_change_count));
+        if live.zone != Zone::Battlefield || (live.counters.bait==0 && !selected_definition(live.card_def) && !transferred && !rows(state).any(|(_,row)|matches!(row,JournalV39::BaitChanged {pole,..} if pole.source==object && pole.zone_change_count==live.zone_change_count))) {
             continue;
         }
         let mut balance = 0;
-        for (_, row) in rows(state) {
-            if let JournalV39::BaitChanged {
-                pole,
-                before,
-                after,
-                ..
-            } = row
-            {
-                if pole.source == object && pole.zone_change_count == live.zone_change_count {
-                    if *before != balance {
-                        return Err("Fishing counter operation rewrote original balance".into());
+        for (at, event) in state.engine.event_history.iter().enumerate() {
+            if let CommittedEvent::FishingPoleJournalV39 { journal } = event {
+                if let JournalV39::BaitChanged {
+                    pole,
+                    before,
+                    after,
+                    ..
+                } = journal.as_ref()
+                {
+                    if pole.source == object && pole.zone_change_count == live.zone_change_count {
+                        if *before != balance {
+                            return Err("Fishing counter operation rewrote original balance".into());
+                        }
+                        balance = *after;
                     }
-                    balance = *after;
+                }
+            }
+            if let Some((recipient, before, after)) =
+                crate::doubling_season_v48::bait_transfer_balance(state, at)?
+            {
+                if recipient.object == object
+                    && recipient.zone_change_count == live.zone_change_count
+                {
+                    if before != balance {
+                        return Err("Fishing transferred bait rewrote original balance".into());
+                    }
+                    balance = after;
                 }
             }
         }
