@@ -19,6 +19,20 @@ fn effect_capture(effect: &EffectOp) -> Option<u64> {
     }
 }
 
+pub(crate) fn has_unowned_roots(state: &GameState) -> bool {
+    state.stack.iter().any(|item| binding(item).is_some())
+        || state
+            .engine
+            .pending_triggers
+            .iter()
+            .any(|pending| effect_capture(&pending.effect).is_some())
+        || state
+            .engine
+            .event_log
+            .iter()
+            .any(|event| journal(event).is_some())
+}
+
 fn source_at(state: &GameState, capture: u64) -> Result<AbilitySourceContractV4, String> {
     let index = usize::try_from(capture).map_err(|_| "Fake trigger capture index overflow")?;
     match state.engine.event_history.get(index).and_then(journal) {

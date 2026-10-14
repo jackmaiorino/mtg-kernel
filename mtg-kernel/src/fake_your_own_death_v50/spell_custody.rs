@@ -574,8 +574,10 @@ pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), S
         .any(|event| journal(event).is_some())
     {
         validate_grant_lifetime(state)?;
+        super::death_custody::validate_retained_owners(state)?;
+    } else if super::death_custody::has_unowned_roots(state) {
+        super::death_custody::validate_retained_owners(state)?;
     }
-    super::death_custody::validate_retained_owners(state)?;
     Ok(())
 }
 
