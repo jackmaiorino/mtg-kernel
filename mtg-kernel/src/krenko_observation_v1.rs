@@ -51,54 +51,58 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("krenko_observation_v1.rs"),
-        include_str!("rules_meaning_krenko_v1.rs"),
-        include_str!("krenko_public_v1.rs"),
-        include_str!("krenko_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("gorehorn_damage_v1.rs"),
-        include_str!("effect/squad_rallier_resolution_v1.rs"),
-        include_str!("raid_entry_v1.rs"),
-        include_str!("raid_entry_custody_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("extra_turn_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/krenko_v34.rs"),
-        include_str!("human_bo3_v1/krenko_v34.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("policy_observation_v7.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("surface_v2.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("krenko_observation_v1.rs"),
+            include_str!("rules_meaning_krenko_v1.rs"),
+            include_str!("krenko_public_v1.rs"),
+            include_str!("krenko_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("gorehorn_damage_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
+            include_str!("raid_entry_v1.rs"),
+            include_str!("raid_entry_custody_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("extra_turn_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("rl.rs"),
+            include_str!("rl_session.rs"),
+            include_str!("rl_session/krenko_v34.rs"),
+            include_str!("human_bo3_v1/krenko_v34.rs"),
+            include_str!("human_bo3_v1/labels.rs"),
+            include_str!("human_bo3_v1/visible.rs"),
+            include_str!("human_bo3_v1/life_ward_v8.rs"),
+            include_str!("policy_observation_v8.rs"),
+            include_str!("policy_observation_v7.rs"),
+            include_str!("rl_session/flat_action_v3.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("policy_surface_v5.rs"),
+            include_str!("surface_v2.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_keywords_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 fn commitment(observation: &KrenkoObservationV1) -> Result<String, RlContractError> {
     let mut value = serde_json::to_value(observation)?;

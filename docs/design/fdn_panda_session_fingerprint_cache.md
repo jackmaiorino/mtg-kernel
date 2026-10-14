@@ -24,3 +24,13 @@ Pinned formatting and diff checks pass. Runtime qualification and the full
 0/255, bound revalidation and every final result assertion are preserved. The
 original Native122 executable and source stay unchanged until completion and
 release with outputs retained. No training or playing-strength claim is made.
+
+The continued real session path also builds Fiery, Krenko, Zul Ashur, Banner and
+Inspiration observations. Their five zero-argument producer digests each hash
+only compiled schema/source strings and are now retained once per process. Their
+initializer bodies, input order, delimiters and hex formatting are unchanged.
+Akroma's aggregate digest was already cached. Opt-in existing test phase timing
+is copied from the qualified focused-source branch; the complete260-target/both-seat
+session and all restore/result assertions remain unchanged. Native123 stays at
+immutable711 until its original completion/release/output retention. Current
+performance and whole-session qualification are not inferred from this source.
