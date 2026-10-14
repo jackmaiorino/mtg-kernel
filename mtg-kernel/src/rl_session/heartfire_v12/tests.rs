@@ -85,7 +85,7 @@ fn ordinary_input_preserves_frozen_observation_and_complete_ordered_menu_both_se
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-fn registered_partial_walker_recipient_uses_new_input_and_public_path_only_both_seats() {
+fn registered_full_walker_recipient_uses_successor_input_and_refuses_v12_both_seats() {
     use crate::event::{self, ProposedEvent};
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = fixture(actor);
@@ -100,29 +100,30 @@ fn registered_partial_walker_recipient_uses_new_input_and_public_path_only_both_
             ProposedEvent::zone_change(walker, Zone::Battlefield),
         );
         assert_eq!(crate::planeswalker_v1::loyalty(&state, walker), Some(4));
-        let old = FastActorSessionV1::from_human_v8_fixture_state(state);
-        let next = old.clone().into_heartfire_v12().unwrap();
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::planeswalker_v1::validate_heartfire_recipients_v12(&state).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        let old = FastActorSessionV1::from_human_v8_fixture_state(state.clone());
+        assert!(old.clone().into_heartfire_v12().is_err());
+        let next = FastActorSessionV1::from_ajani_v42_fixture_state(state);
         let e = expected(&next);
-        assert!(matches!(
-            old.human_current_decision_input_v8(e, actor.into()),
-            Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic)
-        ));
+        assert!(old
+            .human_current_decision_input_v8(e, actor.into())
+            .is_err());
         assert!(old.human_raid_observation_v9(e, actor.into()).is_err());
-        let (_, _, binding) = next
-            .heartfire_current_decision_input_v12(e, actor.into())
+        let (public, _, binding) = next
+            .ajani_current_decision_input_v42(e, actor.into())
             .unwrap();
-        let public = next.human_heartfire_public_v12(e, actor.into()).unwrap();
-        crate::heartfire_public_v1::validate(&public).unwrap();
+        public.validate_artifact().unwrap();
         assert_eq!(
-            public.predecessor,
-            crate::policy_observation_v9::observe_policy_v9(
+            public,
+            crate::ajani_observation_v42::observe_v42(
                 &next.state,
                 &next.surface,
                 actor,
                 e.step,
                 e.physical_decision_id,
-                e.substep_index,
-                e.substep_count
+                (e.substep_index, e.substep_count)
             )
             .unwrap()
         );
@@ -130,12 +131,12 @@ fn registered_partial_walker_recipient_uses_new_input_and_public_path_only_both_
         crate::planeswalker_v1::change_loyalty(&mut changed.state, walker, -1);
         let before = serde_json::to_vec(&changed.state).unwrap();
         assert!(changed
-            .heartfire_validate_bound_decision_v12(e, actor.into(), &binding)
+            .ajani_validate_bound_decision_v42(e, actor.into(), &binding)
             .is_err());
         assert_eq!(serde_json::to_vec(&changed.state).unwrap(), before);
         // Rebuilding a genuine current binding uses the actual public loyalty.
         assert!(changed
-            .heartfire_current_decision_input_v12(e, actor.into())
+            .ajani_current_decision_input_v42(e, actor.into())
             .is_ok());
     }
 }
@@ -145,7 +146,7 @@ fn registered_partial_walker_recipient_uses_new_input_and_public_path_only_both_
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-fn missing_stale_or_hidden_recipient_ledger_refuses_without_state_mutation_both_seats() {
+fn full_walker_missing_stale_or_hidden_ledger_refuses_successor_without_mutation_both_seats() {
     use crate::event::{self, ProposedEvent};
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = fixture(actor);
@@ -159,9 +160,7 @@ fn missing_stale_or_hidden_recipient_ledger_refuses_without_state_mutation_both_
             &mut state,
             ProposedEvent::zone_change(walker, Zone::Battlefield),
         );
-        let base = FastActorSessionV1::from_human_v8_fixture_state(state)
-            .into_heartfire_v12()
-            .unwrap();
+        let base = FastActorSessionV1::from_ajani_v42_fixture_state(state);
         let e = expected(&base);
         for case in 0..4 {
             let mut malformed = base.clone();
@@ -177,12 +176,19 @@ fn missing_stale_or_hidden_recipient_ledger_refuses_without_state_mutation_both_
             }
             let before = serde_json::to_vec(&malformed.state).unwrap();
             assert!(malformed
-                .heartfire_current_decision_input_v12(e, actor.into())
+                .ajani_current_decision_input_v42(e, actor.into())
                 .is_err());
-            assert!(malformed
-                .human_heartfire_public_v12(e, actor.into())
-                .is_err());
+            assert!(crate::ajani_observation_v42::observe_v42(
+                &malformed.state,
+                &malformed.surface,
+                actor,
+                e.step,
+                e.physical_decision_id,
+                (e.substep_index, e.substep_count)
+            )
+            .is_err());
             assert_eq!(serde_json::to_vec(&malformed.state).unwrap(), before);
+            assert!(malformed.clone().into_ajani_v42().is_err());
             assert!(malformed.clone().into_heartfire_v12().is_err());
             assert_eq!(serde_json::to_vec(&malformed.state).unwrap(), before);
         }
