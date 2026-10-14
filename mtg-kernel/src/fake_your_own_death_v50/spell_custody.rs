@@ -250,7 +250,7 @@ fn selected_item(state: &GameState, item: &StackItem) -> bool {
             .try_get(item.source)
             .is_some_and(|o| selected_definition(o.card_def))
 }
-fn validate_spell(item: &StackItem) -> Result<EffectObjectBinding, String> {
+pub(super) fn validate_spell(item: &StackItem) -> Result<EffectObjectBinding, String> {
     let source = item
         .v4
         .source_contract
@@ -291,7 +291,7 @@ fn validate_spell(item: &StackItem) -> Result<EffectObjectBinding, String> {
         expected_zone_change_count: *zone_change_count,
     })
 }
-fn publication_for(state: &GameState, item: &StackItem) -> Result<Option<u64>, String> {
+pub(super) fn publication_for(state: &GameState, item: &StackItem) -> Result<Option<u64>, String> {
     let matches = state
         .engine
         .event_history
@@ -325,8 +325,22 @@ pub(crate) fn publish_spell(state: &mut GameState, id: StackItemId) -> Result<()
         return Ok(());
     }
     validate_spell(&item)?;
+    validate_copy_publication(state, &item)?;
+    if publication_for(state, &item)?.is_some() {
+        return Err("Fake spell published twice".into());
+    }
+    emit(
+        state,
+        JournalV50::Published {
+            item: Box::new(item),
+        },
+    );
+    Ok(())
+}
+
+pub(super) fn validate_copy_publication(state: &GameState, item: &StackItem) -> Result<(), String> {
     if item.is_copy {
-        let (creation, original) = copy_creation(state, id)?;
+        let (creation, original) = copy_creation(state, item.v4.stack_item_id)?;
         let inputs = state
             .engine
             .event_history
@@ -348,25 +362,19 @@ pub(crate) fn publish_spell(state: &mut GameState, id: StackItemId) -> Result<()
             expected.targets = vec![*target];
             expected.v4.target_contracts = vec![*contract];
         }
-        if *input <= creation || expected != item {
+        if *input <= creation || expected != *item {
             return Err(
                 "Fake copy finalization changed original row outside its target input".into(),
             );
         }
     }
-    if publication_for(state, &item)?.is_some() {
-        return Err("Fake spell published twice".into());
-    }
-    emit(
-        state,
-        JournalV50::Published {
-            item: Box::new(item),
-        },
-    );
     Ok(())
 }
 
-fn copy_creation(state: &GameState, id: StackItemId) -> Result<(u64, &StackItem), String> {
+pub(super) fn copy_creation(
+    state: &GameState,
+    id: StackItemId,
+) -> Result<(u64, &StackItem), String> {
     let originals = state
         .engine
         .event_history

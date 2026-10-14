@@ -7953,7 +7953,7 @@ fn visible_card_refs(
 // A public reference must preserve its captured identity after an incarnation
 // changes. Disguise's Stack-to-Battlefield resolution is the exception to
 // revealing a departing face-down object: that next incarnation stays hidden.
-fn projected_captured_card_def(
+pub(crate) fn projected_captured_card_def(
     state: &GameState,
     id: ObjectId,
     generation: u32,

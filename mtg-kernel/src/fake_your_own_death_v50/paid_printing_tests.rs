@@ -65,16 +65,28 @@ fn paid_on(
     assert_eq!(state.stack.last().unwrap().source, spell);
     assert!(state.engine.event_history.iter().any(|event|
         matches!(event, CommittedEvent::FakeJournalV50 { journal } if matches!(journal.as_ref(), spell_custody::JournalV50::Published { item } if item.source == spell))));
+    public_facts(&state);
     (state, spell, target)
+}
+
+fn public_facts(state: &GameState) -> public_v50::FactsV50 {
+    let facts = public_v50::capture(state).unwrap();
+    public_v50::validate(state, &facts).unwrap();
+    let decoded: public_v50::FactsV50 =
+        serde_json::from_slice(&serde_json::to_vec(&facts).unwrap()).unwrap();
+    assert_eq!(facts, decoded);
+    facts
 }
 
 fn drain(state: &mut GameState) {
     for _ in 0..24 {
         if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+            public_facts(state);
             return;
         }
         let decision = engine::advance_until_decision(state);
         if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+            public_facts(state);
             return;
         }
         assert!(
@@ -448,6 +460,22 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                     assert!(found);
                     assert_eq!(state.stack.last(), Some(&original));
                     assert_eq!(treasures(&state, owner), 0);
+                    let facts = public_facts(&state);
+                    let menu = facts.aura_menu.unwrap();
+                    assert_eq!(menu.owner, owner.into());
+                    assert!(menu.mandatory);
+                    assert!(!menu.targeted);
+                    assert_eq!(
+                        menu.legal_hosts
+                            .iter()
+                            .map(|host| host.arena_id)
+                            .collect::<Vec<_>>(),
+                        vec![original_host.0, ward_host.unwrap().0]
+                    );
+                    assert_eq!(
+                        facts.deaths[menu.death].phase,
+                        public_v50::DeathPhaseV50::ResolvingEntry
+                    );
                 }
                 let bytes = serde_json::to_vec(&state).unwrap();
                 let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
@@ -664,6 +692,16 @@ fn actual_paid_fake_returns_opponent_owned_card_but_treasure_belongs_to_death_co
             );
             assert_eq!(treasures(game, actor), 1);
             assert_eq!(treasures(game, owner), 0);
+            let facts = public_facts(game);
+            assert_eq!(facts.deaths[0].controller_at_death, actor.into());
+            assert_eq!(facts.deaths[0].returned_controller, Some(owner.into()));
+            assert_eq!(facts.deaths[0].treasure_controller, Some(actor.into()));
+            assert_eq!(facts.deaths[0].treasures.len(), 1);
+            let mut forged = facts.clone();
+            forged.deaths[0].treasure_controller = Some(owner.into());
+            let before = serde_json::to_vec(game).unwrap();
+            assert!(public_v50::validate(game, &forged).is_err());
+            assert_eq!(serde_json::to_vec(game).unwrap(), before);
         }
         assert_eq!(
             serde_json::to_vec(&state).unwrap(),
@@ -845,5 +883,116 @@ fn actual_paid_fake_power_and_gained_death_ability_expire_at_real_cleanup() {
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&restored).unwrap()
         );
+    }
+}
+
+#[test]
+fn actual_paid_fake_copied_spell_publication_retargets_and_restores_without_losing_birth() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, spell, original_target) = paid(actor, actor);
+        let copy_target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        // The shared engine constructor initializes a genuine copy of the
+        // paid spell. It does not claim a second paid copy-making printing.
+        let (copy_source, copy_id) =
+            engine::copy_spell_for(&mut state, spell, actor.opponent()).unwrap();
+        let born = public_facts(&state);
+        assert_eq!(born.spells.len(), 1);
+        assert_eq!(born.unfinalized_copies.len(), 1);
+        assert_eq!(born.unfinalized_copies[0].source.arena_id, copy_source.0);
+        assert_eq!(
+            born.unfinalized_copies[0].original_target.arena_id,
+            original_target.0
+        );
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for game in [&mut state, &mut restored] {
+            engine::finish_spell_copy_targets(game, copy_id, Some(Target::Object(copy_target)))
+                .unwrap();
+            let finalized = public_facts(game);
+            assert!(finalized.unfinalized_copies.is_empty());
+            assert_eq!(finalized.spells.len(), 2);
+            assert!(finalized.spells[1].copied);
+            assert_eq!(finalized.spells[1].copy_occurrence, Some(0));
+            assert_eq!(finalized.spells[1].original_target.arena_id, copy_target.0);
+            drain(game);
+            assert_eq!(engine::effective_power(game, original_target), 3);
+            assert_eq!(engine::effective_power(game, copy_target), 3);
+            death(game, original_target);
+            drain(game);
+            death(game, copy_target);
+            drain(game);
+            let facts = public_facts(game);
+            assert_eq!(facts.grants.len(), 2);
+            assert_eq!(facts.deaths.len(), 2);
+            assert_eq!(facts.deaths[0].treasure_controller, Some(actor.into()));
+            assert_eq!(
+                facts.deaths[1].treasure_controller,
+                Some(actor.opponent().into())
+            );
+            assert_eq!(treasures(game, actor), 1);
+            assert_eq!(treasures(game, actor.opponent()), 1);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_public_facts_mask_face_down_recipient_and_ignore_unrelated_hidden_hand() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Mountain", Zone::Battlefield);
+        }
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let hidden_definition = state.objects.get(target).card_def;
+        // Existing face-down state initializes the privacy operand. No paid
+        // Disguise printing is claimed by this Fake fixture.
+        state.objects.get_mut(target).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+            disguised: true,
+            lookers: 1 << actor.index(),
+            hidden_by: None,
+            hidden_by_source: None,
+        });
+        let (mut state, _, _) = paid_on(state, actor, target);
+        let sentinel = crate::card_def::card_id_by_name("Face-down creature").unwrap();
+        let facts = public_facts(&state);
+        assert_eq!(facts.spells[0].original_target.card_db_id, sentinel);
+        assert_ne!(sentinel, hidden_definition);
+        let mut other = state.clone();
+        let hidden_hand = other.players[actor.opponent().index()].hand[0];
+        let replacement = crate::card_def::card_id_by_name("Mountain").unwrap();
+        other.objects.get_mut(hidden_hand).card_def = replacement;
+        other.objects.get_mut(hidden_hand).name = "Mountain".into();
+        assert_eq!(facts, public_facts(&other));
+        drain(&mut state);
+        assert_eq!(
+            public_facts(&state).grants[0].original_recipient.card_db_id,
+            sentinel
+        );
+        death(&mut state, target);
+        drain(&mut state);
+        let revealed = public_facts(&state);
+        assert_eq!(
+            revealed.spells[0].original_target.card_db_id,
+            hidden_definition
+        );
+        assert_eq!(
+            revealed.deaths[0].original_creature.card_db_id,
+            hidden_definition
+        );
+        assert_eq!(
+            revealed.deaths[0].phase,
+            public_v50::DeathPhaseV50::Resolved
+        );
+        assert_eq!(treasures(&state, actor), 1);
     }
 }

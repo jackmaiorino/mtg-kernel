@@ -14,6 +14,7 @@ use crate::state::{GameState, Zone};
 
 pub mod death_custody;
 pub mod grant_primitive;
+pub mod public_v50;
 pub mod return_aura;
 pub mod spell_custody;
 
