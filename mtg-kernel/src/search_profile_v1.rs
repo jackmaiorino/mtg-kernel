@@ -57,9 +57,13 @@ pub(crate) enum Bucket {
     TensorHash,
     /// V3/V4 tensorizer: digest features and output validation.
     TensorFinish,
+    /// Inference cache: building and hashing the input key.
+    CacheKey,
+    /// Inference cache: lookup, full key comparison, output copy and insert.
+    CacheLookup,
 }
 
-pub(crate) const BUCKETS: usize = 23;
+pub(crate) const BUCKETS: usize = 25;
 
 pub(crate) const NAMES: [&str; BUCKETS] = [
     "sample",
@@ -85,6 +89,8 @@ pub(crate) const NAMES: [&str; BUCKETS] = [
     "tensor_actions",
     "tensor_hash",
     "tensor_finish",
+    "cache_key",
+    "cache_lookup",
 ];
 
 #[cfg(feature = "s4a-profile-v1")]

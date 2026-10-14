@@ -1607,3 +1607,176 @@ fn interchange_setting_is_off_unless_set_to_one() {
     assert!(parse_interchange(Ok("yes".into())).is_err());
     assert!(parse_interchange(Ok(String::new())).is_err());
 }
+
+/// The opt-in prediction cache changes no search output: tree, selection
+/// record and frozen-execution evaluations are identical with it off and
+/// on, while repeated inputs are served from it.
+#[test]
+fn inference_cache_leaves_search_unchanged_and_serves_repeats() {
+    let cfg = test_cfg();
+    let spy = spy_index();
+    let game = spy as u64 + 9 * 3;
+    let setup = game_setup(&cfg, 1, game);
+    let focal_id = PlayerId(setup.focal as u8);
+    let (mut a, mut b) = (fixture(), fixture());
+    let mut root = None;
+    drive(&setup, &mut a, &mut b, |s, d, _| {
+        if play::acting(d) == focal_id && d.legal_action_count >= 3 && s.game_state().turn >= 3 {
+            root = Some(s.clone());
+            return Ok(true);
+        }
+        Ok(false)
+    })
+    .unwrap();
+    let session = root.expect("a fixture root");
+    let prior = world::DeckPrior::new(&cfg.decks);
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "fixture-root".into(),
+    };
+    let run = |cached: bool| {
+        let mut roles = Roles {
+            focal: fixture(),
+            opps: vec![fixture()],
+            scorer: fixture(),
+            inner_focal: fixture(),
+            inner_opps: vec![fixture()],
+        };
+        if cached {
+            let cache = crate::inference_cache_v1::InferenceCacheV1::shared(64 << 20);
+            roles.focal.attach_inference_cache_v1(&cache).unwrap();
+        }
+        let d = play::decision(&session).unwrap();
+        let probs = arms::softmax(&roles.scorer.score_fast_session_v1(&session).unwrap().logits);
+        let ctx = RootCtx {
+            visible_history: &[],
+            root: &session,
+            d,
+            focal: focal_id,
+            opp: 0,
+            seeds: &seeds,
+            prior: &prior,
+            defs: spy_defs(),
+            cast_root: false,
+            probs,
+            limits: Limits {
+                select_cap: 6_000,
+                eval_worlds: 3,
+                eval_cap: 4_000,
+            },
+            urgency: None,
+            key_mode: super::canon2::KeyMode::Legacy,
+            interchange: false,
+            bestline: None,
+        };
+        let mut diag = arms::SearchDiag::default();
+        let (e, tree) = roles.select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+        let mut st = arms::SamplerStats::default();
+        let mut outs = Vec::new();
+        for w in 0..3u64 {
+            let world = world::sample(&session, 99 + w, &prior).unwrap();
+            let o =
+                roles.evaluate_traced(&ctx, "E", &world.world, w, None, Some(&tree), &mut st, None);
+            outs.push(o.json().to_string());
+        }
+        (
+            (tree.hash(), e.json().to_string(), outs),
+            diag.inference_cache,
+        )
+    };
+    let (plain, none) = run(false);
+    let (cached, counters) = run(true);
+    assert!(none.is_null());
+    assert_eq!(plain, cached);
+    let n = |k: &str| counters[k].as_u64().unwrap();
+    assert!(n("hits") > 0, "{counters}");
+    assert_eq!(n("hits") + n("misses"), n("requests"));
+    assert_eq!(n("forwards"), n("misses"));
+    assert!(n("peak_bytes") <= n("budget_bytes"));
+}
+
+/// Scores from the cache are bit-identical to an uncached policy; a mode
+/// change, a different model or a different input never reuses an entry.
+#[test]
+fn inference_cache_scores_match_and_respect_mode_and_model() {
+    let cache = crate::inference_cache_v1::InferenceCacheV1::shared(64 << 20);
+    let mut cached = fixture();
+    cached.attach_inference_cache_v1(&cache).unwrap();
+    let mut fast = fixture();
+    fast.enable_fast_search_forward_v1();
+    fast.attach_inference_cache_v1(&cache).unwrap();
+    let mut other = FrozenPlayPolicyV1::training_fixture_v3();
+    other.attach_inference_cache_v1(&cache).unwrap();
+    let mut reference = fixture();
+    let mut reference_fast = fixture();
+    reference_fast.enable_fast_search_forward_v1();
+    let mut reference_other = FrozenPlayPolicyV1::training_fixture_v3();
+    let bits = |x: &crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1| {
+        (
+            x.logits.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            x.value.to_bits(),
+        )
+    };
+    let stats = |c: &crate::inference_cache_v1::SharedV1| c.lock().unwrap().json();
+    // Passive probes: the uncached reference and the cached policy see the
+    // same input identity; the probe changes no score.
+    use crate::inference_cache_v1::CallOutcomeV1;
+    assert!(reference.take_inference_call_v1().is_err());
+    reference.set_inference_probe_v1(true).unwrap();
+    cached.set_inference_probe_v1(true).unwrap();
+    let mut decisions = 0u64;
+    each_decision(1, |s, d| {
+        if d.legal_action_count < 2 || decisions >= 12 {
+            return;
+        }
+        decisions += 1;
+        let expected = bits(&reference.score_fast_session_v1(s).unwrap());
+        let uncached = reference.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(uncached.outcome, CallOutcomeV1::Uncached);
+        assert_eq!(uncached.cache_bytes, None);
+        let before = stats(&cache)["hits"].as_u64().unwrap();
+        assert_eq!(bits(&cached.score_fast_session_v1(s).unwrap()), expected);
+        let first = cached.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(first.input, uncached.input);
+        assert_eq!(first.key_bytes, uncached.key_bytes);
+        assert_eq!(bits(&cached.score_fast_session_v1(s).unwrap()), expected);
+        let second = cached.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(
+            (second.outcome, second.input),
+            (CallOutcomeV1::Hit, uncached.input)
+        );
+        assert!(second.cache_bytes.is_some_and(|b| b <= 64 << 20));
+        assert!(cached.take_inference_call_v1().unwrap().is_none());
+        assert!(stats(&cache)["hits"].as_u64().unwrap() > before);
+        // Fast tanh and another model miss, then match their own references.
+        let hits = stats(&cache)["hits"].as_u64().unwrap();
+        assert_eq!(
+            bits(&fast.score_fast_session_v1(s).unwrap()),
+            bits(&reference_fast.score_fast_session_v1(s).unwrap())
+        );
+        assert_eq!(
+            bits(&other.score_fast_session_v1(s).unwrap()),
+            bits(&reference_other.score_fast_session_v1(s).unwrap())
+        );
+        assert_eq!(stats(&cache)["hits"].as_u64().unwrap(), hits);
+    });
+    assert!(decisions > 0);
+    // Two calls between takes are an error, never a silent merge.
+    each_decision(1, |s, d| {
+        if d.legal_action_count >= 2 && decisions > 0 {
+            decisions = 0;
+            reference.score_fast_session_v1(s).unwrap();
+            reference.score_fast_session_v1(s).unwrap();
+            assert!(reference.take_inference_call_v1().is_err());
+        }
+    });
+    // Forks share the worker's cache; replacing parameters detaches it.
+    let fork = cached.fork_for_collection_v3().unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        fork.inference_cache_v1().unwrap(),
+        &cache
+    ));
+    let parameters = cached.training_parameters_v3();
+    cached.replace_training_parameters_v3(&parameters).unwrap();
+    assert!(cached.inference_cache_v1().is_none());
+}
