@@ -13,7 +13,7 @@ fn restore(state: &GameState) -> GameState {
 fn genuine_counter_primitive_has_no_new_absent_source_state_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
-        let creature = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        let creature = put(&mut state, actor, "Forest", Zone::Hand);
         event::propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(creature, Zone::Battlefield),

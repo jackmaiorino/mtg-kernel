@@ -130,7 +130,7 @@ mod tests {
     use super::*;
     #[test]
     fn real_registered_other_printing_is_not_a_replacement_root() {
-        let id = crate::card_def::card_id_by_name("Llanowar Elves").unwrap();
+        let id = crate::card_def::card_id_by_name("Forest").unwrap();
         for root in [
             RootV48::EnchantmentSpell,
             RootV48::EffectTokenCreation,
