@@ -1,5 +1,10 @@
 use super::*;
 use crate::ids::PlayerId;
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+use crate::policy_observation_v6::tests::ready_state;
 use crate::policy_observation_v6::tests::{put, ready_state_for};
 
 #[test]
