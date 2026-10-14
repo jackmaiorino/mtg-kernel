@@ -71,3 +71,10 @@ and avoids an admission deadlock when both generations share a registry.
 - On Linux (WSL runners, tests), containment is a process group. A process that leaves the group escapes affinity bookkeeping and suspension.
 - Cores above 63 (a second Windows processor group) are not supported.
 - During a v1 reclaim the lock is briefly absent, so claims may resume for one poll interval (2 s).
+# Per-request core pools
+
+`run` and `submit` accept `--core-pool 8-15` to restrict one request to those
+configured logical CPUs. The existing reservation, ordinary/background claims,
+queue order and shared mutex still govern admission. A request waits when its
+pool lacks room even if CPUs outside the pool are free. The host configuration
+is unchanged; omitting this option preserves the existing allocation behavior.
