@@ -161,7 +161,10 @@ class Archive(Temp):
         self.assertEqual(command["mode"], "archive_distillation_bank")
         self.assertEqual([Path(s["path"]).name for s in command["sources"]],
                          ["ARCHIVE.jsonl", "a-r1-1.jsonl", "a-r1-2.jsonl"])
-        self.assertEqual(command["games"], common.pin(self.root / "out" / "games-r1.jsonl"))
+        # The bank pins the games file by its resolved path, which on Windows
+        # spells out short names such as RUNNER~1.
+        self.assertEqual(command["games"],
+                         common.pin((self.root / "out" / "games-r1.jsonl").resolve()))
 
     def test_inputs_that_disagree_are_refused(self):
         arch = self.game("archive-r1-k0-v6-s1")
