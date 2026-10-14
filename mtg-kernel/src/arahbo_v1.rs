@@ -527,6 +527,18 @@ pub(crate) fn resolve_removed(
         state,
         ProposedEvent::create_token(token_def, ctx.controller),
     );
+    let expected = crate::doubling_season_v48::expected_tokens(
+        state,
+        start,
+        state.engine.event_history.len(),
+        token_def,
+        ctx.controller,
+        1,
+    )?;
+    let actual = state.engine.event_history[start..].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def:created,..} if *controller==ctx.controller && *created==token_def)).count();
+    if actual != expected {
+        return Err("Arahbo did not create its full replacement-expanded roster".into());
+    }
     let token = Some(state.engine.event_history[start..].iter().position(|event|
         matches!(event, CommittedEvent::CreateToken { controller, token_def: created_def, .. } if *controller == ctx.controller && *created_def == token_def)
     ).map(|offset| start+offset).ok_or("Arahbo token produced no actual creation occurrence")? as u64);
@@ -746,6 +758,23 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 }
             }
             let should_token = **kind == RemovalKindV1::Resolving;
+            let definition = cat_token_definition()?;
+            let expected = if should_token {
+                crate::doubling_season_v48::expected_tokens(
+                    state,
+                    *removed + 1,
+                    *completed,
+                    definition,
+                    capture.source.controller,
+                    1,
+                )?
+            } else {
+                0
+            };
+            let actual=state.engine.event_history[*removed+1..*completed].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def,..} if *controller==capture.source.controller && *token_def==definition)).count();
+            if actual != expected {
+                return Err("Arahbo closure lost complete actual expanded token roster".into());
+            }
             match (should_token, token) {
                 (true, Some(token))
                     if *token > *removal

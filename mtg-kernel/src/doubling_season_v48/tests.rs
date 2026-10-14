@@ -789,3 +789,184 @@ fn frozen_visible_printing_refusal_uses_only_actor_current_knowledge_both_seats(
         assert_eq!(restore(&state), state);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_arahbo_self_entry_is_expanded_once_and_full_roster_closure_both_seats() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for owner in [actor, actor.opponent()] {
+            put(&mut state, owner, "Forest", Zone::Battlefield);
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {player,..} if player==actor)
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        for _ in 0..32 {
+            let decision = engine::advance_until_decision(&mut state);
+            assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+            if state.objects.get(source).zone == Zone::Battlefield
+                && state.stack.is_empty()
+                && state.engine.pending_triggers.is_empty()
+            {
+                break;
+            }
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        let cat = crate::arahbo_v1::cat_token_definition().unwrap();
+        let occurrences=state.engine.event_history.iter().enumerate().filter_map(|(i,event)|matches!(event,event::CommittedEvent::CreateToken {token_def,controller,..} if *token_def==cat && *controller==actor).then_some(i)).collect::<Vec<_>>();
+        assert_eq!(occurrences.len(), 2);
+        crate::arahbo_v1::validate_state(&state).unwrap();
+        for _ in 0..3 {
+            state = restore(&state);
+            crate::arahbo_v1::validate_state(&state).unwrap();
+        }
+        let before = state.clone();
+        // Retain original captured/publication/removal and completion. Changing
+        // only the real second member must fail full volume authentication.
+        state.engine.event_history[occurrences[1]] = event::CommittedEvent::Tap { object: source };
+        let corrupted = state.clone();
+        assert!(engine::step(&mut state, Action::Pass).is_err());
+        assert_eq!(state, corrupted);
+        assert_ne!(before, state);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_both_seats() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for owner in [actor, actor.opponent()] {
+            put(&mut state, owner, "Forest", Zone::Battlefield);
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        for _ in 0..32 {
+            let decision = engine::advance_until_decision(&mut state);
+            assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+            if state.objects.get(source).zone == Zone::Battlefield
+                && state.stack.is_empty()
+                && state.engine.pending_triggers.is_empty()
+            {
+                break;
+            }
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        let reflection = put(&mut state, actor, "Self-Reflection", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 6;
+        engine::step(&mut state, Action::CastSpell(reflection)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::ChooseTargets {spell,remaining:1,can_finish:false,..} if spell==reflection)
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(crate::state::Target::Object(source)),
+        )
+        .unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass {player,..} if player==actor)
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let start = state.engine.event_history.len();
+        let mut reached = false;
+        for _ in 0..32 {
+            let decision = engine::advance_until_decision(&mut state);
+            if let Decision::ChooseLegendPermanent { player, candidates } = &decision {
+                assert_eq!(*player, actor);
+                assert_eq!(candidates.len(), 3);
+                assert!(candidates.contains(&source));
+                reached = true;
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(reached);
+        let copies = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::CreateToken {
+                    object,
+                    token_def,
+                    controller,
+                } if *token_def == state.objects.get(source).card_def && *controller == actor => {
+                    Some(*object)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 2);
+        assert!(copies.iter().all(|id| state.objects.get(*id).v4.is_token));
+        let captures = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::ArahboTokenCaptureV1 { capture } => Some(capture),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(captures.len(), 2);
+        assert!(captures
+            .iter()
+            .all(|capture| capture.root == crate::arahbo_v1::RootV1::OwnEntry
+                && copies.contains(&capture.source.source)));
+        crate::arahbo_v1::validate_state(&state).unwrap();
+        let cat = crate::arahbo_v1::cat_token_definition().unwrap();
+        let original = state.clone();
+        for keep in std::iter::once(source).chain(copies.iter().copied()) {
+            let mut branch = restore(&original);
+            engine::step(&mut branch, Action::ChooseLegendPermanent(keep)).unwrap();
+            for _ in 0..48 {
+                let decision = engine::advance_until_decision(&mut branch);
+                assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                if branch.stack.is_empty()
+                    && branch.engine.pending_triggers.is_empty()
+                    && branch.pending_legend_rule_v1.is_none()
+                {
+                    break;
+                }
+                match decision {
+                    Decision::OrderTriggers { pending, .. } => engine::step(
+                        &mut branch,
+                        Action::OrderTriggers((0..pending.len()).collect()),
+                    )
+                    .unwrap(),
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut branch, Action::Pass).unwrap()
+                    }
+                    other => panic!("unexpected genuine copy continuation {other:?}"),
+                }
+            }
+            assert_eq!(branch.engine.event_history[start..].iter().filter(|event|matches!(event,event::CommittedEvent::CreateToken {token_def,controller,..} if *token_def==cat && *controller==actor)).count(),4);
+            assert_eq!(branch.objects.get(keep).zone, Zone::Battlefield);
+            crate::arahbo_v1::validate_state(&branch).unwrap();
+            crate::doubling_season_v48::validate_token_journals(&branch).unwrap();
+            assert_eq!(restore(&branch), branch);
+        }
+    }
+}
