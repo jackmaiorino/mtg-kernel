@@ -391,6 +391,16 @@ jobs:
         run: |
           python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
 
+      - name: Validate new FDN family cores and owned consumers
+        if: matrix.group == 'limited'
+        run: |
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures krenko_v1:: krenko_public_v1:: krenko_observation_v1:: rules_meaning_krenko_v1:: rl_session::krenko_v34:: zul_ashur_v1:: zul_ashur_public_v1:: zul_ashur_observation_v1:: rules_meaning_zul_ashur_v1:: rl_session::zul_ashur_v35:: heraldic_banner_v1:: banner_observation_v1:: rules_meaning_heraldic_banner_v1:: rl_session::banner_v36:: effect::inspiration_resolution_v1:: inspiration_observation_v1:: rules_meaning_inspiration_v1:: rl_session::inspiration_v37:: controlled_creature_grants_v1:: twinflame_tyrant_v1:: twinflame_observation_v1:: rl_session::twinflame_v38:: fishing_pole_v39:: fishing_pole_public_v39:: fishing_pole_observation_v39:: rules_meaning_fishing_pole_v39:: rl_session::fishing_pole_v39:: game_outcome_protection_v1:: game_outcome_protection_public_v1:: game_outcome_observation_v41:: rules_meaning_game_outcome_protection_v1:: rl_session::game_outcome_v41:: ajani_full_v42:: ajani_public_v42:: ajani_observation_v42:: rules_meaning_ajani_v42:: rl_session::ajani_v42:: faebloom_trick_v43:: faebloom_public_v43:: faebloom_observation_v43:: rules_meaning_faebloom_v43:: rl_session::faebloom_v43:: fake_your_own_death_v50::
+
+      - name: Validate ordinary departures under the native Store feature
+        if: matrix.group == 'limited-store'
+        run: |
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" ordinary_departure_retains_color_proof actual_grant_source_still_requires_successor
+
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
         run: |

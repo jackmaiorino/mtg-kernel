@@ -334,7 +334,7 @@ pub(crate) mod future_printed {
                         let custody::JournalV49::Published { item, .. } = journal.as_mut() else {
                             unreachable!()
                         };
-                        *item = Box::new(changed);
+                        **item = changed;
                     }
                 }
                 readonly(forged);

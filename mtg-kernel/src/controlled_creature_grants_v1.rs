@@ -94,17 +94,34 @@ pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(),
     if !enabled() {
         return Ok(());
     }
-    if state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
-        )
-    }) || state.objects.iter().any(|(source, live)| {
-        active(state, source)
-            && CARD_DEFS
-                .get(usize::from(live.card_def))
-                .is_some_and(|d| d.controlled_creature_grant.is_some())
-    }) {
+    let mut retained_grant_source = false;
+    for event in &state.engine.event_history {
+        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
+        else {
+            continue;
+        };
+        if CARD_DEFS
+            .get(usize::from(snapshot.source.card_def))
+            .is_some_and(|definition| definition.controlled_creature_grant.is_some())
+        {
+            let captured: crate::state::GameObject =
+                serde_json::from_str(&snapshot.private_snapshot_json)
+                    .map_err(|_| "invalid original color visibility snapshot")?;
+            retained_grant_source |=
+                captured.v4.face_down_v1.is_none() && captured.v4.face_index == 0;
+        }
+    }
+    // Ordinary color LKI remains mandatory for future protection, but an
+    // unrelated departure does not introduce a controlled-creature grant.
+    // A masked source cannot select a refusal through its hidden definition.
+    if retained_grant_source
+        || state.objects.iter().any(|(source, live)| {
+            active(state, source)
+                && CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|d| d.controlled_creature_grant.is_some())
+        })
+    {
         return Err(
             "controlled-creature color protection requires its explicit consumer successor".into(),
         );

@@ -351,6 +351,12 @@ fn actual_snap_and_real_flash_recast_keep_old_generation_gain_independent_of_new
 #[test]
 #[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
 fn actual_source_lethal_combat_batch_observes_unblocked_loss_before_sba_and_gains_after_death() {
+    let turn_key = |state: &GameState| {
+        state
+            .extra_turn_v1
+            .as_ref()
+            .map_or(state.turn, |turn| turn.occurrence)
+    };
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let source = conqueror(&mut state, actor);
@@ -361,10 +367,10 @@ fn actual_source_lethal_combat_batch_observes_unblocked_loss_before_sba_and_gain
             "Shivan Dragon",
             Zone::Battlefield,
         );
-        let original_turn = state.turn_key_v1();
+        let original_turn = turn_key(&state);
         for _ in 0..160 {
             let decision = next(&mut state);
-            if state.turn_key_v1() != original_turn
+            if turn_key(&state) != original_turn
                 && state.active_player == actor
                 && state.step == Step::Main1
             {
@@ -381,7 +387,7 @@ fn actual_source_lethal_combat_batch_observes_unblocked_loss_before_sba_and_gain
                 other => panic!("actual next-turn traversal {other:?}"),
             }
         }
-        assert_ne!(state.turn_key_v1(), original_turn);
+        assert_ne!(turn_key(&state), original_turn);
         assert_eq!(state.active_player, actor);
         assert!(!state.objects.get(source).summoning_sick);
         for _ in 0..20 {

@@ -1139,7 +1139,6 @@ mod doubling_season_transfer_tests_v48 {
                     charge: 1,
                     net: 1,
                     bait: 1,
-                    ..Default::default()
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,

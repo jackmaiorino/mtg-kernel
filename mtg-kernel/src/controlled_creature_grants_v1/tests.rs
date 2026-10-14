@@ -33,6 +33,77 @@ fn registered_absence_preserves_state_hash_observation_and_restore_both_seats() 
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
+#[test]
+fn ordinary_departure_retains_color_proof_without_requiring_grant_transport_both_seats() {
+    assert!(enabled());
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(elf, Zone::Graveyard),
+        );
+        assert!(state.engine.halted.is_none());
+        let index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(event,
+                crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. }
+                if snapshot.source.source == elf && snapshot.color_mask == 16)
+            })
+            .unwrap();
+        let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
+        for _ in 0..3 {
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let before = serde_json::to_vec(&restored).unwrap();
+            validate_color_history(&restored).unwrap();
+            require_legacy_consumer_supported(&restored).unwrap();
+            for viewer in [actor, actor.opponent()] {
+                crate::rl::observe_policy_v6(&restored, &surface, viewer, 0, 0, 0, 1).unwrap();
+            }
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), before);
+            let mut erased = restored;
+            erased.engine.event_history.remove(index);
+            let before = serde_json::to_vec(&erased).unwrap();
+            assert!(require_legacy_consumer_supported(&erased).is_err());
+            assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
+            state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn actual_grant_source_still_requires_successor_after_departure_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let source = put(&mut state, actor, "Akroma's Memorial", Zone::Battlefield);
+        assert!(require_legacy_consumer_supported(&state).is_err());
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        assert!(state.engine.halted.is_none());
+        for _ in 0..3 {
+            validate_color_history(&state).unwrap();
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(require_legacy_consumer_supported(&state).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            state = serde_json::from_slice(&before).unwrap();
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod future_printed {
     use super::*;
     use crate::card_def::{card_id_by_name, Supertype, TargetSpec};
