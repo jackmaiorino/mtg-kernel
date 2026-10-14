@@ -286,9 +286,20 @@ fn genuine_held_and_resolving_typed_copy_keep_original_controller_source_identit
             )
             .unwrap();
             if held {
-                let waiting = crate::trigger::collect_and_process(&mut state);
-                assert_eq!(waiting.len(), 1);
-                state.engine.pending_triggers.extend(waiting);
+                // Actual attack declaration already collected and queued the
+                // captured occurrence. Recollection correctly yields none.
+                assert_eq!(state.engine.pending_triggers.len(), 1);
+                let waiting = &state.engine.pending_triggers[0];
+                assert_eq!((waiting.source, waiting.controller), (hunter, actor));
+                let source = crate::high_society_hunter_public_v45::pending_source_reference(
+                    &state, waiting,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(
+                    (source.arena_id, source.controller),
+                    (hunter.0, actor.into())
+                );
             } else {
                 for _ in 0..16 {
                     let decision = crate::engine::advance_until_decision(&mut state);
