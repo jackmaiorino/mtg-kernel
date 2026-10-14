@@ -1370,6 +1370,19 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::FakeAuraV50 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.owner,
+            source: choice.aura.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|host| Target::Object(host.object))
+                .collect(),
+        }),
         GeneralChoiceV36::TokenEquipmentV48 { choice, .. } => Ok(Decision::ChooseEffectTargets {
             player: choice.controller,
             source: choice.source.source,
