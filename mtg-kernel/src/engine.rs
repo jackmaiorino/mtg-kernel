@@ -13215,6 +13215,7 @@ pub(crate) fn validate_pending_trigger(
             || matches!(
                 expected,
                 TargetSpec::UpToTwoCardsInSingleGraveyard
+                    | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::UpToOneOtherCreature
                     | TargetSpec::AnotherAttackingCreature
                     | TargetSpec::UpToOneOtherControlledPermanent
