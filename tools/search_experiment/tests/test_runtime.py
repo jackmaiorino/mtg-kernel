@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -13,6 +14,72 @@ import analyze
 
 
 class QualificationTests(unittest.TestCase):
+    def calibrated_spec(self, directory):
+        root = Path(directory)
+        binary, model, calibration = (root / name for name in ("binary", "model", "calibration.json"))
+        binary.write_bytes(b"native")
+        model.write_bytes(b"frozen model")
+        launch.publish(calibration, {"schema": "search-sharing-allocation-cost-calibration/v1", "quality_read": False})
+        asset = lambda path: {"path": str(path), "sha256": launch.digest(path)}
+        spec = {"schema": launch.SCHEMA, "host": launch.platform.node(), "binary": asset(binary),
+                "inputs": [asset(model)], "storage": {"volume": "D"}, "eligible_workers": 2, "cores_claimed": 2,
+                "cpu_cap_seconds": 43200, "external_cpu_seconds": 2000, "projected_output_bytes": 0,
+                "qualification_cpu_cap_seconds": 1200,
+                "workload": {"arms": "A", "evaluation": {"enabled": False}},
+                "jobs": [{"id": str(n), "group": str(n), "max_wall_seconds": 600,
+                          "max_cpu_seconds": 300, "expected_rows": 1, "argv": [],
+                          "env": {"PROFILE_ARM": "A", "PROFILE_EVALUATE": "0",
+                                  "BUDGET_TOTAL": "16000", "PROFILE_ANCHOR": "16000"}} for n in (1, 2)]}
+        receipt = root / "receipt.json"
+        rates = {str(n): {"completed_jobs": 2, "wall_seconds": 2 / n, "completed_per_second": n,
+                          "peak_active_workers": n} for n in (1, 2)}
+        launch.publish(receipt, {"compatible": launch.compatibility(spec), "parity": True, "rates": rates})
+        spec["qualification"] = asset(receipt)
+        spec["calibration"] = asset(calibration)
+        spec["inputs"].append(spec["calibration"])
+        return spec
+
+    def test_derived_calibration_preserves_identity_but_changed_model_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            launch.qualification_guard(spec, 2)
+            model = Path(spec["inputs"][0]["path"])
+            model.write_bytes(b"changed model")
+            spec["inputs"][0]["sha256"] = launch.digest(model)
+            with self.assertRaisesRegex(ValueError, "incompatible"):
+                launch.qualification_guard(spec, 2)
+
+    def test_changed_calibration_bytes_fail_independent_hash_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            Path(spec["calibration"]["path"]).write_text("changed calibration")
+            with patch.object(launch, "storage_guard"):
+                with self.assertRaisesRegex(ValueError, "input hash differs"):
+                    launch.validate(spec, 2, "calibrate")
+
+    def test_substantial_calibration_requires_its_own_completed_work_qualification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = self.calibrated_spec(directory)
+            with patch.object(launch, "storage_guard"):
+                launch.validate(spec, 2, "calibrate")
+                with self.assertRaisesRegex(ValueError, "ABC frozen-evaluation"):
+                    launch.validate(spec, 2, "measure")
+                saved = spec.pop("qualification")
+                with self.assertRaisesRegex(ValueError, "qualification required"):
+                    launch.validate(spec, 2, "calibrate")
+                spec["qualification"] = saved
+                receipt = Path(saved["path"])
+                quality_receipt = launch.load(receipt)
+                quality_spec = {**spec, "workload": {"arms": "ABC", "evaluation": {"enabled": True}}}
+                quality_receipt["compatible"] = launch.compatibility(quality_spec)
+                launch.publish(receipt, quality_receipt)
+                saved["sha256"] = launch.digest(receipt)
+                with self.assertRaisesRegex(ValueError, "incompatible"):
+                    launch.validate(spec, 2, "calibrate")
+                spec["workload"] = {"arms": "ABC", "evaluation": {"enabled": True}}
+                with self.assertRaisesRegex(ValueError, "cost-only A"):
+                    launch.validate(spec, 2, "calibrate")
+
     def test_missing_parallel_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             spec = {"binary": {"sha256": "binary"}, "workload": {"mode": "search"},

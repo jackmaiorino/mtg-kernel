@@ -103,13 +103,17 @@ def storage_guard(spec, extra=0):
 
 
 def compatibility(spec):
+    calibration = spec.get("calibration")
     return {"host": platform.node().upper(), "binary_sha256": spec["binary"]["sha256"],
             "workload_sha256": identity(spec["workload"]),
-            "input_sha256s": sorted(a["sha256"] for a in spec["inputs"]),
+            "input_sha256s": sorted(a["sha256"] for a in spec["inputs"]
+                                   if not calibration or (a["path"], a["sha256"]) !=
+                                   (calibration["path"], calibration["sha256"])),
             "storage": spec["storage"], "cores_claimed": spec["cores_claimed"]}
 
 
 def qualification_guard(spec, workers):
+    require(spec.get("qualification"), "compatible throughput qualification required")
     receipt = load(checked(spec["qualification"]))
     require(receipt["compatible"] == compatibility(spec), "throughput qualification incompatible")
     require(receipt["parity"] is True, "serial/parallel primary output parity missing")
@@ -142,6 +146,11 @@ def validate(spec, workers, phase):
     checked(spec["binary"])
     for asset in spec["inputs"]:
         checked(asset)
+    if spec.get("calibration"):
+        calibration = load(checked(spec["calibration"]))
+        require(calibration.get("schema") == "search-sharing-allocation-cost-calibration/v1"
+                and calibration.get("quality_read") is False,
+                "derived calibration asset is not cost-only calibration")
     require(spec["jobs"] and len({j["id"] for j in spec["jobs"]}) == len(spec["jobs"]), "job IDs must be unique")
     require(len({j["group"] for j in spec["jobs"]}) >= workers,
             "requested worker concurrency exceeds independent matched group count")
@@ -153,7 +162,22 @@ def validate(spec, workers, phase):
         require(job.get("group"), "matched root/seed affinity group required")
         require(not any(a.startswith("out=") or a.startswith("workers=") for a in job["argv"]),
                 "launcher owns output path and single-worker process count")
-    if phase == "measure":
+    if phase in ("measure", "calibrate"):
+        if phase == "measure":
+            require(spec["workload"]["arms"] == "ABC"
+                    and spec["workload"]["evaluation"]["enabled"] is True,
+                    "formal measurement requires qualified ABC frozen-evaluation workload")
+        if phase == "calibrate":
+            require(spec["workload"]["arms"] == "A"
+                    and spec["workload"]["evaluation"]["enabled"] is False,
+                    "substantial calibration requires qualified cost-only A workload")
+            for job in spec["jobs"]:
+                env = job["env"]
+                require(env.get("PROFILE_ARM") == "A" and env.get("PROFILE_EVALUATE") == "0"
+                        and env.get("BUDGET_TOTAL") in ("16000", "64000")
+                        and env.get("PROFILE_ANCHOR") == env.get("BUDGET_TOTAL")
+                        and not any(name in env for name in ("PROFILE_WORK_LIMIT", "PROFILE_CPU_SECONDS")),
+                        "calibration must complete actual baseline anchors without quality evaluation")
         qualification_guard(spec, workers)
     else:
         require(0 < spec["qualification_cpu_cap_seconds"] <= 1200, "small qualification CPU cap exceeds 20 minutes")
@@ -634,7 +658,7 @@ def main(argv=None):
     for name in ("dispatch", "worker", "check", "supervise"):
         sub = commands.add_parser(name)
         sub.add_argument("--manifest", required=True)
-        sub.add_argument("--phase", choices=("qualify", "measure"), required=True)
+        sub.add_argument("--phase", choices=("qualify", "calibrate", "measure"), required=True)
         sub.add_argument("--workers", type=int, required=True)
         sub.add_argument("--label", required=True)
         sub.add_argument("--manifest-sha")

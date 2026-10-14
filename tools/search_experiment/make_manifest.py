@@ -17,8 +17,12 @@ def prepare(args):
     budgets = [int(n) for n in args.budgets.split(",")]
     selected = set(int(n) for n in args.decks.split(","))
     qualification = args.phase == "qualify"
-    require(not args.calibrate or qualification, "cost calibration is a bounded qualification phase")
-    if not qualification:
+    cost_only = args.calibrate or args.phase == "calibrate"
+    require(not args.calibrate or args.phase in ("qualify", "calibrate"),
+            "cost calibration needs bounded qualification or qualified calibration phase")
+    if args.phase == "calibrate":
+        require(args.qualification, "substantial calibration needs cost-only throughput receipt")
+    if args.phase == "measure":
         require(calibration, "measurement queue needs cost-only calibration")
         require(args.qualification, "measurement queue needs throughput receipt")
         require(len(seeds) == 3 and len(set(seeds)) == 3 and all("qualification" not in seed and "calibration" not in seed for seed in seeds),
@@ -33,19 +37,19 @@ def prepare(args):
                 group = f"d{deck}-{budget}-r{repetition}"
                 shift = (deck + repetition) % 3
                 arms = "ABC"[shift:] + "ABC"[:shift]
-                for arm in ("A" if args.calibrate else arms):
+                for arm in ("A" if cost_only else arms):
                     env = {"PROFILE_EXPERIMENT": "1", "PROFILE_ARM": arm, "PROFILE_SEED": seed,
                            "PROFILE_CASES": (inputs / f"case-{deck}-{lineage}.jsonl").as_posix(),
                            "PROFILE_POSITIONS": f"{entry['position']}={entry['fraction']}",
                            "PROFILE_INTERCHANGE": "0", "S4A_KEY_MEMO": "0", "BUDGET_KEY_MODE": "repaired",
-                           "BUDGET_TOTAL": str(budget if args.calibrate else args.safety_cap), "PROFILE_ANCHOR": str(budget),
+                           "BUDGET_TOTAL": str(budget if cost_only else args.safety_cap), "PROFILE_ANCHOR": str(budget),
                            "BANK_SPEC": (inputs / f"bank-spec-{lineage}.json").as_posix(),
-                           "S4A_MODEL": lineage, "PROFILE_EVALUATE": "0" if args.calibrate else "1", "PROFILE_EVAL_WORLDS": "128",
+                           "S4A_MODEL": lineage, "PROFILE_EVALUATE": "0" if cost_only else "1", "PROFILE_EVAL_WORLDS": "128",
                            "PROFILE_EVAL_CAP": "65536",
                            "OPPONENTS": f"T1={(inputs / 't1-source.json').as_posix()},A48={(inputs / 'a48-source.json').as_posix()}"}
-                    if qualification and not args.calibrate:
+                    if qualification and not cost_only:
                         env["PROFILE_WORK_LIMIT"] = str(args.work_limit)
-                    elif not qualification:
+                    elif args.phase == "measure":
                         target = calibration["roots"][entry["id"]][str(budget)]
                         env["PROFILE_CPU_SECONDS"] = str(target["native_cpu_seconds"])
                         env["PROFILE_CPU_OVERHEAD_RESERVE_SECONDS"] = str(target["overhead_reserve_seconds"])
@@ -70,11 +74,11 @@ def prepare(args):
             "host_slots_env": ({"HOST_SLOTS_ROOT": args.host_lock_root, "MTG_HOST_LOCK_ROOT": args.host_lock_root}
                                if args.host_lock_root else {}),
             "workload": {"mode": "s4a-search-profile", "experiment": "search-sharing-allocation-20261013",
-                         "arms": "ABC", "root_panel_sha256": digest(inputs / "ROOTS.json"),
+                         "arms": "A" if cost_only else "ABC", "root_panel_sha256": digest(inputs / "ROOTS.json"),
                          "common_flags": {"key_mode": "repaired", "interchange": False, "key_memo": False},
-                         "evaluation": {"enabled": not args.calibrate, "continuation": "frozen-search-tree", "worlds": 128, "cap": 65536},
-                         "selection_safety_cap": args.safety_cap,
-                         "budget_anchors": budgets, "qualification_work_limit": args.work_limit},
+                         "evaluation": {"enabled": not cost_only, "continuation": "frozen-search-tree", "worlds": 128, "cap": 65536},
+                         "selection_safety_cap": "anchor" if cost_only else args.safety_cap,
+                         "budget_anchors": budgets, "qualification_work_limit": None if cost_only else args.work_limit},
             "seeds": seeds, "jobs": jobs}
     if calibration:
         spec["calibration"] = {"path": str(Path(args.calibration).resolve()), "sha256": digest(args.calibration)}
@@ -106,7 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--pod-id")
     parser.add_argument("--lease-name")
     parser.add_argument("--lease-deadline", type=float)
-    parser.add_argument("--phase", choices=("qualify", "measure"), default="qualify")
+    parser.add_argument("--phase", choices=("qualify", "calibrate", "measure"), default="qualify")
     parser.add_argument("--out", required=True)
     parser.add_argument("--eligible-workers", type=int, default=2)
     parser.add_argument("--cores-claimed", type=int, default=2)
@@ -122,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--wait-timeout", type=float, default=43200)
     parser.add_argument("--calibration")
     parser.add_argument("--qualification")
-    parser.add_argument("--calibrate", action="store_true", help="cost-only A at actual baseline transition anchors, no fresh quality evaluation")
+    parser.add_argument("--calibrate", action="store_true", help="cost-only A qualification at actual baseline anchors; --phase calibrate uses prior throughput evidence")
     parser.add_argument("--safety-cap", type=int, default=16000000)
     parser.add_argument("--cold-binary-root", default="E:/pinned-binaries" if platform.system() == "Windows" else "/workspace/pinned-binaries")
     parser.add_argument("--hot-volume", default="D" if platform.system() == "Windows" else "/workspace")

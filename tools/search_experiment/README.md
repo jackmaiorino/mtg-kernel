@@ -184,3 +184,23 @@ per core. Measured oversubscription is bounded and balanced when workers exceed
 cores. Dispatch refuses concurrency greater than independent matched groups;
 completion and throughput receipts report actual peak live workers. A requested
 32-worker limit is not evidence that 32 workers were active.
+# Cost-only calibration and compatibility
+
+Use `make_manifest.py --phase qualify --calibrate` for bounded baseline-A
+serial/parallel throughput checks at the actual 16k and 64k anchors, without
+quality evaluation. Produce the usual parity/rate receipt, then use
+`--phase calibrate --qualification RECEIPT` for the remaining baseline anchors.
+This phase uses the fastest qualified eligible worker count and the remaining
+aggregate CPU ledger; it does not bypass the 1200-second small-qualification
+limit. Reuse already completed baseline anchors once when assembling the
+calibration asset, including one selected qualification batch rather than both
+duplicate serial/parallel copies.
+
+ABC search with frozen evaluation needs a separate `--phase qualify` receipt.
+Formal `--phase measure --calibration ASSET --qualification RECEIPT` keeps that
+production identity. Compatibility pins the full root panel, binary, source/model
+inputs, workload, storage and claimed cores; selected representative job subsets
+and fresh repetition seeds may differ. Only the explicit derived calibration
+asset is excluded from source/model input identity. Its hash and cost-only schema
+are checked independently on every validation. A changed model or a receipt from
+the other evaluation workload is incompatible.
