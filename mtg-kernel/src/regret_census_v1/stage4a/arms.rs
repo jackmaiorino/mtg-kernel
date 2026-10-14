@@ -724,7 +724,10 @@ impl Roles {
             ));
         }
         let SearchDiag {
-            keys, legacy_path, ..
+            keys,
+            legacy_path,
+            path_log,
+            ..
         } = diag;
         legacy_path.clear();
         let mut keyer = Keyer::with_history(ctx.key_mode, keys, ctx.visible_history)?
@@ -838,6 +841,9 @@ impl Roles {
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
+                                if let Some(log) = path_log.as_mut() {
+                                    log.created(key, &s, cn, ctx.focal);
+                                }
                                 let e = if path.is_empty() {
                                     allocator.as_deref_mut().map(|a| a.select(key, &node))
                                 } else {
@@ -878,6 +884,10 @@ impl Roles {
                         let cn = canon(&s, d)?;
                         let key = child_key(&parent.0, &parent.1, &cn);
                         let a = act(&mut self.focal, &s, &d, c)?;
+                        rec.rollout_choices += 1;
+                        if let Some(log) = path_log.as_mut() {
+                            log.created(key, &s, &cn, ctx.focal);
+                        }
                         let edge = cn.menu[a as usize].clone();
                         let e = cn
                             .edges
@@ -894,6 +904,7 @@ impl Roles {
                         parent = (key, edge);
                         a
                     } else {
+                        rec.rollout_choices += 1;
                         act(&mut self.focal, &s, &d, c)?
                     };
                     if let Some(cap) = capture.as_deref_mut() {
@@ -1066,6 +1077,9 @@ impl Roles {
             (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
         let mut sharing = options.sharing.then(Sharing::default);
         let mut stop_reason = None;
+        if diag.path_log.is_none() {
+            diag.path_log = super::pathlog::dir().map(super::pathlog::PathLog::new);
+        }
         let retain = retain.max(1);
         // Exact and per search: this context's keys only.
         let mut memo = key_memo_enabled().then(KeyMemo::new);
@@ -1132,6 +1146,9 @@ impl Roles {
                 t.sim_begin(index, meter.spent);
             }
             let mut rec = SimRecord::default();
+            if let Some(log) = diag.path_log.as_mut() {
+                log.begin_sim();
+            }
             let mut sharing_cursor = SharingCursor::default();
             let (spent0, calls0) = (meter.spent, c.inference);
             if let Some(cap) = capture.as_deref_mut() {
@@ -1196,6 +1213,9 @@ impl Roles {
                     let _span =
                         crate::search_profile_v1::span(crate::search_profile_v1::Bucket::Backup);
                     diag.before_backup(&tree, &path, &new, win, sel.completed);
+                    if let Some(log) = diag.path_log.as_mut() {
+                        log.natural(index, &path, &new, win, &rec);
+                    }
                     tree.backup(&path, new, win);
                     if let Some(sharing) = sharing.as_mut() {
                         sharing.backup(&sharing_cursor, index, win);
@@ -1225,6 +1245,11 @@ impl Roles {
         }
         sel.transitions = meter.spent;
         sel.inference = c.inference;
+        if let Some(log) = diag.path_log.take() {
+            if let Err(e) = log.write(ctx, &tree, sel.completed, sel.attempted, sel.transitions) {
+                eprintln!("S4A_PATH_LOG: search log not written: {e}");
+            }
+        }
         sel.extra = json!({"tree":tree_stats(&tree)});
         if let Some(sharing) = sharing.as_ref() {
             sel.extra["sharing"] = sharing.json();
@@ -1623,6 +1648,9 @@ pub(crate) struct SearchDiag {
     /// Stored node -> legacy history identity -> natural backups per edge.
     pub(crate) legacy: HashMap<Key, BTreeMap<Key, Vec<u64>>>,
     legacy_path: Vec<Key>,
+    /// Per-attempt path log (`pathlog.rs`, `S4A_PATH_LOG`); a log set by the
+    /// caller is used as is.
+    pub(crate) path_log: Option<super::pathlog::PathLog>,
 }
 
 impl SearchDiag {
@@ -1767,6 +1795,9 @@ pub(crate) struct SimRecord {
     pub(crate) supported_groups: u32,
     pub(crate) supported_substeps: u32,
     pub(crate) first_unsupported_depth: u32,
+    /// Focal nonforced choices the rollout policy made (after the tree path,
+    /// past the depth limit, or on retained tail nodes).
+    pub(crate) rollout_choices: u32,
 }
 
 impl SimRecord {
