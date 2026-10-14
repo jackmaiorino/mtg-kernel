@@ -3365,8 +3365,8 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().cloned().find(|snapshot|
-                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
@@ -3382,8 +3382,8 @@ fn commit_batch_survivors(
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().cloned().find(|snapshot|
-                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)));
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
