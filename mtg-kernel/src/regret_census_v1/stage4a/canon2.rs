@@ -41,6 +41,7 @@ use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Most canonicalizations tried to resolve one frame's qualifying ties
@@ -177,7 +178,7 @@ pub(crate) fn swap_handles(v: &mut Value, x: u64, y: u64) {
 }
 
 /// Unordered lists sorted by full JSON (multiset comparison).
-fn as_multisets(v: &Value) -> Value {
+pub(super) fn as_multisets(v: &Value) -> Value {
     let mut x = v.clone();
     super::tree::for_unordered_lists(&mut x, &mut |a| {
         a.sort_by_cached_key(|e| e.to_string());
@@ -292,8 +293,8 @@ fn matters(c: &Class, total: &HashMap<u64, usize>, menu: &[Value]) -> bool {
 /// taken there.
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
-    pub(crate) obs: Value,
-    pub(crate) menu: Vec<Value>,
+    pub(crate) obs: Arc<Value>,
+    pub(crate) menu: Arc<Vec<Value>>,
     pub(crate) taken: Value,
 }
 
@@ -373,7 +374,7 @@ fn qualifies(c: &Class, now: &Value, prefix: &[Frame]) -> Result<(), Fallback> {
         let base_obs = as_multisets(&f.obs);
         let base_menu = menu_multiset(&f.menu);
         for &y in &c.members[1..] {
-            let mut o = f.obs.clone();
+            let mut o = (*f.obs).clone();
             swap_handles(&mut o, c.members[0], y);
             let menu: Vec<Value> = f
                 .menu
@@ -520,6 +521,12 @@ pub(crate) struct KeyStats {
     pub(crate) canonicalizations_for_ties: u64,
     pub(crate) fallbacks: BTreeMap<&'static str, u64>,
     pub(crate) seconds: f64,
+    /// Interchangeable-choice merging was on (`interchange.rs`).
+    pub(crate) interchange: bool,
+    /// Frames where at least two live candidates merged.
+    pub(crate) merged_frames: u64,
+    /// Live candidates merged away (menu size minus orbits), summed.
+    pub(crate) merged_candidates: u64,
 }
 
 impl KeyStats {
@@ -532,26 +539,213 @@ impl KeyStats {
             *self.fallbacks.entry(k).or_default() += v;
         }
         self.seconds += o.seconds;
+        self.interchange |= o.interchange;
+        self.merged_frames += o.merged_frames;
+        self.merged_candidates += o.merged_candidates;
     }
 
     pub(crate) fn json(&self) -> Value {
-        serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
+        let mut v = serde_json::json!({"frames":self.frames,"frames_with_mattering_ties":self.frames_with_mattering_ties,
             "exact_resolved":self.exact_resolved,"canonicalizations_for_ties":self.canonicalizations_for_ties,
             "fallbacks":self.fallbacks,"fallback_total":self.fallbacks.values().sum::<u64>(),
-            "keying_seconds":self.seconds,"work_bound":TIE_WORK_BOUND})
+            "keying_seconds":self.seconds,"work_bound":TIE_WORK_BOUND});
+        // Present only when merging was on, so default rows are unchanged.
+        if self.interchange {
+            v["interchange"] = serde_json::json!({"frames_with_merges":self.merged_frames,
+                "merged_candidates":self.merged_candidates});
+        }
+        v
     }
 }
 
-/// One keyed focal frame.
+/// One keyed focal frame. Views are shared, so a memoized step is cheap to
+/// hand out again.
+#[derive(Clone)]
 pub(crate) struct Step {
     pub(crate) legacy_key: Key,
-    pub(crate) legacy: Canon,
+    pub(crate) legacy: Arc<Canon>,
     pub(crate) repaired_key: Key,
-    pub(crate) repaired: Canon,
-    obs: Value,
-    menu: Vec<Value>,
+    pub(crate) repaired: Arc<Canon>,
+    obs: Arc<Value>,
+    menu: Arc<Vec<Value>>,
     /// Members of classes this frame resolved by exchange.
     resolved: Vec<u64>,
+    /// Orbit id per live candidate when interchangeable choices merge.
+    orbits: Option<Vec<usize>>,
+    /// The `KeyMemo` entry this step came from or was stored as, if any.
+    memo_entry: Option<u32>,
+}
+
+/// Estimated heap bytes one `KeyMemo` may hold. Late-game views take up to
+/// about a megabyte per stored frame, so the memo stops storing new frames
+/// (and keeps serving the ones it has, the hot top of the tree) at this size.
+pub(crate) const KEY_MEMO_BYTES: usize = 256 << 20;
+
+/// Exact per-search memo of key steps (`S4A_KEY_MEMO=1`).
+///
+/// A keyer's step is a deterministic function of its mode, its starting
+/// history and the sequence of prepared frames and live actions applied to
+/// it, so a trie over that sequence identifies its state: node 0 is a keyer
+/// just constructed for the search's context, and each stored frame records
+/// the node every live action leads to. A frame is identified within its node
+/// by the SHA-256 of its prepared observation and menu. A hit returns the stored step and
+/// replays the stored statistics increments, so keys, trees, selection and
+/// statistics are unchanged; only `seconds` differs. One memo serves one
+/// search context and must not be shared across contexts or key modes.
+#[derive(Default)]
+pub(crate) struct KeyMemo {
+    index: HashMap<(u32, [u8; 32]), u32>,
+    entries: Vec<MemoEntry>,
+    nodes: u32,
+    /// Estimated heap bytes of the stored steps, and their limit.
+    bytes: usize,
+    max_bytes: usize,
+    pub(crate) hits: u64,
+    pub(crate) misses: u64,
+}
+
+struct MemoEntry {
+    step: Step,
+    delta: KeyStats,
+    children: HashMap<u32, u32>,
+}
+
+impl KeyMemo {
+    pub(crate) fn new() -> Self {
+        Self::with_max_bytes(KEY_MEMO_BYTES)
+    }
+
+    fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        serde_json::json!({"hits":self.hits,"misses":self.misses,"entries":self.entries.len(),
+            "nodes":self.nodes + 1,"estimated_bytes":self.bytes,"max_bytes":self.max_bytes})
+    }
+
+    /// The node an advance from `entry` along `live` reaches.
+    fn child(&mut self, entry: u32, live: u32) -> u32 {
+        let next = self.nodes + 1;
+        let id = *self.entries[entry as usize]
+            .children
+            .entry(live)
+            .or_insert(next);
+        if id == next {
+            self.nodes = next;
+        }
+        id
+    }
+}
+
+/// SHA-256 over a prepared observation and its menu: a tagged,
+/// length-framed walk of the values, so equal digests mean equal values.
+fn prepared_digest(obs: &Value, menu: &[Value]) -> [u8; 32] {
+    fn feed(h: &mut Sha256, v: &Value) {
+        match v {
+            Value::Null => h.update(b"n"),
+            Value::Bool(b) => h.update(if *b { b"t" } else { b"f" }),
+            Value::Number(n) => {
+                if let Some(u) = n.as_u64() {
+                    h.update(b"u");
+                    h.update(u.to_le_bytes());
+                } else if let Some(i) = n.as_i64() {
+                    h.update(b"i");
+                    h.update(i.to_le_bytes());
+                } else {
+                    h.update(b"d");
+                    h.update(n.as_f64().unwrap_or(f64::NAN).to_bits().to_le_bytes());
+                }
+            }
+            Value::String(x) => {
+                h.update(b"s");
+                h.update((x.len() as u64).to_le_bytes());
+                h.update(x.as_bytes());
+            }
+            Value::Array(a) => {
+                h.update(b"a");
+                h.update((a.len() as u64).to_le_bytes());
+                for x in a {
+                    feed(h, x);
+                }
+            }
+            Value::Object(m) => {
+                h.update(b"o");
+                h.update((m.len() as u64).to_le_bytes());
+                for (k, x) in m {
+                    h.update((k.len() as u64).to_le_bytes());
+                    h.update(k.as_bytes());
+                    feed(h, x);
+                }
+            }
+        }
+    }
+    let mut h = Sha256::new();
+    h.update(b"key-memo-v1");
+    feed(&mut h, obs);
+    h.update((menu.len() as u64).to_le_bytes());
+    for m in menu {
+        feed(&mut h, m);
+    }
+    h.finalize().into()
+}
+
+/// Estimated heap bytes a stored step keeps alive.
+fn step_bytes(st: &Step) -> usize {
+    fn value(v: &Value) -> usize {
+        std::mem::size_of::<Value>()
+            + match v {
+                Value::String(x) => x.capacity(),
+                Value::Array(a) => a.iter().map(value).sum(),
+                // Key string plus map node overhead per entry.
+                Value::Object(m) => m.iter().map(|(k, x)| 48 + k.capacity() + value(x)).sum(),
+                _ => 0,
+            }
+    }
+    fn canon(c: &Canon) -> usize {
+        let list = |l: &Vec<Vec<u8>>| l.iter().map(|x| 24 + x.capacity()).sum::<usize>();
+        c.obs.capacity() + list(&c.menu) + list(&c.edges)
+    }
+    let repaired = if Arc::ptr_eq(&st.legacy, &st.repaired) {
+        0
+    } else {
+        canon(&st.repaired)
+    };
+    value(&st.obs)
+        + st.menu.iter().map(value).sum::<usize>()
+        + canon(&st.legacy)
+        + repaired
+        + 8 * st.resolved.len()
+        + 256
+}
+
+impl KeyStats {
+    /// `self - before`, for statistics that only grow.
+    fn delta_since(&self, before: &Self) -> Self {
+        let mut fallbacks = BTreeMap::new();
+        for (k, v) in &self.fallbacks {
+            let d = v - before.fallbacks.get(k).copied().unwrap_or(0);
+            if d > 0 {
+                fallbacks.insert(*k, d);
+            }
+        }
+        Self {
+            frames: self.frames - before.frames,
+            frames_with_mattering_ties: self.frames_with_mattering_ties
+                - before.frames_with_mattering_ties,
+            exact_resolved: self.exact_resolved - before.exact_resolved,
+            canonicalizations_for_ties: self.canonicalizations_for_ties
+                - before.canonicalizations_for_ties,
+            fallbacks,
+            seconds: 0.0,
+            interchange: self.interchange,
+            merged_frames: self.merged_frames - before.merged_frames,
+            merged_candidates: self.merged_candidates - before.merged_candidates,
+        }
+    }
 }
 
 /// Keys along one path from the root; selection and frozen execution use it
@@ -563,7 +757,11 @@ pub(crate) struct Keyer<S: std::borrow::BorrowMut<KeyStats>> {
     frames: Vec<Frame>,
     /// Members of every class resolved by exchange earlier on this path.
     resolved: HashSet<u64>,
+    /// Merge interchangeable choices (`interchange.rs`); off by default.
+    interchange: bool,
     pub(crate) stats: S,
+    /// This keyer's node in its search's `KeyMemo` (None: not tracked).
+    memo_node: Option<u32>,
 }
 
 impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
@@ -589,8 +787,90 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             repaired: ([0u8; 32], b"root".to_vec()),
             frames: Vec::new(),
             resolved: HashSet::new(),
+            interchange: false,
             stats,
+            memo_node: None,
         }
+    }
+
+    /// Turns interchangeable-choice merging on or off for this path.
+    pub(crate) fn with_interchange(mut self, on: bool) -> Self {
+        self.interchange = on;
+        self.stats.borrow_mut().interchange |= on;
+        self
+    }
+
+    /// Marks this keyer as the starting state (node 0) of a search's
+    /// `KeyMemo`: call once, right after constructing it for that search's
+    /// context and before any step.
+    pub(crate) fn start_memo(&mut self) {
+        self.memo_node = Some(0);
+    }
+
+    /// `step`, served from `memo` when this keyer's state and the prepared
+    /// frame were seen before in this search (identical result and stats).
+    pub(crate) fn step_memo(
+        &mut self,
+        s: &FastActorSessionV1,
+        d: FastActorDecisionV1,
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        // Merging reads the engine's knowledge records, which the memo's
+        // frame digest does not cover, so a merging keyer never memoizes.
+        if memo.is_none() || self.memo_node.is_none() || self.interchange {
+            return self.step(s, d);
+        }
+        let (raw_obs, raw_menu) = raw_decision(s, d)?;
+        self.key_raw_memo(raw_obs, raw_menu, memo)
+    }
+
+    /// `key_raw` through `memo` (see `step_memo`).
+    pub(crate) fn key_raw_memo(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        memo: Option<&mut KeyMemo>,
+    ) -> Result<Step, PlayErr> {
+        let (Some(memo), Some(node), false) = (memo, self.memo_node, self.interchange) else {
+            return self.key_raw(raw_obs, raw_menu);
+        };
+        let t0 = Instant::now();
+        let (obs, menu) = prepare(raw_obs, raw_menu);
+        let digest = prepared_digest(&obs, &menu);
+        if let Some(&e) = memo.index.get(&(node, digest)) {
+            memo.hits += 1;
+            let entry = &memo.entries[e as usize];
+            self.stats.borrow_mut().merge(&entry.delta);
+            let mut st = entry.step.clone();
+            st.memo_entry = Some(e);
+            self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
+            return Ok(st);
+        }
+        memo.misses += 1;
+        let before = self.stats.borrow().clone();
+        let mut st = self.key_prepared(obs, menu, t0, &[])?;
+        let bytes = step_bytes(&st);
+        if memo.bytes + bytes <= memo.max_bytes {
+            memo.bytes += bytes;
+            let e = memo.entries.len() as u32;
+            memo.entries.push(MemoEntry {
+                step: st.clone(),
+                delta: self.stats.borrow().delta_since(&before),
+                children: HashMap::new(),
+            });
+            memo.index.insert((node, digest), e);
+            st.memo_entry = Some(e);
+        }
+        Ok(st)
+    }
+
+    /// `advance`, keeping this keyer's `KeyMemo` node in step.
+    pub(crate) fn advance_memo(&mut self, st: Step, live: u32, memo: Option<&mut KeyMemo>) {
+        self.memo_node = match (memo, self.memo_node, st.memo_entry) {
+            (Some(memo), Some(_), Some(e)) => Some(memo.child(e, live)),
+            _ => None,
+        };
+        self.advance(st, live);
     }
 
     pub(crate) fn step(
@@ -599,7 +879,12 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         d: FastActorDecisionV1,
     ) -> Result<Step, PlayErr> {
         let (raw_obs, raw_menu) = raw_decision(s, d)?;
-        self.key_raw(raw_obs, raw_menu)
+        let known = if self.interchange {
+            super::interchange::opponent_known(s, super::play::acting(&d))
+        } else {
+            Vec::new()
+        };
+        self.key_raw_known(raw_obs, raw_menu, &known)
     }
 
     /// `step` on a raw actor-visible observation and menu.
@@ -608,19 +893,53 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         raw_obs: Value,
         raw_menu: Vec<Value>,
     ) -> Result<Step, PlayErr> {
+        self.key_raw_known(raw_obs, raw_menu, &[])
+    }
+
+    /// `key_raw` with the handles the opponent knows (`interchange.rs`).
+    fn key_raw_known(
+        &mut self,
+        raw_obs: Value,
+        raw_menu: Vec<Value>,
+        known: &[u64],
+    ) -> Result<Step, PlayErr> {
         let t0 = Instant::now();
         let (obs, menu) = prepare(raw_obs, raw_menu);
+        self.key_prepared(obs, menu, t0, known)
+    }
+
+    /// `key_raw` after `prepare`; `t0` is when keying started.
+    fn key_prepared(
+        &mut self,
+        obs: Value,
+        menu: Vec<Value>,
+        t0: Instant,
+        known: &[u64],
+    ) -> Result<Step, PlayErr> {
+        let orbits = self.interchange.then(|| {
+            let (ids, _) = super::interchange::orbits(&obs, &menu, known);
+            let mut distinct = ids.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let merged = (ids.len() - distinct.len()) as u64;
+            self.stats.borrow_mut().merged_frames += u64::from(merged > 0);
+            self.stats.borrow_mut().merged_candidates += merged;
+            ids
+        });
         let (legacy, _) = canon_prepared(obs.clone(), menu.clone(), None)?;
         let legacy_key = child_key(&self.legacy.0, &self.legacy.1, &legacy);
+        let legacy = Arc::new(legacy);
         let step = if self.mode == KeyMode::Legacy {
             Step {
                 legacy_key,
                 repaired_key: legacy_key,
-                repaired: legacy.clone(),
+                repaired: Arc::clone(&legacy),
                 legacy,
-                obs,
-                menu,
+                obs: Arc::new(obs),
+                menu: Arc::new(menu),
                 resolved: Vec::new(),
+                orbits,
+                memo_entry: None,
             }
         } else {
             let (view, tried, mattering) = repaired_view(
@@ -639,11 +958,13 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                     Step {
                         legacy_key,
                         repaired_key: child_key_v2(&self.repaired.0, &self.repaired.1, &c),
-                        repaired: c,
+                        repaired: Arc::new(c),
                         legacy,
-                        obs,
-                        menu,
+                        obs: Arc::new(obs),
+                        menu: Arc::new(menu),
                         resolved: members,
+                        orbits,
+                        memo_entry: None,
                     }
                 }
                 Err(f) => {
@@ -656,11 +977,13 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                     Step {
                         legacy_key,
                         repaired_key: fallback_key(&legacy_key, &self.repaired.0),
-                        repaired: legacy.clone(),
+                        repaired: Arc::clone(&legacy),
                         legacy,
-                        obs,
-                        menu,
+                        obs: Arc::new(obs),
+                        menu: Arc::new(menu),
                         resolved: Vec::new(),
+                        orbits,
+                        memo_entry: None,
                     }
                 }
             }
@@ -677,13 +1000,13 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 st.legacy_key,
                 self.legacy.0,
                 self.legacy.1.clone(),
-                &st.legacy,
+                &*st.legacy,
             ),
             KeyMode::Repaired => (
                 st.repaired_key,
                 self.repaired.0,
                 self.repaired.1.clone(),
-                &st.repaired,
+                &*st.repaired,
             ),
         }
     }
@@ -709,6 +1032,39 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 map_priority(&pr, &st.repaired, &st.legacy)
             }
         }
+    }
+
+    /// The representative of `live`'s orbit: the member with the least
+    /// storage canonical bytes (`live` itself when merging is off). It is a
+    /// property of the stored node, so every visit and execution agrees.
+    pub(crate) fn representative(&self, st: &Step, live: u32) -> u32 {
+        let Some(ids) = &st.orbits else {
+            return live;
+        };
+        let (_, _, _, cn) = self.storage(st);
+        let orbit = ids[live as usize];
+        (0..ids.len())
+            .filter(|&i| ids[i] == orbit)
+            .min_by(|&i, &j| cn.menu[i].cmp(&cn.menu[j]))
+            .map_or(live, |i| i as u32)
+    }
+
+    /// Storage edges that are not their orbit's representative (empty when
+    /// merging is off): a node never selects them.
+    pub(crate) fn skipped(&self, st: &Step) -> Vec<bool> {
+        let Some(ids) = &st.orbits else {
+            return Vec::new();
+        };
+        let (_, _, _, cn) = self.storage(st);
+        let mut skip = vec![false; cn.edges.len()];
+        for i in 0..ids.len() {
+            if self.representative(st, i as u32) as usize != i {
+                if let Some(e) = cn.edges.iter().position(|x| *x == cn.menu[i]) {
+                    skip[e] = true;
+                }
+            }
+        }
+        skip
     }
 
     /// Records the live action taken at this frame.
@@ -807,7 +1163,7 @@ mod tests {
         let mut s = KeyStats::default();
         let st = keyer(KeyMode::Repaired, &mut s).key_raw(o, m).unwrap();
         let fb = s.fallbacks.values().sum();
-        (st.repaired_key, st.repaired, fb)
+        (st.repaired_key, (*st.repaired).clone(), fb)
     }
 
     fn x() -> Value {
@@ -1143,5 +1499,73 @@ mod tests {
         assert_eq!(a1, b1, "frame 1 merges");
         assert_eq!(fa.get("prefix_asymmetric"), Some(&1));
         assert_ne!(a2, b2, "the later tie is not relabeled by engine order");
+    }
+
+    /// The key memo is exact: paths keyed through one shared memo give the
+    /// same keys, canonical frames, seeded orders and statistics as keying
+    /// without it, in every mode, including merged and fallback histories
+    /// and the same frame reached along different paths.
+    #[test]
+    fn key_memo_matches_unmemoized_keying() {
+        let seeds = RootSeeds {
+            model: "t".into(),
+            root: "r".into(),
+        };
+        let f1 = |t: u64| view(vec![x(), y()], vec![obj(t, 19, 3)], vec![]);
+        let f2 = || view(vec![x(), y()], vec![], vec![]);
+        // (frame, menu, live action) sequences; repeats and shared prefixes
+        // exercise hits, distinct prefixes exercise separate memo nodes.
+        let paths: Vec<Vec<(Value, Vec<Value>, u32)>> = vec![
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(12), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 2)],
+            vec![(f1(11), menu(&[]), 0), (f2(), menu(&[11, 12]), 1)],
+            vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
+            vec![(f2(), menu(&[11, 12]), 2), (f1(11), menu(&[]), 0)],
+            vec![(f2(), menu(&[11, 12]), 1), (f1(11), menu(&[]), 0)],
+        ];
+        for mode in [KeyMode::Legacy, KeyMode::Repaired, KeyMode::Shadow] {
+            let run = |memo: Option<&mut KeyMemo>| {
+                let mut memo = memo;
+                let mut stats = KeyStats::default();
+                let mut out = Vec::new();
+                for path in &paths {
+                    let mut k = keyer(mode, &mut stats);
+                    if memo.is_some() {
+                        k.start_memo();
+                    }
+                    for (o, m, live) in path {
+                        let st = k
+                            .key_raw_memo(o.clone(), m.clone(), memo.as_deref_mut())
+                            .unwrap();
+                        let (key, pk, pe, cn) = k.storage(&st);
+                        out.push((
+                            st.legacy_key,
+                            st.repaired_key,
+                            key,
+                            pk,
+                            pe.to_vec(),
+                            cn.obs.clone(),
+                            cn.edges.clone(),
+                            k.perm(&st, &seeds).unwrap(),
+                        ));
+                        k.advance_memo(st, *live, memo.as_deref_mut());
+                    }
+                }
+                stats.seconds = 0.0;
+                (out, stats.json())
+            };
+            let plain = run(None);
+            let mut memo = KeyMemo::new();
+            let memoized = run(Some(&mut memo));
+            assert_eq!(plain, memoized, "{mode:?}");
+            assert_eq!((memo.hits, memo.misses), (7, 7), "{mode:?}");
+            assert_eq!(memo.json()["nodes"], 10, "{mode:?}");
+            // A full memo stops storing frames and stays exact.
+            let mut small = KeyMemo::with_max_bytes(memo.bytes / 3);
+            assert_eq!(plain, run(Some(&mut small)), "{mode:?}");
+            assert!(small.entries.len() < memo.entries.len(), "{mode:?}");
+            assert!(small.hits > 0 && small.bytes <= small.max_bytes, "{mode:?}");
+        }
     }
 }

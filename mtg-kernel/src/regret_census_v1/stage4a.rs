@@ -20,6 +20,9 @@
 //! `OPPONENTS` (`label=source,...`, in game-setup order), and optionally
 //! `S4A_LIMITS=select_cap,eval_worlds,eval_cap` for cost-only engineering
 //! checks (rows record the limits and whether they are formal).
+//! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
+//! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
+//! rows carry `"interchange"` only when it is on.
 
 mod arms;
 mod bank;
@@ -29,8 +32,10 @@ mod canon2;
 mod diag;
 pub(crate) mod e_supported;
 mod identity;
+mod interchange;
 mod labels;
 mod play;
+mod profile_roots;
 mod refresh;
 mod replay_labels;
 mod seeds;
@@ -73,6 +78,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-canon-offline"
             | "s4a-budget"
             | "s4a-budget-replay"
+            | "s4a-search-profile"
     )
 }
 
@@ -210,6 +216,17 @@ fn parse_select_rule(
         "" | "untried-first" => Ok(None),
         "fpu-1.5" if mode == "s4a-diag" || mode == "s4a-bank-parity" => Ok(Some(1.5)),
         other => Err(format!("unsupported S4A_SELECT {other} for {mode}")),
+    }
+}
+
+/// `S4A_INTERCHANGE`: `1` merges interchangeable choices; `0` or unset is
+/// the unchanged search.
+fn parse_interchange(setting: Result<String, std::env::VarError>) -> Result<bool, String> {
+    match setting.as_deref() {
+        Ok("1") => Ok(true),
+        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
+        Ok(v) => Err(format!("S4A_INTERCHANGE must be 0 or 1, not {v}")),
+        Err(e) => Err(format!("invalid S4A_INTERCHANGE: {e}")),
     }
 }
 
@@ -582,6 +599,7 @@ fn run_root(
         limits: shared.limits,
         urgency: None,
         key_mode: canon2::KeyMode::Legacy,
+        interchange: false,
     };
     let (e_sel, e_tree) = roles.select_e(&ctx);
     let a_cands = arms::a_candidates(&probs);
@@ -734,6 +752,7 @@ fn run_root_diag(
         limits: shared.limits,
         urgency: shared.select_urgency,
         key_mode: canon2::KeyMode::Legacy,
+        interchange: false,
     };
     let trace_dir = std::env::var("S4A_TRACE").ok();
     let mut trace = trace_dir.as_ref().map(|_| diag::Trace::default());
@@ -1158,6 +1177,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
             Ok("legacy") => canon2::KeyMode::Legacy,
             _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
         };
+        // Opt-in interchangeable-choice merging (`stage4a/interchange.rs`);
+        // off unless set, so existing budget runs are unchanged.
+        let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1166,7 +1188,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
-                        refresh::budget_case(&sh, policy, src, total, mode, &binding)
+                        refresh::budget_case(&sh, policy, src, total, mode, interchange, &binding)
                     })
                     .map_err(|e| e.to_string())?
                     .join()
@@ -1177,6 +1199,71 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 "{row}
 "
             ));
+        }
+        return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
+    }
+    if cfg.mode == "s4a-search-profile" {
+        // Search cost microchecks (collab LANES/search-efficiency-plan-20261012):
+        // PROFILE_CASES is JSONL of source cases; this process profiles cases
+        // [first_game, first_game + games), one search of BUDGET_TOTAL
+        // selection transitions at each PROFILE_POSITIONS root
+        // (`label=fraction,...` of the case's eligible focal decisions).
+        sh.spec.validate()?;
+        let binding = bank::bank_binding(policy, &sh)?;
+        let path = std::env::var("PROFILE_CASES").map_err(|_| "PROFILE_CASES is required")?;
+        let cases: Vec<bank::SourceSpec> = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{path}: {e}"))?
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).map_err(|e| format!("{path}: {e}")))
+            .collect::<Result<_, _>>()?;
+        let positions: Vec<(String, f64)> = std::env::var("PROFILE_POSITIONS")
+            .map_err(|_| "PROFILE_POSITIONS is required")?
+            .split(',')
+            .filter(|x| !x.trim().is_empty())
+            .map(|x| {
+                let (l, f) = x
+                    .split_once('=')
+                    .ok_or_else(|| format!("position {x} needs label=fraction"))?;
+                let f: f64 = f
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad fraction in {x}"))?;
+                if !(0.0..1.0).contains(&f) {
+                    return Err(format!("fraction in {x} must be in [0, 1)"));
+                }
+                Ok((l.trim().to_owned(), f))
+            })
+            .collect::<Result<_, String>>()?;
+        let budget: u64 = std::env::var("BUDGET_TOTAL")
+            .map_err(|_| "BUDGET_TOTAL is required")?
+            .parse()
+            .map_err(|_| "BUDGET_TOTAL must be a count")?;
+        let mode = match std::env::var("BUDGET_KEY_MODE").as_deref() {
+            Ok("repaired") => canon2::KeyMode::Repaired,
+            Ok("legacy") => canon2::KeyMode::Legacy,
+            _ => return Err("BUDGET_KEY_MODE must be repaired or legacy".into()),
+        };
+        let first = cfg.first_game as usize;
+        let end = (first + cfg.games as usize).min(cases.len());
+        let mut out = String::new();
+        for src in &cases[first..end] {
+            let rows = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .stack_size(256 << 20)
+                    .spawn_scoped(scope, || {
+                        profile_roots::profile_case(
+                            &sh, policy, src, &positions, budget, mode, &binding,
+                        )
+                    })
+                    .map_err(|e| e.to_string())?
+                    .join()
+                    .map_err(|_| "profile worker panicked".to_owned())?
+            })
+            .unwrap_or_else(|e| vec![json!({"kind":"error","id":src.id,"error":e})]);
+            for row in rows {
+                out.push_str(&format!("{row}\n"));
+            }
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
@@ -1292,7 +1379,9 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" => return run_bank_mode(cfg, policy),
+        | "s4a-budget" | "s4a-budget-replay" | "s4a-search-profile" => {
+            return run_bank_mode(cfg, policy)
+        }
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}
