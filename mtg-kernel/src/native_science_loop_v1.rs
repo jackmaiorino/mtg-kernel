@@ -79,7 +79,8 @@ pub enum NativeScienceLoopV1ErrorKind {
     StoreBusy,
     InputInvalid,
     /// Dual-Profile Catalog Successor (collab CLAUDE #220): the supplied run
-    /// classified as `NativeRunCatalogProfileV1::Historical` at decode time.
+    /// classified as historical at decode time or no longer matches the
+    /// compiled catalog identity.
     /// Historical-profile records stay decodable and read-only-validatable
     /// forever, but are rejected here, before any bootstrap, genesis, train,
     /// or evaluate work begins.
@@ -576,14 +577,10 @@ fn run_native_science_loop_with_opponents_v1(
     // `NativeRunCatalogProfileV1` variant fails this match at compile time
     // rather than silently falling through an `if`/`else`, forcing an
     // explicit decision here instead of an accidental pass-through. The live
-    // build-identity authenticity check for CURRENT (fix round, panel
-    // finding 1) lives at the publish and resume boundaries only: this
-    // function calls into both transitively (bootstrap's own genesis publish
-    // and every training window's resume), so a forged CURRENT record is
-    // still caught before any mutation, just slightly later in the call
-    // chain than a redundant check here would catch it. PauperMetaW1 (schema
-    // migration, card lane, design ruling 6 pending) is admitted alongside
-    // Current, identically: this boundary only rejects Historical.
+    // build identity is checked here before bootstrap can create or inspect
+    // store contents. Publisher and resume retain their independent checks.
+    // Readable predecessor profiles remain historical when this build's
+    // catalog has advanced; their decode/classification rules stay intact.
     match run.catalog_profile_v1() {
         NativeRunCatalogProfileV1::Historical => {
             return Err(loop_error_v1(
@@ -652,7 +649,15 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnFollowingSourceBatch
         | NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
         | NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
-        | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch => {}
+        | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch => {
+            if !crate::native_training_store_run_v2::current_profile_matches_live_build_identity_v1(
+                run.record().environment(),
+            ) {
+                return Err(loop_error_v1(
+                    NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
+                ));
+            }
+        }
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
@@ -1298,6 +1303,38 @@ mod windows_science_loop_tests {
             !parent.parent.join("store").exists(),
             "the boundary must reject before bootstrap creates anything"
         );
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn science_loop_rejects_prior_fdn_batch_ajani_faebloom_before_bootstrap() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_ajani_faebloom_batch_v1;
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_ajani_faebloom_batch_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            crate::native_training_store_run_v2::NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
+        );
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("prior-fdn-ajani-faebloom");
+        let result = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile
+        );
+        assert!(!parent.parent.join("store").exists());
     }
 
     /// Learning smoke at the settled K=64 operating point: train a real
