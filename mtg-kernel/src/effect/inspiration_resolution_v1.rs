@@ -391,7 +391,7 @@ pub(crate) fn acquire_owner(
     let Some(root) = CARD_DEFS
         .get(usize::from(source.card_def))
         .and_then(|definition| (definition.spell_effect)())
-        .filter(|root| owned_root(root))
+        .filter(owned_root)
     else {
         return Ok(None);
     };
@@ -692,17 +692,19 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         }
     }
     for receipt in &latest {
-        if receipt.pending.is_none() {
+        if let Some(pending) = receipt.pending.as_deref() {
+            if state
+                .stack
+                .iter()
+                .filter(|row| row.v4.stack_item_id == receipt.stack_item_id)
+                .collect::<Vec<_>>()
+                .as_slice()
+                != [&pending.resolving_item]
+            {
+                return Err("Inspiration open boundary lost sole actual marked live row".into());
+            }
+        } else {
             validate_departure(state, receipt)?;
-        } else if state
-            .stack
-            .iter()
-            .filter(|row| row.v4.stack_item_id == receipt.stack_item_id)
-            .collect::<Vec<_>>()
-            .as_slice()
-            != [&receipt.pending.as_ref().unwrap().resolving_item]
-        {
-            return Err("Inspiration open boundary lost sole actual marked live row".into());
         }
     }
     let open: Vec<_> = latest.into_iter().filter(|r| r.pending.is_some()).collect();

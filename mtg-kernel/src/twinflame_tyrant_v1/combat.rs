@@ -711,10 +711,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
             expected = next;
         }
-        if !closed {
-            if open.replace(expected).is_some() {
-                return Err("multiple actual combat waves remain open".into());
-            }
+        if !closed && open.replace(expected).is_some() {
+            return Err("multiple actual combat waves remain open".into());
         }
     }
     if state.engine.twinflame_combat_v38.0 != open {
