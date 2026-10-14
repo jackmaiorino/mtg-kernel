@@ -351,3 +351,14 @@ hash sequence; the genuine paid Season fixture retains its actual six-counter
 occurrence through both-record erasure and repeated Step readonly/Advance
 halt-only refusals. Original event journal provenance remains trusted, rather
 than a cryptographic guarantee against replacing that original occurrence too.
+
+
+A resolving permanent spell copy now receives its token flag at the actual
+Stack-to-battlefield transition in every catalog path, independently of the
+Season component. The Stack object remains a nontoken virtual spell copy until
+that transition. It is never a CreateToken request and is never expanded by
+Season. Shared genuine paid Arahbo copy fixtures cover no Season plus active
+and departed Seasons, both original/copy controllers and three serialized
+restores, exact before/entry flags, original spell remaining on Stack, genuine
+Garruk token snapshots and captured Arahbo self-entry. The no-Season group uses
+already registered printing metadata; Season groups remain ignored/unrun.
