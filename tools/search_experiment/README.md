@@ -179,7 +179,10 @@ current without inventing productive activity or setting `finished`. The next
 controller takes over that writer; the existing idle and lease bounds remain.
 
 New matched groups are assigned to currently available cores, then keep that
-affinity for A/B/C. When workers do not exceed claimed cores, only one job runs
+affinity for A/B/C. Core assignment uses one logical CPU from each physical core
+before SMT siblings. On Windows, a nested one-core job narrows the outer claim's
+affinity before the suspended native process resumes. When workers do not exceed
+claimed cores, only one job runs
 per core. Measured oversubscription is bounded and balanced when workers exceed
 cores. Dispatch refuses concurrency greater than independent matched groups;
 completion and throughput receipts report actual peak live workers. A requested
@@ -204,3 +207,14 @@ and fresh repetition seeds may differ. Only the explicit derived calibration
 asset is excluded from source/model input identity. Its hash and cost-only schema
 are checked independently on every validation. A changed model or a receipt from
 the other evaluation workload is incompatible.
+
+`sequential_driver.py --plan PLAN.json` advances the lead-approved qualification
+queues through one, four and eight workers. It retains each dispatch receipt,
+requires completed jobs and deterministic search/evaluation parity, and checks
+the measured projection before advancing. It creates separate ABC/evaluation
+and A/cost throughput receipts, then uses the qualified cost path for the
+remaining anchors. `LADDER-DRIVER.json` records the current owned stage; controller
+CPU joins the same aggregate ledger. A failure stops the sequence. Preserve its
+attempt labels and use fresh labels for a repaired retry. The driver stops after
+full cost calibration for the lead's formal-run review; it cannot launch formal
+measurement.
