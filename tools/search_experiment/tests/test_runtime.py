@@ -12,9 +12,20 @@ sys.path.insert(0, str(HERE))
 import launch
 import analyze
 import certify_qualification
+import sequential_driver
 
 
 class QualificationTests(unittest.TestCase):
+    def test_controller_helper_large_output_is_retained_without_pipe_wait(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "helper.log"
+            code, cpu = sequential_driver.logged_command(
+                [sys.executable, "-c", "import sys;sys.stdout.write('x'*131072);sys.stderr.write('done')"],
+                path, launch.ProcessClock)
+            self.assertEqual(code, 0)
+            self.assertGreaterEqual(cpu, 0)
+            self.assertEqual(path.stat().st_size, 131076)
+
     def test_output_accounting_tolerates_only_disappearance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

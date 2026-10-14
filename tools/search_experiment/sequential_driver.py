@@ -10,6 +10,26 @@ import sys
 import time
 
 
+def logged_command(command, path, clock_type):
+    """Retain arbitrarily sized helper output without a pipe backpressure wait."""
+    with Path(path).open("x") as stream:
+        child = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, text=True)
+        try:
+            clock = clock_type(child)
+        except BaseException:
+            child.kill()
+            child.wait()
+            raise
+        try:
+            while clock.poll() is None:
+                time.sleep(.1)
+            return child.returncode, clock.read()
+        finally:
+            if child.poll() is None:
+                clock.stop()
+            clock.close()
+
+
 def run(plan):
     root = Path(plan["root"])
     log = (root / plan.get("log_filename", "LADDER-DRIVER.log")).open("a", buffering=1)
@@ -21,21 +41,20 @@ def run(plan):
     state = {"pid": os.getpid(), "started_epoch": time.time(), "state": "running", "stages": []}
     own_start = time.process_time()
     cli_cpu = 0.0
+    cli_count = 0
 
     def save():
         state["epoch"] = time.time()
         publish(root / "LADDER-DRIVER.json", state)
 
     def invoke(arguments):
-        nonlocal cli_cpu
-        child = subprocess.Popen([sys.executable, *arguments], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        clock = runtime.ProcessClock(child)
-        while clock.poll() is None:
-            time.sleep(.1)
-        stdout, stderr = child.communicate()
-        cli_cpu += clock.read()
-        clock.close()
-        require(child.returncode == 0, stderr or stdout)
+        nonlocal cli_cpu, cli_count
+        cli_count += 1
+        path = root / f"CONTROLLER-CLI-{plan['attempt']}-{cli_count}.log"
+        code, cpu = logged_command([sys.executable, *arguments], path, runtime.ProcessClock)
+        cli_cpu += cpu
+        stdout = path.read_text()
+        require(code == 0, stdout[-4000:] or f"helper exit {code}; see {path}")
         return stdout
 
     def accounted():
