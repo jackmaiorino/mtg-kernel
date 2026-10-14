@@ -9,6 +9,11 @@ fn main() -> io::Result<()> {
         std::process::exit(2);
     }
     let mut server = LimitedCommonJsonlServerV1::new();
+    if std::env::var_os("MTG_LIMITED_COMMON_TIMING_V1").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        server.enable_timings_v1();
+    }
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     loop {
@@ -32,6 +37,9 @@ fn main() -> io::Result<()> {
             server.handle_line(text.trim_end_matches(['\r', '\n']))
         )?;
         output.flush()?;
+    }
+    if let Some(report) = server.timing_report_v1() {
+        eprintln!("LIMITED_COMMON_TIMING_V1 {report}");
     }
     Ok(())
 }

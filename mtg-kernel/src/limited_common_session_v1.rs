@@ -196,10 +196,33 @@ pub struct LimitedCommonJsonlServerV1 {
     snapshots: BTreeMap<u64, Saved>,
     next_snapshot: u64,
     last_exchange: Option<(LimitedCommonRequestV1, LimitedCommonReplyV1, u64)>,
+    timings: Option<CommonTimingsV1>,
+}
+
+#[derive(Default, Serialize)]
+struct CommonTimingsV1 {
+    apply_calls: u64,
+    apply_seconds: f64,
+    projection_seconds: f64,
+    reply_seconds: f64,
 }
 impl LimitedCommonJsonlServerV1 {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Process diagnostics only. Timings never enter replies, game state,
+    /// snapshots, action selection or executable authority.
+    pub fn enable_timings_v1(&mut self) {
+        self.timings = Some(CommonTimingsV1::default());
+    }
+
+    /// Phase samples exclude parsing, JSON encoding, I/O and early retries.
+    /// Their sum is not the process's total elapsed time.
+    pub fn timing_report_v1(&self) -> Option<String> {
+        self.timings.as_ref().map(|timings| {
+            serde_json::to_string(timings).expect("bounded process timings serialize")
+        })
     }
 
     fn reply(&self, request: Option<String>, body: LimitedCommonBodyV1) -> LimitedCommonReplyV1 {
@@ -249,10 +272,21 @@ impl LimitedCommonJsonlServerV1 {
                 };
             }
         }
+        let apply_started = self.timings.as_ref().map(|_| std::time::Instant::now());
         let result = self.apply(&request);
+        if let (Some(timings), Some(started)) = (&mut self.timings, apply_started) {
+            timings.apply_calls += 1;
+            timings.apply_seconds += started.elapsed().as_secs_f64();
+        }
+        let mut reply_started = self.timings.as_ref().map(|_| std::time::Instant::now());
         let reply = match result {
             Ok((receipt, snapshot_id)) => {
+                let projection_started = self.timings.as_ref().map(|_| std::time::Instant::now());
                 let state = self.current_state();
+                if let (Some(timings), Some(started)) = (&mut self.timings, projection_started) {
+                    timings.projection_seconds += started.elapsed().as_secs_f64();
+                }
+                reply_started = self.timings.as_ref().map(|_| std::time::Instant::now());
                 self.reply(
                     Some(id),
                     LimitedCommonBodyV1::State {
@@ -265,6 +299,9 @@ impl LimitedCommonJsonlServerV1 {
             Err(code) => self.error(Some(id), code),
         };
         self.last_exchange = Some((request, reply.clone(), self.generation));
+        if let (Some(timings), Some(started)) = (&mut self.timings, reply_started) {
+            timings.reply_seconds += started.elapsed().as_secs_f64();
+        }
         reply
     }
     fn apply(
