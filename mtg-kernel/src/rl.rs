@@ -3485,7 +3485,6 @@ pub(crate) fn common_family_observation_storage_scoped(
                     CommonProjectionScopeV42::DivineV44
                         | CommonProjectionScopeV42::HunterV45
                         | CommonProjectionScopeV42::EatenV46
-                        | CommonProjectionScopeV42::EatenV46
                 ),
                 matches!(
                     scope,
