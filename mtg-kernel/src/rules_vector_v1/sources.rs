@@ -497,10 +497,16 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         as_enters_color_choice_v1,
         chosen_color_creature_boost_v1,
         damage_replacement_v1,
+        token_counter_replacement_v48,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
     } = def;
+
+    assert!(
+        token_counter_replacement_v48.is_none(),
+        "effect token and counter replacement requires its precise successor"
+    );
 
     assert!(
         damage_replacement_v1.is_none(),

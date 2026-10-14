@@ -515,7 +515,6 @@ mod limited {
         (state, spell, target, sacrifice)
     }
     #[test]
-    #[ignore = "requires serial Eaten Alive registration and native qualification"]
     fn actual_mandatory_two_branches_paid_publication_human_restore_and_exile_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for pay_mana in [false, true] {
@@ -650,7 +649,6 @@ mod limited {
         }
     }
     #[test]
-    #[ignore = "requires serial Eaten Alive registration and native qualification"]
     fn actual_full_ajani_recipient_mixed_facts_cost_menu_and_paid_exile_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, spell, _, _) = eaten_state(actor);
@@ -718,7 +716,6 @@ mod limited {
         }
     }
     #[test]
-    #[ignore = "requires serial Eaten Alive registration and native qualification"]
     fn actual_paid_eaten_history_and_typed_kicked_divine_share_full_mixed_owning_input_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -855,7 +852,6 @@ mod limited {
         }
     }
     #[test]
-    #[ignore = "requires serial Eaten Alive registration and native qualification"]
     fn genuine_copied_banishing_sacrifice_retains_real_linked_payment_host_choice_and_v46_restore_both_seats(
     ) {
         use crate::effect::{EffectObjectBinding, ExecCtx};

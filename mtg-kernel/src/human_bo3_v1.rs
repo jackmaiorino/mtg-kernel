@@ -63,6 +63,7 @@ pub use visible::*;
 
 pub mod eaten_v46;
 pub mod panda_v47;
+pub mod season_v48;
 pub use panda_v47::{
     HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,
 };

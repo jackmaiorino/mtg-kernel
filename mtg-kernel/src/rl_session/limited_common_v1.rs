@@ -13,6 +13,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::HunterV45
                 | FlatActionContractModeV1::EatenV46
                 | FlatActionContractModeV1::PandaV47
+                | FlatActionContractModeV1::SeasonV48
         )
     }
     #[cfg(all(

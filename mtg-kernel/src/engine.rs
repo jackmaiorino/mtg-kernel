@@ -6132,7 +6132,7 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
-                crate::planeswalker_v1::change_loyalty(state, source, *delta);
+                crate::planeswalker_v1::pay_loyalty_cost(state, source, *delta);
             }
             CostComponent::SacrificeCreatureOrPayMana(_) => return None,
             CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
@@ -9287,7 +9287,9 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+        || crate::doubling_season_v48::validate_token_journals(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -15284,6 +15286,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15769,8 +15778,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     {
         state.objects.get_mut(item.source).v4.warped_v1 = true;
     }
-    // Impending: it enters with its time counters.
-    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+    // The V48 entry owner has already installed these before entry observers.
+    // Keep the absent-component path unchanged.
+    if !initialized_entry
+        .as_ref()
+        .is_some_and(|owner| owner.initializes_time_counters())
+        && item.v4.cast_method == Some(CastMethodV4::Alternative)
         && state.objects.get(item.source).zone == Zone::Battlefield
     {
         if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =
@@ -16250,7 +16263,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
                     continue;
                 }
-                event::add_lore_counters(state, saga, 1).expect("supported Saga counters fit");
+                event::add_lore_counters_rule(state, saga, 1).expect("supported Saga counters fit");
             }
             collect_and_queue_triggers(state);
         }
@@ -18373,6 +18386,7 @@ fn action_matches_pending_activation_stage(
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::bloodthirsty_conqueror_v49::validate(state)?;
+    crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
@@ -20872,7 +20886,15 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+    if !crate::doubling_season_v48::sources(state, player).is_empty() {
+        // Playing a land remains a special action even under a resolution-time
+        // play permission. Its entry is not an effect placing counters.
+        let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
+        if let ProposedEvent::ZoneChange(change) = &mut event {
+            change.counter_origin_v48 = Some(crate::doubling_season_v48::CounterOriginV48::Rule);
+        }
+        event::propose_and_commit(state, event);
+    } else if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),

@@ -39,6 +39,9 @@ pub enum JournalV39 {
         countered: bool,
         bait: Option<i32>,
         departure: Option<u64>,
+        /// Actual resolution-time replacement sources. Absent for all old paths.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bait_replacement_v48: Option<crate::doubling_season_v48::ReplacementInputV48>,
     },
     Removed {
         input: u64,
@@ -543,6 +546,44 @@ fn departure(state: &GameState, pole: AbilitySourceContractV4, since: u64) -> Op
     state.engine.event_history.iter().enumerate().skip(since as usize).find_map(|(i,e)|
         matches!(e,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,..} if *object==pole.source).then_some(i as u64))
 }
+/// Check effect placement capacity while the authentic full row is still live.
+/// Countering the ability uses its separate owner and need not place counters.
+pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Result<(), String> {
+    if !tracked(item) {
+        return Ok(());
+    }
+    validate_item(state, item)?;
+    let origin = publications_for_item(state, item)?;
+    if matches!(at(state, origin)?, JournalV39::PaymentInput { .. }) {
+        let pole = origin_pole(state, origin)?;
+        if same_pole(state, pole) {
+            let live = state.objects.get(pole.source);
+            let input =
+                crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller);
+            live.counters
+                .bait
+                .checked_add(input.replaced_count(1)?)
+                .ok_or("Fishing bait effect overflow")?;
+        }
+    }
+    Ok(())
+}
+fn publications_for_item(state: &GameState, item: &StackItem) -> Result<u64, String> {
+    let original = rows(state)
+        .filter_map(|(_, row)| match row {
+            JournalV39::Published {
+                origin,
+                item: saved,
+            } if saved.as_ref() == item => Some(*origin),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    match original.as_slice() {
+        [origin] => Ok(*origin),
+        _ => Err("Fishing effect lost original publication".into()),
+    }
+}
+
 pub(crate) fn removed_input(
     state: &mut GameState,
     owner: Option<&OwnerV39>,
@@ -566,6 +607,23 @@ pub(crate) fn removed_input(
     if bait.is_none() && departed.is_none() {
         return Err("Fishing no-op lacks actual original Pole departure".into());
     }
+    let bait_replacement_v48 = if !countered
+        && bait.is_some()
+        && matches!(at(state, owner.origin)?, JournalV39::PaymentInput { .. })
+    {
+        let controller = state.objects.get(pole.source).controller;
+        let input = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller);
+        if input.seasons.is_empty() {
+            None
+        } else {
+            bait.unwrap()
+                .checked_add(input.replaced_count(1)?)
+                .ok_or("Fishing replaced bait overflow")?;
+            Some(input)
+        }
+    } else {
+        None
+    };
     append(
         state,
         JournalV39::OriginalRemoval {
@@ -574,6 +632,7 @@ pub(crate) fn removed_input(
             countered,
             bait,
             departure: departed,
+            bait_replacement_v48,
         },
     );
     Ok(())
@@ -658,6 +717,7 @@ pub(crate) fn complete(
         countered: original_countered,
         bait: original_bait,
         departure,
+        bait_replacement_v48,
     } = at(state, original_removal)?.clone()
     else {
         unreachable!()
@@ -686,7 +746,10 @@ pub(crate) fn complete(
                     None
                 }
             } else {
-                Some(before.checked_add(1).ok_or("Fishing bait overflow")?)
+                let amount = bait_replacement_v48
+                    .as_ref()
+                    .map_or(Ok(1), |input| input.replaced_count(1))?;
+                Some(before.checked_add(amount).ok_or("Fishing bait overflow")?)
             };
             if let Some(after) = after {
                 if !same_pole(state, pole)
@@ -920,6 +983,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                             countered: saved_countered,
                             bait: saved_bait,
                             departure: saved_departure,
+                            ..
                         } if saved == origin => Some((
                             at,
                             saved_item.as_ref(),
@@ -976,8 +1040,36 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if bait.is_some_and(|n| n < 0) {
                     return Err("Fishing original counter sample negative".into());
                 }
+                let JournalV39::OriginalRemoval {
+                    bait_replacement_v48,
+                    ..
+                } = at(state, *input)?
+                else {
+                    unreachable!()
+                };
+                let placed_bait = bait_replacement_v48.as_ref().map_or(Ok(1), |replacement| {
+                    if replacement.seasons.is_empty()
+                        || replacement.seasons.iter().enumerate().any(|(i, source)| {
+                            source.zone != Zone::Battlefield
+                                || source.controller != replacement.controller
+                                || !crate::doubling_season_v48::owns_definition(source.card_def)
+                                || replacement.seasons[..i]
+                                    .iter()
+                                    .any(|prior| prior.source == source.source)
+                        })
+                    {
+                        return Err("Fishing captured bait replacement changed".into());
+                    }
+                    replacement.replaced_count(1)
+                })?;
                 let trigger = matches!(at(state, *origin)?, JournalV39::Captured { .. });
-                if !*countered && !trigger && bait == &Some(i32::MAX) {
+                if bait_replacement_v48.is_some() && (*countered || trigger || bait.is_none()) {
+                    return Err("Fishing no-op/removal forged counter replacement".into());
+                }
+                if !*countered
+                    && !trigger
+                    && bait.is_some_and(|before| before.checked_add(placed_bait).is_none())
+                {
                     return Err("Fishing completed an overflowing bait operation".into());
                 }
                 let expected = if *countered {
@@ -987,7 +1079,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         if trigger {
                             (before > 0).then_some(before - 1)
                         } else {
-                            before.checked_add(1)
+                            before.checked_add(placed_bait)
                         }
                     })
                 };
@@ -1005,6 +1097,37 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     let Some(token) = token else {
                         return Err("Fishing paid mandatory trigger skipped Fish".into());
                     };
+                    let fish = fish_definition()?;
+                    let count = crate::doubling_season_v48::expected_tokens(
+                        state,
+                        change.unwrap() as usize + 1,
+                        *closed as usize,
+                        fish,
+                        item.controller,
+                        1,
+                    )?;
+                    let actual = state.engine.event_history
+                        [change.unwrap() as usize + 1..*closed as usize]
+                        .iter()
+                        .filter_map(|event| match event {
+                            CommittedEvent::CreateToken {
+                                object,
+                                token_def,
+                                controller,
+                            } if *token_def == fish && *controller == item.controller => {
+                                Some(*object)
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if actual.len() != count
+                        || actual
+                            .iter()
+                            .enumerate()
+                            .any(|(i, object)| actual[..i].contains(object))
+                    {
+                        return Err("Fishing replacement omitted/duplicated actual Fish".into());
+                    }
                     if *token <= change.unwrap()
                         || *token >= *closed
                         || !matches!(state.engine.event_history.get(*token as usize),Some(CommittedEvent::CreateToken {token_def,controller,..}) if *token_def==fish_definition()? && *controller==item.controller)
@@ -1034,23 +1157,38 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if live.counters.bait < 0 {
             return Err("Fishing bait count negative".into());
         }
-        if live.zone != Zone::Battlefield || (live.counters.bait==0 && !selected_definition(live.card_def) && !rows(state).any(|(_,row)|matches!(row,JournalV39::BaitChanged {pole,..} if pole.source==object && pole.zone_change_count==live.zone_change_count))) {
+        let transferred = state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::BaitTransferInputV48 {input} if input.recipient.object==object && input.recipient.zone_change_count==live.zone_change_count));
+        if live.zone != Zone::Battlefield || (live.counters.bait==0 && !selected_definition(live.card_def) && !transferred && !rows(state).any(|(_,row)|matches!(row,JournalV39::BaitChanged {pole,..} if pole.source==object && pole.zone_change_count==live.zone_change_count))) {
             continue;
         }
         let mut balance = 0;
-        for (_, row) in rows(state) {
-            if let JournalV39::BaitChanged {
-                pole,
-                before,
-                after,
-                ..
-            } = row
-            {
-                if pole.source == object && pole.zone_change_count == live.zone_change_count {
-                    if *before != balance {
-                        return Err("Fishing counter operation rewrote original balance".into());
+        for (at, event) in state.engine.event_history.iter().enumerate() {
+            if let CommittedEvent::FishingPoleJournalV39 { journal } = event {
+                if let JournalV39::BaitChanged {
+                    pole,
+                    before,
+                    after,
+                    ..
+                } = journal.as_ref()
+                {
+                    if pole.source == object && pole.zone_change_count == live.zone_change_count {
+                        if *before != balance {
+                            return Err("Fishing counter operation rewrote original balance".into());
+                        }
+                        balance = *after;
                     }
-                    balance = *after;
+                }
+            }
+            if let Some((recipient, before, after)) =
+                crate::doubling_season_v48::bait_transfer_balance(state, at)?
+            {
+                if recipient.object == object
+                    && recipient.zone_change_count == live.zone_change_count
+                {
+                    if before != balance {
+                        return Err("Fishing transferred bait rewrote original balance".into());
+                    }
+                    balance = after;
                 }
             }
         }

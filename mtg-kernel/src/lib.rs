@@ -664,7 +664,9 @@ pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
 pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
+pub mod doubling_season_v48;
 pub mod rules_meaning_akroma_v1;
+pub mod rules_meaning_doubling_season_v48;
 pub mod twinflame_observation_v1;
 pub mod twinflame_tyrant_v1;
 
@@ -678,3 +680,8 @@ pub mod faebloom_observation_v43;
 
 pub mod eaten_alive_v1;
 pub mod rules_meaning_eaten_alive_v1;
+
+pub mod doubling_season_public_v48;
+pub mod season_observation_v48;
+
+pub mod season_token_attachment_v48;

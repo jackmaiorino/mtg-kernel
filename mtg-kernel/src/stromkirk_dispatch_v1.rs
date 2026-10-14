@@ -754,8 +754,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     if *index as usize <= removal_at
                         || *index as usize >= operation_at
                         || !matches!(state.engine.event_history.get(*index as usize),
-                        Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count:1 })
-                            if *object==target && *player==item.controller
+                        Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count })
+                            if *object==target && *player==item.controller && crate::doubling_season_v48::expected_plus_at(state,*index,*object,*player,1).ok()==Some(*count)
                                 && input.target_snapshot.as_ref().is_some_and(|snapshot|
                                     snapshot.zone == Zone::Battlefield && snapshot.zone_change_count == *zone_change_count))
                     {

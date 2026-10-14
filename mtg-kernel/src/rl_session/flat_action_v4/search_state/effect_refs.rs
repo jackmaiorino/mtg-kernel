@@ -970,7 +970,10 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
-    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+    // Both retained original-world mechanisms require their qualified sampler.
+    if crate::bloodthirsty_conqueror_v49::has_history(state)
+        || crate::doubling_season_v48::requires_successor(state)
+    {
         return true;
     }
     if state
@@ -1048,6 +1051,12 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
                 | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
                 | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
+                | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+                | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
         )
     }) {
         return true;
@@ -1398,7 +1407,9 @@ pub(super) fn conflicts(
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
                 | FiendishPandaCaptureCollectedV1 { .. }
-                | FiendishPandaJournalV1 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } => true,
+                | FiendishPandaJournalV1 { .. }
+                | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
+                | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } => true,
         }
     })
 }

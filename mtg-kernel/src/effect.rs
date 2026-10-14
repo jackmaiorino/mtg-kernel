@@ -1648,12 +1648,12 @@ pub enum EffectOp {
     AshrootAttackBoostV1 {
         source: EffectObjectBinding,
     },
+    AshrootBoostFromCaptureV2 {
+        capture_history_index: u64,
+    },
     /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
     StromkirkVampirePermanentCounterV1,
     StromkirkCounterFromCaptureV2 {
-        capture_history_index: u64,
-    },
-    AshrootBoostFromCaptureV2 {
         capture_history_index: u64,
     },
     BindGarrukEtbDrawV1,
@@ -7055,10 +7055,14 @@ fn apply_undercity_throne_result(
             return Err("Throne chosen creature did not enter as its next incarnation".to_string());
         }
         let generation = permanent.zone_change_count;
-        let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
-        *counters = counters
-            .checked_add(3)
-            .ok_or("Throne +1/+1 counter overflow")?;
+        if crate::doubling_season_v48::requires_successor(state) {
+            event::add_plus_one_counters(state, chosen.object, binding.player, 3)?;
+        } else {
+            let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
+            *counters = counters
+                .checked_add(3)
+                .ok_or("Throne +1/+1 counter overflow")?;
+        }
         let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
         let timestamp =
             cfg!(feature = "limited-fdn-fixtures").then(|| crate::engine::next_timestamp(state));
@@ -13553,10 +13557,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     continue;
                 }
                 if explorer_on_battlefield {
-                    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-                    *counters = counters
-                        .checked_add(1)
-                        .ok_or("Explore +1/+1 counter overflow")?;
+                    if crate::doubling_season_v48::requires_successor(state) {
+                        event::add_plus_one_counters(state, target, player, 1)?;
+                    } else {
+                        let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                        *counters = counters.checked_add(1).ok_or("Explore +1/+1 counter overflow")?;
+                    }
                 }
                 let canonical_path = path.clone();
                 continuation.choice = Some(PendingEffectChoice::ChooseOption {
@@ -16677,12 +16683,35 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
+            let placed = if !crate::doubling_season_v48::requires_successor(state) {
+                1
+            } else {
+                match crate::doubling_season_v48::counter_amount(
+                    state,
+                    object_id,
+                    ctx.controller,
+                    crate::doubling_season_v48::CounterOriginV48::Effect,
+                    1,
+                )
+                .ok()
+                .and_then(|count| i16::try_from(count).ok())
+                {
+                    Some(count) => count,
+                    None => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            };
             let Some(next) = state
                 .objects
                 .get(object_id)
                 .counters
                 .minus1_minus1
-                .checked_add(1)
+                .checked_add(placed)
             else {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -17364,6 +17393,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             };
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(incubator, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        plus_one_counters: i32::from(*amount),
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(incubator, ctx.controller),
@@ -17524,6 +17564,18 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.entry_tapped = true;
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        attacking: true,
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(*token_def, ctx.controller),
@@ -17631,6 +17683,35 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let recipient = live.owner;
+                let original = crate::standard_cards_v1::scale_counters(
+                    state,
+                    ctx.controller,
+                    i32::from(*stun),
+                );
+                let placed =
+                    crate::doubling_season_v48::ReplacementInputV48::capture(state, recipient)
+                        .replaced_count(original)
+                        .ok()
+                        .and_then(|amount| i16::try_from(amount).ok());
+                let Some(placed) = placed else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                let mut entry =
+                    event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source);
+                if let event::ProposedEvent::ZoneChange(change) = &mut entry {
+                    change.battlefield_stun_v48 = Some(placed);
+                }
+                // This effect says "with" counters. Replay retains the actual
+                // quoted proposal, and entry observers see the initialized total.
+                event::propose_and_commit(state, entry);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
@@ -17655,15 +17736,30 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let placed = i16::try_from(crate::standard_cards_v1::scale_counters(
+            let placed = match crate::doubling_season_v48::counter_amount(
                 state,
+                object.object,
                 ctx.controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
                 1,
-            ))
-            .unwrap_or(i16::MAX);
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            let placed = 1;
+            )
+            .ok()
+            .and_then(|count| {
+                if crate::doubling_season_v48::requires_successor(state) {
+                    i16::try_from(count).ok()
+                } else {
+                    Some(i16::try_from(count).unwrap_or(i16::MAX))
+                }
+            }) {
+                Some(count) => count,
+                None => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
             let oil = &mut state.objects.get_mut(object.object).counters.oil;
             match oil.checked_add(placed) {
                 Some(next) => *oil = next,
@@ -17731,15 +17827,26 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if object.zone != Zone::Battlefield {
                 return;
             }
-            let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-            let Some(updated) = counters.checked_add(1) else {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-                return;
-            };
-            *counters = updated;
+            if crate::doubling_season_v48::requires_successor(state) {
+                if event::add_plus_one_counters(state, target, ctx.controller, 1).is_err() {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            } else {
+                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                let Some(updated) = counters.checked_add(1) else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                *counters = updated;
+            }
+
             if target != ctx.source {
                 let timestamp = crate::engine::next_timestamp(state);
                 state.engine.until_end_of_turn.push(
@@ -18117,20 +18224,30 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let scaled = {
-                let scale = |count: i16| {
-                    i16::try_from(crate::standard_cards_v1::scale_counters(
-                        state,
-                        ctx.controller,
-                        i32::from(count),
-                    ))
-                    .unwrap_or(i16::MAX)
-                };
-                (scale(*plus1_plus1), scale(*lifelink), scale(*stun))
+            let scale = |count: i16| -> Result<i16, String> {
+                let amount = crate::doubling_season_v48::counter_amount(
+                    state,
+                    object,
+                    ctx.controller,
+                    crate::doubling_season_v48::CounterOriginV48::Effect,
+                    i32::from(count),
+                )?;
+                if crate::doubling_season_v48::requires_successor(state) {
+                    i16::try_from(amount)
+                        .map_err(|_| "counter amount does not fit recipient storage".into())
+                } else {
+                    Ok(i16::try_from(amount).unwrap_or(i16::MAX))
+                }
             };
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let (plus1_plus1, lifelink, stun) = (&scaled.0, &scaled.1, &scaled.2);
+            let scaled = (scale(*plus1_plus1), scale(*lifelink), scale(*stun));
+            let (Ok(placed_plus), Ok(placed_lifelink), Ok(placed_stun)) = scaled else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let (plus1_plus1, lifelink, stun) = (&placed_plus, &placed_lifelink, &placed_stun);
             let next = (
                 live.counters
                     .plus1_plus1
@@ -18188,6 +18305,20 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let host_generation = state.objects.get(host).zone_change_count;
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        attached_to: Some(crate::state::ObjectLinkV4 {
+                            object: host,
+                            zone_change_count: host_generation,
+                        }),
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(*token_def, ctx.controller),
@@ -18221,6 +18352,167 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+                return;
+            }
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let start = state.engine.event_history.len();
+                event::propose_and_commit_batch(
+                    state,
+                    vec![event::ProposedEvent::create_token(
+                        *token_def,
+                        ctx.controller,
+                    )],
+                );
+                if state.engine.halted.is_some() {
+                    return;
+                }
+                let Some(source) = ctx.ability_source_contract else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                let source_live = state.objects.try_get(source.source).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.v4.face_down_v1.is_none()
+                        && crate::engine::object_has_type(
+                            state,
+                            source.source,
+                            crate::card_def::CardType::Artifact,
+                        )
+                        && !crate::engine::object_has_type(
+                            state,
+                            source.source,
+                            crate::card_def::CardType::Creature,
+                        )
+                        && live.zone_change_count == source.zone_change_count
+                        && live.owner == source.owner
+                        && live.card_def == source.card_def
+                        && crate::card_def::CARD_DEFS[usize::from(live.card_def)]
+                            .equipment
+                            .is_some()
+                });
+                if !source_live {
+                    return;
+                }
+                let creations = state.engine.event_history[start..]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(offset, event)| match event {
+                        event::CommittedEvent::CreateToken {
+                            object,
+                            token_def: actual,
+                            controller,
+                        } if actual == token_def && *controller == ctx.controller => Some((
+                            (start + offset) as u64,
+                            EffectObjectBinding {
+                                object: *object,
+                                expected_zone: Zone::Battlefield,
+                                expected_zone_change_count: state
+                                    .objects
+                                    .get(*object)
+                                    .zone_change_count,
+                            },
+                        )),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if creations.iter().all(|(_, candidate)| {
+                    !crate::engine::object_has_type(
+                        state,
+                        candidate.object,
+                        crate::card_def::CardType::Creature,
+                    )
+                }) {
+                    return;
+                }
+                if creations.iter().all(|(_, candidate)| {
+                    crate::engine::damage_is_prevented_by_protection(
+                        state,
+                        source.source,
+                        Target::Object(candidate.object),
+                    )
+                }) {
+                    return;
+                }
+                let choice = crate::season_token_attachment_v48::ChoiceV48 {
+                    source,
+                    controller: ctx.controller,
+                    candidates: creations.iter().map(|(_, c)| *c).collect(),
+                    creations: creations.iter().map(|(at, _)| *at).collect(),
+                };
+                let selected = match crate::linked_aura_operation_v1::choose_created_token_v48(
+                    state, choice,
+                ) {
+                    Ok(Some(selected)) => selected,
+                    Ok(None) => return,
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                };
+                let input = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(at, event)| match event {
+                        event::CommittedEvent::TokenAttachmentJournalV48 { journal }
+                            if matches!(
+                                journal.as_ref(),
+                                crate::season_token_attachment_v48::JournalV48::Input { .. }
+                            ) =>
+                        {
+                            Some(at as u64)
+                        }
+                        _ => None,
+                    })
+                    .expect("genuine token attachment choice emits its input");
+                // Untargeted attachment still respects protection, but Shroud
+                // and the Equipment's present controller do not target-filter it.
+                if crate::engine::damage_is_prevented_by_protection(
+                    state,
+                    source.source,
+                    Target::Object(selected.object),
+                ) {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                let attachment_start = state.engine.event_history.len();
+                if state
+                    .attach_object_exact(
+                        source.source,
+                        source.zone_change_count,
+                        selected.object,
+                        selected.expected_zone_change_count,
+                    )
+                    .is_err()
+                {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                let attachment=state.engine.event_history[attachment_start..].iter().enumerate().find_map(|(offset,event)| match event {
+                    event::CommittedEvent::TokenAttachmentJournalV48 {journal} if matches!(journal.as_ref(),crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {source:actual,host} if actual.object==source.source && actual.zone_change_count==source.zone_change_count && host.object==selected.object && host.zone_change_count==selected.expected_zone_change_count) => Some((attachment_start+offset) as u64), _=>None,
+                }).expect("actual attachment helper emits independent occurrence");
+                crate::season_token_attachment_v48::record(
+                    state,
+                    crate::season_token_attachment_v48::JournalV48::Completed {
+                        input,
+                        selected,
+                        attachment,
+                    },
+                );
                 return;
             }
             event::propose_and_commit(
@@ -18350,6 +18642,21 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             );
             let controller = ctx.resolve_player(*controller, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
+            if !crate::doubling_season_v48::sources(state, controller).is_empty()
+                || crate::doubling_season_v48::owns_definition(*token_def)
+            {
+                let events = (0..count)
+                    .map(|_| {
+                        let mut event = event::ProposedEvent::create_token(*token_def, controller);
+                        if let event::ProposedEvent::CreateToken(t) = &mut event {
+                            t.entry_tapped = *tapped;
+                        }
+                        event
+                    })
+                    .collect();
+                event::propose_and_commit_batch(state, events);
+                return;
+            }
             for _ in 0..count {
                 event::propose_and_commit(
                     state,
@@ -18496,6 +18803,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             event::propose_and_commit_batch(state, events);
         }
         EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { token_def, count } => {
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        haste_until_end_of_turn: true,
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal; usize::from(*count)]);
+                return;
+            }
             for _ in 0..*count {
                 event::propose_and_commit(
                     state,
@@ -19590,6 +19908,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
+                if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                    change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
+                        original: i32::from(ctx.x_value),
+                        host: None,
+                    });
+                }
+                event::propose_and_commit(state, proposal);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
@@ -19627,6 +19956,20 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+                return;
+            }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
+                if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                    change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
+                        original: i32::from(ctx.x_value),
+                        host: Some(ObjectLinkV4 {
+                            object: target,
+                            zone_change_count: state.objects.get(target).zone_change_count,
+                        }),
+                    });
+                }
+                event::propose_and_commit(state, proposal);
                 return;
             }
             event::propose_and_commit(

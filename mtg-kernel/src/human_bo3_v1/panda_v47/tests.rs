@@ -171,7 +171,6 @@ fn genuine_registered_large_group_keeps_distinct_safe_labels_and_restored_final_
     }
 }
 #[test]
-#[ignore = "genuine Panda printing required; parent owns registration/native"]
 fn real_paid_panda_mandatory_death_target_keeps_original_roles_restore_and_old_refusals_both_seats()
 {
     for actor in [PlayerId::P0, PlayerId::P1] {

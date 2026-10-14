@@ -68,7 +68,6 @@ fn registered_complete_binding_reorders_forgeries_and_monotonic_restore_refuse_r
     }
 }
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn actual_paid_cast_attack_decline_sacrifice_death_draw_and_restored_complete_public_owner_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -270,7 +269,6 @@ fn real_registered_generic_ward_payment_or_decline_keeps_original_spell_and_full
 }
 
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn genuine_held_and_resolving_typed_copy_keep_original_controller_source_identity_counter_and_restore(
 ) {
     use crate::effect::{EffectObjectBinding, ExecCtx};

@@ -3,7 +3,6 @@ use crate::effect::{EffectObjectBinding, ExecCtx};
 use crate::state::{AbilitySourceContractV4, ObjectLinkV4, Target};
 
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn genuine_hunter_sacrifice_and_foreign_aura_owner_prompt_use_distinct_sources_and_resume_after_owning_restore(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {

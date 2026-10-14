@@ -1,0 +1,29 @@
+{
+  "scope": "Unaccepted registry candidate; no native/Full admission",
+  "parent": "2d516ddba1043cb7c31358118ac2ad9746355464",
+  "mage_ref": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "prior247_canonical_sha256": "106363f2efffdc1206de1a1f3e95b539297bd355ad078cba5a92f6f2c13a9e9e",
+  "sources": [
+    {
+      "name": "High-Society Hunter",
+      "path": "Mage.Sets/src/mage/cards/h/HighSocietyHunter.java",
+      "git_blob": "b61d6a510950574ee8f98ea420e7c267617a9bbf",
+      "bytes": 2297,
+      "sha256": "ba5a6a0c6b3b0432f067de2263d78c9b6e4f568565329824760b3b061c4b5968"
+    },
+    {
+      "name": "Eaten Alive",
+      "path": "Mage.Sets/src/mage/cards/e/EatenAlive.java",
+      "git_blob": "070b39550d6fc8aeac29f690963b0e2460b31c96",
+      "bytes": 1386,
+      "sha256": "1e33cca7c9625a6c423bc8b5dda01cd644211c6bf853f93009348ab31c62c62a"
+    },
+    {
+      "name": "Fiendish Panda",
+      "path": "Mage.Sets/src/mage/cards/f/FiendishPanda.java",
+      "git_blob": "d6845da4c1b4e94fb0bab7765985e1a82e1ca27f",
+      "bytes": 3421,
+      "sha256": "ab1cb0abdbd6939c61bc02b78261dad22fb1fff23a3b459e47c28ff6039e923a"
+    }
+  ]
+}

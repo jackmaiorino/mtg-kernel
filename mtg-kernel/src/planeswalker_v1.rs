@@ -34,7 +34,11 @@ pub fn loyalty(state: &GameState, object: ObjectId) -> Option<u32> {
         .map(|entry| entry.counters)
 }
 
-pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
+pub(crate) fn after_zone_change(
+    state: &mut GameState,
+    object: ObjectId,
+    counter_input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     if let Some(planeswalkers) = &mut state.planeswalkers_v1 {
         planeswalkers.loyalty.remove(&object);
         if planeswalkers.loyalty.is_empty() {
@@ -45,17 +49,23 @@ pub(crate) fn after_zone_change(state: &mut GameState, object: ObjectId) {
     if live.zone == Zone::Battlefield
         && engine::object_has_type(state, object, CardType::Planeswalker)
     {
-        let counters = u32::from(
+        let counters = match crate::doubling_season_v48::entry_loyalty_amount(
+            state,
+            counter_input,
+            live.controller,
             CARD_DEFS[live.card_def as usize]
                 .starting_loyalty
                 .unwrap_or(0),
-        );
-        let counters = crate::standard_cards_v1::scale_counters(
-            state,
-            live.controller,
-            counters as i32,
-        )
-        .max(0) as u32;
+        ) {
+            Ok(count) => count,
+            Err(_) => {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
+        };
         let entry = LoyaltyV1 {
             permanent: ObjectLinkV4 {
                 object,
@@ -79,18 +89,79 @@ pub(crate) fn damage(state: &mut GameState, object: ObjectId, amount: i32) {
 /// planeswalker. Removal stops at zero; the state-based action then puts it
 /// into its owner's graveyard.
 pub fn change_loyalty(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    );
+}
+
+pub(crate) fn pay_loyalty_cost(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
+        crate::doubling_season_v48::CounterOriginV48::Cost,
+    );
+}
+
+pub(crate) fn change_loyalty_effect(state: &mut GameState, object: ObjectId, delta: i32) {
+    change_loyalty_with_origin(
+        state,
+        object,
+        delta,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    );
+}
+
+fn change_loyalty_with_origin(
+    state: &mut GameState,
+    object: ObjectId,
+    delta: i32,
+    origin: crate::doubling_season_v48::CounterOriginV48,
+) {
     let Some(counters) = loyalty(state, object) else {
         return;
     };
     let counters = if delta >= 0 {
-        counters.saturating_add(
-            crate::standard_cards_v1::scale_counters(
+        let original = crate::standard_cards_v1::scale_counters(
+            state,
+            state.objects.get(object).controller,
+            delta,
+        );
+        let amount = if origin == crate::doubling_season_v48::CounterOriginV48::Effect {
+            crate::doubling_season_v48::ReplacementInputV48::capture(
                 state,
                 state.objects.get(object).controller,
-                delta,
             )
-            .max(0) as u32,
-        )
+            .replaced_loyalty(original as u32)
+        } else {
+            Ok(original as u32)
+        };
+        let amount = match amount {
+            Ok(amount) => amount,
+            Err(_) => {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
+        };
+        // Retain the legacy saturation only on catalogs without the new source.
+        if crate::doubling_season_v48::requires_successor(state) {
+            let Some(total) = counters.checked_add(amount) else {
+                state.engine.halted = Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            };
+            total
+        } else {
+            counters.saturating_add(amount)
+        }
     } else {
         counters.saturating_sub(delta.unsigned_abs())
     };
@@ -118,6 +189,32 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
     if amount <= 0 || state.objects.get(object).zone != Zone::Battlefield {
         return;
     }
+    if crate::doubling_season_v48::requires_successor(state) {
+        let original = crate::standard_cards_v1::scale_counters(
+            state,
+            state.objects.get(object).controller,
+            amount,
+        );
+        let placed = crate::doubling_season_v48::ReplacementInputV48::capture(
+            state,
+            state.objects.get(object).controller,
+        )
+        .replaced_loyalty(original as u32);
+        if placed.is_err()
+            || placed.is_ok_and(|placed| {
+                loyalty(state, object)
+                    .unwrap_or(0)
+                    .checked_add(placed)
+                    .is_none()
+            })
+        {
+            state.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
     if loyalty(state, object).is_none() {
         let permanent = ObjectLinkV4 {
             object,
@@ -135,7 +232,60 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
                 },
             );
     }
-    change_loyalty(state, object, amount);
+    change_loyalty_effect(state, object, amount);
+}
+
+/// Quote the full native-width effect before the transfer mutates any family.
+pub(crate) fn quote_loyalty_counters_v48(
+    state: &GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<u32, String> {
+    if state.objects.get(object).zone != Zone::Battlefield {
+        return Err("loyalty counter recipient is not a permanent".into());
+    }
+    let controller = state.objects.get(object).controller;
+    let original = crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, amount)?;
+    let placed = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller)
+        .replaced_loyalty(original)?;
+    loyalty(state, object)
+        .unwrap_or(0)
+        .checked_add(placed)
+        .ok_or_else(|| "loyalty total overflow".into())
+}
+
+pub(crate) fn add_loyalty_counters_u32_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<(), String> {
+    if amount == 0 {
+        return Ok(());
+    }
+    // Keep every old representable, absent-component placement byte-identical.
+    if !crate::doubling_season_v48::requires_successor(state) {
+        if let Ok(signed) = i32::try_from(amount) {
+            add_loyalty_counters(state, object, signed);
+            return Ok(());
+        }
+    }
+    let counters = quote_loyalty_counters_v48(state, object, amount)?;
+    let permanent = ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    };
+    state
+        .planeswalkers_v1
+        .get_or_insert_with(Default::default)
+        .loyalty
+        .insert(
+            object,
+            LoyaltyV1 {
+                permanent,
+                counters,
+            },
+        );
+    Ok(())
 }
 
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.
