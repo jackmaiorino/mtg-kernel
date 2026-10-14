@@ -1648,12 +1648,12 @@ pub enum EffectOp {
     AshrootAttackBoostV1 {
         source: EffectObjectBinding,
     },
+    AshrootBoostFromCaptureV2 {
+        capture_history_index: u64,
+    },
     /// Stromkirk's legal controlled Vampire permanent, including noncreatures.
     StromkirkVampirePermanentCounterV1,
     StromkirkCounterFromCaptureV2 {
-        capture_history_index: u64,
-    },
-    AshrootBoostFromCaptureV2 {
         capture_history_index: u64,
     },
     BindGarrukEtbDrawV1,
