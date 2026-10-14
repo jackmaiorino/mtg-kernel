@@ -3,7 +3,7 @@
 use crate::ajani_full_v42::lifecycle::JournalV42;
 use crate::event::CommittedEvent;
 use crate::ids::ObjectId;
-use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
+use crate::rl::{CardStableRefV1, RlContractError};
 use crate::rules_meaning_ajani_v42::{MeaningV42, RootV42};
 use crate::state::{GameState, StackTargetContractV4, Zone};
 use serde::{Deserialize, Serialize};

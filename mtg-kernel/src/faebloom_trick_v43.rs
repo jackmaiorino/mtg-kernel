@@ -1092,7 +1092,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn requires_successor(state: &GameState, actor: Option<crate::state::PlayerId>) -> bool {
+pub(crate) fn requires_successor(state: &GameState, actor: Option<crate::ids::PlayerId>) -> bool {
     state
         .engine
         .event_history
@@ -1108,7 +1108,7 @@ pub(crate) fn requires_successor(state: &GameState, actor: Option<crate::state::
 }
 pub(crate) fn require_legacy_supported(
     state: &GameState,
-    actor: Option<crate::state::PlayerId>,
+    actor: Option<crate::ids::PlayerId>,
 ) -> Result<(), String> {
     if requires_successor(state, actor) {
         return Err("Faebloom reflexive creation requires V43".into());

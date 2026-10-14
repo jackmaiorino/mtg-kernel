@@ -1,7 +1,7 @@
 use super::*;
 use crate::engine::{self, Action, Decision};
 use crate::mana::ManaColor;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_with_turn_authority};
 
 fn library_choice(card: &str) -> GameState {
     let mut state = ready_state();
@@ -58,9 +58,7 @@ fn v4_search_sampler_library_locks_admit_and_unlocked_binding_rejects() {
 }
 
 fn historical_opponent_source(owner: PlayerId) -> (GameState, ObjectId) {
-    let mut state = ready_state();
-    state.active_player = owner;
-    state.priority_player = owner;
+    let mut state = ready_state_with_turn_authority(owner);
     let other = owner.opponent();
     let source = put(&mut state, owner, "Writhing Chrysalis", Zone::Hand);
     let counter = put(&mut state, other, "Counterspell", Zone::Hand);
