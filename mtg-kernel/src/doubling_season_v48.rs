@@ -170,12 +170,20 @@ pub enum CounterOriginV48 {
 pub struct ReplacementInputV48 {
     pub controller: PlayerId,
     pub seasons: Vec<AbilitySourceContractV4>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_controls_big: Option<bool>,
 }
 impl ReplacementInputV48 {
     pub(crate) fn capture(state: &GameState, controller: PlayerId) -> Self {
         Self {
             controller,
             seasons: sources(state, controller),
+            entry_controls_big: Some(
+                state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .any(|id| crate::engine::object_mana_value(state, *id) >= 4),
+            ),
         }
     }
     /// The same nonconsuming replacements all commute; each applies once.
@@ -256,7 +264,14 @@ pub(crate) fn preflight_entry_definition(
                 .ok_or("combined entry counters overflow")?;
         }
     }
-    let _ = plus;
+    if def.name == "Ascendant Packleader" && input.entry_controls_big == Some(true) {
+        plus.checked_add(entry_amount(state, Some(input), input.controller, 1)?)
+            .ok_or("combined conditional entry plus counters overflow")?;
+    }
+    if def.name == "Evolving Adaptive" {
+        i16::try_from(entry_amount(state, Some(input), input.controller, 1)?)
+            .map_err(|_| "entry oil counter storage overflow")?;
+    }
     if let Some(time) = time {
         u8::try_from(entry_amount(
             state,

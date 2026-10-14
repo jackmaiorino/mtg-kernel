@@ -80,6 +80,37 @@ pub(crate) fn apply_conditional_entry_counters(
         return;
     };
     let controller = state.objects.get(id).controller;
+    // Do not quote an unrequested counter for every ordinary entry.
+    let requested = match name {
+        "Ascendant Packleader" => {
+            if crate::doubling_season_v48::requires_successor(state)
+                || input.is_some_and(|input| !input.seasons.is_empty())
+            {
+                input
+                    .and_then(|input| input.entry_controls_big)
+                    .unwrap_or_else(|| {
+                        state.players[controller.index()]
+                            .battlefield
+                            .iter()
+                            .any(|other| {
+                                *other != id && crate::engine::object_mana_value(state, *other) >= 4
+                            })
+                    })
+            } else {
+                state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .any(|other| {
+                        *other != id && crate::engine::object_mana_value(state, *other) >= 4
+                    })
+            }
+        }
+        "Evolving Adaptive" => true,
+        _ => false,
+    };
+    if !requested {
+        return;
+    }
     let count = match crate::doubling_season_v48::entry_amount(state, input, controller, 1) {
         Ok(count) => count,
         Err(_) => {
@@ -90,23 +121,47 @@ pub(crate) fn apply_conditional_entry_counters(
             return;
         }
     };
+    let checked = crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty());
     match name {
-        // "This creature enters with a +1/+1 counter on it if you control a
-        // permanent with mana value 4 or greater."
         "Ascendant Packleader" => {
-            let controls_big_permanent = state.players[controller.index()]
-                .battlefield
-                .iter()
-                .any(|&other| other != id && crate::engine::object_mana_value(state, other) >= 4);
-            if controls_big_permanent {
+            if checked {
+                let Some(total) = state
+                    .objects
+                    .get(id)
+                    .counters
+                    .plus1_plus1
+                    .checked_add(count)
+                else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                };
+                state.objects.get_mut(id).counters.plus1_plus1 = total;
+            } else {
                 state.objects.get_mut(id).counters.plus1_plus1 += count;
             }
         }
-        // "This creature enters with an oil counter on it."
         "Evolving Adaptive" => {
-            state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX)
+            if checked {
+                let total = i16::try_from(count)
+                    .ok()
+                    .and_then(|count| state.objects.get(id).counters.oil.checked_add(count));
+                let Some(total) = total else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                };
+                state.objects.get_mut(id).counters.oil = total;
+            } else {
+                state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX);
+            }
         }
-        _ => {}
+        _ => unreachable!("only actual requested conditional counter families reach commit"),
     }
 }
 
