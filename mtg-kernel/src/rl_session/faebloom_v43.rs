@@ -2,7 +2,11 @@
 
 use super::*;
 use crate::faebloom_observation_v43::FaebloomObservationV43;
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 use crate::state::GameState;
 
 // No Debug/Serialize: executable candidates and the transport observation
