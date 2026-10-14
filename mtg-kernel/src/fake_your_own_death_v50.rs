@@ -12,6 +12,8 @@ use crate::effect::{EffectOp, ExecCtx, PlayerRef};
 use crate::mana::ManaColor;
 use crate::state::{GameState, Zone};
 
+pub mod grant_primitive;
+
 fn treasure_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Treasure Token")
         .ok_or("Fake Your Own Death needs the existing Treasure blueprint")?;
