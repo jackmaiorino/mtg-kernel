@@ -885,6 +885,8 @@ pub fn validate_death_captures(state: &GameState) -> Result<(), String> {
                         || g.source != lookback.battlefield_source.source
                         || g.card_def != lookback.battlefield_source.card_def
                         || g.owner != lookback.battlefield_source.owner
+                        || g.controller != lookback.battlefield_source.owner
+                        || g.attached_to.is_some()
                         || g.zone != Zone::Graveyard
                         || g.zone_change_count != lookback.graveyard_zone_change_count
                     {
