@@ -265,3 +265,6 @@ The direct shared X-entry leaves now carry their original X/actual host through 
 
 
 The native Net/Bankbuster entry initializer moves before entry observations only under the new component, using the same frozen original recipient quote and current printed-ability availability. Its late predecessor hook is skipped for that entry to prevent double initialization. The old absent-component placement remains at its original position. These Standard-specific descriptors have no current compatible selected Season catalog, so this is an explicit source adapter with runtime qualification still unavailable, rather than a claimed current printing test.
+
+
+An actual permanent spell copy resolving onto the battlefield is now marked as a token before entry observations under V48, while remaining a single genuine ZoneChange rather than a CreateToken request. Therefore Season never expands that entry. Prepared real paid Arahbo/copy_spell_for fixtures cover both original and opposite copy controllers, exact own-entry token snapshot/capture, original spell still on Stack, absence of any copied-Arahbo creation occurrence and repeated restored execution. This uses the real spell-copy primitive, not an admitted printed arbitrary permanent-copy spell; that printed-producer qualification remains separate.

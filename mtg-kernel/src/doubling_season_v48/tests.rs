@@ -1118,3 +1118,97 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() {
+    use crate::card_def::ManaColor;
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for copy_controller in [actor, actor.opponent()] {
+            let mut state = ready_state_for(actor);
+            for player in [actor, actor.opponent()] {
+                put(&mut state, player, "Forest", Zone::Hand);
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+            cast_season(&mut state, actor);
+            let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+            engine::step(&mut state, Action::CastSpell(source)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            let (copy, copy_stack) =
+                engine::copy_spell_for(&mut state, source, copy_controller).unwrap();
+            assert_ne!(copy, source);
+            assert!(state.stack.iter().any(|row| row.source == copy
+                && row.v4.stack_item_id == copy_stack
+                && row.is_copy));
+            let start = state.engine.event_history.len();
+            let original = restore(&state);
+            for _ in 0..3 {
+                let mut branch = restore(&original);
+                for _ in 0..32 {
+                    let decision = engine::advance_until_decision(&mut branch);
+                    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                    if branch.objects.get(copy).zone == Zone::Battlefield {
+                        break;
+                    }
+                    match decision {
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut branch, Action::Pass).unwrap()
+                        }
+                        Decision::OrderTriggers { pending, .. } => engine::step(
+                            &mut branch,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        )
+                        .unwrap(),
+                        other => panic!("unexpected permanent copy entry {other:?}"),
+                    }
+                }
+                let live = branch.objects.get(copy);
+                assert_eq!(live.zone, Zone::Battlefield);
+                assert_eq!(live.controller, copy_controller);
+                assert!(live.v4.is_token);
+                assert_eq!(branch.objects.get(source).zone, Zone::Stack);
+                assert_eq!(branch.engine.event_history[start..].iter().filter(|event| matches!(event, event::CommittedEvent::CreateToken { token_def, .. } if *token_def == live.card_def)).count(), 0);
+                let entries: Vec<_> = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == copy =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(entries.len(), 1);
+                assert!(entries[0].snapshot.v4.is_token);
+                assert_eq!(entries[0].snapshot.controller, copy_controller);
+                let captures: Vec<_> = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::ArahboTokenCaptureV1 { capture }
+                            if capture.source.source == copy =>
+                        {
+                            Some(capture)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(captures.len(), 1);
+                assert_eq!(captures[0].root, crate::arahbo_v1::RootV1::OwnEntry);
+                assert_eq!(captures[0].source.controller, copy_controller);
+                crate::arahbo_v1::validate_state(&branch).unwrap();
+                validate_token_journals(&branch).unwrap();
+                assert_eq!(restore(&branch), branch);
+            }
+        }
+    }
+}

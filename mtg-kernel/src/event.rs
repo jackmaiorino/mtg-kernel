@@ -4228,6 +4228,8 @@ fn commit_zone_change(
     ),
 ) {
     let (authority_observers, entering_characteristics, counter_input) = entry_context;
+    let season_entry_active = crate::doubling_season_v48::requires_successor(state)
+        || counter_input.is_some_and(|input| !input.seasons.is_empty());
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -4341,6 +4343,15 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // 707.10f: a resolving permanent spell copy becomes a token. This
+        // is a zone entry, not token creation, so no creation replacement applies.
+        if season_entry_active
+            && from_zone == Zone::Stack
+            && to_zone == Zone::Battlefield
+            && obj.spell_copy_origin.is_some()
+        {
+            obj.v4.is_token = true;
+        }
         if to_zone == Zone::Battlefield {
             if let Some(face_down) = entering_face_down {
                 obj.v4.face_down_v1 = Some(face_down);
