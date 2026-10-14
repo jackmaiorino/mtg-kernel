@@ -889,6 +889,39 @@ pub enum CommittedEvent {
         owner: PlayerId,
         power: i32,
     },
+    AshrootDispatchV2 {
+        journal: crate::ashroot_dispatch_v2::JournalV2,
+    },
+    GorehornDepartureV1 {
+        departure: Box<crate::gorehorn_damage_v1::DepartureV1>,
+    },
+    GorehornPublishedV1 {
+        publication: Box<crate::gorehorn_damage_v1::PublicationV1>,
+    },
+    GorehornPreparedV1 {
+        prepared: Box<crate::gorehorn_damage_v1::PreparedV1>,
+    },
+    GorehornDamageOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::DamageOperationV1>,
+    },
+    GorehornOperationV1 {
+        operation: Box<crate::gorehorn_damage_v1::OperationV1>,
+    },
+    RaidEntryCaptureV1 {
+        capture: Box<crate::raid_entry_custody_v1::CaptureV1>,
+    },
+    RaidEntryPublishedV1 {
+        publication: Box<crate::raid_entry_custody_v1::PublishedV1>,
+    },
+    RaidEntryDroppedV1 {
+        dropped: Box<crate::raid_entry_custody_v1::DroppedV1>,
+    },
+    RaidEntryCounteredV1 {
+        countered: Box<crate::raid_entry_custody_v1::CounteredV1>,
+    },
+    RaidEntryStartedV1 {
+        started: Box<crate::raid_entry_custody_v1::StartedV1>,
+    },
     /// History-only definition-owned entry and linked-duration authority.
     BanishingEntryV1 {
         source: crate::state::AbilitySourceContractV4,
@@ -1016,39 +1049,6 @@ pub enum CommittedEvent {
     VampireGourmandCounterClosedV2 {
         publication_history_index: u32,
         removal_history_index: u32,
-    },
-    AshrootDispatchV2 {
-        journal: crate::ashroot_dispatch_v2::JournalV2,
-    },
-    GorehornDepartureV1 {
-        departure: Box<crate::gorehorn_damage_v1::DepartureV1>,
-    },
-    GorehornPublishedV1 {
-        publication: Box<crate::gorehorn_damage_v1::PublicationV1>,
-    },
-    GorehornPreparedV1 {
-        prepared: Box<crate::gorehorn_damage_v1::PreparedV1>,
-    },
-    GorehornDamageOperationV1 {
-        operation: Box<crate::gorehorn_damage_v1::DamageOperationV1>,
-    },
-    GorehornOperationV1 {
-        operation: Box<crate::gorehorn_damage_v1::OperationV1>,
-    },
-    RaidEntryCaptureV1 {
-        capture: Box<crate::raid_entry_custody_v1::CaptureV1>,
-    },
-    RaidEntryPublishedV1 {
-        publication: Box<crate::raid_entry_custody_v1::PublishedV1>,
-    },
-    RaidEntryDroppedV1 {
-        dropped: Box<crate::raid_entry_custody_v1::DroppedV1>,
-    },
-    RaidEntryCounteredV1 {
-        countered: Box<crate::raid_entry_custody_v1::CounteredV1>,
-    },
-    RaidEntryStartedV1 {
-        started: Box<crate::raid_entry_custody_v1::StartedV1>,
     },
     GarrukEntryObservationV1 {
         entry: Box<crate::garruks_uprising_v1::EntryV1>,
