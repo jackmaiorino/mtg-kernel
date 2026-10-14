@@ -564,6 +564,56 @@ mod printed {
             }
         }
     }
+    #[test]
+    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
+    fn actual_return_and_restoration_keep_an_unrelated_paid_banishing_link_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = panda(&mut state, actor);
+            let exiled = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let aura = put(&mut state, actor, "Banishing Light", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+            engine::step(&mut state, Action::CastSpell(aura)).unwrap();
+            for _ in 0..24 {
+                if state.objects.get(exiled).zone == Zone::Exile {
+                    break;
+                }
+                match engine::advance_until_decision(&mut state) {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    Decision::ChooseTargets { .. } => {
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(exiled)))
+                            .unwrap()
+                    }
+                    other => panic!("unexpected actual Banishing exile decision {other:?}"),
+                }
+            }
+            assert_eq!(state.objects.get(exiled).zone, Zone::Exile);
+            assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+            assert!(!state.engine.linked_exile_records.is_empty());
+            let target = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            death_publication(&mut state, source, target);
+            settle_stack(&mut state);
+            assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+            assert!(state.objects.get(target).summoning_sick);
+            assert_eq!(state.objects.get(exiled).zone, Zone::Exile);
+            validate_state(&state).unwrap();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            validate_state(&restored).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&restored).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+        }
+    }
     fn panda(state: &mut GameState, actor: PlayerId) -> ObjectId {
         let source = put(state, actor, "Fiendish Panda", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;

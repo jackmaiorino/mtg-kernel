@@ -60,6 +60,7 @@ pub enum RemovalV1 {
 pub struct WorldV1 {
     history_count: u64,
     bytes: Vec<u8>,
+    linked_borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
 }
 impl WorldV1 {
     fn capture(state: &GameState) -> Result<Self, String> {
@@ -70,6 +71,7 @@ impl WorldV1 {
         Ok(Self {
             history_count,
             bytes: serde_json::to_vec(&original).map_err(|e| e.to_string())?,
+            linked_borrow: crate::linked_aura_operation_v1::capture_panda_replay_borrow_v1(state),
         })
     }
     fn restore(&self, state: &GameState, before: u64) -> Result<GameState, String> {
@@ -487,7 +489,12 @@ fn validate_operation(state: &GameState, operation: u64) -> Result<(), String> {
         .engine
         .event_history
         .push(state.engine.event_history[*input as usize].clone());
-    super::execute_core(&mut replay, context, item.inline_effect.as_ref().unwrap())?;
+    crate::linked_aura_operation_v1::with_panda_replay_borrow_v1(
+        &mut replay,
+        item,
+        &world.linked_borrow,
+        |replay| super::execute_core(replay, context, item.inline_effect.as_ref().unwrap()),
+    )?;
     if replay.engine.halted.is_some()
         || replay.objects.try_get(object) != after.as_deref()
         || &replay.engine.event_history[*input as usize + 1..] != events

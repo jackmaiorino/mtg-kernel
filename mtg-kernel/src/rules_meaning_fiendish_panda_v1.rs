@@ -59,6 +59,7 @@ pub fn producer_sha256() -> String {
         include_str!("rules_meaning_fiendish_panda_v1.rs"),
         include_str!("fiendish_panda_v1.rs"),
         include_str!("fiendish_panda_v1/custody.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
         include_str!("creature_death_capture_v1.rs"),
         include_str!("life_gain_turn_v1.rs"),
         include_str!("trigger.rs"),
