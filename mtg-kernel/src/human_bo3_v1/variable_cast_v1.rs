@@ -456,13 +456,11 @@ impl HumanVariableCastSessionV1 {
 mod tests {
     use super::*;
     use crate::ids::PlayerId;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     use crate::state::Zone;
 
     fn ordinary(actor: PlayerId, reversed: bool, hidden: &str) -> HumanVariableCastSessionV1 {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] = 2;
         put(&mut state, actor.opponent(), hidden, Zone::Hand);
         put(&mut state, actor.opponent(), hidden, Zone::Library);
@@ -622,9 +620,8 @@ mod tests {
     fn actual_registered_divine_human_true_only_zero_and_three_hundred_restore_finish() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for total in [0usize, 300] {
-                let mut state = ready_state();
-                state.active_player = actor;
-                state.priority_player = actor;
+                let mut state =
+                    crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
                 state.players[actor.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 4;
                 put(&mut state, actor, "Divine Resilience", Zone::Hand);
                 for _ in 0..total {

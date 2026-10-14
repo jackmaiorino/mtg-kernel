@@ -6632,6 +6632,10 @@ mod tests {
                         engine::step(&mut stale, Action::DeclareBlockers(Vec::new())).unwrap();
                         continue;
                     }
+                    engine::Decision::DeclareAttackers { .. } => {
+                        engine::step(&mut stale, Action::DeclareAttackers(Vec::new())).unwrap();
+                        continue;
+                    }
                     other => panic!("unexpected real Raid turn transition {other:?}"),
                 }
                 if stale.turn != original_turn {
