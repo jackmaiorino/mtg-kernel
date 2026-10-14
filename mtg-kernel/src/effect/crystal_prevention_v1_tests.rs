@@ -454,7 +454,10 @@ fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across
             assert_eq!(serde_json::to_vec(&branch).unwrap(), before);
             crate::doubling_season_v48::validate_token_journals(&branch).unwrap();
             let damage = capture.damage.as_ref().unwrap().proposed();
-            crate::event::propose_and_commit(&mut branch, damage);
+            crate::event::propose_and_commit(
+                &mut branch,
+                crate::event::ProposedEvent::Damage(damage),
+            );
             assert_eq!(branch.objects.get(recipient).damage, 4);
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&branch).unwrap()).unwrap();

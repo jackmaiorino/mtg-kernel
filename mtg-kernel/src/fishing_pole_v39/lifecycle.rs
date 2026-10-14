@@ -607,22 +607,22 @@ pub(crate) fn removed_input(
     if bait.is_none() && departed.is_none() {
         return Err("Fishing no-op lacks actual original Pole departure".into());
     }
-    let bait_replacement_v48 = if !countered
-        && bait.is_some()
-        && matches!(at(state, owner.origin)?, JournalV39::PaymentInput { .. })
-    {
-        let controller = state.objects.get(pole.source).controller;
-        let input = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller);
-        if input.seasons.is_empty() {
-            None
-        } else {
-            bait.unwrap()
-                .checked_add(input.replaced_count(1)?)
-                .ok_or("Fishing replaced bait overflow")?;
-            Some(input)
+    let bait_replacement_v48 = match bait {
+        Some(bait)
+            if !countered
+                && matches!(at(state, owner.origin)?, JournalV39::PaymentInput { .. }) =>
+        {
+            let controller = state.objects.get(pole.source).controller;
+            let input = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller);
+            if input.seasons.is_empty() {
+                None
+            } else {
+                bait.checked_add(input.replaced_count(1)?)
+                    .ok_or("Fishing replaced bait overflow")?;
+                Some(input)
+            }
         }
-    } else {
-        None
+        _ => None,
     };
     append(
         state,

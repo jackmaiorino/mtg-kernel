@@ -10279,23 +10279,6 @@ fn stack_item_public_v1(
     })
 }
 
-fn stack_public_union_v40(
-    state: &GameState,
-    acting_player: PlayerId,
-    accept_fishing: bool,
-    accepted_sources: HistoricalSourcesV47,
-    accept_divine: bool,
-) -> Result<Vec<StackItemPublicV2>> {
-    stack_public_conqueror_v49(
-        state,
-        acting_player,
-        accept_fishing,
-        accepted_sources,
-        accept_divine,
-        false,
-    )
-}
-
 fn stack_public_conqueror_v49(
     state: &GameState,
     acting_player: PlayerId,

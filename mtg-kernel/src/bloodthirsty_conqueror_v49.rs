@@ -399,7 +399,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         for loss in losses(state, 0, state.engine.event_history.len())? {
             if batches
                 .iter()
-                .filter(|batch| batch.losses.iter().any(|member| *member == loss))
+                .filter(|batch| batch.losses.contains(&loss))
                 .count()
                 != 1
             {
