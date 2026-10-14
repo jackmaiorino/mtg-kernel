@@ -500,7 +500,9 @@ class BackgroundProcessTests(unittest.TestCase):
         body = script(self.tmp_path, "existing-worker.py", "from pathlib import Path\n"
                       "Path(sys.argv[1]).write_text('up')\n"
                       "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
-        worker = subprocess.Popen([sys.executable, body, str(started), str(release)])
+        # Adopt the running interpreter rather than a Windows venv launcher
+        # that places its interpreter child in a separate lifetime job.
+        worker = subprocess.Popen([sys._base_executable, body, str(started), str(release)])
         controller = None
         try:
             self.assertTrue(wait_for(started.exists))
