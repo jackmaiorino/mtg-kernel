@@ -1,7 +1,7 @@
 use super::*;
 use crate::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
 use crate::engine::{self, Action, Decision};
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
 
 pub(crate) fn fixture(
     actor: PlayerId,
@@ -11,9 +11,7 @@ pub(crate) fn fixture(
     known: bool,
     partial: bool,
 ) -> GameState {
-    let mut s = ready_state();
-    s.active_player = actor;
-    s.priority_player = actor;
+    let mut s = ready_state_with_turn_authority(actor);
     let source = put(
         &mut s,
         actor,
