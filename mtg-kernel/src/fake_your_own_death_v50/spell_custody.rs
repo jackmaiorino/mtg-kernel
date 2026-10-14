@@ -229,7 +229,7 @@ pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {
         _ => None,
     }
 }
-pub(super) fn emit(state: &mut GameState, value: JournalV50) -> u64 {
+pub(crate) fn emit(state: &mut GameState, value: JournalV50) -> u64 {
     let index = state.engine.event_history.len() as u64;
     state
         .engine
