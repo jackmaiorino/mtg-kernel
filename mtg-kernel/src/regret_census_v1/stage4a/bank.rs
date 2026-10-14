@@ -293,6 +293,7 @@ pub(super) fn guide_ctx<'a>(
         urgency: Some(URGENCY),
         key_mode: super::canon2::KeyMode::Legacy,
         interchange: false,
+        bestline: None,
     })
 }
 
