@@ -2702,6 +2702,10 @@ pub enum ExpandedTrainingCommandV1 {
         /// Checks every input and the anchor pre-flight, then stops.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         dry_run: bool,
+        /// One cell of the U collapse diagnostic; omitted for the screen's
+        /// frozen recipe.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<archive_distillation_v1::ArchiveDistillationOptionsV1>,
         output_directory: PathBuf,
     },
     /// Spy archive distillation fit check: forward-only readouts of each
@@ -2787,6 +2791,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             stop_after_steps,
             dry_run,
+            options,
             output_directory,
         } => archive_distillation_v1::phase1_v1(
             parent,
@@ -2797,6 +2802,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             anchor,
             stop_after_steps,
             dry_run,
+            options,
             output_directory,
         ),
         ExpandedTrainingCommandV1::ArchiveDistillationProbe {
