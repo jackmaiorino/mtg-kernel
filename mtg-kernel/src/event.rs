@@ -1415,6 +1415,9 @@ pub enum CommittedEvent {
     BaitTransferAppliedV48 {
         placement: Box<crate::doubling_season_v48::BaitTransferAppliedV48>,
     },
+    PlusCounterInputV48 {
+        input: Box<crate::doubling_season_v48::PlusCounterInputV48>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1566,10 +1569,28 @@ pub(crate) fn add_plus_one_counters(
         object,
         zone_change_count: live.zone_change_count,
     };
+    let replacement_input = if original > 0 && !replacement.seasons.is_empty() {
+        Some(crate::doubling_season_v48::PlusCounterInputV48::capture(
+            state, object, player, original,
+        )?)
+    } else {
+        None
+    };
+    let input_index = replacement_input.map(|mut input| {
+        input.index = state.engine.event_history.len() as u64;
+        let at = input.index;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PlusCounterInputV48 {
+                input: Box::new(input),
+            });
+        at
+    });
     state.objects.get_mut(object).counters.plus1_plus1 = total;
     let counter_event = state.engine.event_history.len() as u64;
     log_plus_one_counters_added(state, object, player, count);
-    if original > 0 && !replacement.seasons.is_empty() {
+    if let Some(input) = input_index {
         let index = state.engine.event_history.len() as u64;
         state
             .engine
@@ -1577,6 +1598,7 @@ pub(crate) fn add_plus_one_counters(
             .push(CommittedEvent::PlusCounterReplacementV48 {
                 placement: Box::new(crate::doubling_season_v48::PlusCounterPlacementV48 {
                     index,
+                    input,
                     recipient,
                     actor: player,
                     replacement,

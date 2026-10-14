@@ -1317,3 +1317,101 @@ fn native_loyalty_effect_and_cost_quotes_remain_distinct_at_signed_boundary() {
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_before_actions() {
+    use crate::engine::{self, Action};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        event::add_plus_one_counters(&mut state, recipient, actor.opponent(), 3).unwrap();
+        assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 6);
+        validate_token_journals(&state).unwrap();
+        let placement_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                )
+            })
+            .unwrap();
+        let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+            &state.engine.event_history[placement_index]
+        else {
+            unreachable!()
+        };
+        let original_placement = placement.clone();
+        let input_index = original_placement.input as usize;
+        let counter_index = original_placement.counter_event as usize;
+        assert!(input_index < counter_index && counter_index < placement_index);
+        for _ in 0..3 {
+            let valid = restore(&state);
+            validate_token_journals(&valid).unwrap();
+            assert_eq!(bytes(&valid), bytes(&state));
+            for forgery in 0..5 {
+                let mut forged = restore(&state);
+                match forgery {
+                    0 => {
+                        if let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+                            &mut forged.engine.event_history[placement_index]
+                        {
+                            placement.original = 4;
+                            placement.after = 8;
+                        }
+                        if let event::CommittedEvent::PlusOneCountersAdded { count, .. } =
+                            &mut forged.engine.event_history[counter_index]
+                        {
+                            *count = 8;
+                        }
+                        forged.objects.get_mut(recipient).counters.plus1_plus1 = 8;
+                    }
+                    1 => {
+                        if let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+                            &mut forged.engine.event_history[placement_index]
+                        {
+                            placement.actor = actor;
+                        }
+                        if let event::CommittedEvent::PlusOneCountersAdded { player, .. } =
+                            &mut forged.engine.event_history[counter_index]
+                        {
+                            *player = actor;
+                        }
+                    }
+                    2 => {
+                        forged.engine.event_history[input_index] =
+                            event::CommittedEvent::Tap { object: recipient }
+                    }
+                    3 => {
+                        forged.engine.event_history[placement_index] =
+                            event::CommittedEvent::Tap { object: recipient }
+                    }
+                    4 => forged
+                        .engine
+                        .event_log
+                        .push(forged.engine.event_history[input_index].clone()),
+                    _ => unreachable!(),
+                }
+                let before = bytes(&forged);
+                assert!(validate_token_journals(&forged).is_err());
+                assert!(engine::step(&mut forged, Action::Pass).is_err());
+                assert_eq!(bytes(&forged), before);
+            }
+        }
+        let before = bytes(&state);
+        assert!(event::add_plus_one_counters(&mut state, recipient, actor, i32::MAX).is_err());
+        assert_eq!(bytes(&state), before);
+    }
+}

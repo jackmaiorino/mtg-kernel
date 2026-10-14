@@ -1055,6 +1055,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
                 | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
                 | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
         )
     }) {
         return true;
@@ -1405,7 +1406,7 @@ pub(super) fn conflicts(
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
                 | FiendishPandaCaptureCollectedV1 { .. }
-                | FiendishPandaJournalV1 { .. } | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. } => true,
+                | FiendishPandaJournalV1 { .. } | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. } | PlusCounterInputV48 { .. } => true,
         }
     })
 }
