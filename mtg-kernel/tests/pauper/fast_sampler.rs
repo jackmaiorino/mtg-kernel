@@ -10,10 +10,10 @@ use sha2::{Digest, Sha256};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-const ORACLE_BYTES: &[u8] = include_bytes!("../../data/fast_sampler_decimal_oracle_v1.json");
+const ORACLE_BYTES: &[u8] = include_bytes!("../../../data/fast_sampler_decimal_oracle_v1.json");
 const ORACLE_SHA256: &str = "bb42f0cacae9902d67851941678cf2fb34a90cb8459403126a8026085dcae033";
 const CANDIDATE_VECTOR_BYTES: &[u8] =
-    include_bytes!("../../data/fast_sampler_candidate_vectors_v1.json");
+    include_bytes!("../../../data/fast_sampler_candidate_vectors_v1.json");
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))

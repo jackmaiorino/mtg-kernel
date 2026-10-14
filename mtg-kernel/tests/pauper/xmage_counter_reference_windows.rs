@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FIXTURE_JSON: &str = include_str!("../../data/xmage_counter_reference_windows_v1.json");
+const FIXTURE_JSON: &str = include_str!("../../../data/xmage_counter_reference_windows_v1.json");
 const OPPONENT_DECISION_PREFIX: &str = "REPLAY_OPPONENT_DECISION_JSON: ";
 const XMAGE_ORACLE_ROOT_ENV: &str = "MTG_KERNEL_XMAGE_ORACLE_ROOT";
 const VENDORED_XMAGE_ORACLE_ROOT: &str = "oracle/xmage";
