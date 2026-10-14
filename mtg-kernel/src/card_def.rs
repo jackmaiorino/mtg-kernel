@@ -2699,7 +2699,11 @@ mod tests {
                 192
             }
         );
-        if cfg!(feature = "limited-fdn-fixtures") {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        {
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
             assert_eq!(card_id_by_name("Soulstone Sanctuary"), Some(428));
