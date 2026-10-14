@@ -1768,12 +1768,13 @@ impl FrozenPlayPolicyV1 {
 /// a hit returns the stored owned output of an identical input; a miss runs
 /// the declared forward and stores its output. Without a cache this is the
 /// plain forward.
+#[allow(clippy::too_many_arguments)]
 fn cached_forward_v1(
     model: &NativePolicyValueNetV1,
     scratch: &mut NativePolicyValueForwardScratchV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
-    mut probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
+    probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
     path: crate::inference_cache_v1::ForwardPathV1,
     mode: ForwardActivationModeV1,
     view: crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>,
@@ -1828,7 +1829,7 @@ fn cached_forward_v1(
             );
         }
     }
-    if let Some(p) = probe.as_deref_mut() {
+    if let Some(p) = probe {
         let bytes = cache.map(|c| c.cache.lock().unwrap_or_else(|p| p.into_inner()).bytes());
         p.record(outcome, key, bytes);
     }
