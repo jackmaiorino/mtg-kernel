@@ -191,6 +191,7 @@ def lease_progress_takeover(spec):
     lease = spec.get("lease_progress")
     if not lease:
         return
+    lease_guard_check(spec)
     path = Path(lease["state"]) / "progress.json"
     previous = load(path) if path.exists() else {}
     old_pid = previous.get("controller_pid")
@@ -211,7 +212,7 @@ def lease_progress_takeover(spec):
                 # zombie. It has exited and cannot own work; PID disappearance
                 # is not required, and this supervisor cannot reap it.
                 deadline = time.monotonic() + 20
-                while old.is_running() and old.status() != psutil.STATUS_ZOMBIE:
+                while old.is_running() and old.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                     require(time.monotonic() < deadline, "previous lease controller did not exit")
                     time.sleep(.1)
         except psutil.NoSuchProcess:
