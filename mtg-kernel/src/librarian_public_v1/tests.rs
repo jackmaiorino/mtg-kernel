@@ -4,13 +4,11 @@ use super::*;
     not(feature = "standard-magezero-fixtures")
 ))]
 use crate::engine::{self, Action, Decision};
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
 use crate::state::ObjectStateV4;
 
 pub(crate) fn ready(actor: PlayerId) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = ready_state_with_turn_authority(actor);
     // Keep actual draw and hidden-library substitution fixtures on live cards.
     for player in [PlayerId::P0, PlayerId::P1] {
         for _ in 0..10 {
