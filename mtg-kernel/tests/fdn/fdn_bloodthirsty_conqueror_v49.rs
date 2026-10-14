@@ -282,9 +282,24 @@ fn actual_snap_and_real_flash_recast_keep_old_generation_gain_independent_of_new
         let original_generation = state.objects.get(source).zone_change_count;
         event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 2));
         next(&mut state);
+        let original_facts = mtg_kernel::conqueror_public_v49::capture(&state).unwrap();
+        assert_eq!(
+            original_facts.occurrences[0].source.zone_change_count,
+            original_generation
+        );
         let snap = cast(&mut state, actor, "Snap", Some(Target::Object(source)));
         until_spell_gone(&mut state, snap);
         assert_eq!(state.objects.get(source).zone, Zone::Hand);
+        let hidden_departure = mtg_kernel::conqueror_public_v49::capture(&state).unwrap();
+        assert_eq!(
+            hidden_departure.occurrences[0].source,
+            original_facts.occurrences[0].source
+        );
+        assert_eq!(
+            hidden_departure.occurrences[0].current_original_source,
+            None
+        );
+
         state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 2;
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
         priority(&mut state, actor);
@@ -314,6 +329,21 @@ fn actual_snap_and_real_flash_recast_keep_old_generation_gain_independent_of_new
             assert_eq!(current.players[actor.index()].life, 19);
             assert_eq!(current.players[actor.opponent().index()].life, 21);
             assert_eq!(captures(current), 2);
+            let public = mtg_kernel::conqueror_public_v49::capture(current).unwrap();
+            assert_eq!(
+                public.occurrences[0].source,
+                original_facts.occurrences[0].source
+            );
+            assert_eq!(public.occurrences[0].current_original_source, None);
+            assert_ne!(
+                public.occurrences[0].source.zone_change_count,
+                public.occurrences[1].source.zone_change_count
+            );
+            assert_eq!(public.occurrences[0].original_controller, actor.into());
+            assert_eq!(
+                public.occurrences[1].original_controller,
+                actor.opponent().into()
+            );
         }
         assert_eq!(state, replay);
     }

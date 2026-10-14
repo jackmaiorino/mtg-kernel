@@ -662,6 +662,7 @@ pub mod ajani_full_v42;
 pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
+pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
 pub mod rules_meaning_akroma_v1;
 pub mod twinflame_observation_v1;
