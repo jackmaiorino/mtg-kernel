@@ -21,16 +21,33 @@ fn effect_capture(effect: &EffectOp) -> Option<u64> {
 
 pub(crate) fn has_unowned_roots(state: &GameState) -> bool {
     state.stack.iter().any(|item| binding(item).is_some())
-        || state
-            .engine
-            .pending_triggers
-            .iter()
-            .any(|pending| effect_capture(&pending.effect).is_some())
+        || held_triggers(state).any(|pending| effect_capture(&pending.effect).is_some())
         || state
             .engine
             .event_log
             .iter()
             .any(|event| journal(event).is_some())
+}
+
+fn held_triggers(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
+    state
+        .engine
+        .pending_triggers
+        .iter()
+        .chain(state.legend_pending_v1.iter().flatten())
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers()),
+        )
+        .chain(
+            state
+                .standard_v1
+                .iter()
+                .filter_map(|standard| standard.resolution_play.as_ref())
+                .flat_map(|pending| pending.deferred_triggers.iter()),
+        )
 }
 
 fn source_at(state: &GameState, capture: u64) -> Result<AbilitySourceContractV4, String> {
@@ -164,7 +181,7 @@ fn validate_pending_shape(
 /// until then every published gained trigger must retain its exact live row.
 pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> {
     validate_mutable_capture_roster(state, &state.engine.event_log)?;
-    for pending in &state.engine.pending_triggers {
+    for pending in held_triggers(state) {
         let Some(capture) = effect_capture(&pending.effect) else {
             continue;
         };
@@ -185,10 +202,7 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
     for event in &state.engine.event_history {
         match journal(event) {
             Some(JournalV50::DeathCollected { capture, .. }) => {
-                let pending = state
-                    .engine
-                    .pending_triggers
-                    .iter()
+                let pending = held_triggers(state)
                     .filter(|pending| effect_capture(&pending.effect) == Some(*capture))
                     .collect::<Vec<_>>();
                 let published = state
