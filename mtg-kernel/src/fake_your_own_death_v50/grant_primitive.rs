@@ -29,6 +29,19 @@ pub struct PrimitiveDeathLookbackV50 {
 }
 
 impl PrimitiveGrantV50 {
+    /// The power modifier remains even when a later layer-six effect suppresses
+    /// the death ability or the original object has left the battlefield.
+    /// Absence is a lifetime fact only after the private owner's Cleanup proof.
+    pub fn temporary_modifier_retained(self, state: &GameState) -> Result<bool, String> {
+        let matching: Vec<_> = state.engine.until_end_of_turn.iter().filter(|effect| {
+            matches!(effect, UntilEndOfTurnEffect::ResolvedObjectEffect {timestamp, ..} if *timestamp == self.timestamp)
+        }).collect();
+        match matching.as_slice() {
+            [] => Ok(false),
+            [modifier] if **modifier == self.modifier() => Ok(true),
+            _ => Err("Fake primitive grant lost its unique exact temporary modifier".into()),
+        }
+    }
     pub(super) fn matches_installation(
         self,
         recipient: EffectObjectBinding,
@@ -65,26 +78,12 @@ impl PrimitiveGrantV50 {
         {
             return Ok(false);
         }
-        let matching: Vec<_> = state
-            .engine
-            .until_end_of_turn
-            .iter()
-            .filter(|effect| {
-                matches!(effect, UntilEndOfTurnEffect::ResolvedObjectEffect {timestamp, ..}
-                if *timestamp == self.timestamp)
-            })
-            .collect();
-        match matching.as_slice() {
-            [] => Ok(false),
-            [modifier] if **modifier == self.modifier() => {
-                Ok(crate::continuous_characteristics_v1::grant_survives(
-                    state,
-                    self.recipient.object,
-                    self.timestamp,
-                ))
-            }
-            _ => Err("Fake primitive grant lost its unique exact temporary modifier".into()),
-        }
+        Ok(self.temporary_modifier_retained(state)?
+            && crate::continuous_characteristics_v1::grant_survives(
+                state,
+                self.recipient.object,
+                self.timestamp,
+            ))
     }
 }
 
@@ -528,6 +527,7 @@ mod tests {
             assert_eq!(state.objects.get(witness).zone, Zone::Battlefield);
             assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
             assert!(!earlier.active(&state).unwrap());
+            assert!(earlier.temporary_modifier_retained(&state).unwrap());
             assert_eq!(crate::engine::effective_power(&state, creature), 3);
             let later = primitive_install_grant_v50(&mut state, recipient).unwrap();
             assert!(later.active(&state).unwrap());
@@ -547,6 +547,7 @@ mod tests {
             let mut separate = state.clone();
             crate::event::propose_and_commit(&mut separate, simultaneous[0].clone());
             assert!(earlier.active(&separate).unwrap());
+            assert!(earlier.temporary_modifier_retained(&separate).unwrap());
             let mut simultaneous_state = state.clone();
             crate::event::propose_and_commit_batch(&mut simultaneous_state, simultaneous.to_vec());
             primitive_bind_committed_death_v50(
@@ -669,11 +670,14 @@ mod tests {
             let recipient = binding(&state, creature);
             let grant = primitive_install_grant_v50(&mut state, recipient).unwrap();
             assert!(grant.active(&state).unwrap());
+            assert!(grant.temporary_modifier_retained(&state).unwrap());
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             advance_to_next_main_for(&mut state, actor.opponent());
             advance_to_next_main_for(&mut restored, actor.opponent());
             assert!(!grant.active(&state).unwrap());
+            assert!(!grant.temporary_modifier_retained(&state).unwrap());
+            assert!(!grant.temporary_modifier_retained(&restored).unwrap());
             assert_eq!(crate::engine::effective_power(&state, creature), 1);
             assert_eq!(
                 serde_json::to_vec(&state).unwrap(),

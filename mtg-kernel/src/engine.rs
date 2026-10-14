@@ -16470,7 +16470,23 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
+            let fake_cleanup =
+                match crate::fake_your_own_death_v50::spell_custody::before_cleanup(state) {
+                    Ok(owner) => owner,
+                    Err(_) => {
+                        state.engine.halted =
+                            Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                        return;
+                    }
+                };
             state.engine.until_end_of_turn.clear();
+            if crate::fake_your_own_death_v50::spell_custody::finish_cleanup(state, fake_cleanup)
+                .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             if let Err(source) = event::expire_exile_if_dies_replacements(state) {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, source));

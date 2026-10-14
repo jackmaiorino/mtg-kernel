@@ -28,14 +28,20 @@ sampler refuse the private root/journals; frozen rules meaning retains an opaque
 original program. No printing ID is registered by this slice.
 
 This source is uncompiled/unrun and its journal is not a complete retained-state
-validator. Cleanup authenticity, complete pre-death inventory, death capture and
-all triggered publication/removal/entry consumers remain unfinished. In
-particular, the installation inventory does not authenticate current expiry or
-authorize a death trigger. The new ownerless-root both-seat/restore case is
+validator. Cleanup now has source ownership: original turn/active-player input,
+complete unexpired installation roster before the actual temporary-effect clear,
+and a nonserializable loan consumed by the adjacent completion. Retained modifier
+identity is checked independently from layer-six ability suppression or creature
+departure; expiry needs its original Cleanup proof. The existing paid Witness
+and real Cleanup primitive cases now distinguish these facts. This source is
+uncompiled/unrun; no genuine printing Cleanup case has passed. Complete pre-death
+inventory, death capture and all triggered publication/removal/entry consumers
+remain unfinished. The inventory does not authorize a death trigger. The new
+ownerless-root both-seat/restore case is
 authored, not passed; genuine paid printing and copy/counter/fizzle fixtures need
 the completed owner and eventual registration.
 
-Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the five new groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
+Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes
 and passes ten predecessor primitive groups, including real cleanup, copied-token

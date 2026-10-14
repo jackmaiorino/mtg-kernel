@@ -1,12 +1,13 @@
 //! Finalized spell and removal ownership for the still-unregistered printing.
 //! Installation records supply the future death owner's grant inventory.
-//! Cleanup/death custody and consumer admission are separate, unfinished work.
+//! Cleanup binds expiry to an original complete ending-turn roster. Death
+//! custody and full consumer admission remain separate, unfinished work.
 
 use super::grant_primitive::{primitive_install_grant_v50, PrimitiveGrantV50};
 use crate::card_def::{CardCapability, CardType, Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp};
 use crate::event::CommittedEvent;
-use crate::ids::{ObjectId, StackItemId};
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::state::{GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
@@ -89,12 +90,16 @@ pub enum JournalV50 {
         item: Box<StackItem>,
         removal: RemovalV50,
         timestamp: u64,
+        turn: u32,
+        active_player: PlayerId,
     },
     Installed {
         input: u64,
         recipient: EffectObjectBinding,
         timestamp: u64,
         grant: PrimitiveGrantV50,
+        turn: u32,
+        active_player: PlayerId,
     },
     WithoutGrant {
         input: u64,
@@ -103,6 +108,14 @@ pub enum JournalV50 {
         publication: u64,
         item: Box<StackItem>,
         movement: Option<u64>,
+    },
+    CleanupEntered {
+        turn: u32,
+        active_player: PlayerId,
+        installations: Vec<u64>,
+    },
+    CleanupCompleted {
+        occurrence: u64,
     },
 }
 
@@ -338,6 +351,7 @@ pub(crate) fn acquire(
     if !selected_item(state, item) {
         return Ok(None);
     }
+    validate_grant_lifetime(state)?;
     validate_spell(item)?;
     let publication = publication_for(state, item)?.ok_or("Fake removal lacks publication")?;
     if state.stack.iter().filter(|i| i.v4.stack_item_id == item.v4.stack_item_id).count() != 1
@@ -360,6 +374,8 @@ pub(crate) fn resolve(
     { return Err("Fake removal changed its original loan or left a live row".into()); }
     let recipient = validate_spell(&owner.item)?;
     let timestamp = state.engine.next_effect_timestamp;
+    let turn = state.turn_key_v1();
+    let active_player = state.active_player;
     if removal == (RemovalV50::Resolving { target_legal: true }) {
         // The engine independently rechecks target legality before removal.
         // The primitive rechecks the exact live incarnation before installation.
@@ -374,6 +390,8 @@ pub(crate) fn resolve(
             item: Box::new(owner.item.clone()),
             removal,
             timestamp,
+            turn,
+            active_player,
         },
     );
     if removal == (RemovalV50::Resolving { target_legal: true }) {
@@ -388,6 +406,8 @@ pub(crate) fn resolve(
                 recipient,
                 timestamp,
                 grant,
+                turn,
+                active_player,
             },
         );
     } else {
@@ -449,6 +469,8 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
             recipient,
             timestamp,
             grant,
+            turn,
+            active_player,
         }) = journal(event)
         {
             let input_index = usize::try_from(*input).map_err(|_| "Fake input index overflow")?;
@@ -457,6 +479,8 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
                 item,
                 removal: RemovalV50::Resolving { target_legal: true },
                 timestamp: input_timestamp,
+                turn: input_turn,
+                active_player: input_active_player,
             }) = state
                 .engine
                 .event_history
@@ -470,6 +494,7 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
                 || *publication >= *input || !grant.matches_installation(*recipient,*timestamp)
                 || result.contains(grant)
                 || timestamp != input_timestamp || !timestamps.insert(*timestamp)
+                || turn != input_turn || active_player != input_active_player
                 || state.engine.event_history.iter().filter(|e| matches!(journal(e), Some(JournalV50::Installed {input:i,..} | JournalV50::WithoutGrant {input:i}) if i == input)).count() != 1
                 || state.engine.event_history.iter().filter(|e| matches!(journal(e), Some(JournalV50::RemovalInput {publication:p,..}) if p == publication)).count() != 1
             { return Err("Fake installation changed unique original grant provenance".into()); }
@@ -477,6 +502,164 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
         }
     }
     Ok(result)
+}
+
+fn installations_before(
+    state: &GameState,
+    end: usize,
+) -> Vec<(u64, PrimitiveGrantV50, u32, PlayerId)> {
+    state
+        .engine
+        .event_history
+        .iter()
+        .take(end)
+        .enumerate()
+        .filter_map(|(index, event)| match journal(event) {
+            Some(JournalV50::Installed {
+                grant,
+                turn,
+                active_player,
+                ..
+            }) => Some((index as u64, *grant, *turn, *active_player)),
+            _ => None,
+        })
+        .collect()
+}
+fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
+    state.engine.event_history.iter().take(end).any(|event| match journal(event) {
+        Some(JournalV50::CleanupCompleted {occurrence}) => usize::try_from(*occurrence).ok()
+            .and_then(|i|state.engine.event_history.get(i)).and_then(journal)
+            .is_some_and(|entry|matches!(entry,JournalV50::CleanupEntered {installations,..} if installations.contains(&installation))),
+        _ => false,
+    })
+}
+
+/// Validates retained installation lifetime independently from whether its
+/// creature currently has the granted death ability. No trigger admission.
+pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
+    installed_grants(state)?;
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        match journal(event) {
+            Some(JournalV50::CleanupEntered {
+                turn,
+                active_player,
+                installations,
+            }) => {
+                let expected = installations_before(state, index)
+                    .into_iter()
+                    .filter(|(i, ..)| !expired_before(state, *i, index))
+                    .collect::<Vec<_>>();
+                if expected.is_empty()
+                    || expected.iter().map(|(i, ..)| *i).collect::<Vec<_>>() != *installations
+                    || expected
+                        .iter()
+                        .any(|(_, _, t, p)| t != turn || p != active_player)
+                    || !matches!(state.engine.event_history.get(index+1).and_then(journal),Some(JournalV50::CleanupCompleted {occurrence}) if *occurrence==index as u64)
+                {
+                    return Err(
+                        "Fake Cleanup lost its complete original ending-turn roster or completion"
+                            .into(),
+                    );
+                }
+            }
+            Some(JournalV50::CleanupCompleted { occurrence }) => {
+                if occurrence.checked_add(1) != Some(index as u64)
+                    || !matches!(
+                        usize::try_from(*occurrence)
+                            .ok()
+                            .and_then(|i| state.engine.event_history.get(i))
+                            .and_then(journal),
+                        Some(JournalV50::CleanupEntered { .. })
+                    )
+                {
+                    return Err("Fake expiry lacks its adjacent original Cleanup occurrence".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    for (index, grant, turn, active_player) in
+        installations_before(state, state.engine.event_history.len())
+    {
+        let expired = expired_before(state, index, state.engine.event_history.len());
+        if grant.temporary_modifier_retained(state)? == expired
+            || (!expired && (turn != state.turn_key_v1() || active_player != state.active_player))
+        {
+            return Err(
+                "Fake retained grant lost original modifier or authenticated expiry".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct CleanupOwnerV50 {
+    occurrence: u64,
+    installations: Vec<u64>,
+    turn: u32,
+    active_player: PlayerId,
+}
+
+/// Called in the actual Cleanup branch before ordinary temporary effects clear.
+pub(crate) fn before_cleanup(state: &mut GameState) -> Result<Option<CleanupOwnerV50>, String> {
+    validate_grant_lifetime(state)?;
+    let end = state.engine.event_history.len();
+    let installations = installations_before(state, end)
+        .into_iter()
+        .filter(|(i, ..)| !expired_before(state, *i, end))
+        .map(|(i, ..)| i)
+        .collect::<Vec<_>>();
+    if installations.is_empty() {
+        return Ok(None);
+    }
+    if state.step != crate::state::Step::Cleanup {
+        return Err("Fake expiry attempted outside actual Cleanup".into());
+    }
+    let turn = state.turn_key_v1();
+    let active_player = state.active_player;
+    let occurrence = emit(
+        state,
+        JournalV50::CleanupEntered {
+            turn,
+            active_player,
+            installations: installations.clone(),
+        },
+    );
+    Ok(Some(CleanupOwnerV50 {
+        occurrence,
+        installations,
+        turn,
+        active_player,
+    }))
+}
+
+/// A private nonserializable loan binds completion to the original pre-clear
+/// occurrence. Suppressed and departed grants expire along with the whole roster.
+pub(crate) fn finish_cleanup(
+    state: &mut GameState,
+    owner: Option<CleanupOwnerV50>,
+) -> Result<(), String> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    if state.step != crate::state::Step::Cleanup
+        || state.turn_key_v1() != owner.turn
+        || state.active_player != owner.active_player
+        || !state.engine.until_end_of_turn.is_empty()
+        || owner.occurrence.checked_add(1) != Some(state.engine.event_history.len() as u64)
+        || !matches!(state.engine.event_history.last().and_then(journal),Some(JournalV50::CleanupEntered {turn,active_player,installations}) if *turn==owner.turn && *active_player==owner.active_player && *installations==owner.installations)
+    {
+        return Err(
+            "Fake Cleanup completion changed original loan, phase, roster or actual clear".into(),
+        );
+    }
+    emit(
+        state,
+        JournalV50::CleanupCompleted {
+            occurrence: owner.occurrence,
+        },
+    );
+    validate_grant_lifetime(state)
 }
 pub(crate) fn departure_candidate(state: &GameState, source: ObjectId) -> Option<(u64, StackItem)> {
     state.engine.event_history.iter().enumerate().rev().find_map(|(i,e)| match journal(e) {
