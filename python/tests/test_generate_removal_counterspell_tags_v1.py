@@ -68,7 +68,7 @@ class GenerateRemovalCounterspellTags(unittest.TestCase):
         cards = json.load(open(ROOT / "data/cards_v1.json", encoding="utf-8"))["cards"]
         # Scoped to Instant/Sorcery: mtg_kernel::card_def::CardDef.target_spec
         # is the *spell's own cast-time target* (verified against every
-        # card_id in mtg-kernel/tests/removal_counterspell_tags_v1.rs). A
+        # card_id in mtg-kernel/tests/pauper/removal_counterspell_tags_v1.rs). A
         # Creature/Artifact/Enchantment with a "destroy_target" mechanics tag
         # (e.g. Gorilla Shaman) expresses that target on a later activated
         # ability or ETB trigger, not on the permanent spell's own casting,

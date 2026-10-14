@@ -236,7 +236,7 @@ fn exact_snapshot_and_clone_reuse_are_identical_and_stale_expected_fails_closed(
 #[test]
 fn generated_enum_inventory_and_privacy_shape_are_exact() {
     let golden: Value =
-        serde_json::from_str(include_str!("../../data/flat_policy_v1/goldens_v1.json")).unwrap();
+        serde_json::from_str(include_str!("../../../data/flat_policy_v1/goldens_v1.json")).unwrap();
     let groups = golden["enum_maps"]["object_group"].as_object().unwrap();
     let expected_groups = [
         ("self_hand", FlatObjectGroupV1::SelfHand),
@@ -297,7 +297,7 @@ fn generated_enum_inventory_and_privacy_shape_are_exact() {
     assert!(!needs_drop::<FlatRelationV1>());
     assert!(!needs_drop::<FlatDecisionV1>());
     let inventory: Value = serde_json::from_str(include_str!(
-        "../../data/flat_policy_v1/feature_inventory_v1.json"
+        "../../../data/flat_policy_v1/feature_inventory_v1.json"
     ))
     .unwrap();
     for entry in inventory["entries"].as_array().unwrap() {
@@ -320,9 +320,9 @@ fn digest_from_json(value: &Value) -> [u8; 32] {
 #[test]
 fn compiled_contract_digests_and_action_ref_projection_crosswalk_are_exact() {
     let golden: Value =
-        serde_json::from_str(include_str!("../../data/flat_policy_v1/goldens_v1.json")).unwrap();
+        serde_json::from_str(include_str!("../../../data/flat_policy_v1/goldens_v1.json")).unwrap();
     let inventory: Value = serde_json::from_str(include_str!(
-        "../../data/flat_policy_v1/feature_inventory_v1.json"
+        "../../../data/flat_policy_v1/feature_inventory_v1.json"
     ))
     .unwrap();
     assert_eq!(
@@ -499,7 +499,7 @@ fn historical_runtime_fixture_binding(mut decision: FlatDecisionV1) -> FlatDecis
 #[test]
 fn runtime_typed_row_count_and_digest_goldens_are_exact() {
     let golden: Value =
-        serde_json::from_str(include_str!("../../data/flat_policy_v1/goldens_v1.json")).unwrap();
+        serde_json::from_str(include_str!("../../../data/flat_policy_v1/goldens_v1.json")).unwrap();
     let fixture_case = |name: &str| {
         golden["runtime_fixture_cases"]
             .as_array()

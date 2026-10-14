@@ -1,15 +1,19 @@
 # Integration suites
 
 FDN files live in `fdn/` and compile as `fdn_integration`. Standard files live
-in `standard/` and compile as `standard_integration`. Keep each file's feature
-guards and add its `mod` declaration to the corresponding root suite. CI rejects
-missing declarations and ungrouped FDN/Standard files.
+in `standard/` and compile as `standard_integration`. Default-feature Pauper and
+engine files live in `pauper/` and compile as `pauper_integration`, so the
+workspace suite links one test binary instead of seventy. Keep each file's
+feature guards and add its `mod` declaration to the corresponding root suite.
+CI rejects missing declarations and ungrouped FDN/Standard/Pauper files. A new
+file left directly in `tests/` still runs as its own target.
 
 Run all modules with the same fresh-process isolation as CI:
 
 ```powershell
 python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
 python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
+python python/tools/run_rust_integration_tests.py pauper_integration --features ""
 ```
 
 For one former target, use its module as the test filter:
@@ -18,9 +22,10 @@ For one former target, use its module as the test filter:
 cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --test fdn_integration fdn_witness_protection_v1::
 ```
 
-Allocator instrumentation, London mulligans, Limited CLI and the other
-integration targets remain standalone. Default workspace tests retain their
-coverage; the feature-gated FDN/Standard suites are skipped when unavailable.
+Allocator instrumentation (it installs a global allocator), the native Store
+targets, London mulligans, the Limited session, priority and combat targets
+that CI selects by name, and the feature-gated `prepared_*` future-fixture
+targets remain standalone. Default workspace tests retain their coverage; the feature-gated FDN/Standard suites are skipped when unavailable.
 Raid entry fixtures are admitted with their registered cards and run in the
 FDN group alongside Condemn, Run Away Together and Vengeful Bloodwitch.
 

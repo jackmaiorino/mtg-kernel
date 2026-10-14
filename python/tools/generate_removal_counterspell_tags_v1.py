@@ -2,7 +2,7 @@
 """Generates data/pauper_removal_counterspell_tags_v1.json from the
 mechanics tags in data/cards_v1.json (design section 3, W4). This is a
 disclosed, reviewable mapping from mechanics tags to two boolean fields;
-mtg-kernel/tests/removal_counterspell_tags_v1.rs cross-checks every row
+mtg-kernel/tests/pauper/removal_counterspell_tags_v1.rs cross-checks every row
 against the live CARD_DEFS[card_id].target_spec so a hand-authored tag
 cannot silently drift from engine ground truth (design section 9 risk).
 """
@@ -58,7 +58,7 @@ COUNTERSPELL_MECHANICS = frozenset({
 # or activated ability (Gorilla Shaman's tap ability, Journey to Nowhere's
 # ETB, Spellstutter Sprite's ETB counter, ...), a separate mechanism with its
 # own targeting that CardDef.target_spec does not represent. Cross-checked
-# against every card_id in mtg-kernel/tests/removal_counterspell_tags_v1.rs:
+# against every card_id in mtg-kernel/tests/pauper/removal_counterspell_tags_v1.rs:
 # for every Instant/Sorcery in this registry with a REQUIRES_TARGET_MECHANICS
 # or COUNTERSPELL_MECHANICS tag, target_spec is the matching non-None (and,
 # for counterspells, *SpellOnStack) live ground truth; for every Creature,

@@ -10,7 +10,8 @@ import subprocess
 import sys
 
 
-SUITES = {"fdn_integration": "fdn", "standard_integration": "standard"}
+SUITES = {"fdn_integration": "fdn", "standard_integration": "standard",
+          "pauper_integration": "pauper"}
 
 
 def suite_modules(root: Path, suite: str) -> list[str]:
