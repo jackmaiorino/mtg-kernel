@@ -1,13 +1,34 @@
 import tempfile
+import io
+import json
 import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
 import cloud_lease as lease
+import diagnostic_create
 
 
 class CloudLeaseOwnershipTests(unittest.TestCase):
+    def test_provider_diagnostic_keeps_safe_status_and_redacts_credentials(self):
+        with tempfile.TemporaryDirectory() as folder:
+            diagnostic_create.DiagnosedProvider.control = Path(folder)
+            api = diagnostic_create.DiagnosedProvider("memory-only-secret")
+            error = urllib.error.HTTPError("https://example.invalid", 500, "failure", {},
+                    io.BytesIO(json.dumps({"error": "no capacity", "detail": "memory-only-secret",
+                                           "env": {"RUNPOD_API_KEY": "must-not-save"}}).encode()))
+            with patch.object(diagnostic_create.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaisesRegex(RuntimeError, "provider HTTP 500"):
+                    api._call(urllib.request.Request("https://example.invalid"))
+            receipt = next(Path(folder).glob("create-http-error-*.json")).read_text()
+            self.assertNotIn("memory-only-secret", receipt)
+            self.assertNotIn("must-not-save", receipt)
+            self.assertEqual(json.loads(receipt)["http_status"], 500)
+            self.assertEqual(json.loads(receipt)["safe_error_fields"]["error"], "no capacity")
+
     def test_replacement_preserves_absolute_deadline_and_cumulative_cap(self):
         with tempfile.TemporaryDirectory() as folder:
             key = Path(folder) / "existing.pub"

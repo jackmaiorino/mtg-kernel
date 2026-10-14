@@ -165,7 +165,10 @@ def create(root, execute):
         except (RuntimeError, ValueError, KeyError, TypeError):
             matches = matching_pods(key, lease["name"])
             if not matches:
-                write(root / "lease/create-failure.json", {"epoch": time.time(),
+                failure = root / "lease/create-failure.json"
+                if failure.exists():
+                    failure = root / ("lease/create-failure-" + str(time.time_ns()) + ".json")
+                write(failure, {"epoch": time.time(),
                       "exact_name": lease["name"], "observed_matches": 0})
                 raise RuntimeError("create outcome unavailable; exact-name census found no Pod; retry only this same prepared lease") from None
             result = safe_pod(matches[0], lease["name"])
