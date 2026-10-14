@@ -35,6 +35,7 @@ mod branch;
 mod canon2;
 mod diag;
 pub(crate) mod e_supported;
+pub(crate) mod e_teacher_diagnostic;
 mod identity;
 mod interchange;
 mod labels;

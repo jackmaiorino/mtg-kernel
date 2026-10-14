@@ -63,7 +63,12 @@ const uctBaseSchema=z.object({
     choices:z.array(z.object({node:u32,action:u32,board:u32,step:u32,physical:u32,substep:u32,live:u32,expanded:z.boolean(),scores:z.array(z.number().finite().nullable())}).strict()).max(256),
     rollout:z.array(z.tuple([u32,u32,u32,u32,u32,u32,u32,u32.nullable(),u32.nullable()])).max(100000),
     leaf:u32.nullable(),terminal:z.object({kind:text,winner:seat.nullable()}).strict().nullable(),combo:z.boolean(),
+    // Per simulated move: u UCT choice, f forced (no inference), x uncached forward, m cache miss, h cache hit.
+    inference:z.object({codes:z.string().regex(/^[ufxmh]*$/).max(100001),groups:z.array(u32).max(100001),cacheBytes:z.array(u32).max(100001),unapplied:z.boolean()}).strict().optional(),
   }).strict()).min(1).max(4096),firstCombo:u32.nullable(),
+  inference:z.object({schema:z.literal('mtg-kernel-uct-inference/v1'),mode:z.enum(['cache','uncached']),budgetBytes:u32.nullable(),groups:u32,
+    totals:z.object({requests:u32,hits:u32,misses:u32,forwards:u32,uct:u32,forced:u32}).strict(),
+    paired:z.object({mode:z.enum(['cache','uncached']),sourceSha256:hash,requests:u32,forwards:u32,hits:u32}).strict().optional()}).strict().optional(),
 }).strict();
 const pooledPlayerSchema=playerSchema.extend({battlefield:z.array(u32),graveyard:z.array(u32),hand:z.array(u32).length(0)}).strict();
 const pooledBoardSchema=boardSchema.extend({players:z.tuple([pooledPlayerSchema,pooledPlayerSchema]),exile:z.array(u32)}).strict();

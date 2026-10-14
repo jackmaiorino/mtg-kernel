@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronsLeft, ChevronsRight, Circle, GitBranch, Pause, Play, Sparkles } from 'lucide-react';
-import type { Frame, Recording } from './recording';
+import type { Frame, Recording, UctReplay } from './recording';
 import { initialSearchPlayback, searchReducer } from './search-playback';
 import { actualTreePath, uctEvents, uctGraphAt } from './uct-playback';
 import { attemptSummaries, comboProgress, comboSteps, shortLabel, type AttemptSummary } from './uct-console';
+import { inferenceIndex, inferenceLabels, mib, moveInference, tallyAt, type MoveInference, type Tally } from './uct-inference';
 import { SearchGraphCanvas } from './SearchGraph';
 import type { GraphTopology } from './search-graph';
 import { Preview } from './SearchReplay';
@@ -33,6 +34,7 @@ function AttemptStrip({attempts,length,current}:{attempts:AttemptSummary[];lengt
 export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase,onInteract}:{frame:Frame;actualFrame?:Frame;recording:Recording;assetBase:string;onInteract:()=>void}) {
   const replay=frame.search!.uctReplay!,events=useMemo(()=>uctEvents(replay),[replay]);
   const attempts=useMemo(()=>attemptSummaries(replay,events),[replay,events]);
+  const inference=useMemo(()=>inferenceIndex(replay),[replay]);
   const [state,dispatch]=useReducer(searchReducer,initialSearchPlayback,s=>{
     const p=new URLSearchParams(window.location.hash.slice(1)),event=Number(p.get('searchEvent')??0);
     return {...s,event:p.get('decision')===actualFrame.id&&p.get('game')===recording.id&&Number.isInteger(event)&&event>=0&&event<events.length?event:0};
@@ -41,6 +43,7 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
   const execution=actualFrame.searchLifecycle;
   const actual=execution?.root===frame.id&&execution.node!==null?{node:execution.node,path:actualTreePath(replay,execution.node)}:undefined;
   const [previewNode,setPreviewNode]=useState<number|null>(null),[manualMove,setManualMove]=useState<number|null>(null);
+  const pendingMove=useRef<number|null>(null);
   const params=new URLSearchParams(window.location.hash.slice(1)),linked=useRef(params.has('searchEvent')&&params.get('decision')===actualFrame.id&&params.get('game')===recording.id);
   const event=events[state.event],simulation=replay.simulations[event.simulation],choice=simulation.choices[event.choice];
   const graph=useMemo(()=>uctGraphAt(replay,event),[replay,event]);
@@ -55,6 +58,9 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
   const publicBoard=rollout?(event.after||manualMove!==null?rollout[8]??rollout[7]:rollout[7]):null;
   const fallback=choice?.board??replay.nodes[0].board;
   const board=previewNode!==null?graph.nodes.get(previewNode)?.board??replay.boards[fallback]:replay.boards[publicBoard??(event.phase==='evaluate'||event.phase==='backup'?simulation.leaf??fallback:fallback)];
+  const tally=inference?tallyAt(inference,replay,event):null;
+  const called=move!==null?moveInference(inference,replay,event.simulation,move):null;
+  const watchUse=(simulation:number,move:number)=>{if(simulation===event.simulation){interact();setPreviewNode(null);setManualMove(move);return;}pendingMove.current=move;seek(start(simulation));};
   const treeMove=rollout&&simulation.choices.find(c=>c.step===rollout[1]&&c.physical===rollout[2]&&c.substep===rollout[3]&&c.live===action!.index);
   const counts=useMemo(()=>{
     const visits=replay.nodes[0].actions.map(()=>0),wins=visits.slice();
@@ -73,7 +79,7 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
   useEffect(()=>{if(linked.current)document.getElementById('search-replay')?.scrollIntoView({behavior:'instant',block:'start'});},[]);
   useEffect(()=>{if(!state.playing)return;const timer=window.setTimeout(()=>dispatch({type:'advance',length:events.length}),(event.phase==='rollout'?1100:650)/state.speed);return()=>window.clearTimeout(timer);},[state,event.phase,events.length]);
   useEffect(()=>{
-    setPreviewNode(null);setManualMove(null);const p=new URLSearchParams(window.location.hash.slice(1));p.set('game',recording.id);p.set('decision',actualFrame.id);p.set('searchEvent',String(state.event));if(showActual)p.set('searchView','actual');else p.delete('searchView');window.history.replaceState(null,'',`#${p}`);
+    setPreviewNode(null);setManualMove(pendingMove.current);pendingMove.current=null;const p=new URLSearchParams(window.location.hash.slice(1));p.set('game',recording.id);p.set('decision',actualFrame.id);p.set('searchEvent',String(state.event));if(showActual)p.set('searchView','actual');else p.delete('searchView');window.history.replaceState(null,'',`#${p}`);
   },[state.event,actualFrame.id,recording.id,showActual]);
   useEffect(()=>{const listener=()=>{const p=new URLSearchParams(window.location.hash.slice(1)),n=Number(p.get('searchEvent')??0);if(p.get('game')===recording.id&&p.get('decision')===actualFrame.id&&Number.isInteger(n)&&n>=0&&n<events.length){setShowActual(p.get('searchView')==='actual');dispatch({type:'seek',event:n});}};window.addEventListener('hashchange',listener);return()=>window.removeEventListener('hashchange',listener);},[recording.id,actualFrame.id,events.length]);
   const seek=(n:number)=>{onInteract();setShowActual(false);dispatch({type:'seek',event:Math.max(0,Math.min(events.length-1,n))});};
@@ -89,7 +95,7 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
   const step=stepOf[event.phase],stage=comboProgress(replay,event,recording.perspective==='p0'?0:1),resolved=step>=2;
   const stepState=(i:number)=>i<step?'done':i===step?'current':'pending';
   const update=!simulation.backedUp?'Not counted. Stopped or rejected attempts leave every count unchanged.':`${step===3?'Added':'Adds'} one try${simulation.reason==='win'?' and one win':''} to each of the ${simulation.choices.length} tree ${simulation.choices.length===1?'move':'moves'} on this path.`;
-  const caption=<div className="search-caption" aria-live="polite">{rollout?<><strong>{event.after?'After: ':'Move: '}{clean(action!.label)}</strong><span>{treeMove?'Selected at a UCT tree node':'Policy rollout choice'} · {recording.seats[rollout[0]].name} · step {rollout[1]}.{(rollout[6]&2)!==0&&event.after?' Self-targeted Spy resolved.':''}{(rollout[6]&4)!==0&&event.after?' Dread Return reanimated Lotleth Giant.':''}{publicBoard===null?' No snapshot was retained for this routine move; preview shows the nearest recorded tree context.':''}</span></>:event.phase==='select'?`${clean(action?.label??'Sample rejected')} · actual selection score ${choice?.scores[choice.action]??'Unavailable'}${choice?.expanded?' · proposes a new branch':''}`:`${outcomes[simulation.reason]}. ${completion(simulation)}.`}</div>;
+  const caption=<div className="search-caption" aria-live="polite">{rollout?<><strong>{event.after?'After: ':'Move: '}{clean(action!.label)}</strong><span>{called?called.label:treeMove?'Selected at a UCT tree node':'Policy rollout choice'} · {recording.seats[rollout[0]].name} · step {rollout[1]}.{(rollout[6]&2)!==0&&event.after?' Self-targeted Spy resolved.':''}{(rollout[6]&4)!==0&&event.after?' Dread Return reanimated Lotleth Giant.':''}{publicBoard===null?' No snapshot was retained for this routine move; preview shows the nearest recorded tree context.':''}</span></>:event.phase==='select'?`${clean(action?.label??'Sample rejected')} · actual selection score ${choice?.scores[choice.action]??'Unavailable'}${choice?.expanded?' · proposes a new branch':''}${inference&&choice?` · ${inferenceLabels.u}`:''}`:`${outcomes[simulation.reason]}. ${completion(simulation)}.`}</div>;
   return <section id="search-replay" className="search-replay-section uct-console" aria-label="Recorded full UCT search replay">
     <header className="uct-head">
       <div className="uct-head-text"><span className="eyebrow"><GitBranch size={13}/>INSIDE THE SPY SEARCH</span><h2>Follow the discovery.</h2>
@@ -145,6 +151,7 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
       </>:<>
         <span className="eyebrow">ATTEMPT {event.simulation+1} OF {replay.simulations.length}</span>
         <h3 className={resolved?`uct-result ${simulation.reason}`:''}>{resolved?headlines[simulation.reason]:'In progress'}{resolved&&simulation.combo&&simulation.reason==='win'?' with the combo':''}</h3>
+        <InferencePanel replay={replay} tally={tally} called={called} onWatch={watchUse}/>
         <ol className="uct-steps">
           <li className={stepState(0)}><strong><StepMark state={stepState(0)}/>1 · {steps[0]}</strong><p>At each tree position, take the highest-scoring move: win rate so far plus a bonus for moves tried less. Untried moves score 1.5, so each gets tried once first.</p>
             <div className="search-path" aria-label="Recorded tree path">{simulation.choices.map((c,i)=><button key={i} className={event.phase==='select'&&event.choice===i?'active':''} onClick={()=>seek(events.findIndex(e=>e.simulation===event.simulation&&e.phase==='select'&&e.choice===i))}><span>Tree node {c.node} · step {c.step}</span><strong title={clean(replay.nodes[c.node].actions[c.action].label)}>{shortLabel(replay.nodes[c.node].actions[c.action].label)}</strong></button>)}</div></li>
@@ -154,11 +161,33 @@ export function UctSearchReplayView({frame,actualFrame=frame,recording,assetBase
           <li className={stepState(3)}><strong><StepMark state={stepState(3)}/>4 · {steps[3]}</strong><p>{update}</p></li>
         </ol>
         {caption}
-        <details className="search-rollout-inspector"><summary>Inspect every simulated move ({simulation.rollout.length})</summary><label>Recorded move <select aria-label="Inspect rollout move" value={manualMove??''} onChange={e=>{interact();setPreviewNode(null);setManualMove(e.target.value===''?null:Number(e.target.value));}}><option value="">Follow search playback</option>{simulation.rollout.map((m,i)=><option value={i} key={i}>{i+1}. {recording.seats[m[0]].name} · {clean(replay.actions[m[4]].label)}</option>)}</select></label><p>Every applied action is preserved. Public snapshots accompany tree choices, combo events and natural outcomes. Routine actions without snapshots retain their original step and action IDs.</p></details>
+        <details className="search-rollout-inspector"><summary>Inspect every simulated move ({simulation.rollout.length})</summary><label>Recorded move <select aria-label="Inspect rollout move" value={manualMove??''} onChange={e=>{interact();setPreviewNode(null);setManualMove(e.target.value===''?null:Number(e.target.value));}}><option value="">Follow search playback</option>{simulation.rollout.map((m,i)=><option value={i} key={i}>{i+1}. {recording.seats[m[0]].name} · {clean(replay.actions[m[4]].label)}{simulation.inference?` · ${inferenceLabels[simulation.inference.codes[i] as keyof typeof inferenceLabels]}`:''}</option>)}</select></label><p>Every applied action is preserved. Public snapshots accompany tree choices, combo events and natural outcomes. Routine actions without snapshots retain their original step and action IDs.</p></details>
         <details className="uct-howto"><summary>More on how this search works</summary><p>A simulation selects focal branches in this tree. After its expansion or depth limit, frozen policies play the remaining moves. Opponent choices and forced moves happen between tree nodes.</p><p>Only natural results add visits and wins. Draws and losses both add a non-winning backup. Limited and rejected attempts remain visible without changing the counts.</p><p>{replay.worlds}</p><p>{frame.search!.valueScale} These recorded outcomes are not a forecast of the real game.</p></details>
       </>}</aside>
     </div>
   </section>;
+}
+
+// Policy scoring over the viewed prefix: actual cache hits, misses, uncached
+// forwards and moves that needed no inference. Input groups link identical
+// scoring inputs; tree nodes, visits and outcomes stay separate.
+function InferencePanel({replay,tally,called,onWatch}:{replay:UctReplay;tally:Tally|null;called:MoveInference|null;onWatch:(simulation:number,move:number)=>void}) {
+  const block=replay.inference;
+  if(!block||!tally)return <div className="uct-inference"><span className="eyebrow">POLICY SCORING</span><p>Not recorded for this search.</p></div>;
+  const cache=block.mode==='cache',rate=tally.requests?` (${(tally.hits/tally.requests*100).toFixed(1)}%)`:'',paired=block.paired;
+  return <div className="uct-inference" aria-label="Policy scoring so far">
+    <span className="eyebrow">SCORING SO FAR · {cache?`EXACT CACHE ${mib(block.budgetBytes!)}`:'NO CACHE'}</span>
+    <dl>
+      <div><dt>Scoring calls</dt><dd>{tally.requests.toLocaleString()}</dd></div>
+      {cache&&<div><dt>Cache hits</dt><dd className="hit">{tally.hits.toLocaleString()}{rate}</dd></div>}
+      <div><dt>Forwards run</dt><dd>{tally.forwards.toLocaleString()}</dd></div>
+      {cache&&<div><dt>Cache bytes</dt><dd>{tally.bytes===null?'Empty':mib(tally.bytes)}</dd></div>}
+      <div><dt>UCT choices</dt><dd>{tally.uct.toLocaleString()}</dd></div>
+      <div><dt>Forced moves</dt><dd>{tally.forced.toLocaleString()}</dd></div>
+    </dl>
+    {called&&<p className={`uct-call ${called.code}`}><strong>{called.label}</strong>{called.call!==null?<> · call {called.call.toLocaleString()} · input group {called.group!.toLocaleString()}, use {called.use}{called.first&&called.use!==1?<> · <button onClick={()=>onWatch(called.first!.simulation,called.first!.move)}>First use: attempt {called.first.simulation+1}, move {called.first.move+1}</button></>:null}</>:null}</p>}
+    <p className="uct-inference-note">{cache?`Without the cache this prefix would run ${tally.requests.toLocaleString()} forwards.`:'Every scoring call runs the network.'}{paired?paired.mode==='cache'?` Whole search, matched cache-on run: ${paired.hits.toLocaleString()} of ${paired.requests.toLocaleString()} calls returned from the cache, with the same game.`:` A matched cache-off run of this search produced the same game and ran all ${paired.forwards.toLocaleString()} forwards.`:''} An input group is one exact scoring input. Sharing it reuses a prediction only; each tree position keeps its own history, visits and results.</p>
+  </div>;
 }
 
 function StepMark({state}:{state:string}) {
