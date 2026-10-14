@@ -2,6 +2,7 @@
 //! CPU collection and explicitly selected updates. This successor starts from an inference export with fresh Adam
 //! or resumes its own checkpoint. It never reads or writes a legacy Store.
 
+pub mod archive_distillation_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
@@ -1167,7 +1168,7 @@ struct ExpandedTrajectoryV1 {
     learner_sampler: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ParameterBitsV1 {
     name: String,
@@ -1247,6 +1248,12 @@ pub(crate) struct ExpandedCheckpointV1 {
         deserialize_with = "registry_transfer_source::deserialize_present_continuation"
     )]
     registry_transfer: Option<registry_transfer_source::ExpandedRegistryContinuationV1>,
+    /// `Some` exactly when `loss_identity` is
+    /// [`archive_distillation_v1::PHASE1_LOSS_IDENTITY_V1`]: the phase-1
+    /// provenance, whose named parent checkpoint the loader reads and checks
+    /// bit for bit before these parameters resume under any loss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    archive_distillation: Option<archive_distillation_v1::ArchiveDistillationProvenanceV1>,
 }
 
 /// Whole-pair V3-or-V4 admission: a stored trajectory/checkpoint's
@@ -1572,9 +1579,14 @@ fn restore_checkpoint_fields_v1(
     ensure(
         saved.loss_identity == "terminal_reinforce_value/v3"
             || saved.loss_identity == GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1
-            || saved.loss_identity == "gae_uniform_kl_recovery/v1",
+            || saved.loss_identity == "gae_uniform_kl_recovery/v1"
+            || saved.loss_identity == archive_distillation_v1::PHASE1_LOSS_IDENTITY_V1,
         "checkpoint loss differs",
     )?;
+    // Distilled parameters never pass as ordinary ones: the phase-1 identity
+    // and its provenance come together, and its named parent must hold this
+    // checkpoint's exact optimizer state.
+    archive_distillation_v1::validate_phase1_checkpoint_v1(saved)?;
     // `gamma_bits`/`gae_lambda_bits`/`entropy_coefficient_bits` are required
     // exactly when the checkpoint's own loss is the new identity, and
     // refused otherwise (design section 3), so a v3 checkpoint that somehow
@@ -2647,6 +2659,45 @@ pub enum ExpandedTrainingCommandV1 {
         treatment: ExpandedModelSourceV1,
         control: ExpandedModelSourceV1,
     },
+    /// Spy archive distillation: replays one lineage's archived E search
+    /// games and banks the parent's training input at every supported tree
+    /// choice (collab LANES/spy-archive-distillation-20261013).
+    ArchiveDistillationBank {
+        parent: ExpandedModelSourceV1,
+        lineage: String,
+        games: PinnedFileV1,
+        /// The raw archive files `games` was built from.
+        sources: Vec<PinnedFileV1>,
+        output_directory: PathBuf,
+    },
+    /// Spy archive distillation phase 1: auxiliary-only steps from the
+    /// parent, writing checkpoints under their own loss identity.
+    ArchiveDistillationPhase1 {
+        parent: ExpandedModelSourceV1,
+        lineage: String,
+        arm: archive_distillation_v1::ArchiveDistillationArmV1,
+        games: PinnedFileV1,
+        bank: PinnedFileV1,
+        anchor: archive_distillation_v1::ArchiveDistillationAnchorV1,
+        /// A G3 reproduction rerun's stop step; omitted for a full run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_after_steps: Option<u64>,
+        /// Checks every input and the anchor pre-flight, then stops.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        dry_run: bool,
+        output_directory: PathBuf,
+    },
+    /// Spy archive distillation fit check: forward-only readouts of each
+    /// candidate on the banks, the held-out anchor and the offer set.
+    ArchiveDistillationProbe {
+        parent: ExpandedModelSourceV1,
+        lineage: String,
+        candidates: Vec<archive_distillation_v1::ArchiveDistillationCandidateV1>,
+        banks: Vec<archive_distillation_v1::ArchiveDistillationProbeBankV1>,
+        anchor: archive_distillation_v1::ArchiveDistillationAnchorV1,
+        offers: Vec<PinnedFileV1>,
+        output_directory: PathBuf,
+    },
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
@@ -2683,6 +2734,51 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
         }
+        ExpandedTrainingCommandV1::ArchiveDistillationBank {
+            parent,
+            lineage,
+            games,
+            sources,
+            output_directory,
+        } => archive_distillation_v1::bank_v1(parent, lineage, games, sources, output_directory),
+        ExpandedTrainingCommandV1::ArchiveDistillationPhase1 {
+            parent,
+            lineage,
+            arm,
+            games,
+            bank,
+            anchor,
+            stop_after_steps,
+            dry_run,
+            output_directory,
+        } => archive_distillation_v1::phase1_v1(
+            parent,
+            lineage,
+            arm,
+            games,
+            bank,
+            anchor,
+            stop_after_steps,
+            dry_run,
+            output_directory,
+        ),
+        ExpandedTrainingCommandV1::ArchiveDistillationProbe {
+            parent,
+            lineage,
+            candidates,
+            banks,
+            anchor,
+            offers,
+            output_directory,
+        } => archive_distillation_v1::probe_v1(
+            parent,
+            lineage,
+            candidates,
+            banks,
+            anchor,
+            offers,
+            output_directory,
+        ),
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,
@@ -3747,6 +3843,7 @@ fn execute_update_v1(
             .as_ref()
             .map(|context| context.after_update(snapshot.adam_step))
             .transpose()?,
+        archive_distillation: None,
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &checkpoint)?;
     // Readback exercises the real same-format continuation loader.
@@ -4790,6 +4887,7 @@ pub(crate) mod tests {
             learning_rate_bits: 0.001_f32.to_bits(),
             value_coefficient_bits: 0.5_f32.to_bits(),
             registry_transfer: None,
+            archive_distillation: None,
         };
         (policy, model, saved)
     }
