@@ -294,7 +294,11 @@ fn allocation(state: &GameState) -> Result<Option<AllocationMenuV38>, RlContract
             .collect::<Result<Vec<_>, RlContractError>>()?,
     }))
 }
-fn menu(state: &GameState, accepted_union: bool) -> Result<Option<MenuV1>, RlContractError> {
+fn menu(
+    state: &GameState,
+    accepted_union: bool,
+    accept_fake: bool,
+) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
     let (choice, is_combat) = if let Some(pending) = state.engine.twinflame_combat_v38.0.as_ref() {
         let Some(slot) = pending.selected else {
@@ -325,7 +329,11 @@ fn menu(state: &GameState, accepted_union: bool) -> Result<Option<MenuV1>, RlCon
     } else {
         let item = &state.engine.pending_effect.as_ref().unwrap().resolving_item;
         if accepted_union {
-            crate::rl::akroma_crystal_resolving_source_ref_v40(state, item)?
+            crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(
+                state,
+                item,
+                accept_fake,
+            )?
         } else {
             crate::rl::crystal_resolving_source_ref(state, item)?
         }
@@ -488,6 +496,7 @@ pub(crate) fn parts_for_common_scope(
                         | crate::rl::CommonProjectionScopeV42::PandaV47
                         | crate::rl::CommonProjectionScopeV42::SeasonV48
                         | crate::rl::CommonProjectionScopeV42::ConquerorV49
+                        | crate::rl::CommonProjectionScopeV42::FakeV50
                 ),
             ),
             Some(scope),
@@ -555,45 +564,53 @@ fn observe_inner_scoped(
     ),
 ) -> Result<TwinflameObservationV1, RlContractError> {
     let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope) = accepted_scope;
+    let accept_fake = explicit_scope == Some(crate::rl::CommonProjectionScopeV42::FakeV50);
     let (substep_index, substep_count) = substep;
     validate_projection_authority(state)?;
     // The union gives each real pending menu to its actual typed family. Do not
     // construct a frozen foreign source projection merely to discard it later.
     let project_menu = !accepted_union || owns_family_menu(state);
     let optional_discard_menu = if project_menu {
-        crate::crystal_public_v1::discard_menu_inner(state, actor, accepted_union)?.map(|menu| {
-            DiscardMenuV2 {
-                chooser: menu.chooser,
-                source: menu.source,
-                maximum_cards: menu.maximum_cards,
-                draws_if_discarded: menu.draws_if_discarded,
-            }
+        crate::crystal_public_v1::discard_menu_fake_scoped_v50(
+            state,
+            actor,
+            accepted_union,
+            accept_fake,
+        )?
+        .map(|menu| DiscardMenuV2 {
+            chooser: menu.chooser,
+            source: menu.source,
+            maximum_cards: menu.maximum_cards,
+            draws_if_discarded: menu.draws_if_discarded,
         })
     } else {
         None
     };
-    let optional_fight_menu = if project_menu
-        && crate::effect::crystal_prevention_v1::is_program_choice(state)
-    {
-        let pending = state
-            .engine
-            .pending_effect
-            .as_ref()
-            .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
-        Some(ProgramMenuV3 {
-            chooser: pending.ctx.controller.into(),
-            source: if accepted_union {
-                crate::rl::akroma_crystal_resolving_source_ref_v40(state, &pending.resolving_item)?
-            } else {
-                crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?
-            },
-            decline_index: 0,
-            fight_index: 1,
-            requires_original_source_creature: true,
-        })
-    } else {
-        None
-    };
+    let optional_fight_menu =
+        if project_menu && crate::effect::crystal_prevention_v1::is_program_choice(state) {
+            let pending = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
+            Some(ProgramMenuV3 {
+                chooser: pending.ctx.controller.into(),
+                source: if accepted_union {
+                    crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(
+                        state,
+                        &pending.resolving_item,
+                        accept_fake,
+                    )?
+                } else {
+                    crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?
+                },
+                decline_index: 0,
+                fight_index: 1,
+                requires_original_source_creature: true,
+            })
+        } else {
+            None
+        };
     let mut static_sources = Vec::new();
     for (id, o) in state.objects.iter() {
         if crate::crystal_barricade_v1::is_active_source(state, id) {
@@ -676,7 +693,7 @@ fn observe_inner_scoped(
             None
         },
         prevention_menu: if project_menu {
-            menu(state, accepted_union)?
+            menu(state, accepted_union, accept_fake)?
         } else {
             None
         },

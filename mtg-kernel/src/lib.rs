@@ -689,3 +689,5 @@ pub mod doubling_season_public_v48;
 pub mod season_observation_v48;
 
 pub mod season_token_attachment_v48;
+
+pub mod fake_observation_v50;

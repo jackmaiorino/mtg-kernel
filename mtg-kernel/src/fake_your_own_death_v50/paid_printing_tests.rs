@@ -1224,3 +1224,256 @@ fn predecessor_candidate_builders_refuse_actual_affordable_fake_in_decision_acto
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }
+
+fn mixed_observation(state: &mut GameState) -> crate::fake_observation_v50::FakeObservationV50 {
+    use crate::fake_observation_v50 as observation;
+    let mut surface = crate::policy_surface_v5::PolicySurfaceV5::new_with_priority_mode_v1(
+        crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+        crate::surface_v2::SuppressionAuditMode::Off,
+    );
+    let origin = surface.next_decision(state).unwrap();
+    let actor = origin.actor(state).unwrap();
+    let substep = origin.substep();
+    let before = serde_json::to_vec(state).unwrap();
+    let value = observation::observe_v50(state, &surface, (actor, &origin), 0, 0, substep).unwrap();
+    value.validate_artifact().unwrap();
+    observation::validate_current(state, &surface, (actor, &origin), 0, 0, substep, &value)
+        .unwrap();
+    assert_eq!(value.fake, public_facts(state));
+    let serialized = serde_json::to_vec(&value).unwrap();
+    let decoded: observation::FakeObservationV50 = serde_json::from_slice(&serialized).unwrap();
+    assert_eq!(decoded, value);
+    assert!(
+        serde_json::from_slice::<crate::conqueror_observation_v49::ConquerorObservationV49>(
+            &serialized,
+        )
+        .is_err()
+    );
+    assert!(crate::conqueror_observation_v49::observe_v49(
+        state,
+        &surface,
+        (actor, &origin),
+        0,
+        0,
+        substep,
+    )
+    .is_err());
+    assert!(
+        observation::observe_v50(state, &surface, (actor.opponent(), &origin), 0, 0, substep,)
+            .is_err()
+    );
+    assert_eq!(serde_json::to_vec(state).unwrap(), before);
+    value
+}
+
+#[test]
+fn actual_paid_fake_mixed_observation_preserves_live_death_source_restore_and_real_outcomes() {
+    use crate::fake_observation_v50 as observation;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let owner = actor.opponent();
+        let (mut state, _, target) = paid(actor, owner);
+        let published = mixed_observation(&mut state);
+        assert_eq!(published.fake.spells.len(), 1);
+        assert_eq!(
+            published.fake.spells[0].phase,
+            public_v50::SpellPhaseV50::Published
+        );
+        assert_eq!(
+            published.projection.surface.stack.last().unwrap().source,
+            published.fake.spells[0].source
+        );
+        drain(&mut state);
+        let granted = mixed_observation(&mut state);
+        assert_eq!(granted.fake.grants.len(), 1);
+        assert!(granted.fake.grants[0].death_ability_active);
+        death(&mut state, target);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let live = mixed_observation(&mut state);
+        let restored_live = mixed_observation(&mut restored);
+        assert_eq!(live, restored_live);
+        assert_eq!(live.fake.deaths.len(), 1);
+        let source = &live.projection.surface.stack.last().unwrap().source;
+        assert_eq!(*source, live.fake.deaths[0].original_creature);
+        assert_eq!(source.zone, Zone::Battlefield);
+        assert_eq!(source.controller, owner.into());
+        assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+
+        let mut surface = crate::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1();
+        let origin = surface.next_decision(&mut state).unwrap();
+        let seat = origin.actor(&state).unwrap();
+        let mut forged = live.clone();
+        forged.fake.spells[0].original_target.zone = Zone::Exile;
+        forged.projection_sha256 = observation::commitment(&forged).unwrap();
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(observation::validate_current(
+            &state,
+            &surface,
+            (seat, &origin),
+            0,
+            0,
+            origin.substep(),
+            &forged,
+        )
+        .is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+
+        for game in [&mut state, &mut restored] {
+            drain(game);
+            let resolved = mixed_observation(game);
+            assert_eq!(
+                resolved.fake.deaths[0].phase,
+                public_v50::DeathPhaseV50::Resolved
+            );
+            assert_eq!(
+                resolved.fake.deaths[0].returned_controller,
+                Some(owner.into())
+            );
+            assert_eq!(
+                resolved.fake.deaths[0].treasure_controller,
+                Some(owner.into())
+            );
+            assert_eq!(resolved.fake.deaths[0].treasures.len(), 1);
+            assert_eq!(game.objects.get(target).zone, Zone::Battlefield);
+            assert!(game.objects.get(target).tapped);
+            assert_eq!(treasures(game, owner), 1);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_mixed_observation_is_invariant_to_unrelated_unknown_opponent_hand() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, _) = paid(actor, actor);
+        let mut surface = crate::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1();
+        let origin = surface.next_decision(&mut state).unwrap();
+        let observer = origin.actor(&state).unwrap();
+        let hidden = *state.players[observer.opponent().index()]
+            .hand
+            .last()
+            .unwrap();
+        let mut alternate = state.clone();
+        alternate.objects.get_mut(hidden).card_def =
+            crate::card_def::card_id_by_name("Mountain").unwrap();
+        alternate.objects.get_mut(hidden).name = "Mountain".into();
+        assert_eq!(
+            mixed_observation(&mut state),
+            mixed_observation(&mut alternate)
+        );
+    }
+}
+
+#[test]
+fn actual_paid_fake_history_coexists_with_paid_heartfire_crystal_historical_source_and_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _, _) = paid(actor, actor);
+        drain(&mut state);
+        let source = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
+        for name in ["Mountain", "Swamp"] {
+            let land = put(&mut state, actor, name, Zone::Battlefield);
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, mana_abilities, .. }
+                if player == actor && mana_abilities.contains(&land)));
+            engine::step(&mut state, Action::ActivateManaAbility(land)).unwrap();
+        }
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor && castable_spells.contains(&source)));
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        drain(&mut state);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        let wall = put(
+            &mut state,
+            actor.opponent(),
+            "Crystal Barricade",
+            Zone::Battlefield,
+        );
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Shivan Dragon",
+            Zone::Battlefield,
+        );
+        // Existing typed prevention setup competes with the actual Barricade.
+        // This does not claim an additional paid shield-producing printing.
+        let shield = state.engine.next_replacement_id;
+        state.engine.next_replacement_id += 1;
+        state
+            .engine
+            .active_replacements
+            .push(crate::event::ActiveReplacement {
+                id: shield,
+                source: wall,
+                kind: crate::event::ReplacementEffectKind::PreventNextDamage {
+                    target: Target::Object(target),
+                    remaining: 1,
+                },
+            });
+        let mountain = put(&mut state, actor, "Mountain", Zone::Battlefield);
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, mana_abilities, .. }
+            if player == actor && mana_abilities.contains(&mountain)));
+        engine::step(&mut state, Action::ActivateManaAbility(mountain)).unwrap();
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { player, legal_targets, .. }
+            if player == actor && legal_targets.contains(&Target::Object(target))));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        for _ in 0..12 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::ChooseEffectOption { player, source: actual, .. }
+                if player == actor.opponent() && actual == source)
+            {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        crate::effect::validate_pending_effect_choice(&state).unwrap();
+        let item = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
+        assert!(matches!(
+            item.inline_effect.as_ref(),
+            Some(EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+            ))
+        ));
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::rl::akroma_crystal_resolving_source_ref_v40(&state, &item).is_err());
+        let historical =
+            crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(&state, &item, true)
+                .unwrap();
+        assert_eq!(historical.arena_id, source.0);
+        assert_eq!(historical.zone, Zone::Battlefield);
+        assert_eq!(historical.controller, actor.into());
+        let mut forged = item.clone();
+        forged.controller = actor.opponent();
+        assert!(
+            crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(&state, &forged, true,)
+                .is_err()
+        );
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        let mut restored: GameState = serde_json::from_slice(&before).unwrap();
+        assert_eq!(
+            mixed_observation(&mut state),
+            mixed_observation(&mut restored)
+        );
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
