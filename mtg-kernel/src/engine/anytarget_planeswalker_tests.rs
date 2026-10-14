@@ -1,4 +1,4 @@
-//! Recipient primitive tests. Ajani remains Partial; these do not admit its gameplay.
+//! Recipient primitive tests for registered Ajani; these do not qualify its loyalty gameplay.
 use super::*;
 use crate::policy_observation_v6::tests::{put, ready_state};
 
@@ -107,10 +107,10 @@ mod fdn {
     fn ajani_recipient(state: &mut GameState, owner: PlayerId) -> ObjectId {
         let ajani = put(state, owner, "Ajani, Caller of the Pride", Zone::Hand);
         let definition = &card_def::CARD_DEFS[state.objects.get(ajani).card_def as usize];
-        assert_eq!(definition.capability, CardCapability::Partial);
-        // Partial is executable, but full-deck admission still refuses its missing printed abilities.
+        assert_eq!(definition.capability, CardCapability::Full);
+        // The wider catalog has the actual Full recipe; recipient checks remain separate.
         assert!(definition.is_executable());
-        assert!(!definition.has_full_support());
+        assert!(definition.has_full_support());
         // Actual zone event initializes registered starting loyalty; no casting/admission bypass.
         event::propose_and_commit(state, ProposedEvent::zone_change(ajani, Zone::Battlefield));
         assert_eq!(planeswalker_v1::loyalty(state, ajani), Some(4));
@@ -346,8 +346,7 @@ mod fdn {
     }
 
     #[test]
-    fn partial_planeswalker_protection_blocks_announcement_rechecks_resolution_and_prevents_damage()
-    {
+    fn planeswalker_protection_blocks_announcement_rechecks_resolution_and_prevents_damage() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for added_after_announcement in [false, true] {
                 let mut state = ready(actor);

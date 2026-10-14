@@ -462,6 +462,12 @@ const FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1: &str = "88c0d
 const FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_LIFECYCLE_BATCH_V1: &str =
     "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
+// v82 comes from Native105 actual439 generator and runtime-deck outputs.
+// This pins record identity; gameplay and consumer qualification remain separate.
+const FROZEN_CARD_DB_HASH_U64_HEX_FDN_AJANI_FAEBLOOM_BATCH_V1: &str = "a4f64a2d54aa6c8b";
+const FROZEN_RUNTIME_CATALOG_SHA256_FDN_AJANI_FAEBLOOM_BATCH_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -2198,6 +2204,7 @@ pub(crate) enum NativeRunCatalogProfileV1 {
     FdnAuthorityEmployment,
     FdnFollowingSourceBatch,
     FdnPreparedLifecycleBatch,
+    FdnAjaniFaebloomBatch,
 }
 
 impl ValidatedTrainRunV2 {
@@ -2922,6 +2929,11 @@ fn classify_catalog_profile_from_identity_v1(
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1,
             FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_LIFECYCLE_BATCH_V1,
             NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch,
+        ),
+        (
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_AJANI_FAEBLOOM_BATCH_V1,
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_AJANI_FAEBLOOM_BATCH_V1,
+            NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch,
         ),
         (
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_CELESTIAL_ARMOR_V1,
@@ -5810,6 +5822,11 @@ pub(crate) fn test_fixture_bytes_fdn_later_source_batch_v1() -> Vec<u8> {
 }
 
 #[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+pub(crate) fn test_fixture_bytes_fdn_prepared_lifecycle_batch_v1() -> Vec<u8> {
+    tests::fixture_bytes_fdn_prepared_lifecycle_batch()
+}
+
+#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
 pub(crate) fn test_fixture_bytes_fdn_following_source_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_following_source_batch()
 }
@@ -8375,21 +8392,24 @@ mod tests {
     /// card database/runtime catalog changed again (needs a new profile) or
     /// the frozen literals were typed wrong when this successor landed.
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_prepared_lifecycle_batch_frozen_literal_matches_the_live_build_constant() {
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn fdn_ajani_faebloom_batch_frozen_literal_matches_the_live_build_constant() {
         use crate::card_def::KERNEL_CARDDB_HASH;
         use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
         assert_eq!(
             format!("{KERNEL_CARDDB_HASH:016x}"),
             if cfg!(feature = "limited-fdn-fixtures") {
-                FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1
+                FROZEN_CARD_DB_HASH_U64_HEX_FDN_AJANI_FAEBLOOM_BATCH_V1
             } else {
                 FROZEN_CARD_DB_HASH_U64_HEX_PAUPER_META_W1
             }
         );
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_LIFECYCLE_BATCH_V1
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_AJANI_FAEBLOOM_BATCH_V1
         );
     }
 
@@ -8719,6 +8739,40 @@ mod tests {
     }
 
     #[cfg(feature = "limited-fdn-fixtures")]
+    pub(super) fn fixture_bytes_fdn_prepared_lifecycle_batch() -> Vec<u8> {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1.to_owned();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_FDN_PREPARED_LIFECYCLE_BATCH_V1.to_owned();
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn fdn_prepared_lifecycle_batch_remains_readable_but_is_not_live() {
+        let bytes = fixture_bytes_fdn_prepared_lifecycle_batch();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes);
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            validated.record().environment()
+        ));
+        assert_ne!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1,
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1,
+            "88c0d510de5b6cea"
+        );
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
     pub(super) fn fixture_bytes_fdn_following_source_batch() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
@@ -8753,19 +8807,22 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "limited-fdn-fixtures")]
-    fn fdn_prepared_lifecycle_batch_fixture_decodes_with_its_own_profile_and_live_identity() {
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn fdn_ajani_faebloom_batch_fixture_decodes_with_its_own_profile_and_live_identity() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
             validated.catalog_profile_v1(),
-            NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
+            NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
         );
         assert!(current_profile_matches_live_build_identity_v1(
             validated.record().environment()
         ));
         assert_eq!(
-            FROZEN_CARD_DB_HASH_U64_HEX_FDN_PREPARED_LIFECYCLE_BATCH_V1,
-            "88c0d510de5b6cea"
+            FROZEN_CARD_DB_HASH_U64_HEX_FDN_AJANI_FAEBLOOM_BATCH_V1,
+            "a4f64a2d54aa6c8b"
         );
     }
 
@@ -9076,7 +9133,7 @@ mod tests {
         assert_eq!(
             validated.catalog_profile_v1(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
+                NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
             } else {
                 NativeRunCatalogProfileV1::PauperMetaW1
             }
