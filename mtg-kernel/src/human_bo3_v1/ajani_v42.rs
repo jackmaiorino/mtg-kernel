@@ -744,20 +744,6 @@ impl HumanAjaniProjectorV42 {
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-#[path = "akroma_v40_history_tests.rs"]
-mod history_tests;
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-#[path = "akroma_v40_mixed_tests.rs"]
-mod mixed_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,7 +1000,7 @@ mod future {
             };
             assert!(crate::akroma_public_v1::observe_v1(
                 session.inner.ajani_fixture_state(),
-                &session.inner.surface,
+                session.inner.ajani_fixture_surface(),
                 actor,
                 0,
                 0,

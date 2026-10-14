@@ -52,7 +52,8 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            FiendishPandaCounterFromCaptureV1 { .. }
+            AjaniLoyaltyV42 { .. }
+            | FiendishPandaCounterFromCaptureV1 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
@@ -1130,7 +1131,8 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
-            StromkirkEndStepObserversV1 { .. }
+            AjaniJournalV42 { .. }
+            | StromkirkEndStepObserversV1 { .. }
             | StromkirkTriggerCaptureV2 { .. }
             | StromkirkCollectedV2 { .. }
             | StromkirkPublishedV2 { .. }

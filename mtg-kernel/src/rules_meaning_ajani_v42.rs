@@ -174,8 +174,25 @@ pub fn meaning(selector: &SelectorV42, id: u16, root: RootV42) -> Result<Meaning
     };
     let d = &CARD_DEFS[usize::from(id)];
     let t = &CARD_DEFS[usize::from(token)];
-    // Frozen Supertype has no Serialize. Its checked printed value is explicit.
-    let material = serde_json::json!({"id":id,"root":root,"cost":d.cost,"mana_value":d.mana_value,"types":d.types,"subtypes":d.subtypes,"supertypes":["Legendary"],"colors":d.colors,"starting_loyalty":d.starting_loyalty,"spell":(d.spell_effect)(),"abilities":d.activated_abilities.iter().map(|a|(a.cost,a.target_spec,(a.effect)(),a.activation_zone,a.sorcery_speed_only)).collect::<Vec<_>>(),"token":{"id":token,"name":t.object_name,"types":t.types,"subtypes":t.subtypes,"colors":t.colors,"power":t.power,"toughness":t.toughness,"keywords":t.keywords},"rule":rule});
+    let abilities = d
+        .activated_abilities
+        .iter()
+        .map(|a| {
+            let [crate::card_def::CostComponent::Loyalty(delta)] = a.cost else {
+                return Err(ErrorV42::UnsupportedDefinition);
+            };
+            Ok((
+                *delta,
+                a.target_spec,
+                (a.effect)(),
+                a.activation_zone,
+                a.sorcery_speed_only,
+            ))
+        })
+        .collect::<Result<Vec<_>, ErrorV42>>()?;
+    // Frozen Supertype and CostComponent have no Serialize. Their checked
+    // printed values are explicit; each ability owns one signed loyalty cost.
+    let material = serde_json::json!({"id":id,"root":root,"cost":d.cost,"mana_value":d.mana_value,"types":d.types,"subtypes":d.subtypes,"supertypes":["Legendary"],"colors":d.colors,"starting_loyalty":d.starting_loyalty,"spell":(d.spell_effect)(),"abilities":abilities,"token":{"id":token,"name":t.object_name,"types":t.types,"subtypes":t.subtypes,"colors":t.colors,"power":t.power,"toughness":t.toughness,"keywords":t.keywords},"rule":rule});
     Ok(MeaningV42 {
         selector: selector.clone(),
         card_id: id,

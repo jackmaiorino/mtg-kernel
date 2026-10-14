@@ -376,6 +376,10 @@ impl FastActorSessionV1 {
         &self.state
     }
     #[cfg(test)]
+    pub(crate) fn ajani_fixture_surface(&self) -> &crate::policy_surface_v5::PolicySurfaceV5 {
+        &self.surface
+    }
+    #[cfg(test)]
     pub(crate) fn ajani_fixture_state_mut(&mut self) -> &mut GameState {
         &mut self.state
     }
