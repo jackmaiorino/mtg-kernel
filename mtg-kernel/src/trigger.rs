@@ -265,6 +265,7 @@ pub enum TriggerCondition {
     FishingPoleEquippedCreatureUntappedV39,
     /// Any OTHER nontoken effective creature death; captured on the prebatch battlefield.
     OtherNontokenCreatureDies,
+    OpponentLosesLifeBatchV49,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3548,6 +3549,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
         "Fiendish Panda" => &crate::fiendish_panda_v1::TRIGGERS,
+        "Bloodthirsty Conqueror" => &crate::bloodthirsty_conqueror_v49::TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
         "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
         "Soul-Shackled Zombie" => &SOUL_SHACKLED_ZOMBIE_TRIGGERS,
@@ -3920,6 +3922,9 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
+        return *template == crate::bloodthirsty_conqueror_v49::recipe();
+    }
     if let Some((_, attack)) = crate::high_society_hunter_custody_v45::binding(effect) {
         return *template == crate::high_society_hunter_custody_v45::recipe(attack);
     }
@@ -4129,6 +4134,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
+        return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
     if matches!(
         effect,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
@@ -4859,6 +4868,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::bloodthirsty_conqueror_v49::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::high_society_hunter_v1::collect_attacks(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5170,6 +5189,7 @@ fn triggers_from_events(
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
                         | TriggerCondition::OtherNontokenCreatureDies
+                        | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
                     continue;

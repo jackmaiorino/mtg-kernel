@@ -880,6 +880,7 @@ pub(crate) fn build_for_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<Vec<FamilyProjectionV40>, RlContractError> {
+    crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state).map_err(RlContractError)?;
     match scope {
         crate::rl::CommonProjectionScopeV42::ExistingV40 => {
             return build(state, surface, actor, step, physical, substep)

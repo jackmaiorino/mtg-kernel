@@ -562,6 +562,8 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // These leaves authenticate their original collected capture before
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.
+        // Conqueror custody authenticates a mandatory gain-only root.
+        EffectOp::ConquerorGainFromCaptureV49 { .. } => true,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,

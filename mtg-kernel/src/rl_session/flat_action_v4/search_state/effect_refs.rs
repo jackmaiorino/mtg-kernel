@@ -54,6 +54,7 @@ impl Scan<'_> {
         match op {
             AjaniLoyaltyV42 { .. }
             | FiendishPandaCounterFromCaptureV1 { .. }
+            | ConquerorGainFromCaptureV49 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
@@ -1394,7 +1395,7 @@ pub(super) fn conflicts(
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
                 | FiendishPandaCaptureCollectedV1 { .. }
-                | FiendishPandaJournalV1 { .. } | ConquerorLossBatchV49 { .. } => true,
+                | FiendishPandaJournalV1 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } => true,
         }
     })
 }

@@ -1363,6 +1363,19 @@ pub enum CommittedEvent {
     ConquerorLossBatchV49 {
         batch: Box<crate::bloodthirsty_conqueror_v49::BatchV49>,
     },
+    ConquerorCapturedV49 {
+        batch_history_index: u64,
+        observer_index: u64,
+    },
+    ConquerorCollectedV49 {
+        capture_history_index: u64,
+    },
+    ConquerorJournalV49 {
+        journal: Box<crate::bloodthirsty_conqueror_v49::custody::JournalV49>,
+    },
+    ConquerorObserverInputV49 {
+        input: Box<crate::bloodthirsty_conqueror_v49::ObserverInputV49>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3407,9 +3420,6 @@ fn commit_batch_survivors(
         }
     }
 
-    if let Some(batch) = conqueror_batch {
-        batch.finish(state);
-    }
     for (aura, host) in attachments {
         if state.objects.get(aura.object).zone == Zone::Battlefield {
             let generation = state.objects.get(aura.object).zone_change_count;
@@ -3443,6 +3453,9 @@ fn commit_batch_survivors(
     }
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
+    }
+    if let Some(batch) = conqueror_batch {
+        batch.finish(state);
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }

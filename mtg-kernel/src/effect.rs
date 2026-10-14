@@ -1701,6 +1701,9 @@ pub enum EffectOp {
         capture_history_index: u64,
         maximum: i32,
     },
+    ConquerorGainFromCaptureV49 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17564,7 +17567,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             }
         }
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
-        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => {
+        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. }
+        | EffectOp::ConquerorGainFromCaptureV49 { .. } => {
             if crate::fiendish_panda_v1::execute(state, ctx, op).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

@@ -137,6 +137,7 @@ pub mod hunter_observation_v45;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;
+pub mod rules_meaning_bloodthirsty_conqueror_v49;
 pub mod rules_meaning_crystal_ordering_v1;
 pub mod rules_meaning_fiery_v1;
 pub mod rules_meaning_gourmand_v1;

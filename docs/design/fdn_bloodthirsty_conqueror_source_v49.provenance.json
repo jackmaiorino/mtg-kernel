@@ -1,5 +1,5 @@
 {
-  "state": "unregistered_loss_operation_prerequisite",
+  "state": "unregistered_core_custody_precise_meaning_source",
   "base_commit": "c8ceb82e7528ca6b5a4c378f9a29f4ef787486f1",
   "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
   "references": [
@@ -68,6 +68,10 @@
   "compilation": "unrun",
   "gameplay": "unrun",
   "registration": "absent",
-  "complete_publication_custody": false,
-  "safe_consumer_admitted": false
+  "complete_publication_custody": "implemented_source_unrun",
+  "safe_consumer_admitted": false,
+  "historical_superseded_preoperation_checkpoint": "c185b3016370a040acb332b880dff22adef5d06c",
+  "observer_timing": "original post-event battlefield before state-based actions; ordinary CR603.10",
+  "rules_primary_url": "https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf",
+  "consumer_v49": "design_only_pending_complete_Season_V48"
 }

@@ -409,6 +409,7 @@ pub(crate) fn require_legacy_supported(
     state: &GameState,
     actor: Option<PlayerId>,
 ) -> Result<(), String> {
+    crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)?;
     let retained = state.engine.event_history.iter().any(|e| {
         matches!(
             e,
