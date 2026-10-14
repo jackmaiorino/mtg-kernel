@@ -34,6 +34,9 @@ compile_error!(
     "native-training-store-v2-production requires Windows MSVC x86_64/aarch64 release without debug assertions"
 );
 
+pub mod eaten_observation_v46;
+pub mod eaten_public_v46;
+
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;

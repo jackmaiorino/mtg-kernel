@@ -118,6 +118,15 @@ pub(super) fn branches(state: &GameState, pending: &PendingCast) -> Vec<bool> {
         })
         .collect()
 }
+/// Private consumer authority: validate the original pending cast and derive the
+/// payable ordered branches from the same combined payment planner as the engine.
+pub(crate) fn consumer_branches(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Result<Vec<bool>, String> {
+    super::validate_pending_cast(state, pending)?;
+    Ok(branches(state, pending))
+}
 pub(super) fn answer(
     state: &mut GameState,
     pending: &PendingCast,
