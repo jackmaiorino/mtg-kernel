@@ -218,3 +218,10 @@ CPU joins the same aggregate ledger. A failure stops the sequence. Preserve its
 attempt labels and use fresh labels for a repaired retry. The driver stops after
 full cost calibration for the lead's formal-run review; it cannot launch formal
 measurement.
+
+The ordinary qualification ceiling remains 1200 CPU seconds. When measured costs
+require it, the lead can explicitly prepare representative ABC/evaluation
+qualification with `--representative-qualification --qualification-cpu-cap 2400`.
+The driver applies its 1.5 times measured CPU projection against the declared
+batch ceiling. This does not change the aggregate 12-hour cap, cost-only bound,
+workload, or formal analysis gates. Do not split batches to evade either bound.
