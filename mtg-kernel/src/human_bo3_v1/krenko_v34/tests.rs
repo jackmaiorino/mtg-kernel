@@ -320,10 +320,12 @@ mod future_printed {
     }
     fn resolve(session: &mut HumanKrenkoSessionV34, projector: &mut HumanKrenkoProjectorV34) {
         for _ in 0..12 {
-            if session.inner.krenko_fixture_state_mut().stack.is_empty() {
+            let current = expected(session);
+            if session.inner.krenko_fixture_state_mut().stack.is_empty()
+                && current.acting_player == session.human_seat
+            {
                 return;
             }
-            let current = expected(session);
             if current.acting_player == session.human_seat {
                 let prompt = projector.project_current(session, current).unwrap();
                 projector
@@ -378,7 +380,11 @@ mod future_printed {
                 projector.submit(&mut session, action.clone()).unwrap(),
                 receipt
             );
-            let public = session.public_observation(expected(&session)).unwrap();
+            let paid_current = expected(&session);
+            let (public, _, _) = session
+                .inner
+                .krenko_current_decision_input_v34(paid_current, paid_current.acting_player)
+                .unwrap();
             assert_eq!(
                 public.facts.activations[0].lifecycle,
                 crate::krenko_public_v1::LifecycleV1::PaidOnStack
@@ -433,19 +439,49 @@ mod future_printed {
             projector
                 .submit(&mut session, request(&prompt, "Tap Krenko, Mob Boss"))
                 .unwrap();
-            let pending = projector
-                .project_current(&session, expected(&session))
+            let current = expected(&session);
+            let (_, _, binding) = session
+                .inner
+                .krenko_current_decision_input_v34(current, current.acting_player)
                 .unwrap();
-            let pass = request(&pending, "Pass priority");
+            let human_pass = if current.acting_player == session.human_seat {
+                Some(request(
+                    &projector.project_current(&session, current).unwrap(),
+                    "Pass priority",
+                ))
+            } else {
+                None
+            };
             let valid = session.snapshot_v34();
             session.inner.krenko_fixture_state_mut().stack.clear();
             let before = session.inner.privileged_core_environment_hash();
-            assert_eq!(
-                projector.submit(&mut session, pass),
-                Err(Error::StaleDecision)
-            );
+            assert!(session
+                .inner
+                .krenko_validate_bound_decision_v34(current, current.acting_player, &binding)
+                .is_err());
+            if let Some(pass) = human_pass {
+                assert_eq!(
+                    projector.submit(&mut session, pass),
+                    Err(Error::StaleDecision)
+                );
+            } else {
+                let mut called = false;
+                assert!(session
+                    .step_opponent_with(current, |_, actions| {
+                        called = true;
+                        Ok(actions
+                            .iter()
+                            .position(|a| matches!(a, ActionSemanticV1::Pass { .. }))
+                            .unwrap() as u32)
+                    })
+                    .is_err());
+                assert!(!called);
+            }
             assert_eq!(session.inner.privileged_core_environment_hash(), before);
-            assert!(session.public_observation(expected(&session)).is_err());
+            assert!(session
+                .inner
+                .krenko_current_decision_input_v34(current, current.acting_player)
+                .is_err());
             session.restore_v34(&valid).unwrap();
             resolve(&mut session, &mut projector);
             let completed = session.snapshot_v34();

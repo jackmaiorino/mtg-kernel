@@ -13267,6 +13267,7 @@ fn log_final_targeting_events(
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err("final targeting vectors no longer have parallel contracts".to_string());
     }
+    let zul_graveyard_targeting = crate::zul_ashur_v1::final_graveyard_targeting(state, item)?;
 
     let mut seen = Vec::new();
     for contract in &item.v4.target_contracts {
@@ -13281,6 +13282,7 @@ fn log_final_targeting_events(
         };
         if zone != Zone::Battlefield
             && !(cfg!(feature = "standard-magezero-fixtures") && zone == Zone::Stack)
+            && !(zul_graveyard_targeting && zone == Zone::Graveyard)
         {
             continue;
         }
