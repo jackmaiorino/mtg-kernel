@@ -80,14 +80,23 @@ def checked(asset):
 
 def output_bytes(root):
     # This walks only the declared owned output root, never a source volume.
+    def walk_error(error):
+        if not isinstance(error, FileNotFoundError):
+            raise error
+
     total = 0
-    for folder, directories, files in os.walk(root, followlinks=False):
+    for folder, directories, files in os.walk(root, followlinks=False, onerror=walk_error):
         directories[:] = [d for d in directories if not Path(folder, d).is_symlink()
                            and not getattr(Path(folder, d), "is_junction", lambda: False)()]
         for name in files:
             path = Path(folder, name)
-            if not path.is_symlink():
-                total += path.stat().st_size
+            try:
+                if not path.is_symlink():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                # Atomic publishers rename their temporary file after walk
+                # lists it. The destination is counted on the next scan.
+                continue
     return total
 
 

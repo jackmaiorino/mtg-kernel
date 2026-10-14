@@ -14,6 +14,27 @@ import analyze
 
 
 class QualificationTests(unittest.TestCase):
+    def test_output_accounting_tolerates_only_disappearance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            temp = root / "state.json.tmp"
+            temp.write_bytes(b"abc")
+            original = Path.stat
+
+            def disappear(path, *args, **kwargs):
+                if path == temp:
+                    temp.unlink()
+                    raise FileNotFoundError(str(temp))
+                return original(path, *args, **kwargs)
+
+            with patch.object(Path, "stat", disappear):
+                self.assertEqual(launch.output_bytes(root), 0)
+            (root / "retained.json").write_bytes(b"abcd")
+            self.assertEqual(launch.output_bytes(root), 4)
+            with patch.object(Path, "stat", side_effect=PermissionError("denied")):
+                with self.assertRaises(PermissionError):
+                    launch.output_bytes(root)
+
     def calibrated_spec(self, directory):
         root = Path(directory)
         binary, model, calibration = (root / name for name in ("binary", "model", "calibration.json"))
