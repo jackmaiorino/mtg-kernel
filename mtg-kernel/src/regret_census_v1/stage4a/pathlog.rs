@@ -221,6 +221,7 @@ impl PathLog {
         let v = json!({"schema":SEARCH_SCHEMA,"model":ctx.seeds.model,"root":ctx.seeds.root,
             "focal":ctx.focal.0,"root_step":root_step,"select_cap":ctx.limits.select_cap,
             "urgency":ctx.urgency,"key_mode":ctx.key_mode.label(),"interchange":ctx.interchange,
+            "backup":ctx.bestline.map(super::refresh::bestline_rule),
             "tree_hash":tree_hash,"tree_nodes":tree.nodes.len(),"completed":completed,
             "attempted":attempted,"transitions":transitions,
             "sim_fields":["ordinal","win","transitions","rollout_choices","path"],

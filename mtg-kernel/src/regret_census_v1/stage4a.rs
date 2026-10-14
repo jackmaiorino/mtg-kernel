@@ -1441,6 +1441,8 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    // Every mode refuses a best-line `S4A_BACKUP` it would not use.
+    parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     match cfg.mode.as_str() {
         "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
         | "s4a-budget" | "s4a-budget-replay" | "s4a-search-profile" => {

@@ -487,6 +487,10 @@ impl BestLine {
     }
 }
 
+/// An edge's direct results: (tries, wins) clean and after a rollout choice.
+#[cfg(test)]
+pub(crate) type DirectResults = ((u64, u64), (u64, u64));
+
 pub(crate) fn permutation(len: usize, seed: u64) -> Vec<usize> {
     let mut p: Vec<usize> = (0..len).collect();
     let mut rng = SplitMix64::seed(seed);
@@ -539,6 +543,13 @@ impl Node {
             skip: Vec::new(),
             bl: None,
         }
+    }
+
+    /// Edge `a`'s direct results (tries, wins) with no rollout-policy choice
+    /// of ours after the tree path, and after one; None for formal nodes.
+    #[cfg(test)]
+    pub(crate) fn best_line_direct(&self, a: usize) -> Option<DirectResults> {
+        self.bl.as_deref().map(|b| (b.clean[a], b.rollout[a]))
     }
 
     /// An edge's value: its best-line value when that backup is on, else its
@@ -739,6 +750,15 @@ impl Tree {
     /// nodes change, and each passes its change of visits times value to its
     /// parent's edge. Nothing for formal nodes.
     fn best_line_backup(&mut self, path: &[(Key, usize)], win: bool, world_only: bool) {
+        // A search's nodes are all best-line or all formal: one lookup keeps
+        // the formal backup's cost.
+        let on = path
+            .first()
+            .and_then(|(k, _)| self.nodes.get(k))
+            .is_some_and(|n| n.bl.is_some());
+        if !on {
+            return;
+        }
         // The child's contribution to its parent's edge before and after.
         let mut carry: Option<(f64, f64)> = None;
         for (j, (k, a)) in path.iter().enumerate().rev() {
@@ -831,6 +851,16 @@ impl Tree {
             };
             if n.visits == 0 {
                 continue;
+            }
+            // Every try of an edge reached a stored child or ended there.
+            for a in 0..n.n.len() {
+                let direct = b.clean[a].0 + b.rollout[a].0;
+                if b.kid_visits[a] + direct != n.n[a] {
+                    out.push(format!(
+                        "{k:?} edge {a}: {} child visits + {direct} direct != {} tries",
+                        b.kid_visits[a], n.n[a]
+                    ));
+                }
             }
             value(self, &kids, k, &mut memo);
             let (q, v) = &memo[k];

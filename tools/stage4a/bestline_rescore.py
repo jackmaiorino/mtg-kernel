@@ -51,7 +51,7 @@ import multiprocessing
 import os
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 CURRENT_FLOOR = 8
 TIE_EPS = 1e-9  # values this close count as tied
@@ -160,6 +160,8 @@ class Search:
             "root_step": self.meta.get("root_step"),
             "select_cap": self.cap,
             "tree_hash": self.meta.get("tree_hash"),
+            # The backup the search ran with (absent or None: the formal mean).
+            "backup": self.meta.get("backup"),
             "attempts": len(self.sims),
             "tree_nodes": len(self.nodes),
         }
@@ -560,6 +562,9 @@ def bins(rows, key, edges=(0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0 + EPS)):
 
 def summarise(rows, nodes, m_values, ks):
     out = {"searches": len(rows), "skipped": sum(1 for r in rows if r.get("skipped"))}
+    # Searches grown by a best-line backup: their "current" rule is the mean
+    # rescored on that tree, not the search that was run.
+    out["searches_by_backup"] = dict(Counter(r.get("backup") or "mean" for r in rows))
     rows = [r for r in rows if not r.get("skipped")]
     out["integrity_bad_searches"] = sum(1 for r in rows if r["integrity_mismatched_nodes"])
     for m in map(str, m_values):
