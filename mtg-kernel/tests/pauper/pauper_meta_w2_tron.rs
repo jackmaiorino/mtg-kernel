@@ -122,7 +122,7 @@ fn tapped_lands(state: &GameState) -> usize {
 const PAYMENT_FIXTURE_PATH: &str = "data/pauper_meta_w2_active_nine_payment_plans_v1.json";
 
 const PAYMENT_FIXTURE_JSON: &str =
-    include_str!("../../data/pauper_meta_w2_active_nine_payment_plans_v1.json");
+    include_str!("../../../data/pauper_meta_w2_active_nine_payment_plans_v1.json");
 
 /// Environment switch that regenerates the fixture instead of asserting
 /// against it. Set exactly once, on the pre-refactor build, before

@@ -1,6 +1,11 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+use crate::policy_observation_v6::tests::ready_state;
+use crate::policy_observation_v6::tests::{put, ready_state_for};
 
 #[test]
 #[cfg(all(
