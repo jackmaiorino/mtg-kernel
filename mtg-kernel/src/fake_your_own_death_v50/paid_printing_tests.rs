@@ -464,6 +464,62 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                     assert!(found);
                     assert_eq!(state.stack.last(), Some(&original));
                     assert_eq!(treasures(&state, owner), 0);
+                    let mut backend =
+                        crate::rl_session::FastActorSessionV1::from_fake_v50_fixture_state(
+                            state.clone(),
+                        );
+                    let crate::rl_session::FastActorResponseV1::Decision(e) =
+                        backend.current_response()
+                    else {
+                        panic!("actual V50 mandatory Aura input");
+                    };
+                    let (observation, actions, binding) = backend
+                        .fake_current_decision_input_v50(e, owner.into())
+                        .unwrap();
+                    assert_eq!(actions.len(), 2);
+                    assert_eq!(
+                        observation
+                            .fake
+                            .aura_menu
+                            .as_ref()
+                            .unwrap()
+                            .legal_hosts
+                            .len(),
+                        2
+                    );
+                    assert!(!actions.iter().any(|action| matches!(
+                        action,
+                        crate::rl::ActionSemanticV1::FinishEffectSelection { .. }
+                    )));
+                    let before = backend.privileged_core_environment_hash();
+                    backend
+                        .fake_validate_bound_decision_v50(e, owner.into(), &binding)
+                        .unwrap();
+                    assert!(backend
+                        .fake_validate_bound_decision_v50(e, owner.opponent().into(), &binding)
+                        .is_err());
+                    assert_eq!(backend.privileged_core_environment_hash(), before);
+                    let snapshot = backend.snapshot_v1();
+                    let index = actions.iter().position(|action| matches!(action, crate::rl::ActionSemanticV1::ChooseEffectTarget { target: crate::rl::TargetRefV1::Object { object }, .. } if object.arena_id == selected.0)).unwrap();
+                    backend.step(e.episode_id, e.step, index as u32).unwrap();
+                    let final_state = serde_json::to_vec(backend.fake_fixture_state()).unwrap();
+                    backend.fake_restore_v50(&snapshot).unwrap();
+                    let crate::rl_session::FastActorResponseV1::Decision(restored_e) =
+                        backend.current_response()
+                    else {
+                        panic!("actual V50 restored Aura input");
+                    };
+                    assert!(restored_e.environment_revision > e.environment_revision);
+                    assert!(backend
+                        .fake_validate_bound_decision_v50(e, owner.into(), &binding)
+                        .is_err());
+                    backend
+                        .step(restored_e.episode_id, restored_e.step, index as u32)
+                        .unwrap();
+                    assert_eq!(
+                        serde_json::to_vec(backend.fake_fixture_state()).unwrap(),
+                        final_state
+                    );
                     let facts = public_facts(&state);
                     let menu = facts.aura_menu.unwrap();
                     assert_eq!(menu.owner, owner.into());
@@ -1427,6 +1483,10 @@ fn actual_paid_fake_history_coexists_with_paid_heartfire_crystal_historical_sour
             Decision::ChooseTargets { player, legal_targets, .. }
             if player == actor && legal_targets.contains(&Target::Object(target))));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
         for _ in 0..12 {
             let decision = engine::advance_until_decision(&mut state);

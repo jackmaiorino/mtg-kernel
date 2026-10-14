@@ -53,6 +53,7 @@ pub(crate) mod eaten_v46;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod faebloom_v43;
+pub(crate) mod fake_v50;
 pub(crate) mod fiery_v33;
 pub(crate) mod fishing_pole_v39;
 pub(crate) mod frenzied_v15;
@@ -1961,7 +1962,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if (if scope == crate::rl::CommonProjectionScopeV42::ConquerorV49 {
+    if (if scope == crate::rl::CommonProjectionScopeV42::FakeV50 {
+        crate::fake_observation_v50::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::ConquerorV49 {
         crate::conqueror_observation_v49::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::SeasonV48 {
         crate::season_observation_v48::validate_state(state)
@@ -3394,6 +3397,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -3427,6 +3431,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                 | FlatActionContractModeV1::PandaV47
                 | FlatActionContractModeV1::SeasonV48
                 | FlatActionContractModeV1::ConquerorV49
+                | FlatActionContractModeV1::FakeV50
         )
         && session
             .surface
@@ -4514,6 +4519,7 @@ fn flat_validate_expected_decision_akroma_inner(
                 | FlatActionContractModeV1::PandaV47
                 | FlatActionContractModeV1::SeasonV48
                 | FlatActionContractModeV1::ConquerorV49
+                | FlatActionContractModeV1::FakeV50
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4536,7 +4542,7 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49),
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4677,6 +4683,7 @@ enum FlatActionContractModeV1 {
     PandaV47,
     SeasonV48,
     ConquerorV49,
+    FakeV50,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7356,7 +7363,13 @@ impl FastActorSessionV1 {
     }
 
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
-        *self = snapshot.0.clone();
+        if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            // Keep the frozen void signature. Invalid ownership refuses
+            // without mutation; typed V50 callers can inspect the error.
+            let _ = self.fake_restore_v50(snapshot);
+        } else if snapshot.0.flat_action_contract_mode != FlatActionContractModeV1::FakeV50 {
+            *self = snapshot.0.clone();
+        }
     }
 
     pub fn step(
@@ -7413,7 +7426,25 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
-        if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else {
+            crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+            .map_err(|e| e.0)
+        };
+        fake_guard
+            .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
+
+        if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
             crate::conqueror_observation_v49::validate_state(&self.state)
         } else {
             crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state)
@@ -7422,7 +7453,9 @@ impl FastActorSessionV1 {
 
         if !matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49
+            FlatActionContractModeV1::SeasonV48
+                | FlatActionContractModeV1::ConquerorV49
+                | FlatActionContractModeV1::FakeV50
         ) {
             crate::doubling_season_v48::require_legacy_visible(
                 &self.state,
@@ -7452,7 +7485,9 @@ impl FastActorSessionV1 {
                 )
             })?;
             let mut rederived = current.clone();
-            if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+                fake_v50::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
                 conqueror_v49::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
                 season_v48::prepare_current(self, &mut rederived)
@@ -7621,7 +7656,35 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else {
+            crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+            .map_err(|e| e.0)
+        };
+        if let Err(error) = fake_guard {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                format!("fail_closed:fake_v50_required:{error}"),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
             crate::conqueror_observation_v49::validate_state(&self.state)
         } else {
             crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state)
@@ -7642,7 +7705,9 @@ impl FastActorSessionV1 {
 
         if !matches!(
             self.flat_action_contract_mode,
-            FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49
+            FlatActionContractModeV1::SeasonV48
+                | FlatActionContractModeV1::ConquerorV49
+                | FlatActionContractModeV1::FakeV50
         ) && crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,
@@ -7660,7 +7725,9 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
             crate::conqueror_observation_v49::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
             crate::season_observation_v48::validate_state(&self.state)
@@ -7685,7 +7752,9 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            crate::fake_observation_v50::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
             crate::conqueror_observation_v49::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
             crate::season_observation_v48::validate_state(&self.state)
@@ -7723,6 +7792,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -7749,6 +7819,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -7778,6 +7849,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7809,7 +7881,9 @@ impl FastActorSessionV1 {
             return;
         }
         if (if self.is_common_v40() {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+                crate::fake_observation_v50::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
                 crate::conqueror_observation_v49::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
                 crate::season_observation_v48::validate_state(&self.state)
@@ -7946,6 +8020,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             )
         {
             self.current = None;
@@ -8007,6 +8082,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::PandaV47
                     | FlatActionContractModeV1::SeasonV48
                     | FlatActionContractModeV1::ConquerorV49
+                    | FlatActionContractModeV1::FakeV50
             )
         {
             self.terminal = Some(halted_terminal(
@@ -8058,6 +8134,7 @@ impl FastActorSessionV1 {
                             | FlatActionContractModeV1::PandaV47
                             | FlatActionContractModeV1::SeasonV48
                             | FlatActionContractModeV1::ConquerorV49
+                            | FlatActionContractModeV1::FakeV50
                     ) =>
                 {
                     substeps
@@ -8116,7 +8193,9 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
+            fake_v50::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
             conqueror_v49::actual_candidates(&surfaced, &self.state, &self.surface)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
             season_v48::actual_candidates(&surfaced, &self.state, &self.surface)
@@ -8410,6 +8489,21 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:hunter_v45:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FakeV50 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = fake_v50::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:fake_v50:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

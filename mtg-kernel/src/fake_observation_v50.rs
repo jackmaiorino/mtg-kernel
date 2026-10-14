@@ -72,6 +72,7 @@ pub fn producer_sha256() -> String {
             include_str!("twinflame_observation_v1.rs"),
             include_str!("planeswalker_v1.rs"),
             include_str!("rl_session/conqueror_v49.rs"),
+            include_str!("rl_session/fake_v50.rs"),
             include_str!("rl_session/limited_common_v1.rs"),
             include_str!("rl_session.rs"),
             include_str!("rl_session/flat_action_v3.rs"),
