@@ -73,6 +73,7 @@ pub fn producer_sha256() -> String {
         include_str!("human_bo3_v1/season_v48.rs"),
         include_str!("human_bo3_v1/limited_common_v1.rs"),
         include_str!("human_bo3_v1/season_v48/facts.rs"),
+        include_str!("human_bo3_v1/season_v48/season_facts.rs"),
         include_str!("human_bo3_v1/visible.rs"),
         include_str!("human_bo3_v1/akroma_families_v40.rs"),
         include_str!("divine_actions_v44.rs"),
