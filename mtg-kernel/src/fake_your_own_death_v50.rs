@@ -225,6 +225,11 @@ mod tests {
                 assert!(death_custody::validate_trigger_identity(&state, &item).is_err());
                 assert!(death_custody::publish(&mut state, &item).is_err());
                 assert_eq!(state, before);
+                assert!(death_custody::acquire_counter(&state, &item).is_err());
+                assert!(
+                    engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id).is_err()
+                );
+                assert_eq!(state, before);
                 assert!(engine::step(&mut state, Action::Pass).is_err());
                 assert_eq!(state, before);
                 assert!(matches!(
@@ -234,27 +239,41 @@ mod tests {
                 state.engine.halted = None;
                 assert_eq!(state, before);
             }
-            state
-                .engine
-                .event_history
-                .push(CommittedEvent::FakeJournalV50 {
-                    journal: Box::new(JournalV50::DeathPublished {
-                        capture: 0,
-                        collection: 0,
-                        item: Box::new(item),
-                    }),
-                });
-            for _ in 0..3 {
-                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-                let before = state.clone();
-                assert!(engine::step(&mut state, Action::Pass).is_err());
-                assert_eq!(state, before);
-                assert!(matches!(
-                    engine::advance_until_decision(&mut state),
-                    Decision::Halted { .. }
-                ));
-                state.engine.halted = None;
-                assert_eq!(state, before);
+            for orphan in [
+                JournalV50::DeathPublished {
+                    capture: 0,
+                    collection: 0,
+                    item: Box::new(item.clone()),
+                },
+                JournalV50::DeathCounterInput {
+                    publication: 0,
+                    original_stack: vec![item.clone()],
+                },
+                JournalV50::DeathCounterClosed {
+                    input: 0,
+                    remaining_stack: Vec::new(),
+                },
+            ] {
+                let mut injected = state.clone();
+                injected
+                    .engine
+                    .event_history
+                    .push(CommittedEvent::FakeJournalV50 {
+                        journal: Box::new(orphan),
+                    });
+                for _ in 0..3 {
+                    injected =
+                        serde_json::from_slice(&serde_json::to_vec(&injected).unwrap()).unwrap();
+                    let before = injected.clone();
+                    assert!(engine::step(&mut injected, Action::Pass).is_err());
+                    assert_eq!(injected, before);
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut injected),
+                        Decision::Halted { .. }
+                    ));
+                    injected.engine.halted = None;
+                    assert_eq!(injected, before);
+                }
             }
         }
     }

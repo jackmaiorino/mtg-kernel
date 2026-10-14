@@ -14729,7 +14729,13 @@ pub(crate) fn counter_stack_item_by_id(
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let faebloom_counter_owner = crate::faebloom_trick_v43::acquire(state, &item)?;
     let fake_counter_owner = crate::fake_your_own_death_v50::spell_custody::acquire(state, &item)?;
+    let fake_death_counter_owner =
+        crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    let fake_death_counter = crate::fake_your_own_death_v50::death_custody::begin_counter(
+        state,
+        fake_death_counter_owner,
+    )?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
             apply_spell_departure(state, plan)?;
@@ -14737,6 +14743,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::fake_your_own_death_v50::death_custody::finish_counter(state, fake_death_counter)?;
     crate::ajani_full_v42::lifecycle::record_removed(state, ajani_counter_owner.as_ref(), true)?;
     crate::krenko_v1::record_input(
         state,

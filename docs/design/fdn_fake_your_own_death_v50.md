@@ -107,6 +107,19 @@ These components are uncompiled/unrun. Departed-publication closure, private dea
 execution, removal/counter/return/entry/Treasure and consumer handling remain
 unfinished. Printing registration and genuine paid printing tests remain pending.
 
+The later counter component borrows the original unique live full publication
+before the actual engine removal. Its nonserializable loan captures the complete
+original stack, journals that independent input immediately before removal, and
+requires the exact remaining stack before adjacent completion. Retained checks
+bind the original full publication and unique input, compare the complete original
+and resulting stacks, and refuse an erased, replayed or orphan completion. Stable
+ownership permits a closed counter only while its original row remains absent.
+The both-seat restored forgery group now exercises private counter acquisition,
+actual counter ingress and both orphan counter records without mutation. This is
+uncompiled/unrun source, not a genuine paid printing or counter pass. Resolution,
+resumable return/entry/Treasure, other departure and complete consumers remain
+unfinished; the printing remains unregistered.
+
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes

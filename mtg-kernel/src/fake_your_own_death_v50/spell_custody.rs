@@ -147,6 +147,14 @@ pub enum JournalV50 {
         collection: u64,
         item: Box<StackItem>,
     },
+    DeathCounterInput {
+        publication: u64,
+        original_stack: Vec<StackItem>,
+    },
+    DeathCounterClosed {
+        input: u64,
+        remaining_stack: Vec<StackItem>,
+    },
 }
 
 pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {

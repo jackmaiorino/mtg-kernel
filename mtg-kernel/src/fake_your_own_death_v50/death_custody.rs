@@ -147,6 +147,106 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     Ok(())
 }
 
+/// A live full row is borrowed before the actual counter removes it. Neither
+/// this loan nor its in-flight completion can be deserialized from a game.
+pub(crate) struct CounterOwnerV50 {
+    publication: u64,
+    original_stack: Vec<StackItem>,
+    position: usize,
+}
+pub(crate) struct CounterRemovalV50 {
+    owner: CounterOwnerV50,
+    input: u64,
+}
+
+pub(crate) fn acquire_counter(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CounterOwnerV50>, String> {
+    let Some(capture) = binding(item) else {
+        return Ok(None);
+    };
+    super::spell_custody::validate_retained_grant_history(state)?;
+    validate_trigger_identity(state, item)?;
+    let publications = state.engine.event_history.iter().enumerate().filter_map(|(index, event)| {
+        matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
+            if *original == capture && row.as_ref() == item).then_some(index as u64)
+    }).collect::<Vec<_>>();
+    let [publication] = publications.as_slice() else {
+        return Err("Fake counter lost its unique original full publication".into());
+    };
+    let positions = state
+        .stack
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| (row.v4.stack_item_id == item.v4.stack_item_id).then_some(index))
+        .collect::<Vec<_>>();
+    let [position] = positions.as_slice() else {
+        return Err("Fake counter lost its unique actual full live row".into());
+    };
+    if state.stack[*position] != *item {
+        return Err("Fake counter changed its original full row".into());
+    }
+    Ok(Some(CounterOwnerV50 {
+        publication: *publication,
+        original_stack: state.stack.clone(),
+        position: *position,
+    }))
+}
+
+pub(crate) fn begin_counter(
+    state: &mut GameState,
+    owner: Option<CounterOwnerV50>,
+) -> Result<Option<CounterRemovalV50>, String> {
+    let Some(owner) = owner else { return Ok(None) };
+    if state.stack != owner.original_stack {
+        return Err("Fake counter input changed the complete borrowed original stack".into());
+    }
+    let input = emit(
+        state,
+        JournalV50::DeathCounterInput {
+            publication: owner.publication,
+            original_stack: owner.original_stack.clone(),
+        },
+    );
+    Ok(Some(CounterRemovalV50 { owner, input }))
+}
+
+pub(crate) fn finish_counter(
+    state: &mut GameState,
+    removal: Option<CounterRemovalV50>,
+) -> Result<(), String> {
+    let Some(removal) = removal else {
+        return Ok(());
+    };
+    let mut expected = removal.owner.original_stack.clone();
+    expected.remove(removal.owner.position);
+    if state.stack != expected
+        || state.engine.event_history.len() as u64 != removal.input + 1
+        || !matches!(state.engine.event_history.last().and_then(journal),
+            Some(JournalV50::DeathCounterInput { publication, original_stack })
+            if *publication == removal.owner.publication && *original_stack == removal.owner.original_stack)
+    {
+        return Err(
+            "Fake actual counter changed its original input or exact remaining stack".into(),
+        );
+    }
+    emit(
+        state,
+        JournalV50::DeathCounterClosed {
+            input: removal.input,
+            remaining_stack: expected,
+        },
+    );
+    Ok(())
+}
+
+fn counter_inputs(state: &GameState, publication: u64) -> Vec<u64> {
+    state.engine.event_history.iter().enumerate().filter_map(|(index, event)|
+        matches!(journal(event), Some(JournalV50::DeathCounterInput { publication: original, .. })
+            if *original == publication).then_some(index as u64)).collect()
+}
+
 fn validate_pending_shape(
     state: &GameState,
     pending: &PendingTrigger,
@@ -209,24 +309,29 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                     .engine
                     .event_history
                     .iter()
-                    .filter_map(|event| match journal(event) {
+                    .enumerate()
+                    .filter_map(|(index, event)| match journal(event) {
                         Some(JournalV50::DeathPublished {
                             capture: original,
                             item,
                             ..
-                        }) if original == capture => Some(item.as_ref()),
+                        }) if original == capture => Some((index as u64, item.as_ref())),
                         _ => None,
                     })
                     .collect::<Vec<_>>();
                 match (pending.as_slice(), published.as_slice()) {
                     ([held], []) => validate_pending_shape(state, held, *capture)?,
-                    ([], [original]) => {
+                    ([], [(publication, original)]) => {
                         let rows = state
                             .stack
                             .iter()
                             .filter(|row| row.v4.stack_item_id == original.v4.stack_item_id)
                             .collect::<Vec<_>>();
-                        if rows.as_slice() != [*original] {
+                        let closed = counter_inputs(state, *publication);
+                        if (closed.is_empty() && rows.as_slice() != [*original])
+                            || (closed.len() == 1 && !rows.is_empty())
+                            || closed.len() > 1
+                        {
                             return Err("Fake published gained trigger changed or lost its unique live owner".into());
                         }
                     }
@@ -339,6 +444,63 @@ pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
                             if row.v4.stack_item_id == item.v4.stack_item_id)).count() != 1
                 {
                     return Err("Fake publication changed its original capture, collection or full row".into());
+                }
+            }
+            Some(JournalV50::DeathCounterInput {
+                publication,
+                original_stack,
+            }) => {
+                let publication_index = usize::try_from(*publication)
+                    .map_err(|_| "Fake counter publication index overflow")?;
+                let Some(JournalV50::DeathPublished { item, .. }) = state
+                    .engine
+                    .event_history
+                    .get(publication_index)
+                    .and_then(journal)
+                else {
+                    return Err("Fake counter input lost its original gained publication".into());
+                };
+                let positions = original_stack
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(position, row)| {
+                        (row.v4.stack_item_id == item.v4.stack_item_id).then_some(position)
+                    })
+                    .collect::<Vec<_>>();
+                let [position] = positions.as_slice() else {
+                    return Err("Fake counter input lost its original unique live row".into());
+                };
+                if publication_index >= index
+                    || original_stack[*position] != **item
+                    || counter_inputs(state, *publication).as_slice() != [index as u64]
+                {
+                    return Err(
+                        "Fake counter input changed or repeated its complete original publication"
+                            .into(),
+                    );
+                }
+                let mut expected = original_stack.clone();
+                expected.remove(*position);
+                if !matches!(state.engine.event_history.get(index+1).and_then(journal),
+                    Some(JournalV50::DeathCounterClosed { input, remaining_stack })
+                    if *input == index as u64 && *remaining_stack == expected)
+                {
+                    return Err(
+                        "Fake counter lost its adjacent exact original-stack completion".into(),
+                    );
+                }
+            }
+            Some(JournalV50::DeathCounterClosed { input, .. }) => {
+                if usize::try_from(*input)
+                    .ok()
+                    .and_then(|input| input.checked_add(1))
+                    != Some(index)
+                    || !matches!(
+                        state.engine.event_history.get(index - 1).and_then(journal),
+                        Some(JournalV50::DeathCounterInput { .. })
+                    )
+                {
+                    return Err("Fake counter closure lost its independent original input".into());
                 }
             }
             _ => {}
