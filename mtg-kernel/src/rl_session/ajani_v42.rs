@@ -375,7 +375,11 @@ impl FastActorSessionV1 {
     pub(crate) fn ajani_fixture_state(&self) -> &GameState {
         &self.state
     }
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn ajani_fixture_surface(&self) -> &crate::policy_surface_v5::PolicySurfaceV5 {
         &self.surface
     }
