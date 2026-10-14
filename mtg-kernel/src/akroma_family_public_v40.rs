@@ -890,7 +890,8 @@ pub(crate) fn build_for_scope(
         crate::rl::CommonProjectionScopeV42::FullFaebloomV43 => {
             return build_for_faebloom_v43(state, surface, actor, step, physical, substep)
         }
-        crate::rl::CommonProjectionScopeV42::DivineV44 => {}
+        crate::rl::CommonProjectionScopeV42::DivineV44
+        | crate::rl::CommonProjectionScopeV42::HunterV45 => {}
     }
     let base = crate::rl::common_family_observation_storage_scoped(
         (scope, state),

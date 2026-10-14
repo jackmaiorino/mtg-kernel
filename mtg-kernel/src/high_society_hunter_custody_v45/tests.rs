@@ -434,3 +434,66 @@ fn genuine_sacrifice_of_typed_copied_banishing_source_keeps_linked_attachment_ow
         );
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "unregistered actual Hunter; parent owns registration and native"]
+fn public_original_source_and_ordered_sacrifice_menu_refuse_forgery_without_private_draw_rosters() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, hunter, _) = attack_state(actor);
+        menu(&mut state);
+        let before = crate::high_society_hunter_public_v45::capture(&state).unwrap();
+        let original = before.occurrences[0].source.clone();
+        let original_generation = state.objects.get(hunter).zone_change_count;
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(hunter, Zone::Hand),
+        );
+        assert!(state.objects.get(hunter).zone_change_count > original_generation);
+        let after = crate::high_society_hunter_public_v45::capture(&state).unwrap();
+        assert_eq!(after.occurrences[0].source, original);
+        assert_eq!(after.menu.as_ref().unwrap().source, original);
+        assert_eq!(
+            after.menu.as_ref().unwrap().ordered_legal,
+            before.menu.as_ref().unwrap().ordered_legal
+        );
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut unknown_library = state.clone();
+        unknown_library.players[actor.opponent().index()]
+            .library
+            .reverse();
+        assert_eq!(
+            after,
+            crate::high_society_hunter_public_v45::capture(&unknown_library).unwrap()
+        );
+        for case in 0..5 {
+            let mut bad = after.clone();
+            match case {
+                0 => bad.occurrences[0].source.zone_change_count += 1,
+                1 => bad.occurrences[0].original_controller = actor.opponent().into(),
+                2 => {
+                    bad.occurrences[0].phase =
+                        crate::high_society_hunter_public_v45::PhaseV45::Completed
+                }
+                3 => bad.menu.as_mut().unwrap().ordered_legal.clear(),
+                _ => bad.occurrences[0].draw_attempted = true,
+            }
+            assert!(crate::high_society_hunter_public_v45::validate(&state, &bad).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+        }
+        let json = serde_json::to_string(&after).unwrap();
+        for private in [
+            "original_library",
+            "source_before",
+            "selected_before",
+            "capture_history_index",
+            "removal",
+            "stack_item_id",
+        ] {
+            assert!(!json.contains(private), "{private}")
+        }
+    }
+}
