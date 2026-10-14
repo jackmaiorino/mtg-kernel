@@ -8,6 +8,7 @@ pub enum JournalV1 {
     Published {
         capture: u64,
         item: Box<StackItem>,
+        world: WorldV1,
     },
     Unavailable {
         capture: u64,
@@ -222,17 +223,57 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
         return Ok(());
     };
     validate_item(state, item, capture)?;
+    if state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !state.stack.iter().any(|row| row == item)
+    {
+        return Err("Panda publication did not acquire the actual complete unique row".into());
+    }
     if state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::FiendishPandaJournalV1 { journal }
         if matches!(journal.as_ref(), JournalV1::Published { capture: old, .. } | JournalV1::Unavailable { capture: old, .. } if *old == capture)))
     { return Err("Panda captured occurrence published or dropped twice".into()); }
+    let world = WorldV1::capture(state)?;
     append(
         state,
         JournalV1::Published {
             capture,
             item: Box::new(item.clone()),
+            world,
         },
     )?;
     Ok(())
+}
+fn validate_publication(state: &GameState, publication: u64) -> Result<(), String> {
+    let JournalV1::Published {
+        capture,
+        item,
+        world,
+    } = journal(state, publication)?
+    else {
+        return Err("Panda original publication input absent".into());
+    };
+    if world.history_count != publication {
+        return Err("Panda publication input lost its exact original boundary".into());
+    }
+    let original = world.restore(state, publication)?;
+    if original
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .count()
+        != 1
+        || !original.stack.iter().any(|row| row == item.as_ref())
+    {
+        return Err("Panda publication differs from its complete original input row".into());
+    }
+    // The original public graveyard target is checked in its actual publication
+    // world. A later hidden incarnation cannot choose the public validator's
+    // result by changing its current definition.
+    validate_item(&original, item, *capture)
 }
 pub(crate) fn unavailable(state: &mut GameState, pending: &PendingTrigger) -> Result<(), String> {
     let Some(capture) = binding(&pending.effect) else {
@@ -275,7 +316,6 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
         return Ok(None);
     };
     validate(state)?;
-    validate_item(state, item, capture)?;
     if state
         .stack
         .iter()
@@ -287,7 +327,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
         return Err("Panda owner did not acquire its actual full unique row".into());
     }
     let publications = state.engine.event_history.iter().enumerate().filter_map(|(at, e)| match e {
-        CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Published { capture: old, item: original } if *old == capture && original.as_ref() == item) => Some(at as u64),
+        CommittedEvent::FiendishPandaJournalV1 { journal } if matches!(journal.as_ref(), JournalV1::Published { capture: old, item: original, .. } if *old == capture && original.as_ref() == item) => Some(at as u64),
         _ => None,
     }).collect::<Vec<_>>();
     let [publication] = publications.as_slice() else {
@@ -741,7 +781,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 validate_drop(state, *at)?;
             }
             JournalV1::Published { item, .. } => {
-                validate_item(state, item, *capture)?;
+                validate_publication(state, *at)?;
                 let live = state
                     .stack
                     .iter()
@@ -863,7 +903,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         };
         let reference = match phase.as_ref() {
             JournalV1::Published { capture, .. } => {
-                root_at(state, *capture as usize)?;
+                validate_publication(state, at as u64)?;
                 *capture
             }
             JournalV1::DropInput { capture, .. } => {
