@@ -207,7 +207,13 @@ def lease_progress_takeover(spec):
             old = psutil.Process(old_pid)
             # This is the existing lane build observer, not arbitrary work.
             if any("build_driver" in part or "prereq_driver" in part for part in old.cmdline()):
-                old.wait(timeout=20)
+                # A container init may leave this non-child as an unreaped
+                # zombie. It has exited and cannot own work; PID disappearance
+                # is not required, and this supervisor cannot reap it.
+                deadline = time.monotonic() + 20
+                while old.is_running() and old.status() != psutil.STATUS_ZOMBIE:
+                    require(time.monotonic() < deadline, "previous lease controller did not exit")
+                    time.sleep(.1)
         except psutil.NoSuchProcess:
             pass
 
