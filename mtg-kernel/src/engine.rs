@@ -9320,7 +9320,9 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+    if crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)
+        .is_err()
+        || crate::bloodthirsty_conqueror_v49::validate(state).is_err()
         || crate::doubling_season_v48::validate_token_journals(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -18499,6 +18501,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)?;
     crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;

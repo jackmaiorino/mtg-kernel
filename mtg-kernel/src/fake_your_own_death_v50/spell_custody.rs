@@ -548,6 +548,20 @@ fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
     })
 }
 
+/// Engine ingress checks these prepared grant/death facts before automatic
+/// work or an actor action. This is not a whole printing/consumer validator.
+pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(|event| journal(event).is_some())
+    {
+        validate_grant_lifetime(state)?;
+    }
+    Ok(())
+}
+
 /// Validates retained installation lifetime independently from whether its
 /// creature currently has the granted death ability. No trigger admission.
 pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {

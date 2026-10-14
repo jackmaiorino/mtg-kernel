@@ -50,8 +50,8 @@ graveyard commitment binds the frozen grant and controller-at-death to its exact
 death index and original graveyard incarnation, before later moves or token SBA.
 Panda and older definition-owned captures retain their established prefix/order.
 The gained-ability marker remains private and is not yet a collected or published
-trigger. This new source is uncompiled/unrun; whole capture-roster validation,
-collection, APNAP, publication and removal/return/entry custody still need work.
+trigger. This new source is uncompiled/unrun; collection, APNAP, publication
+and removal/return/entry custody still need work.
 
 Each death now also carries one complete original input roster, constructed on
 the same pre-batch board. Commit binds that roster once and each capture to its
@@ -62,6 +62,12 @@ without borrowing a later board. Grant lifetime and pre-cleanup checks invoke
 this validation before interpreting retained grants. This is source preparation
 within the trusted original-input boundary; current compilation/runtime and
 actual Fake collection/publication still remain unqualified.
+
+Actual engine advance and actor-step ingress now check these prepared retained
+grant, expiry and death-roster facts before any automatic or actor work. A new
+both-seat restore negative injects an orphan expiry and an empty death input and
+requires refusal with no gameplay mutation. This is authored source, not a passed
+fixture or a complete printing-state/consumer validator.
 
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 

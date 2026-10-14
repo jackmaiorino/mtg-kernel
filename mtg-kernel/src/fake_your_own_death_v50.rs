@@ -183,6 +183,45 @@ mod tests {
     }
 
     #[test]
+    fn orphan_cleanup_and_empty_death_inputs_refuse_before_engine_work_both_seats() {
+        use spell_custody::JournalV50;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for journal in [
+                JournalV50::CleanupCompleted {
+                    occurrence: u64::MAX,
+                },
+                JournalV50::DeathInput {
+                    lookbacks: Vec::new(),
+                    departure: 0,
+                },
+            ] {
+                let mut state = ready_state_for(actor);
+                state
+                    .engine
+                    .event_history
+                    .push(crate::event::CommittedEvent::FakeJournalV50 {
+                        journal: Box::new(journal),
+                    });
+                for _ in 0..3 {
+                    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    let before = state.clone();
+                    assert!(crate::engine::step(&mut state, crate::engine::Action::Pass).is_err());
+                    assert_eq!(state, before);
+                    assert!(matches!(
+                        crate::engine::advance_until_decision(&mut state),
+                        crate::engine::Decision::Halted {
+                            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            source: ObjectId(0),
+                        }
+                    ));
+                    state.engine.halted = None;
+                    assert_eq!(state, before);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn primitive_returns_tapped_to_owner_and_creates_treasure_for_trigger_controller_both_seats() {
         for owner in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(owner);
