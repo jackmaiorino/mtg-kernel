@@ -52,7 +52,35 @@ class BestLine(unittest.TestCase):
         self.assertEqual(m3["pick_floor8"], 0)
         self.assertAlmostEqual(m3["root_value"], 1.0)
         self.assertTrue(m3["changed_floor8"])
-        self.assertEqual(summary["m3"]["spy_target_nodes"], {"nodes": 1, "changed": 0, "changes": {}})
+        self.assertEqual(summary["m3"]["spy_target_nodes"],
+                         {"nodes": 1, "changed": 0, "changed_by_tie": 0, "bestline_tied": 0, "changes": {}})
+        self.assertFalse(m3["changed_by_tie_floor8"], "1.0 beats node 2's 0.6")
+        self.assertEqual(summary["m3"]["root_pick_changed_by_tie_floor8"], 0)
+        edges = {e["edge"]: e for e in row["root_edges"]}
+        self.assertEqual(set(edges), {0, 1})
+        self.assertEqual((edges[0]["n"], edges[0]["wins"]), (20, 10))
+        self.assertAlmostEqual(edges[0]["q"]["3"], 1.0)
+        self.assertAlmostEqual(edges[1]["q"]["3"], 0.6)
+
+    def test_ties_settled_by_the_seeded_order_are_counted(self):
+        # Root edge 1 now wins all 10 of its rollouts: both root edges are
+        # worth 1.0, the greatest mean (1.0 > 0.5) picks edge 1 and the best
+        # line's seeded order picks edge 0.
+        log = proven_line_hidden_by_exploration()
+        for s in log["sims"]:
+            if s[4][1] == 1:
+                s[1] = 1
+        log["nodes"][0]["wins"] = [10, 10]
+        log["nodes"][2]["wins"] = [10]
+        row, summary = self.run_on(log)
+        m3 = row["by_m"]["3"]
+        self.assertEqual((row["current_pick"], m3["pick_floor8"]), (1, 0))
+        self.assertTrue(m3["changed_by_tie_floor8"])
+        self.assertTrue(m3["tie_floor8"])
+        self.assertFalse(row["current_tie"], "means 0.5 and 1.0 differ")
+        self.assertEqual(summary["m3"]["root_pick_changed_by_tie_floor8"], 1)
+        [changed] = summary["m3"]["changed_roots"]
+        self.assertTrue(changed["changed_by_tie"])
 
     def test_proven_line_needs_rollout_free_wins(self):
         row, _ = self.run_on(proven_line_hidden_by_exploration())

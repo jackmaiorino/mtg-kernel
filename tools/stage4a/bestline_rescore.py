@@ -54,6 +54,7 @@ import sys
 from collections import defaultdict
 
 CURRENT_FLOOR = 8
+TIE_EPS = 1e-9  # values this close count as tied
 EPS = 1e-12
 
 
@@ -273,6 +274,14 @@ class State:
                 best = (a, v)
         return best[0] if best else None
 
+    def tied(self, i, value, floor, a):
+        """Whether another edge with at least `floor` backups has the same
+        value as edge `a` (so the seeded order settled the pick)."""
+        if a is None:
+            return False
+        return any(b != a and not self.s.skip[i][b] and self.n[i][b] >= floor
+                   and abs(value(b) - value(a)) <= TIE_EPS for b in self.s.perm[i])
+
     def current_pick(self, i):
         return self.pick(i, lambda a: self.w[i][a] / self.n[i][a], CURRENT_FLOOR)
 
@@ -417,16 +426,25 @@ def analyse(s, args, actual_hits):
     row["current_pick"] = cur
     row["current_value"] = st.w[r][cur] / st.n[r][cur] if cur is not None else None
     row["root_mean"] = st.thr[r][1] / st.thr[r][0]
+    row["current_tie"] = st.tied(r, lambda a: st.w[r][a] / st.n[r][a], CURRENT_FLOOR, cur)
     row["by_m"] = {}
+    root_edges = {cur} if cur is not None else set()
     hit_ids = {s.key_index[k] for k in actual_hits if k in s.key_index}
     current = [st.current_pick(i) for i in range(len(s.nodes))]
     for m in m_values:
         Q, V = st.best_line(m)
         p8 = st.bestline_pick(r, Q, CURRENT_FLOOR)
         pm = st.bestline_pick(r, Q, m)
+        root_edges.update(x for x in (p8, pm) if x is not None)
+        q = lambda a, i=r: Q[i][a]  # noqa: E731
         rec = {"pick_floor8": p8, "pick_floor_m": pm,
                "changed_floor8": p8 != cur, "changed_floor_m": pm != cur,
                "value_pick_floor8": Q[r][p8] if p8 is not None else None,
+               "tie_floor8": st.tied(r, q, CURRENT_FLOOR, p8),
+               "tie_floor_m": st.tied(r, q, m, pm),
+               # A changed pick whose best-line value equals the current pick's.
+               "changed_by_tie_floor8": p8 != cur and None not in (p8, cur)
+               and abs(Q[r][p8] - Q[r][cur]) <= TIE_EPS,
                "root_value": V[r], "stops": {}}
         for name, f in stops[m].items():
             if f is None:
@@ -454,10 +472,20 @@ def analyse(s, args, actual_hits):
                                   "current": c, "bestline": p, "current_class": choice_class(s, i, c),
                                   "bestline_class": choice_class(s, i, p),
                                   "current_value": st.w[i][c] / st.n[i][c],
-                                  "bestline_value": Q[i][p] if p is not None else None})
+                                  "bestline_value": Q[i][p] if p is not None else None,
+                                  "bestline_tie": st.tied(i, lambda a, i=i: Q[i][a], CURRENT_FLOOR, p),
+                                  "changed_by_tie": p != c and p is not None
+                                  and abs(Q[i][p] - Q[i][c]) <= TIE_EPS})
         rec["supported_nodes"] = supported
         rec["supported_nodes_changed"] = changed
         row["by_m"][str(m)] = rec
+    # Tries, wins, mean and best-line values at every m of the root edges
+    # either rule picks.
+    cast = set(labelled(s, r, "spy_cast"))
+    row["root_edges"] = [{"edge": a, "n": st.n[r][a], "wins": st.w[r][a],
+                          "mean": st.w[r][a] / st.n[r][a] if st.n[r][a] else None,
+                          "q": {str(m): st.Q[m][r][a] for m in m_values}, "spy_cast": a in cast}
+                         for a in sorted(root_edges)]
     mana = []
     for i in range(len(s.nodes)):
         for g in mana_split(s, st, i):
@@ -539,7 +567,17 @@ def summarise(rows, nodes, m_values, ks):
         with_pick = [r for r in rows if r["current_pick"] is not None]
         sm = {"root_pick_changed_floor8": sum(1 for r in with_pick if r["by_m"][m]["changed_floor8"]),
               "root_pick_changed_floor_m": sum(1 for r in with_pick if r["by_m"][m]["changed_floor_m"]),
-              "roots_with_current_pick": len(with_pick)}
+              "root_pick_changed_by_tie_floor8": sum(1 for r in with_pick
+                                                     if r["by_m"][m].get("changed_by_tie_floor8")),
+              "root_pick_tied_floor8": sum(1 for r in with_pick if r["by_m"][m].get("tie_floor8")),
+              "root_pick_tied_floor_m": sum(1 for r in with_pick if r["by_m"][m].get("tie_floor_m")),
+              "roots_with_current_pick": len(with_pick),
+              "changed_roots": [
+                  {"file": r["file"], "root": r["root"], "current": r["current_pick"],
+                   "pick_floor8": r["by_m"][m]["pick_floor8"],
+                   "changed_by_tie": r["by_m"][m].get("changed_by_tie_floor8"),
+                   "edges": r.get("root_edges")}
+                  for r in with_pick if r["by_m"][m]["changed_floor8"]]}
         for name in ["strict", "bounds"] + [f"proven{k}" for k in ks]:
             fs = [x["stops"][name] for x in rs if x["stops"].get(name)]
             sm[name] = {"fired": len(fs), "of": len(rs),
@@ -554,6 +592,8 @@ def summarise(rows, nodes, m_values, ks):
                 if x["current"] != x["bestline"]:
                     moves[f"{x['current_class']}->{x['bestline_class']}"] += 1
             return {"nodes": len(xs), "changed": sum(1 for x in xs if x["current"] != x["bestline"]),
+                    "changed_by_tie": sum(1 for x in xs if x.get("changed_by_tie")),
+                    "bestline_tied": sum(1 for x in xs if x.get("bestline_tie")),
                     "changes": dict(moves)}
         sm["all_supported_nodes"] = {"nodes": sum(x["supported_nodes"] for x in rs),
                                      "changed": sum(x["supported_nodes_changed"] for x in rs)}
