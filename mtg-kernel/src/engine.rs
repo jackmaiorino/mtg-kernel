@@ -5682,6 +5682,12 @@ fn validate_cost_component_choices_v1(
     }) {
         return None;
     }
+    if crate::doubling_season_v48::requires_successor(state) && components.iter().any(|component| {
+        matches!(component, CostComponent::Loyalty(delta) if crate::planeswalker_v1::quote_loyalty_change_v48(
+            state, source, *delta, crate::doubling_season_v48::CounterOriginV48::Cost).is_err())
+    }) {
+        return None;
+    }
     if components.iter().any(|component| {
         matches!(component, CostComponent::RemoveNetCounterFromSelf)
             && crate::standard_cards_v1::net_counters(state, source) == 0

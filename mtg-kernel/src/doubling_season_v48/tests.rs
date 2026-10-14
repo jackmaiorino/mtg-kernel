@@ -1838,3 +1838,188 @@ fn ordinary_actual_token_occurrence_keeps_legacy_bytes_and_derived_hash() {
         assert_eq!(restore(&state), state);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_full_ajani_zero_target_cost_uses_same_quote_as_payment_before_resolution() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let ajani = put(&mut state, actor, "Ajani, Caller of the Pride", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+        engine::step(&mut state, Action::CastSpell(ajani)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        for _ in 0..24 {
+            if state.objects.get(ajani).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(crate::planeswalker_v1::loyalty(&state, ajani), Some(8));
+        let cost = crate::planeswalker_v1::quote_loyalty_change_v48(
+            &state,
+            ajani,
+            1,
+            CounterOriginV48::Cost,
+        )
+        .unwrap();
+        let effect = crate::planeswalker_v1::quote_loyalty_change_v48(
+            &state,
+            ajani,
+            1,
+            CounterOriginV48::Effect,
+        )
+        .unwrap();
+        assert_eq!(cost, 9, "unmodified printed +1 cost is not doubled");
+        assert_eq!(effect, 10, "effect counter placement is doubled");
+        let original = restore(&state);
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            engine::step(&mut branch, Action::ActivateAbility(ajani, 0)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut branch), Decision::ChooseEffectTargets { source, can_finish: true, min_targets: 0, max_targets: 1, .. } if source == ajani)
+            );
+            engine::step(&mut branch, Action::FinishEffectSelection).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut branch),
+                Decision::CastSpellOrPass { .. }
+            ));
+            assert_eq!(crate::planeswalker_v1::loyalty(&branch, ajani), Some(cost));
+            assert!(branch
+                .stack
+                .iter()
+                .any(|item| item.source == ajani && item.targets.is_empty()));
+            crate::ajani_full_v42::lifecycle::validate_state(&branch).unwrap();
+            for _ in 0..24 {
+                if branch.stack.is_empty() {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut branch),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut branch, Action::Pass).unwrap();
+            }
+            assert!(branch.stack.is_empty());
+            assert_eq!(crate::planeswalker_v1::loyalty(&branch, ajani), Some(cost));
+            crate::ajani_full_v42::lifecycle::validate_state(&branch).unwrap();
+            assert_eq!(restore(&branch), branch);
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "standard-magezero-fixtures")]
+fn genuine_talent_level_order_changes_cost_rule_and_effect_quotes_without_joint_catalog() {
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        let recipient = put(&mut state, actor.opponent(), "Forest", Zone::Battlefield);
+        let talent = put(&mut state, actor, "Innkeeper's Talent", Zone::Hand);
+        assert!(
+            !requires_successor(&state),
+            "this is the real Standard catalog without Season"
+        );
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(talent)).unwrap();
+        engine::advance_until_decision(&mut state);
+        for _ in 0..24 {
+            if state.objects.get(talent).zone == Zone::Battlefield && state.stack.is_empty() {
+                break;
+            }
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(crate::standard_cards_v1::class_level(&state, talent), 1);
+        for origin in [
+            CounterOriginV48::Cost,
+            CounterOriginV48::Rule,
+            CounterOriginV48::Effect,
+        ] {
+            assert_eq!(
+                counter_amount(&state, recipient, actor, origin, 1).unwrap(),
+                1
+            );
+        }
+        for (ability, mana, level) in [(0, 1, 2), (1, 4, 3)] {
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = mana;
+            engine::step(&mut state, Action::ActivateAbility(talent, ability)).unwrap();
+            engine::advance_until_decision(&mut state);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            for _ in 0..24 {
+                if state.stack.is_empty() {
+                    break;
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { .. }
+                ));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(crate::standard_cards_v1::class_level(&state, talent), level);
+        }
+        for _ in 0..3 {
+            let mut branch = restore(&state);
+            for origin in [
+                CounterOriginV48::Cost,
+                CounterOriginV48::Rule,
+                CounterOriginV48::Effect,
+            ] {
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor, origin, 1).unwrap(),
+                    2
+                );
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor.opponent(), origin, 1).unwrap(),
+                    1
+                );
+            }
+            event::propose_and_commit(&mut branch, ProposedEvent::zone_change(talent, Zone::Hand));
+            for origin in [
+                CounterOriginV48::Cost,
+                CounterOriginV48::Rule,
+                CounterOriginV48::Effect,
+            ] {
+                assert_eq!(
+                    counter_amount(&branch, recipient, actor, origin, 1).unwrap(),
+                    1
+                );
+            }
+            assert!(!requires_successor(&branch));
+        }
+    }
+}

@@ -115,15 +115,14 @@ pub(crate) fn change_loyalty_effect(state: &mut GameState, object: ObjectId, del
     );
 }
 
-fn change_loyalty_with_origin(
-    state: &mut GameState,
+/// Readonly cost/effect quote shared by payment custody and actual mutation.
+pub(crate) fn quote_loyalty_change_v48(
+    state: &GameState,
     object: ObjectId,
     delta: i32,
     origin: crate::doubling_season_v48::CounterOriginV48,
-) {
-    let Some(counters) = loyalty(state, object) else {
-        return;
-    };
+) -> Result<u32, String> {
+    let counters = loyalty(state, object).ok_or("loyalty ledger absent")?;
     let counters = if delta >= 0 {
         let controller = state.objects.get(object).controller;
         let original = if crate::doubling_season_v48::requires_successor(state) {
@@ -141,31 +140,39 @@ fn change_loyalty_with_origin(
                 Ok(original)
             }
         });
-        let amount = match amount {
-            Ok(amount) => amount,
-            Err(_) => {
-                state.engine.halted = Some((
-                    engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    object,
-                ));
-                return;
-            }
-        };
+        let amount = amount?;
         // Retain the legacy saturation only on catalogs without the new source.
         if crate::doubling_season_v48::requires_successor(state) {
-            let Some(total) = counters.checked_add(amount) else {
-                state.engine.halted = Some((
-                    engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    object,
-                ));
-                return;
-            };
-            total
+            counters
+                .checked_add(amount)
+                .ok_or("loyalty counter storage overflow")?
         } else {
             counters.saturating_add(amount)
         }
     } else {
         counters.saturating_sub(delta.unsigned_abs())
+    };
+    Ok(counters)
+}
+
+fn change_loyalty_with_origin(
+    state: &mut GameState,
+    object: ObjectId,
+    delta: i32,
+    origin: crate::doubling_season_v48::CounterOriginV48,
+) {
+    if loyalty(state, object).is_none() {
+        return;
+    }
+    let counters = match quote_loyalty_change_v48(state, object, delta, origin) {
+        Ok(counters) => counters,
+        Err(_) => {
+            state.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
     };
     let entry = LoyaltyV1 {
         permanent: ObjectLinkV4 {

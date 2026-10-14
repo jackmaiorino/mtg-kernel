@@ -373,3 +373,18 @@ are erased after Season departs. Old unmarked creations preserve their exact
 three-field serde shape and original derived Hash sequence. Prepared both-seat
 source-departure/serialized both-record erasure negatives keep every original
 CreateToken occurrence and live token, and assert Step readonly/Advance halt-only.
+
+
+## Shared owned quotes
+
+Ajani's acquired payment and actual loyalty mutation share one readonly native
+quote, including the other-replacement qualification for positive Cost counters.
+The activation planner preflights that quote before any payment under V48.
+The real future paid Season/Full Ajani zero-target +1 fixture checks the same
+nine-counter result before resolution and complete no-op ownership over three
+restores. A separate actual Standard Talent fixture pays both printed Class
+levels in order, tests actor-relative Effect/Cost/Rule quotes before and after
+level 3 and real departure, and never inserts a fake Season definition or joint
+catalog. Crystal's counter-bearing chosen-power adapter uses the authenticated
+actual placement amount for its source snapshot and counter occurrence, then
+retains the original subsequent sampled-power/damage validation.

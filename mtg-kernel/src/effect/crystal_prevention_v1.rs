@@ -3033,13 +3033,27 @@ fn validate_creature_power_capture(
     {
         return Err("Crystal power snapshot lost original legal source incarnation".into());
     }
+    if capture.counter_history.len() != usize::from(*plus1_plus1 > 0) {
+        return Err("Crystal power lost its precise counter placement".into());
+    }
+    let placed = if let Some(at) = capture.counter_history.first() {
+        crate::doubling_season_v48::expected_plus_at(
+            state,
+            u64::from(*at),
+            *source,
+            ctx.controller,
+            i32::from(*plus1_plus1),
+        )?
+    } else {
+        0
+    };
     let mut expected_after = before.clone();
     expected_after.counters.plus1_plus1 = expected_after
         .counters
         .plus1_plus1
-        .checked_add(i32::from(*plus1_plus1))
+        .checked_add(placed)
         .ok_or("Crystal counter overflow")?;
-    if *after != expected_after || capture.counter_history.len() != usize::from(*plus1_plus1 > 0) {
+    if *after != expected_after {
         return Err("Crystal power sampled before its precise counter placement".into());
     }
     for at in &capture.counter_history {
@@ -3049,7 +3063,7 @@ fn validate_creature_power_capture(
             || !matches!(state.engine.event_history.get(at),
             Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count, ..})
                 if object == source && *zone_change_count == before.zone_change_count
-                    && *player == ctx.controller && *count == i32::from(*plus1_plus1))
+                    && *player == ctx.controller && *count == placed)
         {
             return Err("Crystal creature power lost genuine counter occurrence".into());
         }
