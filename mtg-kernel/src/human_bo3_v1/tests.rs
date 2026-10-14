@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
 use crate::state::{GameState, Step, Zone};
 
@@ -192,9 +192,7 @@ fn human_v4_rejects_invalid_stale_forged_and_wrong_seat_without_mutation() {
 }
 
 fn basic_state(actor: PlayerId, permuted: bool, duplicate_land: bool) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     // The permutation reverses visible allocations, not just their offset.
     // Both zone arrays follow their newly allocated producer order.
     let mut inventory = vec![
@@ -319,9 +317,7 @@ fn human_impulse_exile_state(
 ) -> (GameState, crate::ids::ObjectId, crate::ids::ObjectId) {
     use crate::engine::{PlayOrCast, PlayPermission, PlayPermissionExpiry};
     use crate::event::{self, ProposedEvent};
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
     let mut cards = Vec::new();
@@ -447,7 +443,7 @@ fn human_team_haste_state(
     token_count: usize,
 ) -> (GameState, Vec<crate::ids::ObjectId>) {
     use crate::engine::{EffectDuration, Layers, UntilEndOfTurnEffect};
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
     put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
     put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
@@ -734,7 +730,7 @@ fn human_fixed_seat_rejects_opponent_view_and_forged_actor() {
 
 #[test]
 fn human_unsupported_ability_rejects_complete_prompt_before_publication() {
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     put(
         &mut state,
         PlayerId::P0,
@@ -814,7 +810,7 @@ fn human_ward_label_binds_exact_public_stack_item_and_payment() {
 #[test]
 fn human_actual_inclusion_prompt_preserves_public_candidate_order_under_renumbering() {
     fn state(reverse: bool) -> GameState {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         let order = if reverse {
             ["Goblin Bushwhacker", "Voldaren Epicure"]
         } else {
@@ -899,7 +895,7 @@ fn human_current_binding_remains_valid_for_direct_supported_mana_choice() {
 #[test]
 fn human_equipment_synthetic_timestamps_do_not_reveal_allocation_order() {
     fn state(reverse: bool) -> GameState {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         // Keep a real P0 choice available so forced priority passing does not
         // advance to an opponent equipment ability before projection.
         put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
@@ -950,7 +946,7 @@ fn human_equipment_synthetic_timestamps_do_not_reveal_allocation_order() {
 #[test]
 fn human_same_name_hosts_with_multiple_attachments_use_visible_ordering() {
     fn state(reverse: bool) -> GameState {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
         let mut entries = vec![
             ("a", "Goblin Bushwhacker"),
@@ -1102,7 +1098,7 @@ fn submit_label(
 
 #[test]
 fn human_blood_activation_names_all_costs_and_binds_the_discard() {
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     let blood = put(&mut state, PlayerId::P0, "Blood Token", Zone::Battlefield);
     let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Hand);
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
@@ -1146,7 +1142,7 @@ fn human_blood_activation_names_all_costs_and_binds_the_discard() {
 
 #[test]
 fn human_synthesizer_activation_names_payment_token_and_timing() {
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     let synth = put(
         &mut state,
         PlayerId::P0,
@@ -1195,7 +1191,7 @@ fn human_synthesizer_activation_names_payment_token_and_timing() {
 fn human_chain_payment_state() -> GameState {
     use crate::engine::{self, Action, Decision};
     use crate::state::Target;
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     let chain = put(&mut state, PlayerId::P0, "Chain Lightning", Zone::Hand);
     put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
     put(&mut state, PlayerId::P1, "Great Furnace", Zone::Battlefield);
@@ -1274,7 +1270,7 @@ fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
 
 fn human_trigger_order_state(repeated_source: bool) -> GameState {
     use crate::event::{self, ProposedEvent};
-    let mut state = ready_state();
+    let mut state = crate::policy_observation_v6::tests::ready_state();
     put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
     let first = put(&mut state, PlayerId::P0, "Voldaren Epicure", Zone::Hand);
     let second = put(

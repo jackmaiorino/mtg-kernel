@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::{GameState, Zone};
 
 fn expected(session: &HumanHeartfireSessionV12) -> FastActorDecisionV1 {
@@ -10,9 +10,7 @@ fn expected(session: &HumanHeartfireSessionV12) -> FastActorDecisionV1 {
     expected
 }
 fn basic(actor: PlayerId, hidden: &str) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor, "Mountain", Zone::Battlefield);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
@@ -169,9 +167,7 @@ fn ward_state(actor: PlayerId) -> GameState {
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
     use crate::state::Target;
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     let terror = put(
         &mut state,
         actor.opponent(),
@@ -389,8 +385,8 @@ mod printed {
     }
     fn cast(state: &mut GameState, actor: PlayerId) -> ObjectId {
         let source = put(state, actor, "Heartfire Immolator", Zone::Hand);
-        state.active_player = actor;
-        state.priority_player = actor;
+        assert_eq!(state.active_player, actor);
+        assert_eq!(state.priority_player, actor);
         // Fund the printed 1R cost without leaving red response mana on the
         // opponent who may also control an unrelated Shivan Dragon.
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
@@ -597,7 +593,17 @@ mod printed {
     fn future_actual_activation_saved_controller_keywords_and_color_survive_source_reentry() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
+            crate::policy_observation_v6::tests::advance_to_next_main_for(
+                &mut state,
+                actor.opponent(),
+            );
             let source = cast(&mut state, actor.opponent());
+            // Finish that actual turn before installing the activation's
+            // current-turn control/keyword primitive fixtures.
+            crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor);
+            // Actual phase progression clears floating mana. Keep the same
+            // real blue opponent response used by the inherited Human fixture.
+            state.players[actor.opponent().index()].mana_pool[ManaColor::U.pool_index()] = 2;
             // Physical control/keyword primitives exercise the actual printed
             // activation. They do not assert a fabricated control/grant producer.
             state.players[actor.opponent().index()]
@@ -623,8 +629,8 @@ mod printed {
                 "Shivan Dragon",
                 Zone::Battlefield,
             );
-            state.active_player = actor;
-            state.priority_player = actor;
+            assert_eq!(state.active_player, actor);
+            assert_eq!(state.priority_player, actor);
             state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
             engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
             assert!(matches!(

@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::rl_session::FastActorResponseV1;
 use crate::state::{GameState, Zone};
 
@@ -67,9 +67,7 @@ fn actual_sire_payment_prompt_submission_and_retry_use_live_producer() {
 }
 
 fn basic(actor: PlayerId, reversed: bool) -> GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     let mut cards = vec![
         (actor, "Mountain", Zone::Hand),
         (actor, "Forest", Zone::Hand),
@@ -354,7 +352,7 @@ fn synthetic_different_traits_on_identical_cards_canonicalize_without_arena_orde
     // or gameplay admission. They isolate scalar traits as a canonical key.
     let mut prompts = Vec::new();
     for reversed in [false, true] {
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         put(&mut state, PlayerId::P0, "Forest", Zone::Hand);
         let mut sources = Vec::new();
         for life in if reversed { [7, 3] } else { [3, 7] } {

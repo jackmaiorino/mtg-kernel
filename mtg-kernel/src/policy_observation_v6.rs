@@ -172,6 +172,50 @@ pub(crate) mod tests {
         state
     }
 
+    pub(crate) fn ready_state_with_turn_authority(actor: PlayerId) -> GameState {
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            return ready_state_for(actor);
+        }
+        // Earlier Default/Standard tensor fixtures retain their exact inputs.
+        // Selected Limited turn ledgers require the real starting constructor.
+        let mut state = ready_state();
+        state.active_player = actor;
+        state.priority_player = actor;
+        state
+    }
+
+    pub(crate) fn advance_to_next_main_for(state: &mut GameState, actor: PlayerId) {
+        let original = (state.turn_key_v1(), state.active_player);
+        for _ in 0..128 {
+            let decision = engine::advance_until_decision(state);
+            if (state.turn_key_v1(), state.active_player) != original
+                && state.active_player == actor
+                && state.priority_player == actor
+                && state.step == Step::Main1
+                && state.stack.is_empty()
+                && matches!(&decision, engine::Decision::CastSpellOrPass { player, .. } if *player == actor)
+            {
+                return;
+            }
+            match decision {
+                engine::Decision::CastSpellOrPass { .. } => {
+                    engine::step(state, Action::Pass).unwrap();
+                }
+                engine::Decision::DeclareAttackers { .. } => {
+                    engine::step(state, Action::DeclareAttackers(Vec::new())).unwrap();
+                }
+                engine::Decision::DeclareBlockers { .. } => {
+                    engine::step(state, Action::DeclareBlockers(Vec::new())).unwrap();
+                }
+                other => panic!("unexpected real fixture turn transition {other:?}"),
+            }
+        }
+        panic!("fixture did not reach the requested real main phase");
+    }
+
     pub(crate) fn put(state: &mut GameState, owner: PlayerId, name: &str, zone: Zone) -> ObjectId {
         let card_def = card_id_by_name(name).unwrap_or_else(|| panic!("fixture card: {name}"));
         let id = state.objects.push(GameObject {
