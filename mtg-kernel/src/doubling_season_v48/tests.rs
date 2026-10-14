@@ -618,3 +618,139 @@ fn unrelated_entry_does_not_quote_unrequested_three_counters() {
         assert_eq!(restore(&state), state);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_full_width_loyalty_and_entry_overflow_halt_before_any_move() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for _ in 0..29 {
+            let source = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+        }
+        let ajani = put(&mut state, actor, "Ajani, Caller of the Pride", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(ajani, Zone::Battlefield),
+        );
+        assert!(state.engine.halted.is_none());
+        assert_eq!(
+            crate::planeswalker_v1::loyalty(&state, ajani),
+            Some(1_u32 << 31)
+        );
+        assert_eq!(restore(&state), state);
+        let source = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        let overflowing = put(&mut state, actor, "Ajani, Caller of the Pride", Zone::Hand);
+        let untouched = put(&mut state, actor, "Forest", Zone::Hand);
+        let mut expected = restore(&state);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(untouched, Zone::Battlefield),
+                ProposedEvent::zone_change(overflowing, Zone::Battlefield),
+            ],
+        );
+        assert!(state.engine.halted.is_some());
+        assert_eq!(state.objects.get(overflowing).zone, Zone::Hand);
+        assert_eq!(state.objects.get(untouched).zone, Zone::Hand);
+        expected.engine.halted = state.engine.halted;
+        assert_eq!(state, expected);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_played_land_rule_entry_and_effect_entry_sample_distinct_origins() {
+    use crate::engine::{self, Action};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let land = put(&mut state, actor, "Forest", Zone::Hand);
+        let mut rule = ProposedEvent::zone_change(land, Zone::Battlefield);
+        if let ProposedEvent::ZoneChange(change) = &mut rule {
+            change.counter_origin_v48 = Some(CounterOriginV48::Rule);
+        }
+        assert!(entry_input(&state, &rule).unwrap().seasons.is_empty());
+        assert_eq!(
+            entry_input(&state, &ProposedEvent::zone_change(land, Zone::Battlefield))
+                .unwrap()
+                .seasons
+                .len(),
+            1
+        );
+        engine::step(&mut state, Action::PlayLand(land)).unwrap();
+        assert_eq!(state.objects.get(land).zone, Zone::Battlefield);
+        assert_eq!(state.players[actor.index()].lands_played_this_turn, 1);
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_return_stun_primitive_uses_returned_owner_not_original_ability_controller() {
+    use crate::effect::ExecCtx;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for same_owner in [true, false] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let owner = if same_owner { actor } else { actor.opponent() };
+            let source = put(&mut state, owner, "Llanowar Elves", Zone::Battlefield);
+            if !same_owner {
+                crate::standard_cards_v1::gain_control(&mut state, source, actor);
+            }
+            let contract = AbilitySourceContractV4::capture(&state, source);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            let mut ctx = ExecCtx::no_targets(source, actor);
+            ctx.ability_source_contract = Some(contract);
+            // Typed return primitive on a real physical incarnation. This
+            // does not assign Llanowar Elves a fictional printed ability.
+            let mut restored = restore(&state);
+            for branch in [&mut state, &mut restored] {
+                crate::effect::execute(
+                    &EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun: 2 },
+                    &ctx,
+                    branch,
+                );
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.objects.get(source).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(source).controller, owner);
+                assert!(branch.objects.get(source).tapped);
+                assert_eq!(
+                    branch.objects.get(source).counters.stun,
+                    if same_owner { 4 } else { 2 }
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
+}

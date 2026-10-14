@@ -464,20 +464,35 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         {
             return;
         }
-        #[cfg(feature = "standard-magezero-fixtures")]
-        let amount = crate::standard_cards_v1::scale_counters(state, live.controller, 1);
-        #[cfg(not(feature = "standard-magezero-fixtures"))]
-        let amount = 1;
-        let upgrade = state
-            .objects
-            .get_mut(object)
+        let amount = crate::doubling_season_v48::counter_amount(
+            state,
+            object,
+            live.controller,
+            crate::doubling_season_v48::CounterOriginV48::Effect,
+            1,
+        );
+        let before = live
             .v4
             .creature_upgrade
-            .get_or_insert_with(Default::default);
-        if let Ok(amount) = u16::try_from(amount) {
-            if let Some(total) = upgrade.finality.checked_add(amount) {
-                upgrade.finality = total;
-            }
+            .as_ref()
+            .map_or(0, |upgrade| upgrade.finality);
+        let total = amount
+            .ok()
+            .and_then(|amount| u16::try_from(amount).ok())
+            .and_then(|amount| before.checked_add(amount));
+        if let Some(total) = total {
+            state
+                .objects
+                .get_mut(object)
+                .v4
+                .creature_upgrade
+                .get_or_insert_with(Default::default)
+                .finality = total;
+        } else if crate::doubling_season_v48::requires_successor(state) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         return;
     }
@@ -616,14 +631,22 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         if effect == CreatureEffectV1::FloodpitsTapStun {
             crate::event::propose_and_commit(state, crate::event::ProposedEvent::tap(target));
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let count = crate::standard_cards_v1::scale_counters(
+            let count = match crate::doubling_season_v48::counter_amount(
                 state,
+                target,
                 state.objects.get(target).controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
                 1,
-            );
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            let count = 1;
+            ) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
             let count = i16::try_from(count)
                 .ok()
                 .and_then(|count| state.objects.get(target).counters.stun.checked_add(count));

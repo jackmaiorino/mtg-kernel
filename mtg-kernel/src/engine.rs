@@ -20834,7 +20834,15 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+    if !crate::doubling_season_v48::sources(state, player).is_empty() {
+        // Playing a land remains a special action even under a resolution-time
+        // play permission. Its entry is not an effect placing counters.
+        let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
+        if let ProposedEvent::ZoneChange(change) = &mut event {
+            change.counter_origin_v48 = Some(crate::doubling_season_v48::CounterOriginV48::Rule);
+        }
+        event::propose_and_commit(state, event);
+    } else if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),

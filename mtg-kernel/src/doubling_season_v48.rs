@@ -129,11 +129,15 @@ pub(crate) fn entry_input(
             Some(ReplacementInputV48::capture(state, t.controller))
         }
         crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
-            Some(ReplacementInputV48::capture(
+            let mut input = ReplacementInputV48::capture(
                 state,
                 z.battlefield_controller
                     .unwrap_or_else(|| state.objects.get(z.object).owner),
-            ))
+            );
+            if z.counter_origin_v48 == Some(CounterOriginV48::Rule) {
+                input.seasons.clear();
+            }
+            Some(input)
         }
         _ => None,
     }
@@ -187,6 +191,13 @@ impl ReplacementInputV48 {
         }
         Ok(result)
     }
+    pub(crate) fn replaced_loyalty(&self, original: u32) -> Result<u32, String> {
+        self.seasons.iter().try_fold(original, |count, _| {
+            count
+                .checked_mul(2)
+                .ok_or_else(|| "loyalty entry overflow".into())
+        })
+    }
     pub fn replaced_token_count(&self, original: usize) -> Result<usize, String> {
         self.seasons.iter().try_fold(original, |count, _| {
             count
@@ -194,6 +205,94 @@ impl ReplacementInputV48 {
                 .ok_or_else(|| "token roster count overflow".into())
         })
     }
+}
+
+pub(crate) fn entry_loyalty_amount(
+    state: &GameState,
+    input: Option<&ReplacementInputV48>,
+    controller: PlayerId,
+    amount: u16,
+) -> Result<u32, String> {
+    let original = crate::standard_cards_v1::scale_counters(state, controller, i32::from(amount));
+    let replacement = input
+        .cloned()
+        .unwrap_or_else(|| ReplacementInputV48::capture(state, controller));
+    replacement.replaced_loyalty(u32::try_from(original).map_err(|_| "negative starting loyalty")?)
+}
+
+/// Check only placements the actual ordinary entry requests. A source entering
+/// simultaneously does not join the replacement roster for another member.
+pub(crate) fn preflight_entry_definition(
+    state: &GameState,
+    definition: u16,
+    input: &ReplacementInputV48,
+    attributes: (bool, Option<i32>, bool),
+) -> Result<(), String> {
+    if input.seasons.is_empty() {
+        return Ok(());
+    }
+    let (kicked, x, face_down) = attributes;
+    if face_down {
+        return Ok(());
+    }
+    let def = CARD_DEFS
+        .get(usize::from(definition))
+        .ok_or("entry definition absent")?;
+    let fixed = x.unwrap_or_else(|| {
+        def.enters_with_plus_one_counters
+            .filter(|entry| !entry.if_kicked || kicked)
+            .map_or(0, |entry| entry.count)
+    });
+    let mut plus = entry_amount(state, Some(input), input.controller, fixed)?;
+    if x.is_none() && state.player_attacked_this_turn_v1(input.controller) {
+        if let Some(count) = crate::fdn_raid_v1::entry_counter_count_for(def.name) {
+            plus = plus
+                .checked_add(entry_amount(
+                    state,
+                    Some(input),
+                    input.controller,
+                    i32::from(count),
+                )?)
+                .ok_or("combined entry counters overflow")?;
+        }
+    }
+    let _ = plus;
+    if let Some(loyalty) = def.starting_loyalty {
+        entry_loyalty_amount(state, Some(input), input.controller, loyalty)?;
+    }
+    if matches!(def.name, "Braided Net" | "Reckoner Bankbuster") {
+        entry_amount(state, Some(input), input.controller, 3)?;
+    }
+    if def.saga.is_some() {
+        i16::try_from(entry_amount(state, Some(input), input.controller, 1)?)
+            .map_err(|_| "entry lore storage overflow")?;
+    }
+    Ok(())
+}
+pub(crate) fn preflight_entry_roster(
+    state: &GameState,
+    events: &[crate::event::ProposedEvent],
+) -> Result<(), String> {
+    for event in events {
+        let Some(input) = entry_input(state, event) else {
+            continue;
+        };
+        let (definition, kicked, face_down) = match event {
+            crate::event::ProposedEvent::CreateToken(token) => (token.token_def, false, false),
+            crate::event::ProposedEvent::ZoneChange(change) => {
+                let live = state.objects.get(change.object);
+                (
+                    live.card_def,
+                    live.zone == Zone::Stack
+                        && state.engine.pending_kicked_source == Some(change.object),
+                    false,
+                )
+            }
+            _ => unreachable!(),
+        };
+        preflight_entry_definition(state, definition, &input, (kicked, None, face_down))?;
+    }
+    Ok(())
 }
 
 /// Counter effects use the live recipient's controller. Talent's distinct
@@ -290,21 +389,28 @@ pub struct TokenInputV48 {
     pub requests: Vec<TokenTemplateV48>,
 }
 impl TokenInputV48 {
-    pub(crate) fn capture(state: &GameState, requests: &[TokenRequestV48]) -> Option<Self> {
+    pub(crate) fn capture(
+        state: &GameState,
+        requests: &[TokenRequestV48],
+    ) -> Result<Option<Self>, String> {
         if requests.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let mut world = state.clone();
-        world.engine.event_history.clear();
-        world.engine.event_log.clear();
-        Some(Self {
+        // Strip earlier journals before serializing. Serialization then removes
+        // private runtime loans without granting replay authority to this world.
+        let mut original = state.clone();
+        original.engine.event_history.clear();
+        original.engine.event_log.clear();
+        let bytes = serde_json::to_vec(&original).map_err(|error| error.to_string())?;
+        let world: GameState = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        Ok(Some(Self {
             index: 0,
             world: Box::new(world),
             requests: requests
                 .iter()
                 .map(|request| request.template.clone())
                 .collect(),
-        })
+        }))
     }
     fn original_requests(&self) -> Vec<TokenRequestV48> {
         self.requests

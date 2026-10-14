@@ -116,6 +116,9 @@ pub struct ZoneChangeProposed {
     /// Optional controller for a battlefield return whose effect says
     /// "under your control" rather than the ordinary owner-controlled rule.
     pub battlefield_controller: Option<PlayerId>,
+    /// Actual played lands retain their rule-action counter origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_origin_v48: Option<crate::doubling_season_v48::CounterOriginV48>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -215,6 +218,7 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -228,6 +232,7 @@ impl ProposedEvent {
             force_battlefield_tapped: true,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -241,6 +246,7 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -257,6 +263,7 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -283,6 +290,7 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -312,6 +320,7 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: Some(face_index),
             battlefield_controller: Some(controller),
+            counter_origin_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -2626,6 +2635,38 @@ fn commit_with_entry_batch_and_source_color(
     let (entry_context, frozen_source_color, frozen_counter_input) = entry_context;
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
+    if let Some(input) = counter_input.as_ref() {
+        let (definition, kicked, face_down, x) = match &event {
+            ProposedEvent::CreateToken(token) => (token.token_def, false, false, None),
+            ProposedEvent::ZoneChange(change) => {
+                let live = state.objects.get(change.object);
+                let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
+                (
+                    live.card_def,
+                    live.zone == Zone::Stack
+                        && state.engine.pending_kicked_source == Some(change.object),
+                    characteristics.is_some_and(|entry| entry.face_down.is_some()),
+                    characteristics.and_then(|entry| entry.x_counters),
+                )
+            }
+            _ => unreachable!("entry input only exists for entering permanents"),
+        };
+        if crate::doubling_season_v48::preflight_entry_definition(
+            state,
+            definition,
+            input,
+            (kicked, x, face_down),
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+
     match crate::linked_aura_operation_v1::prepare_entry_colors(state, std::slice::from_ref(&event))
     {
         Ok(true) => {}
@@ -3305,7 +3346,26 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             return;
         }
     };
-    let token_input = crate::doubling_season_v48::TokenInputV48::capture(state, &token_requests);
+    if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
+        || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    let token_input =
+        match crate::doubling_season_v48::TokenInputV48::capture(state, &token_requests) {
+            Ok(input) => input,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
     // Validate the entire replacement roster before any shield or packet mutates.
     if let Some(source) = events.iter().find_map(|event| match event {
         ProposedEvent::Damage(damage)
@@ -3430,7 +3490,9 @@ fn commit_batch_survivors(
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
 ) {
-    if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err() {
+    if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
+        || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ObjectId(0),

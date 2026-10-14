@@ -49,18 +49,15 @@ pub(crate) fn after_zone_change(
     if live.zone == Zone::Battlefield
         && engine::object_has_type(state, object, CardType::Planeswalker)
     {
-        let counters = u32::from(
-            CARD_DEFS[live.card_def as usize]
-                .starting_loyalty
-                .unwrap_or(0),
-        );
-        let counters = match crate::doubling_season_v48::entry_amount(
+        let counters = match crate::doubling_season_v48::entry_loyalty_amount(
             state,
             counter_input,
             live.controller,
-            counters as i32,
+            CARD_DEFS[live.card_def as usize]
+                .starting_loyalty
+                .unwrap_or(0),
         ) {
-            Ok(count) => count.max(0) as u32,
+            Ok(count) => count,
             Err(_) => {
                 state.engine.halted = Some((
                     engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -128,14 +125,22 @@ fn change_loyalty_with_origin(
         return;
     };
     let counters = if delta >= 0 {
-        let amount = match crate::doubling_season_v48::counter_amount(
+        let original = crate::standard_cards_v1::scale_counters(
             state,
-            object,
             state.objects.get(object).controller,
-            origin,
             delta,
-        ) {
-            Ok(amount) => amount as u32,
+        );
+        let amount = if origin == crate::doubling_season_v48::CounterOriginV48::Effect {
+            crate::doubling_season_v48::ReplacementInputV48::capture(
+                state,
+                state.objects.get(object).controller,
+            )
+            .replaced_loyalty(original as u32)
+        } else {
+            Ok(original as u32)
+        };
+        let amount = match amount {
+            Ok(amount) => amount,
             Err(_) => {
                 state.engine.halted = Some((
                     engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -183,6 +188,32 @@ pub(crate) fn zero_loyalty(state: &GameState, object: ObjectId) -> bool {
 pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amount: i32) {
     if amount <= 0 || state.objects.get(object).zone != Zone::Battlefield {
         return;
+    }
+    if crate::doubling_season_v48::requires_successor(state) {
+        let original = crate::standard_cards_v1::scale_counters(
+            state,
+            state.objects.get(object).controller,
+            amount,
+        );
+        let placed = crate::doubling_season_v48::ReplacementInputV48::capture(
+            state,
+            state.objects.get(object).controller,
+        )
+        .replaced_loyalty(original as u32);
+        if placed.is_err()
+            || placed.is_ok_and(|placed| {
+                loyalty(state, object)
+                    .unwrap_or(0)
+                    .checked_add(placed)
+                    .is_none()
+            })
+        {
+            state.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
     }
     if loyalty(state, object).is_none() {
         let permanent = ObjectLinkV4 {

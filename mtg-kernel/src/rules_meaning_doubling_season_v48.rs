@@ -58,6 +58,8 @@ pub fn producer_sha256() -> String {
         include_str!("engine.rs"),
         include_str!("state.rs"),
         include_str!("fdn_raid_v1.rs"),
+        include_str!("garruks_uprising_v1.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
         include_str!("standard_statics_v1.rs"),
         include_str!("standard_creatures_v1.rs"),
         include_str!("effect.rs"),

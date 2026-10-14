@@ -7052,10 +7052,14 @@ fn apply_undercity_throne_result(
             return Err("Throne chosen creature did not enter as its next incarnation".to_string());
         }
         let generation = permanent.zone_change_count;
-        let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
-        *counters = counters
-            .checked_add(3)
-            .ok_or("Throne +1/+1 counter overflow")?;
+        if crate::doubling_season_v48::requires_successor(state) {
+            event::add_plus_one_counters(state, chosen.object, binding.player, 3)?;
+        } else {
+            let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
+            *counters = counters
+                .checked_add(3)
+                .ok_or("Throne +1/+1 counter overflow")?;
+        }
         let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
         let timestamp =
             cfg!(feature = "limited-fdn-fixtures").then(|| crate::engine::next_timestamp(state));
@@ -13550,10 +13554,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     continue;
                 }
                 if explorer_on_battlefield {
-                    let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-                    *counters = counters
-                        .checked_add(1)
-                        .ok_or("Explore +1/+1 counter overflow")?;
+                    if crate::doubling_season_v48::requires_successor(state) {
+                        event::add_plus_one_counters(state, target, player, 1)?;
+                    } else {
+                        let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                        *counters = counters.checked_add(1).ok_or("Explore +1/+1 counter overflow")?;
+                    }
                 }
                 let canonical_path = path.clone();
                 continuation.choice = Some(PendingEffectChoice::ChooseOption {
@@ -17673,6 +17679,45 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let recipient = live.owner;
+                let original = crate::standard_cards_v1::scale_counters(
+                    state,
+                    ctx.controller,
+                    i32::from(*stun),
+                );
+                let placed =
+                    crate::doubling_season_v48::ReplacementInputV48::capture(state, recipient)
+                        .replaced_count(original)
+                        .ok()
+                        .and_then(|amount| i16::try_from(amount).ok());
+                let Some(placed) = placed else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                let generation = live.zone_change_count;
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
+                );
+                let returned = state.objects.get_mut(contract.source);
+                if returned.zone == Zone::Battlefield
+                    && generation.checked_add(1) == Some(returned.zone_change_count)
+                {
+                    let Some(total) = returned.counters.stun.checked_add(placed) else {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    };
+                    returned.counters.stun = total;
+                }
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
@@ -17788,15 +17833,26 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if object.zone != Zone::Battlefield {
                 return;
             }
-            let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
-            let Some(updated) = counters.checked_add(1) else {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-                return;
-            };
-            *counters = updated;
+            if crate::doubling_season_v48::requires_successor(state) {
+                if event::add_plus_one_counters(state, target, ctx.controller, 1).is_err() {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            } else {
+                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                let Some(updated) = counters.checked_add(1) else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                };
+                *counters = updated;
+            }
+
             if target != ctx.source {
                 let timestamp = crate::engine::next_timestamp(state);
                 state.engine.until_end_of_turn.push(

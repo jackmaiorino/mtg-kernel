@@ -174,3 +174,31 @@ other than genuine Net/Bankbuster. A real thirty-Season/unrelated Forest entry
 fixture preserves requested zero counters; a separate original-world restore
 negative rewrites only completion sources/membership or erases the independent
 input, preserving actual creation/departure journals. These groups are unrun.
+
+
+## Entry capacity and further kind checkpoint
+
+Whole entry rosters preflight requested counters before replacement mutation or
+member movement. The actual initialized X/Bestow spell owner preflights while its
+full original stack row is still live. Direct entry commits also preflight their
+actual initialized characteristics. Starting loyalty uses the native u32 range:
+4 with29 Seasons becomes2^31, while the next doubling refuses before any batch
+member moves. No artificial signed-i32 bound is imposed on that native storage.
+The genuine overflow fixture retains both Hand objects and all bytes apart from
+the terminal halt marker.
+
+Actual land play selects an optional rule-origin proposal only with active
+recipient Seasons; old proposals omit the field. Effect returns retain effect
+origin. Existing Talent behavior remains separate. Return-with-stun samples the
+actual returning owner before movement, uses checked amount/storage and exact
+next incarnation, rather than the old ability controller. Finality and Floodpits
+stun placements share the recipient-controlled effect path; Throne uses the
+original shared +1/+1 operation under Season while retaining old absent bytes.
+
+Private token worlds are serialized after dropping old trigger/history logs so
+transient runner/borrowed leases are never embedded in a restored proof. The
+world supplies replacement facts, not authority to execute a replay. Full V48,
+source-to-created attachment selection, special delayed copy tails, remaining
+kind paths and comprehensive attachment/entry qualifications remain active.
+All new actual printing/cross-family groups are ignored/unrun; only pinned
+formatting and diff checks have run.

@@ -236,6 +236,14 @@ pub(crate) fn acquire_permanent_entry(
         hidden_by: None,
         hidden_by_source: None,
     });
+    let counter_input =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, item.controller);
+    crate::doubling_season_v48::preflight_entry_definition(
+        state,
+        live.card_def,
+        &counter_input,
+        (item.kicked, x_counters, disguised),
+    )?;
     Ok(Some(PermanentEntryOwnerV1 {
         item: item.clone(),
         original: live.clone(),
