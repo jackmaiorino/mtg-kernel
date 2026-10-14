@@ -378,11 +378,11 @@ mod future_printed {
         }
     }
     #[test]
-    fn actual_gorehorn_cast_targets_physical_partial_ajani_through_distinct_input() {
+    fn actual_gorehorn_cast_targets_full_ajani_through_v42_and_refuses_v21() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor, 5);
             raid(&mut state, actor, true);
-            // Physical recipient setup only: no admitted Ajani cast or loyalty ability.
+            // Physical Full recipient setup; the Gorehorn cast and Raid trigger are paid.
             let walker = insert(
                 &mut state,
                 actor.opponent(),
@@ -409,15 +409,27 @@ mod future_printed {
                 FastActorSessionV1::from_human_v8_fixture_state(state.clone()),
             )
             .unwrap();
-            let mut session = HumanRaidEntrySessionV21::from_session(
-                FastActorSessionV1::from_raid_entry_v21_fixture_state(state),
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(crate::planeswalker_v1::validate_heartfire_recipients_v12(&state).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+            assert!(HumanRaidEntrySessionV21::from_session(
+                FastActorSessionV1::from_raid_entry_v21_fixture_state(state.clone())
+            )
+            .is_err());
+            use crate::human_bo3_v1::ajani_v42::{HumanAjaniProjectorV42, HumanAjaniSessionV42};
+            let mut session = HumanAjaniSessionV42::from_session(
+                FastActorSessionV1::from_ajani_v42_fixture_state(state),
+                actor.into(),
             )
             .unwrap();
-            let current = expected(&session);
+            let current = match session.current_response() {
+                FastActorResponseV1::Decision(e) => e,
+                other => panic!("genuine Full recipient menu: {other:?}"),
+            };
             assert!(HumanDecisionProjectorV9::new(actor.into())
                 .project_current(&old, current)
                 .is_err());
-            let mut projector = HumanRaidEntryProjectorV21::new(actor.into());
+            let mut projector = HumanAjaniProjectorV42::new(actor.into());
             let prompt = projector.project_current(&session, current).unwrap();
             safe(&serde_json::to_value(&prompt).unwrap());
             let row = prompt
@@ -434,16 +446,21 @@ mod future_printed {
                     },
                 )
                 .unwrap();
-            let snapshot = session.snapshot_v21();
+            let snapshot = session.snapshot_v42();
             let mut decisions = 0;
-            while crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker)
-                == Some(4)
+            while crate::planeswalker_v1::loyalty(
+                session.fixture_core_v42().ajani_fixture_state(),
+                walker,
+            ) == Some(4)
                 && decisions < 12
             {
-                let e = expected(&session);
+                let e = match session.current_response() {
+                    FastActorResponseV1::Decision(e) => e,
+                    other => panic!("genuine Full recipient continuation: {other:?}"),
+                };
                 let (_, actions, _) = session
-                    .inner
-                    .raid_entry_current_decision_input_v21(e, e.acting_player)
+                    .fixture_core_v42()
+                    .ajani_current_decision_input_v42(e, e.acting_player)
                     .unwrap();
                 let index = actions
                     .iter()
@@ -452,26 +469,48 @@ mod future_printed {
                     })
                     .unwrap();
                 session
-                    .inner
+                    .fixture_core_mut_v42()
                     .step(e.episode_id, e.step, index as u32)
                     .unwrap();
                 decisions += 1;
             }
             assert_eq!(
-                crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker),
+                crate::planeswalker_v1::loyalty(
+                    session.fixture_core_v42().ajani_fixture_state(),
+                    walker
+                ),
                 Some(2)
             );
-            let first = session.inner.privileged_core_environment_hash();
-            session.restore_v21(&snapshot).unwrap();
+            let core = session.fixture_core_v42();
+            let first = (
+                serde_json::to_vec(core.ajani_fixture_state()).unwrap(),
+                core.policy_step_count(),
+                core.physical_decision_count(),
+            );
+            let prior_revision = match session.current_response() {
+                FastActorResponseV1::Decision(e) => e.environment_revision,
+                other => panic!("genuine Full recipient continuation: {other:?}"),
+            };
+            session.restore_v42(&snapshot).unwrap();
+            let restored = match session.current_response() {
+                FastActorResponseV1::Decision(e) => e,
+                other => panic!("genuine Full recipient restored input: {other:?}"),
+            };
+            assert!(restored.environment_revision > prior_revision);
             decisions = 0;
-            while crate::planeswalker_v1::loyalty(session.inner.raid_entry_fixture_state(), walker)
-                == Some(4)
+            while crate::planeswalker_v1::loyalty(
+                session.fixture_core_v42().ajani_fixture_state(),
+                walker,
+            ) == Some(4)
                 && decisions < 12
             {
-                let e = expected(&session);
+                let e = match session.current_response() {
+                    FastActorResponseV1::Decision(e) => e,
+                    other => panic!("genuine Full recipient continuation: {other:?}"),
+                };
                 let (_, actions, _) = session
-                    .inner
-                    .raid_entry_current_decision_input_v21(e, e.acting_player)
+                    .fixture_core_v42()
+                    .ajani_current_decision_input_v42(e, e.acting_player)
                     .unwrap();
                 let index = actions
                     .iter()
@@ -480,12 +519,20 @@ mod future_printed {
                     })
                     .unwrap();
                 session
-                    .inner
+                    .fixture_core_mut_v42()
                     .step(e.episode_id, e.step, index as u32)
                     .unwrap();
                 decisions += 1;
             }
-            assert_eq!(first, session.inner.privileged_core_environment_hash());
+            let core = session.fixture_core_v42();
+            assert_eq!(
+                first,
+                (
+                    serde_json::to_vec(core.ajani_fixture_state()).unwrap(),
+                    core.policy_step_count(),
+                    core.physical_decision_count(),
+                )
+            );
         }
     }
 
