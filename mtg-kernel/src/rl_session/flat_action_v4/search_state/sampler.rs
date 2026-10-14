@@ -562,10 +562,21 @@ mod tests {
                     assert!(conflicts(&state, &[source], None));
                 }
             }
-            // Removing new typed ownership removes this new restriction.
+            // Removing the pending/stack root does not erase its independently
+            // retained departure-color authority. The unmigrated sampler must
+            // still refuse changing that historical physical source.
             state.stack.clear();
             state.engine.pending_triggers.clear();
-            assert!(!conflicts(&state, &[source], None));
+            assert!(state.engine.event_history.iter().any(|event|
+                matches!(event, crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 {snapshot,..}
+                    if snapshot.source.source==source)));
+            assert!(conflicts(&state, &[source], None));
+            let before = state.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut state, actor, 991, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(state, before);
         }
     }
     #[test]
