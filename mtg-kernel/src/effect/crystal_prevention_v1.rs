@@ -3047,7 +3047,7 @@ fn validate_creature_power_capture(
         if at <= previous
             || at >= until
             || !matches!(state.engine.event_history.get(at),
-            Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count })
+            Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count, ..})
                 if object == source && *zone_change_count == before.zone_change_count
                     && *player == ctx.controller && *count == i32::from(*plus1_plus1))
         {

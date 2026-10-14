@@ -1369,7 +1369,7 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
             let valid = restore(&state);
             validate_token_journals(&valid).unwrap();
             assert_eq!(bytes(&valid), bytes(&state));
-            for forgery in 0..5 {
+            for forgery in 0..6 {
                 let mut forged = restore(&state);
                 match forgery {
                     0 => {
@@ -1410,6 +1410,27 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
                         .engine
                         .event_log
                         .push(forged.engine.event_history[input_index].clone()),
+                    5 => {
+                        forged.engine.event_history[input_index] =
+                            event::CommittedEvent::Tap { object: recipient };
+                        forged.engine.event_history[placement_index] =
+                            event::CommittedEvent::Tap { object: recipient };
+                        // Preserve the actual issued six-counter occurrence,
+                        // including its intrinsic original-input reference.
+                        assert_eq!(
+                            forged.engine.event_history[counter_index],
+                            state.engine.event_history[counter_index]
+                        );
+                        assert_eq!(forged.objects.get(recipient).counters.plus1_plus1, 6);
+                        assert!(expected_plus_at(
+                            &forged,
+                            counter_index as u64,
+                            recipient,
+                            actor.opponent(),
+                            3
+                        )
+                        .is_err());
+                    }
                     _ => unreachable!(),
                 }
                 let before = bytes(&forged);
@@ -1426,6 +1447,13 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
                 assert!(validate_token_journals(&forged).is_err());
                 assert!(engine::step(&mut forged, Action::Pass).is_err());
                 assert_eq!(bytes(&forged), before);
+                let mut automatic = restore(&forged);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut automatic),
+                    engine::Decision::Halted { .. }
+                ));
+                automatic.engine.halted = None;
+                assert_eq!(bytes(&automatic), before);
             }
         }
         let before = bytes(&state);
@@ -1620,5 +1648,49 @@ fn genuine_wall_of_roots_cost_is_undoubled_and_overflow_is_readonly() {
             .is_err());
             assert_eq!(bytes(&branch), before);
         }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn ordinary_real_counter_occurrence_keeps_legacy_bytes_and_derived_hash() {
+    use std::hash::{Hash, Hasher};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        event::add_plus_one_counters(&mut state, recipient, actor, 3).unwrap();
+        let occurrence = state.engine.event_history.iter().find(|event|
+            matches!(event, event::CommittedEvent::PlusOneCountersAdded { object, .. } if *object == recipient)).unwrap();
+        let event::CommittedEvent::PlusOneCountersAdded {
+            object,
+            zone_change_count,
+            player,
+            count,
+            replacement_input_v48,
+        } = occurrence
+        else {
+            unreachable!()
+        };
+        assert!(replacement_input_v48.is_none());
+        let mut predecessor = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(occurrence).hash(&mut predecessor);
+        object.hash(&mut predecessor);
+        zone_change_count.hash(&mut predecessor);
+        player.hash(&mut predecessor);
+        count.hash(&mut predecessor);
+        let mut current = std::collections::hash_map::DefaultHasher::new();
+        occurrence.hash(&mut current);
+        assert_eq!(predecessor.finish(), current.finish());
+        let value = serde_json::to_value(occurrence).unwrap();
+        assert!(value["PlusOneCountersAdded"]
+            .get("replacement_input_v48")
+            .is_none());
+        assert_eq!(value["PlusOneCountersAdded"].as_object().unwrap().len(), 4);
+        let legacy: event::CommittedEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(&legacy, occurrence);
+        assert_eq!(restore(&state), state);
     }
 }

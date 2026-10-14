@@ -584,6 +584,11 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         player: PlayerId,
         count: i32,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::doubling_season_v48::CounterInputRefV48::is_none"
+        )]
+        replacement_input_v48: crate::doubling_season_v48::CounterInputRefV48,
     },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
@@ -1524,6 +1529,15 @@ pub(crate) fn log_plus_one_counters_added(
     player: PlayerId,
     count: i32,
 ) {
+    log_plus_one_counters_added_with_input_v48(state, object, player, count, None);
+}
+fn log_plus_one_counters_added_with_input_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+    input: Option<u64>,
+) {
     if count <= 0 || !cfg!(feature = "limited-fdn-fixtures") {
         return;
     }
@@ -1532,6 +1546,7 @@ pub(crate) fn log_plus_one_counters_added(
         zone_change_count: state.objects.get(object).zone_change_count,
         player,
         count,
+        replacement_input_v48: crate::doubling_season_v48::CounterInputRefV48(input),
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed.clone());
@@ -1589,7 +1604,7 @@ pub(crate) fn add_plus_one_counters(
     });
     state.objects.get_mut(object).counters.plus1_plus1 = total;
     let counter_event = state.engine.event_history.len() as u64;
-    log_plus_one_counters_added(state, object, player, count);
+    log_plus_one_counters_added_with_input_v48(state, object, player, count, input_index);
     if let Some(input) = input_index {
         let index = state.engine.event_history.len() as u64;
         state

@@ -470,6 +470,10 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
                 | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
         )
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        crate::event::CommittedEvent::PlusOneCountersAdded { replacement_input_v48, .. }
+        if !replacement_input_v48.is_none())
     }) || state.stack.iter().any(|item| {
         item.v4
             .source_contract
@@ -731,6 +735,26 @@ pub(crate) fn record_token_input(state: &mut GameState, mut input: TokenInputV48
     index
 }
 
+/// Intrinsic input binding on the actual issued counter occurrence. The
+/// absent extension emits no serde field and contributes no bytes to Hash,
+/// preserving the predecessor occurrence's derived hash exactly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CounterInputRefV48(pub Option<u64>);
+impl CounterInputRefV48 {
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl std::hash::Hash for CounterInputRefV48 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(input) = self.0 {
+            std::hash::Hash::hash(b"counter_input_v48", state);
+            std::hash::Hash::hash(&input, state);
+        }
+    }
+}
+
 /// Original actor/recipient replacement world, captured before placement.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -803,7 +827,15 @@ pub(crate) fn expected_plus_at(
         })
         .collect::<Vec<_>>();
     match matches.as_slice() {
-        [] => Ok(original),
+        [] => {
+            if matches!(state.engine.event_history.get(at as usize),
+                Some(crate::event::CommittedEvent::PlusOneCountersAdded { replacement_input_v48, .. })
+                if !replacement_input_v48.is_none())
+            {
+                return Err("issued replaced counter lost mandatory original proof".into());
+            }
+            Ok(original)
+        }
         [p] if p.recipient.object == recipient && p.actor == actor && p.original == original => {
             let Some(crate::event::CommittedEvent::PlusCounterInputV48 { input }) =
                 state.engine.event_history.get(p.input as usize)
@@ -838,8 +870,8 @@ pub(crate) fn expected_plus_at(
             )?;
             if p.before.checked_add(count) != Some(p.after)
                 || !matches!(state.engine.event_history.get(at as usize),
-                    Some(crate::event::CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count: actual })
-                    if *object == recipient && *zone_change_count == p.recipient.zone_change_count
+                    Some(crate::event::CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count: actual, replacement_input_v48 })
+                    if replacement_input_v48.0 == Some(p.input) && *object == recipient && *zone_change_count == p.recipient.zone_change_count
                         && *player == actor && *actual == count)
             {
                 return Err("owned counter actual placement changed".into());
@@ -1017,6 +1049,32 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
         }
     }
     for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::PlusOneCountersAdded {
+            replacement_input_v48: CounterInputRefV48(Some(input_index)),
+            ..
+        } = event
+        else {
+            continue;
+        };
+        if *input_index >= index as u64
+            || !matches!(state.engine.event_history.get(*input_index as usize),
+                Some(CommittedEvent::PlusCounterInputV48 { input }) if input.index == *input_index)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                CommittedEvent::PlusCounterReplacementV48 { placement }
+                if placement.input == *input_index && placement.counter_event == index as u64)
+                })
+                .count()
+                != 1
+        {
+            return Err("issued replaced counter lost original input/completion".into());
+        }
+    }
+    for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::PlusCounterInputV48 { input } = event else {
             continue;
         };
@@ -1076,7 +1134,7 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
                         .iter()
                         .any(|other| other.source == s.source)
             })
-            || !matches!(state.engine.event_history.get(p.counter_event as usize),Some(CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:actual}) if *object==p.recipient.object && *zone_change_count==p.recipient.zone_change_count && *player==p.actor && *actual==count)
+            || !matches!(state.engine.event_history.get(p.counter_event as usize),Some(CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:actual,replacement_input_v48}) if replacement_input_v48.0==Some(p.input) && *object==p.recipient.object && *zone_change_count==p.recipient.zone_change_count && *player==p.actor && *actual==count)
         {
             return Err("actual effect counter replacement changed".into());
         }

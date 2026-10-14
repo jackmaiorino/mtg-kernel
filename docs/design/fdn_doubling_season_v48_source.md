@@ -335,3 +335,19 @@ coherent rewritten amount/actor/output or removed original input while the owner
 is recording its result. It does not recursively invoke whole-family validation.
 The genuine paid Season counter fixture adds exact adapter assertions; joint
 Talent printing runtime remains unavailable and unclaimed.
+
+
+## Intrinsic counter occurrence custody
+
+The actual issued positive +1/+1 occurrence now carries its original V48 input
+reference whenever Season replaced that event. Validation requires that marked
+occurrence retain exactly one independent input and matching completion, even
+when both private receipts are replaced by index-preserving ordinary events.
+The owned-count adapter likewise refuses a marked occurrence with missing proof.
+Ordinary counters omit the optional field, and the typed absent reference hashes
+zero bytes so the old derived occurrence hash and enum ordinal remain exact.
+The real absent counter fixture checks both serialization and the predecessor
+hash sequence; the genuine paid Season fixture retains its actual six-counter
+occurrence through both-record erasure and repeated Step readonly/Advance
+halt-only refusals. Original event journal provenance remains trusted, rather
+than a cryptographic guarantee against replacing that original occurrence too.
