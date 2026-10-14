@@ -4,6 +4,13 @@ This isolated candidate appends the real printing with `Partial` capability.
 It does not add Full coverage or permit a fully supported deck preflight. The
 canonical PR266 registration and accepted issue110 counts are unchanged.
 
+The first actual native build rejected empty deck coverage before generation.
+The registry now names a separate synthetic 40-card reference containing the
+Partial printing. It leaves the original WG/UG fixtures unchanged and supplies
+the provenance required by the existing generator. The reference remains
+ineligible for fully supported deck preflight because Fake is Partial; it does
+not establish gameplay, model, sampler or Full admission.
+
 The source is pinned Mage commit `a5c90fe180021e70e2a644ade00eeab07f857a40`,
 `Mage.Sets/src/mage/cards/f/FakeYourOwnDeath.java`, inspected directly. It is
 a black instant costing `{1}{B}`, targeting any creature. The temporary power

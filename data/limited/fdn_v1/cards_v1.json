@@ -7450,7 +7450,7 @@
       "toughness": null,
       "is_land": false,
       "produces_mana": [],
-      "decks": [],
+      "decks": ["FDN_reference_fake_your_own_death_partial.dck"],
       "sideboard_only": false,
       "complexity": "complex",
       "mechanics": [
