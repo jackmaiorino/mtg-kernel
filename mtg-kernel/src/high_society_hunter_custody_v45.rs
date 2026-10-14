@@ -1,7 +1,6 @@
 //! Independent Hunter custody, not a renamed Gourmand receipt.
 use crate::effect::{EffectContinuation, EffectObjectBinding, EffectOp};
 use crate::event::CommittedEvent;
-use crate::ids::ObjectId;
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Zone,
 };

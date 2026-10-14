@@ -835,20 +835,6 @@ impl HumanFaebloomProjectorV43 {
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-#[path = "akroma_v40_history_tests.rs"]
-mod history_tests;
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-#[path = "akroma_v40_mixed_tests.rs"]
-mod mixed_tests;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HumanFaebloomSpellV43 {
     pub ordinal: u32,

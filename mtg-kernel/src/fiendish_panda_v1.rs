@@ -162,10 +162,8 @@ pub(crate) fn record_gain(state: &mut GameState, index: usize) {
     let observers = state
         .objects
         .iter()
-        .filter_map(|(id, o)| {
-            (o.controller == player && live_source(state, id))
-                .then(|| AbilitySourceContractV4::capture(state, id))
-        })
+        .filter(|(id, o)| o.controller == player && live_source(state, *id))
+        .map(|(id, _)| AbilitySourceContractV4::capture(state, id))
         .collect::<Vec<_>>();
     for source in observers {
         let capture = CommittedEvent::FiendishPandaLifeGainCaptureV1 {
