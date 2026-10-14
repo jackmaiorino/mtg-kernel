@@ -614,6 +614,40 @@ mod printed {
             );
         }
     }
+    #[test]
+    #[ignore = "Requires genuine Fiendish Panda and Doubling Season registration and current native qualification"]
+    fn actual_paid_doubling_season_changes_placement_amount_without_repeating_panda_trigger_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = panda(&mut state, actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            engine::step(&mut state, Action::CastSpell(season)).unwrap();
+            settle_stack(&mut state);
+            assert_eq!(state.objects.get(season).zone, Zone::Battlefield);
+            event::propose_and_commit(&mut state, ProposedEvent::life_gain(actor, 6));
+            settle_stack(&mut state);
+            assert_eq!(state.objects.get(source).counters.plus1_plus1, 2);
+            assert_eq!(state.engine.event_history.iter().filter(|e| matches!(e,
+                CommittedEvent::FiendishPandaLifeGainCaptureV1 { source: captured, .. } if captured.source == source)).count(), 1);
+            assert_eq!(
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter(|e| matches!(e,
+                CommittedEvent::PlusOneCountersAdded { object, count: 2, .. } if *object == source))
+                    .count(),
+                1
+            );
+            validate_state(&state).unwrap();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            validate_state(&restored).unwrap();
+        }
+    }
     fn panda(state: &mut GameState, actor: PlayerId) -> ObjectId {
         let source = put(state, actor, "Fiendish Panda", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 1;

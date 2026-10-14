@@ -550,8 +550,11 @@ fn validate_operation(state: &GameState, operation: u64) -> Result<(), String> {
                     .plus1_plus1
                     .checked_add(*count)
                     .ok_or("Panda counter overflow")?;
-                if *count != 1 || expected != **after {
-                    return Err("Panda actual one-counter output changed".into());
+                // The printed instruction is one counter; replacements may
+                // change the actual placement. Exact original-world replay
+                // above authenticates that amount, not a hardcoded final one.
+                if *count <= 0 || expected != **after {
+                    return Err("Panda actual counter-placement output changed".into());
                 }
             } else if !counters.is_empty() || before != after {
                 return Err("Absent original Panda incarnation received counters".into());
