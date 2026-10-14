@@ -532,3 +532,126 @@ fn no_controlled_target_short_payment_and_coherent_source_method_forgery_refuse_
         }
     }
 }
+
+#[test]
+fn actual_paid_arahbo_copy_is_token_before_all_entry_observers_and_keeps_self_only_legend_owner() {
+    use mtg_kernel::arahbo_v1::RootV1;
+    use mtg_kernel::event::CommittedEvent;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Battlefield);
+        }
+        let arahbo = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        engine::step(&mut state, Action::CastSpell(arahbo)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        settle(&mut state);
+        assert_eq!(state.objects.get(arahbo).zone, Zone::Battlefield);
+        assert!(!state.objects.get(arahbo).v4.is_token);
+        let arahbo_definition = state.objects.get(arahbo).card_def;
+        let cat = card_id_by_name("Cat Token").unwrap();
+        let start = state.engine.event_history.len();
+        let reflection = begin(&mut state, actor, false);
+        finalize(&mut state, arahbo);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        let finalized = restore(&state);
+        let mut reference = None;
+        for _ in 0..3 {
+            let mut branch = restore(&finalized);
+            let mut reached_legend = false;
+            for _ in 0..40 {
+                match next(&mut branch) {
+                    Decision::ChooseLegendPermanent { player, candidates } => {
+                        assert_eq!(player, actor);
+                        assert_eq!(candidates.len(), 2);
+                        assert!(candidates.contains(&arahbo));
+                        reached_legend = true;
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut branch, Action::Pass).unwrap()
+                    }
+                    other => panic!("unexpected genuine copy entry {other:?}"),
+                }
+            }
+            assert!(reached_legend);
+            assert_eq!(branch.objects.get(reflection).zone, Zone::Graveyard);
+            let copies: Vec<_> = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::CreateToken {
+                        object,
+                        token_def,
+                        controller,
+                    } if *token_def == arahbo_definition && *controller == actor => Some(*object),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(copies.len(), 1);
+            let copy = copies[0];
+            assert!(branch.objects.get(copy).v4.is_token);
+            assert_eq!(branch.objects.get(copy).zone, Zone::Battlefield);
+            let garruk_entries: Vec<_> = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                        if entry.object == copy =>
+                    {
+                        Some(entry)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(garruk_entries.len(), 1);
+            assert!(garruk_entries[0].snapshot.v4.is_token);
+            assert_eq!(garruk_entries[0].snapshot.controller, actor);
+            let captures: Vec<_> = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::ArahboTokenCaptureV1 { capture } => Some(capture),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(captures.len(), 1);
+            assert_eq!(captures[0].source.source, copy);
+            assert_eq!(captures[0].source.controller, actor);
+            assert_eq!(captures[0].root, RootV1::OwnEntry);
+            let actual_pending = serde_json::to_value(&branch).unwrap();
+            let held = actual_pending["pending_legend_rule_v1"]["waiting_triggers"]
+                .as_array()
+                .unwrap();
+            assert_eq!(held.len(), 1);
+            assert_eq!(
+                serde_json::to_vec(&restore(&branch)).unwrap(),
+                serde_json::to_vec(&branch).unwrap()
+            );
+            if let Some(original) = &reference {
+                assert_eq!(serde_json::to_vec(&branch).unwrap(), *original);
+            } else {
+                reference = Some(serde_json::to_vec(&branch).unwrap());
+            }
+            for keep in [arahbo, copy] {
+                let mut continued = restore(&branch);
+                engine::step(&mut continued, Action::ChooseLegendPermanent(keep)).unwrap();
+                settle(&mut continued);
+                assert_eq!(continued.objects.get(keep).zone, Zone::Battlefield);
+                assert_eq!(continued.objects.get(keep).v4.is_token, keep == copy);
+                assert_eq!(continued.engine.event_history[start..].iter().filter(|event| matches!(event,
+                    CommittedEvent::CreateToken { token_def, controller, .. } if *token_def == cat && *controller == actor)).count(), 1);
+                assert_eq!(continued.engine.event_history[start..].iter().filter(|event| matches!(event,
+                    CommittedEvent::ArahboTokenCaptureV1 { capture } if capture.root == RootV1::OtherNontokenCatEntry)).count(), 0);
+                assert_eq!(
+                    serde_json::to_vec(&restore(&continued)).unwrap(),
+                    serde_json::to_vec(&continued).unwrap()
+                );
+            }
+        }
+    }
+}
