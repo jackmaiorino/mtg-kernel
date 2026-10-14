@@ -4364,8 +4364,7 @@ fn commit_zone_change(
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
         // 707.10f: a resolving permanent spell copy becomes a token. This
         // is a zone entry, not token creation, so no creation replacement applies.
-        if season_entry_active
-            && from_zone == Zone::Stack
+        if from_zone == Zone::Stack
             && to_zone == Zone::Battlefield
             && obj.spell_copy_origin.is_some()
         {
