@@ -1,11 +1,19 @@
 use super::*;
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn request(id: &str) -> LimitedCommonRequestV1 {
     LimitedCommonRequestV1::Current {
         schema_version: SCHEMA_VERSION,
         request_id: id.into(),
     }
 }
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn decision(reply: &LimitedCommonReplyV1) -> (u64, u64, &LimitedCommonDecisionV1) {
     let LimitedCommonBodyV1::State { state, .. } = &reply.body else {
         panic!("state: {reply:?}");
@@ -20,6 +28,10 @@ fn decision(reply: &LimitedCommonReplyV1) -> (u64, u64, &LimitedCommonDecisionV1
     };
     (*episode_id, *authority_generation, decision)
 }
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn step(reply: &LimitedCommonReplyV1, id: &str, text: &str) -> LimitedCommonRequestV1 {
     let (episode_id, authority_generation, menu) = decision(reply);
     let action = menu
