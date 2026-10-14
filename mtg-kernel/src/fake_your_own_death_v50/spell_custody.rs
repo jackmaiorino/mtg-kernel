@@ -315,7 +315,7 @@ pub(crate) fn publish_copy_created(state: &mut GameState, id: StackItemId) -> Re
         return Ok(());
     }
     validate_spell(&item)?;
-    if !item.is_copy || !item.v4.source_contract.is_some_and(|s|s.spell_copy_origin.is_some())
+    if !item.is_copy || item.v4.source_contract.is_none_or(|s|s.spell_copy_origin.is_none())
         || state.engine.event_history.iter().any(|e|matches!(journal(e),Some(JournalV50::CopyCreated {item:old}) if old.v4.stack_item_id == id))
     { return Err("Fake copy creation changed original ancestry or duplicated its row".into()); }
     emit(
