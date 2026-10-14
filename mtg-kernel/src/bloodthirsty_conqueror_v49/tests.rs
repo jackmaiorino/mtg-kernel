@@ -144,7 +144,7 @@ fn physical_prevention_records_only_actual_surviving_player_loss() {
             .engine
             .active_replacements
             .push(event::ActiveReplacement {
-                id: crate::ids::ReplacementId(701),
+                id: 701,
                 source,
                 kind: event::ReplacementEffectKind::PreventNextDamage {
                     target: Target::Player(actor.opponent()),
@@ -163,7 +163,7 @@ fn physical_prevention_records_only_actual_surviving_player_loss() {
             .engine
             .active_replacements
             .push(event::ActiveReplacement {
-                id: crate::ids::ReplacementId(702),
+                id: 702,
                 source,
                 kind: event::ReplacementEffectKind::PreventNextDamage {
                     target: Target::Player(actor.opponent()),
