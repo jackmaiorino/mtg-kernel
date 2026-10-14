@@ -140,7 +140,9 @@ pub(crate) fn entry_input(
                     }
                 }),
             );
-            if z.counter_origin_v48 == Some(CounterOriginV48::Rule) {
+            if z.counter_origin_v48 == Some(CounterOriginV48::Rule)
+                && input.entry_talent_doublings == Some(0)
+            {
                 input.seasons.clear();
             }
             Some(input)
@@ -157,7 +159,17 @@ pub(crate) fn entry_amount(
 ) -> Result<i32, String> {
     let original =
         if requires_successor(state) || input.is_some_and(|input| !input.seasons.is_empty()) {
-            crate::standard_cards_v1::scale_counters_checked_v48(state, controller, amount)?
+            if amount < 0 {
+                return Err("negative entry counter input".into());
+            }
+            let doublings = input
+                .and_then(|input| input.entry_talent_doublings)
+                .unwrap_or_else(|| {
+                    crate::standard_cards_v1::counter_modifier_doublings_v48(state, controller)
+                });
+            (0..doublings).try_fold(amount, |amount, _| {
+                amount.checked_mul(2).ok_or("entry modifier overflow")
+            })?
         } else {
             crate::standard_cards_v1::scale_counters(state, controller, amount)
         };
@@ -191,12 +203,17 @@ pub struct ReplacementInputV48 {
     pub seasons: Vec<AbilitySourceContractV4>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_controls_big: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_talent_doublings: Option<u32>,
 }
 impl ReplacementInputV48 {
     pub(crate) fn capture(state: &GameState, controller: PlayerId) -> Self {
         Self {
             controller,
             seasons: sources(state, controller),
+            entry_talent_doublings: Some(crate::standard_cards_v1::counter_modifier_doublings_v48(
+                state, controller,
+            )),
             entry_controls_big: Some(
                 state.players[controller.index()]
                     .battlefield
@@ -240,18 +257,26 @@ pub(crate) fn entry_loyalty_amount(
     controller: PlayerId,
     amount: u16,
 ) -> Result<u32, String> {
-    let original = if requires_successor(state)
-        || input.is_some_and(|input| !input.seasons.is_empty())
-    {
-        crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, u32::from(amount))?
-    } else {
-        u32::try_from(crate::standard_cards_v1::scale_counters(
-            state,
-            controller,
-            i32::from(amount),
-        ))
-        .map_err(|_| "negative starting loyalty")?
-    };
+    let original =
+        if requires_successor(state) || input.is_some_and(|input| !input.seasons.is_empty()) {
+            let doublings = input
+                .and_then(|input| input.entry_talent_doublings)
+                .unwrap_or_else(|| {
+                    crate::standard_cards_v1::counter_modifier_doublings_v48(state, controller)
+                });
+            (0..doublings).try_fold(u32::from(amount), |amount, _| {
+                amount
+                    .checked_mul(2)
+                    .ok_or("starting loyalty modifier overflow")
+            })?
+        } else {
+            u32::try_from(crate::standard_cards_v1::scale_counters(
+                state,
+                controller,
+                i32::from(amount),
+            ))
+            .map_err(|_| "negative starting loyalty")?
+        };
     let replacement = input
         .cloned()
         .unwrap_or_else(|| ReplacementInputV48::capture(state, controller));
@@ -373,7 +398,11 @@ pub(crate) fn counter_amount(
     } else {
         crate::standard_cards_v1::scale_counters(state, actor, amount)
     };
-    if origin != CounterOriginV48::Effect {
+    // 614.16: another replacement effect can make an original cost/rule
+    // placement eligible. Unmodified costs and rule actions remain excluded.
+    if origin != CounterOriginV48::Effect
+        && crate::standard_cards_v1::counter_modifier_doublings_v48(state, actor) == 0
+    {
         return Ok(scaled);
     }
     ReplacementInputV48::capture(state, live.controller).replaced_count(scaled)

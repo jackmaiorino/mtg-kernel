@@ -274,3 +274,54 @@ Entry replacement input now uses a resolving Stack permanent's actual controller
 
 
 Positive replaced +1/+1 effects now capture a separate original actor/recipient world before actual placement, then bind its unique actual counter occurrence and completion. Restored validation reconstructs actor-relative checked modifiers and recipient-relative Season from that input, rather than incorrectly treating the original unmodified amount as Season's only multiplier input. Each input requires exactly one completion; missing inputs, orphaned inputs and private log reinjection refuse before public actions. The private world is stripped of old journals/runtime loans and never exported. Prepared genuine paid-Season/physical-Forest counter cases preserve all original input/payment history across coherent amount/actor rewrites, erased input/completion, private log replay and repeated restore; overflow emits nothing. This retains the stated trusted-original-journal boundary and is not cryptographic whole-history replacement protection.
+
+
+Current CR 614.16 also applies Season when another replacement/prevention effect puts counters, even if the original action was a cost or rule action. The source now preserves direct unmodified cost/rule exclusion while allowing the actual Talent replacement to make that event eligible; all these doublings commute. Entry input freezes Talent count from the original board, avoiding later same-batch departure or entry changing the quote. The precise counter root records this qualifier and its existing cost-exclusion fact explicitly means an unmodified direct cost. No compatible joint Talent/Season printing catalog is claimed.
+
+Primary current-rule references: [CR 614.16 and 714.3a-c (June 19, 2026)](https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf) and [official April 15, 2026 Saga update](https://magic.wizards.com/en/news/announcements/secrets-of-strixhaven-update-bulletin). Saga entry is now an intrinsic replacement effect, while ordinary precombat lore placement remains a turn-based action; the existing V48 entry-versus-rule split follows those current rules.
+
+
+## Retained initialization path
+
+Special initialized copy, delayed-copy, haste, tapped dynamic, Role, Incubate
+and tapped/attacking token paths now use the retained V48 component rather than
+only a currently active replacement source. After the last Season leaves or is
+suppressed, every requested token still receives its entry characteristics
+before observers, while the original-board replacement query yields the actual
+undoubled roster. The genuinely absent predecessor branches remain unchanged.
+Played lands likewise keep their rule origin throughout the retained component.
+The source-to-new-token Equipment operation still attaches after creation as its
+actual printed sequence requires; its undoubled single-recipient path remains
+automatic. Future actual Season both-seat serialized tests retain the original
+replacement journals, depart Season, then check undoubled tapped entry snapshots,
+haste and copy identity over three identical restored executions. They are unrun.
+No compatible printed Adeline/Role/Incubator catalog is admitted here. In
+particular, the existing attacking-token player destination does not qualify a
+future player-or-planeswalker owner-choice producer.
+
+
+The rich mana-ability -0/-1 counter cost now quotes the explicit Cost origin and
+native storage before paying or recording activation. An unmodified cost stays
+one; an actual Talent replacement can make it eligible under 614.16. Absent
+catalog behavior keeps its original one-counter amount. A real Default Wall of
+Roots both-seat fixture checks untapped payment, one green mana and three
+restored readonly native-overflow refusals. The unavailable joint
+Talent/Season/Wall-of-Roots printing catalog is not represented as qualified.
+
+
+## Current predecessor join
+
+The owned Season branch absorbs parent d603df0b823514a34163d7cb9403eb4034f037fc:
+current default/public source plus source-reviewed Fish Token blueprint,
+Faebloom placeholder, Panda actual-zone/catalog fixtures and Ajani paid ownership
+before final targeting. The merge has no conflicts. Season remains unregistered;
+the inherited prepared 442-definition roster and frozen 286 printing identities
+plus 24 external token dependencies are unchanged. No new profile/hash/native
+claim follows from source composition. All earlier sections describe successive
+checkpoints, not an assertion that their historical remaining-work lists are
+current. The retained V48 public/backend/Human contracts are source prepared.
+Current unqualified scope includes actual Season catalog/runtime admission,
+joint Standard Talent/Saga/Impending/Role/Incubator/Equipment issuers, attacking
+token planeswalker destination agency for a future compatible Adeline producer,
+and broad mixed-family gameplay/model/sampler qualification. New source proofs
+and counter/tail adapters still require named source review and real execution.

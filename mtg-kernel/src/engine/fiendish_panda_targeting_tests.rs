@@ -7,7 +7,7 @@ fn source_for(state: &GameState, source: ObjectId) -> TargetingSource {
     TargetingSource {
         object: source,
         card_def: object.card_def,
-        zone: Zone::Battlefield,
+        zone: object.zone,
         zone_change_count: object.zone_change_count,
         other_than: None,
         original_source_incarnation_only: false,
@@ -34,7 +34,20 @@ fn signed_bound_requires_another_non_bear_card_in_the_actual_graveyard_both_seat
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
         let source = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
-        let zero = put(&mut state, actor, "Ornithopter", Zone::Graveyard);
+        // Use a genuine zero-mana-value creature when the selected catalog
+        // has one. The current FDN catalog has none; its zero bound must then
+        // offer no card, rather than requiring a nonexistent Ornithopter.
+        let zero = card_def::CARD_DEFS
+            .iter()
+            .find(|definition| {
+                definition.mana_value == 0
+                    && definition.has_type(CardType::Creature)
+                    && !definition.is_token
+                    && !definition.changeling
+                    && !definition.subtypes.contains(&card_def::Subtype::Bear)
+            })
+            .map(|definition| put(&mut state, actor, definition.name, Zone::Graveyard));
+        let zero_targets = zero.into_iter().map(Target::Object).collect::<Vec<_>>();
         let one = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
         let seven = put(&mut state, actor, "Myr Enforcer", Zone::Graveyard);
         let bear = put(&mut state, actor, "Masked Vandal", Zone::Graveyard);
@@ -54,25 +67,30 @@ fn signed_bound_requires_another_non_bear_card_in_the_actual_graveyard_both_seat
         let binding = Some(source_for(&state, source));
         let before = serde_json::to_vec(&state).unwrap();
         assert!(targets(&state, actor, binding, -1).is_empty());
-        assert_eq!(
-            targets(&state, actor, binding, 0),
-            vec![Target::Object(zero)]
-        );
+        assert_eq!(targets(&state, actor, binding, 0), zero_targets);
         assert_eq!(
             targets(&state, actor, binding, 1),
-            vec![Target::Object(zero), Target::Object(one)]
+            zero_targets
+                .iter()
+                .copied()
+                .chain([Target::Object(one)])
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             targets(&state, actor, binding, 6),
-            vec![Target::Object(zero), Target::Object(one)]
+            zero_targets
+                .iter()
+                .copied()
+                .chain([Target::Object(one)])
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             targets(&state, actor, binding, 7),
-            vec![
-                Target::Object(zero),
-                Target::Object(one),
-                Target::Object(seven)
-            ]
+            zero_targets
+                .iter()
+                .copied()
+                .chain([Target::Object(one), Target::Object(seven)])
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             targets(&state, actor, binding, i32::MAX),

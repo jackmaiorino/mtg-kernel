@@ -132,7 +132,9 @@ fn change_loyalty_with_origin(
             Ok(crate::standard_cards_v1::scale_counters(state, controller, delta) as u32)
         };
         let amount = original.and_then(|original| {
-            if origin == crate::doubling_season_v48::CounterOriginV48::Effect {
+            if origin == crate::doubling_season_v48::CounterOriginV48::Effect
+                || crate::standard_cards_v1::counter_modifier_doublings_v48(state, controller) > 0
+            {
                 crate::doubling_season_v48::ReplacementInputV48::capture(state, controller)
                     .replaced_loyalty(original)
             } else {

@@ -510,21 +510,43 @@ impl Node {
         self.select_receipt(urgency, Some(scores))
     }
 
-    fn select_receipt(
+    fn select_receipt(&self, urgency: Option<f64>, scores: Option<&mut Vec<Option<f64>>>) -> usize {
+        self.select_evidence_receipt(urgency, self.visits, &self.n, &self.wins, scores)
+    }
+
+    /// UCT guidance from separately accounted natural evidence. This only
+    /// borrows the incoming node's legal edges, tie order and skip mask; it
+    /// cannot change its stored counts or its execution support.
+    pub(crate) fn select_evidence(
         &self,
         urgency: Option<f64>,
+        visits: u64,
+        n: &[u64],
+        wins: &[u64],
+    ) -> usize {
+        self.select_evidence_receipt(urgency, visits, n, wins, None)
+    }
+
+    fn select_evidence_receipt(
+        &self,
+        urgency: Option<f64>,
+        visits: u64,
+        counts: &[u64],
+        wins: &[u64],
         mut scores: Option<&mut Vec<Option<f64>>>,
     ) -> usize {
+        debug_assert_eq!(counts.len(), self.n.len());
+        debug_assert_eq!(wins.len(), self.wins.len());
         if let Some(u) = urgency {
-            let ln = (self.visits.max(2) as f64).ln();
+            let ln = (visits.max(2) as f64).ln();
             let mut best = self.perm[0];
             let mut best_v = f64::NEG_INFINITY;
             for &a in self.perm.iter().filter(|&&a| !self.skipped(a)) {
-                let v = if self.n[a] == 0 {
+                let v = if counts[a] == 0 {
                     u
                 } else {
-                    let n = self.n[a] as f64;
-                    self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt()
+                    let n = counts[a] as f64;
+                    wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt()
                 };
                 if let Some(out) = scores.as_deref_mut() {
                     out[a] = Some(v);
@@ -539,16 +561,16 @@ impl Node {
         if let Some(&a) = self
             .perm
             .iter()
-            .find(|&&a| self.n[a] == 0 && !self.skipped(a))
+            .find(|&&a| counts[a] == 0 && !self.skipped(a))
         {
             return a;
         }
-        let ln = (self.visits.max(2) as f64).ln();
+        let ln = (visits.max(2) as f64).ln();
         let mut best = self.perm[0];
         let mut best_v = f64::NEG_INFINITY;
         for &a in self.perm.iter().filter(|&&a| !self.skipped(a)) {
-            let n = self.n[a] as f64;
-            let v = self.wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt();
+            let n = counts[a] as f64;
+            let v = wins[a] as f64 / n + (UCB_C2 * ln / n).sqrt();
             if let Some(out) = scores.as_deref_mut() {
                 out[a] = Some(v);
             }

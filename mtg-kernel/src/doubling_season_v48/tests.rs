@@ -1415,3 +1415,192 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
         assert_eq!(bytes(&state), before);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn retained_replacement_history_keeps_single_token_initialization_before_entry() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let token_def = crate::card_def::card_id_by_name("Goblin Token").unwrap();
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![ProposedEvent::create_token(token_def, actor)],
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Graveyard),
+        );
+        assert!(sources(&state, actor).is_empty());
+        assert!(requires_successor(&state));
+        validate_token_journals(&state).unwrap();
+        let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+        let donor = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let original = restore(&state);
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            let ctx = crate::effect::ExecCtx::no_targets(source, actor);
+            let start = branch.engine.event_history.len();
+            crate::effect::execute(
+                &EffectOp::CreateTokensDynamic {
+                    token_def,
+                    controller: crate::effect::PlayerRef::Controller,
+                    count: crate::card_def::DynamicValueDef::Fixed(2),
+                    tapped: true,
+                },
+                &ctx,
+                &mut branch,
+            );
+            let created = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::CreateToken {
+                        object,
+                        token_def: actual,
+                        controller,
+                    } if *actual == token_def && *controller == actor => Some(*object),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                created.len(),
+                2,
+                "departed Season must not multiply new tokens"
+            );
+            for object in created {
+                let observed = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == object =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(observed.len(), 1);
+                assert!(
+                    observed[0].snapshot.tapped,
+                    "tapped is an entry characteristic"
+                );
+                assert!(observed[0].snapshot.v4.is_token);
+            }
+            let start = branch.engine.event_history.len();
+            crate::effect::execute(
+                &EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 {
+                    token_def,
+                    count: 2,
+                },
+                &ctx,
+                &mut branch,
+            );
+            let hasty = branch.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::CreateToken { object, .. } => Some(*object),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(hasty.len(), 2);
+            for object in hasty {
+                assert!(crate::engine::has_effective_keyword(
+                    &branch,
+                    object,
+                    Keywords::HASTE
+                ));
+            }
+            let start = branch.engine.event_history.len();
+            let copy =
+                crate::standard_cards_v1::create_token_copy(&mut branch, donor, actor).unwrap();
+            assert_eq!(
+                branch.engine.event_history[start..]
+                    .iter()
+                    .filter(|event| matches!(event, event::CommittedEvent::CreateToken { .. }))
+                    .count(),
+                1
+            );
+            let snapshot = branch.engine.event_history[start..]
+                .iter()
+                .find_map(|event| match event {
+                    event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                        if entry.object == copy =>
+                    {
+                        Some(&entry.snapshot)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert!(snapshot.v4.is_token);
+            assert_eq!(snapshot.card_def, branch.objects.get(donor).card_def);
+            assert!(branch.engine.halted.is_none());
+            validate_token_journals(&branch).unwrap();
+            assert_eq!(restore(&branch), branch);
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+    }
+}
+
+#[test]
+#[cfg(not(any(
+    feature = "limited-fdn-fixtures",
+    feature = "standard-magezero-fixtures"
+)))]
+fn genuine_wall_of_roots_cost_is_undoubled_and_overflow_is_readonly() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let roots = put(&mut state, actor, "Wall of Roots", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(roots, Zone::Battlefield),
+        );
+        assert!(!requires_successor(&state));
+        let before = state.players[actor.index()].mana_pool[ManaColor::G.pool_index()];
+        let original = restore(&state);
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            crate::engine::step(
+                &mut branch,
+                crate::engine::Action::ActivateManaAbility(roots),
+            )
+            .unwrap();
+            assert_eq!(branch.objects.get(roots).counters.minus0_minus1, 1);
+            assert_eq!(
+                branch.players[actor.index()].mana_pool[ManaColor::G.pool_index()],
+                before + 1
+            );
+            assert!(!branch.objects.get(roots).tapped);
+            assert!(!requires_successor(&branch));
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+        // Native storage boundary for the actual printed counter cost, not
+        // a synthetic counter ability or grant grafted on another printing.
+        state.objects.get_mut(roots).counters.minus0_minus1 = i16::MAX;
+        for _ in 0..3 {
+            let mut branch = restore(&state);
+            let before = bytes(&branch);
+            assert!(crate::engine::step(
+                &mut branch,
+                crate::engine::Action::ActivateManaAbility(roots)
+            )
+            .is_err());
+            assert_eq!(bytes(&branch), before);
+        }
+    }
+}

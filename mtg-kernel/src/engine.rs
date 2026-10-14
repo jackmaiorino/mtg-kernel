@@ -8780,6 +8780,35 @@ fn activate_mana_ability_for(
             return Err("mana ability result exceeds the pool capacity".to_string());
         }
 
+        // A counter in a mana-ability cost is not an effect counter. Only
+        // an actual other counter replacement can make Season applicable
+        // (614.16). Quote native storage before any payment or activation.
+        let minus_toughness_after = if rich.cost == ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        {
+            let count = if crate::doubling_season_v48::requires_successor(state) {
+                crate::doubling_season_v48::counter_amount(
+                    state,
+                    source,
+                    player,
+                    crate::doubling_season_v48::CounterOriginV48::Cost,
+                    1,
+                )?
+            } else {
+                1
+            };
+            Some(
+                state
+                    .objects
+                    .get(source)
+                    .counters
+                    .minus0_minus1
+                    .checked_add(i16::try_from(count).map_err(|_| "-0/-1 counter cost overflow")?)
+                    .ok_or("-0/-1 counter count overflow")?,
+            )
+        } else {
+            None
+        };
+
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
         }
@@ -8799,10 +8828,8 @@ fn activate_mana_ability_for(
                 );
             }
             ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-                let counters = &mut state.objects.get_mut(source).counters.minus0_minus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+                state.objects.get_mut(source).counters.minus0_minus1 =
+                    minus_toughness_after.expect("counter cost was preflighted");
             }
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
@@ -20886,7 +20913,7 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if !crate::doubling_season_v48::sources(state, player).is_empty() {
+    if crate::doubling_season_v48::requires_successor(state) {
         // Playing a land remains a special action even under a resolution-time
         // play permission. Its entry is not an effect placing counters.
         let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
@@ -21983,6 +22010,31 @@ fn push_paid_activation(
         return;
     }
     crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
+    // Final targeting validates mandatory paid ownership. Ajani's original
+    // payment and use must be recorded before that finalized-row boundary.
+    let ajani_paid = frozen.ajani_payment_owner.is_some();
+    if ajani_paid {
+        if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+            state
+                .objects
+                .get_mut(pending.source)
+                .v4
+                .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+        }
+        if crate::ajani_full_v42::lifecycle::record_paid(
+            state,
+            stack_item_id,
+            frozen.ajani_payment_owner,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    }
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -21994,26 +22046,14 @@ fn push_paid_activation(
     // state. Never stamp the old activation onto Lorien's new graveyard
     // incarnation (or any sacrificed/exiled source); the stack provenance
     // above owns that historical fact instead.
-    if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+    if !ajani_paid
+        && state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count
+    {
         state
             .objects
             .get_mut(pending.source)
             .v4
             .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
-    }
-
-    if crate::ajani_full_v42::lifecycle::record_paid(
-        state,
-        stack_item_id,
-        frozen.ajani_payment_owner,
-    )
-    .is_err()
-    {
-        state.engine.halted = Some((
-            UnsupportedMechanic::InvalidEffectContinuation,
-            pending.source,
-        ));
-        return;
     }
 
     // No ability in this increment's pool triggers off another ability

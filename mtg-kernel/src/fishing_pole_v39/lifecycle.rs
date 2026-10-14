@@ -641,7 +641,7 @@ pub(crate) fn fish_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Fish Token")
         .ok_or("Fishing requires actual no-ability Fish Token")?;
     let d = &CARD_DEFS[usize::from(id)];
-    if d.object_name != "Fish"
+    if d.object_name != "Fish Token"
         || !d.is_executable()
         || !d.has_full_support()
         || !d.is_token
