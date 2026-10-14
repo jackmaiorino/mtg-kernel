@@ -749,6 +749,27 @@ fn genuine_return_stun_primitive_uses_returned_owner_not_original_ability_contro
                     branch.objects.get(source).counters.stun,
                     if same_owner { 4 } else { 2 }
                 );
+                let observed: Vec<_> = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == source
+                                && entry.snapshot.zone_change_count
+                                    == branch.objects.get(source).zone_change_count =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(observed.len(), 1);
+                assert_eq!(
+                    observed[0].snapshot.counters.stun,
+                    if same_owner { 4 } else { 2 }
+                );
+                assert!(observed[0].snapshot.tapped);
             }
             assert_eq!(state, restored);
         }
@@ -967,6 +988,50 @@ fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_
             crate::arahbo_v1::validate_state(&branch).unwrap();
             crate::doubling_season_v48::validate_token_journals(&branch).unwrap();
             assert_eq!(restore(&branch), branch);
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_stun_return_overflow_leaves_original_graveyard_incarnation_unchanged() {
+    use crate::effect::ExecCtx;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let contract = AbilitySourceContractV4::capture(&state, source);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.ability_source_contract = Some(contract);
+        let original = restore(&state);
+        for _ in 0..3 {
+            let mut branch = restore(&original);
+            crate::effect::execute(
+                &EffectOp::ReturnSourceFromGraveyardTappedWithStunCounters { stun: i16::MAX },
+                &ctx,
+                &mut branch,
+            );
+            assert_eq!(
+                branch.engine.halted,
+                Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source
+                ))
+            );
+            branch.engine.halted = None;
+            assert_eq!(bytes(&branch), bytes(&original));
         }
     }
 }

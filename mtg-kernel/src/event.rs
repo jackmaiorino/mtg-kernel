@@ -119,6 +119,9 @@ pub struct ZoneChangeProposed {
     /// Actual played lands retain their rule-action counter origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_origin_v48: Option<crate::doubling_season_v48::CounterOriginV48>,
+    /// Already quoted effect stun placement, installed as this permanent enters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_stun_v48: Option<i16>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -219,6 +222,7 @@ impl ProposedEvent {
             battlefield_face_index: None,
             battlefield_controller: None,
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -233,6 +237,7 @@ impl ProposedEvent {
             battlefield_face_index: None,
             battlefield_controller: None,
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -247,6 +252,7 @@ impl ProposedEvent {
             battlefield_face_index: None,
             battlefield_controller: None,
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -264,6 +270,7 @@ impl ProposedEvent {
             battlefield_face_index: None,
             battlefield_controller: None,
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -291,6 +298,7 @@ impl ProposedEvent {
             battlefield_face_index: None,
             battlefield_controller: None,
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -321,6 +329,7 @@ impl ProposedEvent {
             battlefield_face_index: Some(face_index),
             battlefield_controller: Some(controller),
             counter_origin_v48: None,
+            battlefield_stun_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -2928,10 +2937,17 @@ fn commit_with_entry_batch_and_source_color(
                     authority_batch
                         .as_ref()
                         .map(|batch| batch.observers.as_slice()),
-                    entering_characteristics
-                        .as_ref()
-                        .filter(|(object, _)| *object == z.object)
-                        .map(|(_, face)| *face),
+                    {
+                        let mut entry = entering_characteristics
+                            .as_ref()
+                            .filter(|(object, _)| *object == z.object)
+                            .map(|(_, face)| *face);
+                        if let Some(stun) = z.battlefield_stun_v48 {
+                            entry.get_or_insert_with(Default::default).stun_counters_v48 =
+                                Some(stun);
+                        }
+                        entry
+                    },
                     counter_input.as_ref(),
                 ),
             );
@@ -4363,6 +4379,9 @@ fn commit_zone_change(
                 id,
             ));
             return;
+        }
+        if let Some(stun) = entering_characteristics.and_then(|entry| entry.stun_counters_v48) {
+            state.objects.get_mut(id).counters.stun = stun;
         }
         if let Some(count) = entering_characteristics.and_then(|entry| entry.time_counters) {
             let controller = state.objects.get(id).controller;

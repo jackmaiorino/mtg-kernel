@@ -17698,24 +17698,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     ));
                     return;
                 };
-                let generation = live.zone_change_count;
-                event::propose_and_commit(
-                    state,
-                    event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source),
-                );
-                let returned = state.objects.get_mut(contract.source);
-                if returned.zone == Zone::Battlefield
-                    && generation.checked_add(1) == Some(returned.zone_change_count)
-                {
-                    let Some(total) = returned.counters.stun.checked_add(placed) else {
-                        state.engine.halted = Some((
-                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                            ctx.source,
-                        ));
-                        return;
-                    };
-                    returned.counters.stun = total;
+                let mut entry =
+                    event::ProposedEvent::zone_change_to_battlefield_tapped(contract.source);
+                if let event::ProposedEvent::ZoneChange(change) = &mut entry {
+                    change.battlefield_stun_v48 = Some(placed);
                 }
+                // This effect says "with" counters. Replay retains the actual
+                // quoted proposal, and entry observers see the initialized total.
+                event::propose_and_commit(state, entry);
                 return;
             }
             event::propose_and_commit(

@@ -137,6 +137,7 @@ pub(crate) struct EntryCharacteristicsV1 {
     pub face_down: Option<crate::state::FaceDownV1>,
     pub x_counters: Option<i32>,
     pub time_counters: Option<u8>,
+    pub stun_counters_v48: Option<i16>,
     pub attached_to: Option<crate::state::ObjectLinkV4>,
     pub bestowed: bool,
 }
@@ -266,6 +267,7 @@ pub(crate) fn acquire_permanent_entry(
             face_down,
             x_counters,
             time_counters,
+            stun_counters_v48: None,
             attached_to,
             bestowed: bestowed && targets_legal,
         },
