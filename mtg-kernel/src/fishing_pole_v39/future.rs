@@ -1188,3 +1188,54 @@ fn actual_mixed_copied_pole_untap_original_controller_history_and_human_restore_
         assert_eq!(state, restored);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_season_bait_and_complete_fish_roster_original_controller_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, host, pole) = fixture(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        add(&mut state, actor, host, pole);
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(branch.objects.get(pole).counters.bait, 2);
+        }
+        assert_eq!(state, restored);
+        assert!(engine::attempt_untap(&mut state, host));
+        let mut restored = snapshot(&state);
+        for branch in [&mut state, &mut restored] {
+            finish(branch);
+            assert_eq!(branch.objects.get(pole).counters.bait, 1);
+            assert_eq!(fish(branch, actor), 2);
+            lifecycle::validate_state(branch).unwrap();
+            crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+        }
+        assert_eq!(state, restored);
+        let saved = state.engine.event_history.clone();
+        let mut forged = snapshot(&state);
+        let creation = forged
+            .engine
+            .event_history
+            .iter_mut()
+            .rev()
+            .find_map(|event| match event {
+                CommittedEvent::TokenCreationReplacementV48 { creation } => Some(creation),
+                _ => None,
+            })
+            .unwrap();
+        creation.created.pop();
+        let before = serde_json::to_vec(&forged).unwrap();
+        assert!(engine::step(&mut forged, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        assert_eq!(state.engine.event_history, saved);
+    }
+}

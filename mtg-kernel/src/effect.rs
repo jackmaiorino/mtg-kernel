@@ -17384,6 +17384,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             };
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(incubator, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        plus_one_counters: i32::from(*amount),
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(incubator, ctx.controller),
@@ -17542,6 +17553,18 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
+                return;
+            }
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.entry_tapped = true;
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        attacking: true,
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
                 return;
             }
             event::propose_and_commit(
@@ -18232,6 +18255,20 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let host_generation = state.objects.get(host).zone_change_count;
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        attached_to: Some(crate::state::ObjectLinkV4 {
+                            object: host,
+                            zone_change_count: host_generation,
+                        }),
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             event::propose_and_commit(
                 state,
                 event::ProposedEvent::create_token(*token_def, ctx.controller),
@@ -18555,6 +18592,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             event::propose_and_commit_batch(state, events);
         }
         EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { token_def, count } => {
+            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+                let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
+                if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        haste_until_end_of_turn: true,
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal; usize::from(*count)]);
+                return;
+            }
             for _ in 0..*count {
                 event::propose_and_commit(
                     state,

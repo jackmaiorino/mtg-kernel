@@ -160,6 +160,8 @@ pub struct CreateTokenProposed {
     pub entry_face_index: Option<u8>,
     #[serde(default, skip_serializing_if = "token_entry_untapped_v48")]
     pub entry_tapped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
     pub touched_by: Vec<ReplacementId>,
 }
 fn token_entry_untapped_v48(value: &bool) -> bool {
@@ -357,6 +359,7 @@ impl ProposedEvent {
             controller,
             entry_face_index: None,
             entry_tapped: false,
+            initialization_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -366,6 +369,7 @@ impl ProposedEvent {
             controller,
             entry_face_index: Some(1),
             entry_tapped: false,
+            initialization_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -2947,6 +2951,12 @@ fn commit_with_entry_batch_and_source_color(
                 attachments: Vec::new(),
                 v4: {
                     let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
+                    if t.initialization_v48
+                        .as_ref()
+                        .is_some_and(|init| init.copied)
+                    {
+                        v4.is_token = true;
+                    }
                     v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
@@ -2996,7 +3006,60 @@ fn commit_with_entry_batch_and_source_color(
                     },
                 );
             state.objects.get_mut(object).tapped = enters_tapped;
+            if let Some(init) = &t.initialization_v48 {
+                if let Some(host) = init.attached_to {
+                    // Legality and incarnation were checked for the whole roster
+                    // before any entry. This is untargeted attachment on entry.
+                    if state
+                        .attach_object_exact(object, 0, host.object, host.zone_change_count)
+                        .is_err()
+                    {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
+                        return;
+                    }
+                }
+                if init.haste_until_end_of_turn {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                            object_id: object,
+                            object_zone_change_count: 0,
+                            layer: crate::engine::Layers::ABILITY_ADDING,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            keywords: crate::card_def::Keywords::HASTE,
+                        },
+                    );
+                }
+                if init.attacking
+                    && state.engine.combat.attackers_declared
+                    && state.active_player == t.controller
+                    && matches!(
+                        state.step,
+                        crate::state::Step::DeclareAttackers
+                            | crate::state::Step::DeclareBlockers
+                            | crate::state::Step::CombatDamage
+                    )
+                {
+                    state.engine.combat.attackers.push(object);
+                }
+            }
             initialize_entry_counters(state, object, false, counter_input.as_ref());
+            if let Some(init) = &t.initialization_v48 {
+                if init.plus_one_counters > 0 {
+                    let amount = crate::doubling_season_v48::entry_amount(
+                        state,
+                        counter_input.as_ref(),
+                        t.controller,
+                        init.plus_one_counters,
+                    )
+                    .expect("initialized token counter roster preflighted");
+                    state.objects.get_mut(object).counters.plus1_plus1 += amount;
+                }
+            }
             if crate::ajani_full_v42::selected_definition(t.token_def) {
                 crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
@@ -3372,6 +3435,13 @@ fn commit_batch_survivors(
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
 ) {
+    if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
         Ok(true) => {}
         Ok(false) => return,

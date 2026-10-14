@@ -125,3 +125,29 @@ counter input/proof and extra-Fish roster, remaining returned-stun/finality/time
 initialization, the pre-entry overflow transaction, played-land rule tagging,
 special token initialization/attachments/attacking/copies/haste, expanded token
 original-world proof completeness, and distinct safe V48/mixed transport.
+
+
+## Fishing and special token initialization checkpoint
+
+Fishing samples the actual Pole recipient controller's replacement input at
+removal, checks placement capacity while the full authentic row is live, and
+binds the completed bait balance to that original input. Untap removes exactly
+one counter; all Fish produced by the one original creation request are required
+by the completed operation. Existing original Pole incarnation/control semantics
+remain. The optional removal field is omitted on every old path.
+
+Creation proposals now carry a distinct optional initialization payload. The
+shared creator installs copied-token status, haste EOT, tapped/attacking state,
+Role host attachment and Incubate counters before entry observers. The whole
+roster validates attachment incarnation and checked initialized counter capacity
+before any member enters. Old proposals omit the payload. Season-enabled copy,
+haste, Role, attacking and Incubate executors select this path; their old absent
+paths remain. Actual copies retain the original shown face and every expanded
+member is a token when entry observers test nontoken status.
+
+Registered two-token initialization/counter-occurrence fixtures and ignored real
+Season haste/copy/Fishing paid/untap/extra-Fish/serialized omitted-member groups
+are prepared and unrun. Complete delayed sacrifice-copy tails, source-to-new-token
+attachment choice, exhaustive entry overflow, other counter kinds, independent
+original-world proof and the V48 mixed consumer are still active assigned work.
+No new registration, ID, profile, native, gameplay or Full claim is made.

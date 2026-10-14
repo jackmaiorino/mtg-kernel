@@ -15255,6 +15255,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {

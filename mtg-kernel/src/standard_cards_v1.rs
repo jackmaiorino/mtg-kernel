@@ -1246,6 +1246,24 @@ pub(crate) fn create_token_copy_without_banner_owner(
 ) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
+    if !crate::doubling_season_v48::sources(state, controller).is_empty() {
+        let mut proposal = ProposedEvent::create_token(card_def, controller);
+        if let ProposedEvent::CreateToken(token) = &mut proposal {
+            token.entry_face_index = (face != 0).then_some(face);
+            token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                copied: true,
+                ..Default::default()
+            });
+        }
+        let start = state.engine.event_history.len();
+        event::propose_and_commit_batch(state, vec![proposal]);
+        return state.engine.event_history[start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            });
+    }
     let start = state.engine.event_log.len();
     event::propose_and_commit(state, ProposedEvent::create_token(card_def, controller));
     let created = state.engine.event_log[start..]

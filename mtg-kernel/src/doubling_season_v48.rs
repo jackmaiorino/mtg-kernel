@@ -241,6 +241,18 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
     })
 }
 
+/// Properties of the creation effect, installed on every expanded token
+/// before the first entry observer is captured. None leaves old proposals exact.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenEntryV48 {
+    pub copied: bool,
+    pub haste_until_end_of_turn: bool,
+    pub attacking: bool,
+    pub attached_to: Option<crate::state::ObjectLinkV4>,
+    pub plus_one_counters: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenTemplateV48 {
@@ -248,6 +260,8 @@ pub struct TokenTemplateV48 {
     pub controller: PlayerId,
     pub face: Option<u8>,
     pub tapped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization: Option<TokenEntryV48>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -305,6 +319,67 @@ pub(crate) fn expected_plus_at(
     }
 }
 
+pub(crate) fn preflight_token_initialization(
+    state: &GameState,
+    events: &[crate::event::ProposedEvent],
+) -> Result<(), String> {
+    for event in events {
+        let crate::event::ProposedEvent::CreateToken(token) = event else {
+            continue;
+        };
+        let Some(init) = &token.initialization_v48 else {
+            continue;
+        };
+        let def = CARD_DEFS
+            .get(usize::from(token.token_def))
+            .ok_or("token blueprint absent")?;
+        if init.plus_one_counters < 0 {
+            return Err("negative initialized token counters".into());
+        }
+        let input = ReplacementInputV48::capture(state, token.controller);
+        let fixed = def
+            .enters_with_plus_one_counters
+            .filter(|entry| !entry.if_kicked)
+            .map_or(0, |entry| entry.count);
+        let fixed = entry_amount(state, Some(&input), token.controller, fixed)?;
+        let additional = entry_amount(
+            state,
+            Some(&input),
+            token.controller,
+            init.plus_one_counters,
+        )?;
+        fixed
+            .checked_add(additional)
+            .ok_or("initialized token counters overflow")?;
+        if let Some(host) = init.attached_to {
+            let live = state
+                .objects
+                .try_get(host.object)
+                .ok_or("token Aura host absent")?;
+            let attachment = def
+                .attachment
+                .filter(|a| a.is_creature_aura())
+                .ok_or("attached token is not Aura")?;
+            if live.zone != Zone::Battlefield
+                || live.zone_change_count != host.zone_change_count
+                || !crate::engine::object_has_type(state, host.object, attachment.enchanted_type())
+                || (def.colors.len() == 1
+                    && crate::engine::has_effective_keyword(
+                        state,
+                        host.object,
+                        Keywords::PROTECTION_FROM_MONOCOLORED,
+                    ))
+            {
+                return Err("token Aura original attachment is illegal".into());
+            }
+        }
+        if init.attacking && !def.types.contains(&CardType::Creature) {
+            return Err("noncreature token cannot enter attacking".into());
+        }
+    }
+    Ok(())
+}
+
 /// Expand against one unchanged pre-event board. Entry of an additional
 /// replacement source cannot change later requests in this roster.
 pub(crate) fn expand_tokens(
@@ -324,6 +399,7 @@ pub(crate) fn expand_tokens(
                     controller: t.controller,
                     face: t.entry_face_index,
                     tapped: t.entry_tapped,
+                    initialization: t.initialization_v48.clone(),
                 },
                 replacement,
             });

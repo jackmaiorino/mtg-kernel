@@ -417,3 +417,110 @@ fn actual_effect_lore_and_rule_lore_are_distinct_counter_placements() {
         assert_eq!(state, restored);
     }
 }
+
+#[test]
+fn genuine_initialized_token_batch_haste_and_copy_are_present_at_entry() {
+    let token = CARD_DEFS
+        .iter()
+        .position(|d| d.is_token && d.has_full_support() && d.types.contains(&CardType::Creature))
+        .unwrap() as u16;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let mut proposal = ProposedEvent::create_token(token, actor);
+        if let ProposedEvent::CreateToken(token) = &mut proposal {
+            token.entry_tapped = true;
+            token.initialization_v48 = Some(TokenEntryV48 {
+                copied: true,
+                haste_until_end_of_turn: true,
+                plus_one_counters: 3,
+                ..Default::default()
+            });
+        }
+        let start = state.engine.event_history.len();
+        event::propose_and_commit_batch(&mut state, vec![proposal.clone(), proposal]);
+        let created = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(created.len(), 2);
+        for object in created {
+            assert!(state.objects.get(object).tapped);
+            assert!(state.objects.get(object).v4.is_token);
+            assert_eq!(state.objects.get(object).counters.plus1_plus1, 3);
+            assert!(crate::engine::has_effective_keyword(
+                &state,
+                object,
+                Keywords::HASTE
+            ));
+            assert_eq!(state.engine.event_history[start..].iter().filter(|event| matches!(event,
+                event::CommittedEvent::PlusOneCountersAdded {object: actual,count:3,..} if *actual == object)).count(), 1);
+        }
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_doubled_haste_tokens_and_copied_nontoken_all_initialize_before_observers() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+        let token = crate::card_def::card_id_by_name("Goblin Token").unwrap();
+        let ctx = crate::effect::ExecCtx::no_targets(source, actor);
+        let start = state.engine.event_history.len();
+        crate::effect::execute(
+            &EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 {
+                token_def: token,
+                count: 2,
+            },
+            &ctx,
+            &mut state,
+        );
+        let created = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(created.len(), 4);
+        for object in created {
+            assert!(crate::engine::has_effective_keyword(
+                &state,
+                object,
+                Keywords::HASTE
+            ));
+        }
+        let original = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let start = state.engine.event_history.len();
+        crate::standard_cards_v1::create_token_copy(&mut state, original, actor).unwrap();
+        let copies = state.engine.event_history[start..]
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 2);
+        for object in copies {
+            assert!(state.objects.get(object).v4.is_token);
+            assert_eq!(
+                state.objects.get(object).card_def,
+                state.objects.get(original).card_def
+            );
+        }
+        assert_eq!(restore(&state), state);
+    }
+}
