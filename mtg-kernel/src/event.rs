@@ -1432,6 +1432,27 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
 }
 
+fn initialize_entry_lore_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) -> Result<(), String> {
+    let live = state.objects.get(object);
+    let def = &crate::card_def::CARD_DEFS[usize::from(live.card_def)];
+    if !(crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty()))
+        || live.v4.face_down_v1.is_some()
+        || live.v4.face_index != 0
+        || def.saga.is_none()
+    {
+        return Ok(());
+    }
+    let count = crate::doubling_season_v48::entry_amount(state, input, live.controller, 1)?;
+    state.objects.get_mut(object).counters.lore =
+        i16::try_from(count).map_err(|_| "entry lore count overflow")?;
+    Ok(())
+}
+
 fn initialize_entry_counters(
     state: &mut GameState,
     object: ObjectId,
@@ -2635,9 +2656,13 @@ fn commit_with_entry_batch_and_source_color(
     let (entry_context, frozen_source_color, frozen_counter_input) = entry_context;
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
+    let season_entry_active = crate::doubling_season_v48::requires_successor(state)
+        || counter_input
+            .as_ref()
+            .is_some_and(|input| !input.seasons.is_empty());
     if let Some(input) = counter_input.as_ref() {
-        let (definition, kicked, face_down, x) = match &event {
-            ProposedEvent::CreateToken(token) => (token.token_def, false, false, None),
+        let (definition, kicked, face_down, x, time) = match &event {
+            ProposedEvent::CreateToken(token) => (token.token_def, false, false, None, None),
             ProposedEvent::ZoneChange(change) => {
                 let live = state.objects.get(change.object);
                 let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
@@ -2647,6 +2672,7 @@ fn commit_with_entry_batch_and_source_color(
                         && state.engine.pending_kicked_source == Some(change.object),
                     characteristics.is_some_and(|entry| entry.face_down.is_some()),
                     characteristics.and_then(|entry| entry.x_counters),
+                    characteristics.and_then(|entry| entry.time_counters),
                 )
             }
             _ => unreachable!("entry input only exists for entering permanents"),
@@ -2655,7 +2681,7 @@ fn commit_with_entry_batch_and_source_color(
             state,
             definition,
             input,
-            (kicked, x, face_down),
+            (kicked, x, face_down, time),
         )
         .is_err()
         {
@@ -3103,6 +3129,13 @@ fn commit_with_entry_batch_and_source_color(
                 }
             }
             initialize_entry_counters(state, object, false, counter_input.as_ref());
+            if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
             if let Some(init) = &t.initialization_v48 {
                 if init.plus_one_counters > 0 {
                     let amount = crate::doubling_season_v48::entry_amount(
@@ -3174,19 +3207,24 @@ fn commit_with_entry_batch_and_source_color(
             }
         }
     };
-    let saga_entered = matches!(
-        committed,
+    let saga_source = match &committed {
         CommittedEvent::ZoneChange {
             object,
             to: Zone::Battlefield,
             ..
-        } if state.objects.get(object).v4.face_index == 0
-            && crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
-                .saga
-                .is_some()
-    );
-    let saga_source = match &committed {
-        CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
+        }
+        | CommittedEvent::CreateToken { object, .. }
+            if state.objects.get(*object).v4.face_index == 0
+                && (!season_entry_active
+                    || state.objects.get(*object).v4.face_down_v1.is_none())
+                && crate::card_def::CARD_DEFS[usize::from(state.objects.get(*object).card_def)]
+                    .saga
+                    .is_some()
+                && (matches!(&committed, CommittedEvent::ZoneChange { .. })
+                    || season_entry_active) =>
+        {
+            Some(*object)
+        }
         _ => None,
     };
     let entry_counter_object = match &committed {
@@ -3309,7 +3347,25 @@ fn commit_with_entry_batch_and_source_color(
         log_plus_one_counters_added(state, object, controller, count);
     }
     if let Some(source) = saga_source {
-        add_lore_counters(state, source, 1).expect("new Saga counters fit");
+        if season_entry_active {
+            let live = state.objects.get(source);
+            let chapters = crate::card_def::CARD_DEFS[usize::from(live.card_def)]
+                .saga
+                .as_ref()
+                .filter(|_| {
+                    crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                })
+                .map_or(0, |saga| saga.chapter_effects.len());
+            let count = live
+                .counters
+                .lore
+                .min(i16::try_from(chapters).unwrap_or(i16::MAX));
+            for chapter in 1..=count {
+                log_saga_chapter(state, source, chapter as u8);
+            }
+        } else {
+            add_lore_counters(state, source, 1).expect("new Saga counters fit");
+        }
     }
 }
 
@@ -4291,6 +4347,33 @@ fn commit_zone_change(
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked, counter_input);
+        }
+        if initialize_entry_lore_v48(state, id, counter_input).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                id,
+            ));
+            return;
+        }
+        if let Some(count) = entering_characteristics.and_then(|entry| entry.time_counters) {
+            let controller = state.objects.get(id).controller;
+            let placed = crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input,
+                controller,
+                i32::from(count),
+            )
+            .and_then(|n| u8::try_from(n).map_err(|_| "entry time counter overflow".into()));
+            match placed {
+                Ok(placed) => state.objects.get_mut(id).v4.time_counters_v1 = placed,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
         }
         if let Some(count) = entering_characteristics.and_then(|entry| entry.x_counters) {
             let controller = state.objects.get(id).controller;
@@ -5376,6 +5459,73 @@ mod arahbo_entry_tests {
             assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
             settle(&mut state);
             assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod season_time_entry_tests_v48 {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+    #[test]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn genuine_time_entry_primitive_preflights_original_board_before_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for seasons in [1, 6] {
+                let mut state = ready_state_for(actor);
+                for _ in 0..seasons {
+                    let source = put(&mut state, actor, "Doubling Season", Zone::Hand);
+                    propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                    assert!(state.engine.halted.is_none());
+                }
+                let entrant = put(&mut state, actor, "Forest", Zone::Hand);
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    let before = branch.clone();
+                    // Actual central entry primitive on a physical permanent;
+                    // this does not give Forest a fictional Impending ability.
+                    commit_with_ability_lki_and_entry_batch(
+                        branch,
+                        ProposedEvent::zone_change(entrant, Zone::Battlefield),
+                        None,
+                        None,
+                        None,
+                        (None, None),
+                        (
+                            Some((
+                                entrant,
+                                crate::garruks_uprising_v1::EntryCharacteristicsV1 {
+                                    time_counters: Some(4),
+                                    ..Default::default()
+                                },
+                            )),
+                            false,
+                        ),
+                    );
+                    if seasons == 1 {
+                        assert!(branch.engine.halted.is_none());
+                        assert_eq!(branch.objects.get(entrant).zone, Zone::Battlefield);
+                        assert_eq!(branch.objects.get(entrant).v4.time_counters_v1, 8);
+                    } else {
+                        assert_eq!(
+                            branch.engine.halted.as_ref().map(|x| x.0),
+                            Some(crate::engine::UnsupportedMechanic::InvalidEffectContinuation)
+                        );
+                        branch.engine.halted = None;
+                        assert_eq!(*branch, before);
+                    }
+                }
+                assert_eq!(state, restored);
+            }
         }
     }
 }

@@ -15731,8 +15731,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     {
         state.objects.get_mut(item.source).v4.warped_v1 = true;
     }
-    // Impending: it enters with its time counters.
-    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+    // The V48 entry owner has already installed these before entry observers.
+    // Keep the absent-component path unchanged.
+    if !initialized_entry
+        .as_ref()
+        .is_some_and(|owner| owner.initializes_time_counters())
+        && item.v4.cast_method == Some(CastMethodV4::Alternative)
         && state.objects.get(item.source).zone == Zone::Battlefield
     {
         if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =

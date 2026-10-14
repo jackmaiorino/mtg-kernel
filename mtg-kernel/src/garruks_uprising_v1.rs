@@ -136,6 +136,7 @@ fn enabled() -> bool {
 pub(crate) struct EntryCharacteristicsV1 {
     pub face_down: Option<crate::state::FaceDownV1>,
     pub x_counters: Option<i32>,
+    pub time_counters: Option<u8>,
     pub attached_to: Option<crate::state::ObjectLinkV4>,
     pub bestowed: bool,
 }
@@ -149,7 +150,9 @@ pub(crate) fn acquire_permanent_entry(
     item: &StackItem,
     targets_legal: bool,
 ) -> Result<Option<PermanentEntryOwnerV1>, String> {
-    if !(enabled() || crate::arahbo_v1::enabled())
+    if !(enabled()
+        || crate::arahbo_v1::enabled()
+        || crate::doubling_season_v48::requires_successor(state))
         || item.kind != crate::state::StackItemKind::Spell
         || item.inline_effect.is_some()
         || item.v4.cast_method == Some(crate::state::CastMethodV4::Omen)
@@ -158,6 +161,18 @@ pub(crate) fn acquire_permanent_entry(
     }
     let live = state.objects.get(item.source);
     let def = &CARD_DEFS[usize::from(live.card_def)];
+    let time_counters = if crate::doubling_season_v48::requires_successor(state)
+        && item.v4.cast_method == Some(crate::state::CastMethodV4::Alternative)
+    {
+        def.alt_cost.and_then(|alt| match alt.condition {
+            crate::card_def::AltCostCondition::ImpendingFromHand { time_counters } => {
+                Some(time_counters)
+            }
+            _ => None,
+        })
+    } else {
+        None
+    };
     let bestowed = item.v4.cast_method == Some(crate::state::CastMethodV4::Bestow);
     let disguised = item.v4.cast_method == Some(crate::state::CastMethodV4::Alternative)
         && def.alt_cost.is_some_and(|alt| {
@@ -183,7 +198,7 @@ pub(crate) fn acquire_permanent_entry(
         Some(EffectOp::MoveObject {
             object: crate::effect::ObjectRef::ThisSource,
             to_zone: Zone::Battlefield,
-        }) if disguised => (None, None),
+        }) if disguised || time_counters.is_some() => (None, None),
         Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters) => {
             (Some(i32::from(item.v4.x_value)), None)
         }
@@ -242,7 +257,7 @@ pub(crate) fn acquire_permanent_entry(
         state,
         live.card_def,
         &counter_input,
-        (item.kicked, x_counters, disguised),
+        (item.kicked, x_counters, disguised, time_counters),
     )?;
     Ok(Some(PermanentEntryOwnerV1 {
         item: item.clone(),
@@ -250,12 +265,16 @@ pub(crate) fn acquire_permanent_entry(
         characteristics: EntryCharacteristicsV1 {
             face_down,
             x_counters,
+            time_counters,
             attached_to,
             bestowed: bestowed && targets_legal,
         },
     }))
 }
 impl PermanentEntryOwnerV1 {
+    pub(crate) fn initializes_time_counters(&self) -> bool {
+        self.characteristics.time_counters.is_some()
+    }
     pub(crate) fn entering_characteristics(
         &self,
         state: &GameState,

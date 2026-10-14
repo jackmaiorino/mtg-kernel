@@ -226,12 +226,12 @@ pub(crate) fn preflight_entry_definition(
     state: &GameState,
     definition: u16,
     input: &ReplacementInputV48,
-    attributes: (bool, Option<i32>, bool),
+    attributes: (bool, Option<i32>, bool, Option<u8>),
 ) -> Result<(), String> {
     if input.seasons.is_empty() {
         return Ok(());
     }
-    let (kicked, x, face_down) = attributes;
+    let (kicked, x, face_down, time) = attributes;
     if face_down {
         return Ok(());
     }
@@ -257,6 +257,15 @@ pub(crate) fn preflight_entry_definition(
         }
     }
     let _ = plus;
+    if let Some(time) = time {
+        u8::try_from(entry_amount(
+            state,
+            Some(input),
+            input.controller,
+            i32::from(time),
+        )?)
+        .map_err(|_| "entry time counter storage overflow")?;
+    }
     if let Some(loyalty) = def.starting_loyalty {
         entry_loyalty_amount(state, Some(input), input.controller, loyalty)?;
     }
@@ -290,7 +299,7 @@ pub(crate) fn preflight_entry_roster(
             }
             _ => unreachable!(),
         };
-        preflight_entry_definition(state, definition, &input, (kicked, None, face_down))?;
+        preflight_entry_definition(state, definition, &input, (kicked, None, face_down, None))?;
     }
     Ok(())
 }
