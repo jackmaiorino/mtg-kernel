@@ -6132,7 +6132,7 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
-                crate::planeswalker_v1::change_loyalty(state, source, *delta);
+                crate::planeswalker_v1::pay_loyalty_cost(state, source, *delta);
             }
             CostComponent::SacrificeCreatureOrPayMana(_) => return None,
             CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
@@ -8780,6 +8780,35 @@ fn activate_mana_ability_for(
             return Err("mana ability result exceeds the pool capacity".to_string());
         }
 
+        // A counter in a mana-ability cost is not an effect counter. Only
+        // an actual other counter replacement can make Season applicable
+        // (614.16). Quote native storage before any payment or activation.
+        let minus_toughness_after = if rich.cost == ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        {
+            let count = if crate::doubling_season_v48::requires_successor(state) {
+                crate::doubling_season_v48::counter_amount(
+                    state,
+                    source,
+                    player,
+                    crate::doubling_season_v48::CounterOriginV48::Cost,
+                    1,
+                )?
+            } else {
+                1
+            };
+            Some(
+                state
+                    .objects
+                    .get(source)
+                    .counters
+                    .minus0_minus1
+                    .checked_add(i16::try_from(count).map_err(|_| "-0/-1 counter cost overflow")?)
+                    .ok_or("-0/-1 counter count overflow")?,
+            )
+        } else {
+            None
+        };
+
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
         }
@@ -8799,10 +8828,8 @@ fn activate_mana_ability_for(
                 );
             }
             ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-                let counters = &mut state.objects.get_mut(source).counters.minus0_minus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+                state.objects.get_mut(source).counters.minus0_minus1 =
+                    minus_toughness_after.expect("counter cost was preflighted");
             }
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
@@ -9287,6 +9314,14 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+        || crate::doubling_season_v48::validate_token_journals(state).is_err()
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::fiendish_panda_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9370,6 +9405,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::high_society_hunter_custody_v45::validate(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -13533,6 +13574,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
     crate::high_society_hunter_custody_v45::publish(state, &finalized)?;
     crate::fiendish_panda_v1::custody::publish(state, &finalized)?;
+    crate::bloodthirsty_conqueror_v49::custody::publish(state, &finalized)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -13750,6 +13792,11 @@ fn triggered_stack_item_expected_target_spec(
     }
 
     crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::bloodthirsty_conqueror_v49::validate_source(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::fishing_pole_v39::lifecycle::validate_source(
         state,
@@ -14619,6 +14666,8 @@ pub(crate) fn counter_stack_item_by_id(
     let hunter_counter_owner =
         crate::high_society_hunter_custody_v45::acquire(state, &item, false, true)?;
     let panda_counter_owner = crate::fiendish_panda_v1::custody::acquire(state, &item)?;
+    let conqueror_counter_owner =
+        crate::bloodthirsty_conqueror_v49::custody::acquire(state, &item)?;
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     let gourmand_counter_owner =
         crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
@@ -14702,6 +14751,11 @@ pub(crate) fn counter_stack_item_by_id(
     )?;
 
     crate::fiendish_panda_v1::custody::counter_removed(state, panda_counter_owner.as_ref(), &item)?;
+    crate::bloodthirsty_conqueror_v49::custody::counter_removed(
+        state,
+        conqueror_counter_owner.as_ref(),
+        &item,
+    )?;
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
     if let Some(owner) = zul_owner {
@@ -15010,6 +15064,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let conqueror_owner = match crate::bloodthirsty_conqueror_v49::custody::acquire(state, item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15249,6 +15313,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15356,6 +15427,22 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = conqueror_owner.as_ref() {
+        if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
+            state,
+            owner,
+            &item,
+            &ctx,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = panda_owner.as_ref() {
         if crate::fiendish_panda_v1::custody::resolve_owned(
             state,
@@ -15718,8 +15805,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     {
         state.objects.get_mut(item.source).v4.warped_v1 = true;
     }
-    // Impending: it enters with its time counters.
-    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+    // The V48 entry owner has already installed these before entry observers.
+    // Keep the absent-component path unchanged.
+    if !initialized_entry
+        .as_ref()
+        .is_some_and(|owner| owner.initializes_time_counters())
+        && item.v4.cast_method == Some(CastMethodV4::Alternative)
         && state.objects.get(item.source).zone == Zone::Battlefield
     {
         if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =
@@ -16199,7 +16290,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
                     continue;
                 }
-                event::add_lore_counters(state, saga, 1).expect("supported Saga counters fit");
+                event::add_lore_counters_rule(state, saga, 1).expect("supported Saga counters fit");
             }
             collect_and_queue_triggers(state);
         }
@@ -18321,6 +18412,8 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::bloodthirsty_conqueror_v49::validate(state)?;
+    crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
@@ -20820,7 +20913,15 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+    if crate::doubling_season_v48::requires_successor(state) {
+        // Playing a land remains a special action even under a resolution-time
+        // play permission. Its entry is not an effect placing counters.
+        let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
+        if let ProposedEvent::ZoneChange(change) = &mut event {
+            change.counter_origin_v48 = Some(crate::doubling_season_v48::CounterOriginV48::Rule);
+        }
+        event::propose_and_commit(state, event);
+    } else if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),

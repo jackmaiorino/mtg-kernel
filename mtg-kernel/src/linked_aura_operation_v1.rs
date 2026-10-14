@@ -6,7 +6,7 @@ use crate::effect::EffectObjectBinding;
 use crate::engine::{Action, Decision};
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::linked_aura_return_v1::HostChoiceV1;
-use crate::state::{GameState, Target};
+use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::hash::{Hash, Hasher};
@@ -58,6 +58,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
         color: crate::mana::ManaColor,
     },
+    TokenEquipmentV48 {
+        choice: Box<crate::season_token_attachment_v48::ChoiceV48>,
+        selected: EffectObjectBinding,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -68,6 +72,10 @@ pub enum GeneralChoiceV36 {
     Color {
         choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
         capture: u32,
+    },
+    TokenEquipmentV48 {
+        choice: Box<crate::season_token_attachment_v48::ChoiceV48>,
+        input: u64,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +112,10 @@ struct RunnerV1 {
     banner_start: Option<u32>,
     color_plans: Vec<ColorPlanV36>,
     used_banner: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_world_v48: Option<Box<GameState>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attachment_input_v48: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,16 +123,27 @@ pub struct StateV1 {
     pub pending: Option<Box<CheckpointV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_general_v36: Option<Box<GeneralCheckpointV36>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_token_attachment_v48:
+        Option<Box<crate::season_token_attachment_v48::CheckpointV48>>,
     #[serde(skip)]
     runtime: Option<Box<RunnerV1>>,
 }
 impl StateV1 {
     pub fn is_empty(&self) -> bool {
-        self.pending.is_none() && self.pending_general_v36.is_none()
+        self.pending.is_none()
+            && self.pending_general_v36.is_none()
+            && self.pending_token_attachment_v48.is_none()
     }
 }
 impl Hash for StateV1 {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
+        if let Some(pending) = &self.pending_token_attachment_v48 {
+            "season-token-attachment/v48".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned token checkpoint serializes")
+                .hash(hasher);
+        }
         if let Some(pending) = &self.pending {
             "linked-aura-operation/v1".hash(hasher);
             serde_json::to_vec(pending)
@@ -192,7 +215,9 @@ pub(crate) fn with_panda_replay_borrow_v1(
     result
 }
 pub fn has_pending(state: &GameState) -> bool {
-    state.engine.linked_aura_operation_v1.pending.is_some() || has_banner_pending(state)
+    state.engine.linked_aura_operation_v1.pending.is_some()
+        || has_banner_pending(state)
+        || crate::season_token_attachment_v48::pending(state).is_some()
 }
 pub(crate) fn has_banner_pending(state: &GameState) -> bool {
     state
@@ -298,7 +323,10 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
-    potentially_returns_aura(state) || crate::heraldic_banner_v1::potentially_enters(state)
+    potentially_returns_aura(state)
+        || crate::heraldic_banner_v1::potentially_enters(state)
+        || !crate::doubling_season_v48::sources(state, state.active_player).is_empty()
+        || !crate::doubling_season_v48::sources(state, state.active_player.opponent()).is_empty()
 }
 
 fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool {
@@ -355,6 +383,9 @@ fn replay_general(
         banner_start: None,
         color_plans: Vec::new(),
         used_banner,
+        original_world_v48: crate::doubling_season_v48::requires_successor(original)
+            .then(|| Box::new(original.clone())),
+        attachment_input_v48: None,
     }));
     if potentially_returns_aura(original) {
         staged
@@ -376,7 +407,21 @@ fn replay_general(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
-        if runner.used_banner {
+        if let Some(input) = runner.attachment_input_v48 {
+            checkpoint
+                .engine
+                .linked_aura_operation_v1
+                .pending_token_attachment_v48 = Some(Box::new(
+                crate::season_token_attachment_v48::CheckpointV48 {
+                    original: Box::new(original.clone()),
+                    operation: operation.clone(),
+                    answers: answers.to_vec(),
+                    choice,
+                    input,
+                    used_banner: runner.used_banner,
+                },
+            ));
+        } else if runner.used_banner {
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -651,6 +696,35 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
 /// Complete checkpoint reconstruction authenticates source incarnation,
 /// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
+    if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
+        if locally_owned(state)
+            || state.engine.linked_aura_operation_v1.pending.is_some()
+            || state
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36
+                .is_some()
+        {
+            return Err("token attachment checkpoint has another owner".into());
+        }
+        if !matches!(state.engine.event_history.get(pending.input as usize), Some(CommittedEvent::TokenAttachmentJournalV48 { journal }) if matches!(journal.as_ref(), crate::season_token_attachment_v48::JournalV48::Input { input } if input.original==pending.original && input.operation==pending.operation))
+        {
+            return Err("token attachment checkpoint lost independent original input".into());
+        }
+        let (expected, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &pending.answers,
+            pending.used_banner,
+        )?;
+        if expected != *state || crate::season_token_attachment_v48::pending(&expected).is_none() {
+            return Err(
+                "token attachment checkpoint changed original operation or confirmed answers"
+                    .into(),
+            );
+        }
+        return Ok(());
+    }
     if let Some(pending) = state
         .engine
         .linked_aura_operation_v1
@@ -697,6 +771,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
+        return equipment_decision_v48(&pending.choice);
+    }
     if let Some(pending) = state
         .engine
         .linked_aura_operation_v1
@@ -704,6 +781,9 @@ fn decision(state: &GameState) -> Result<Decision, String> {
         .as_ref()
     {
         return Ok(match &pending.choice {
+            GeneralChoiceV36::TokenEquipmentV48 { .. } => {
+                return Err("token attachment cannot use frozen Banner checkpoint".into())
+            }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
                 player: choice.controller,
                 entry_ordinal: choice.ordinal,
@@ -747,6 +827,20 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
+        validate(state)?;
+        let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
+        let mut answers = pending.answers.clone();
+        answers.push(answer);
+        let (next, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            pending.used_banner,
+        )?;
+        *state = next;
+        return Ok(());
+    }
     if let Some(pending) = state
         .engine
         .linked_aura_operation_v1
@@ -1134,4 +1228,176 @@ pub(crate) fn commit_entry_color(
         .color_plans[index]
         .committed = Some(marker);
     Ok(())
+}
+
+fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
+    match choice {
+        GeneralChoiceV36::TokenEquipmentV48 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.controller,
+            source: choice.source.source,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|c| Target::Object(c.object))
+                .collect(),
+        }),
+        GeneralChoiceV36::Host { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.owner,
+            source: choice.aura.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: choice
+                .original_candidates
+                .iter()
+                .map(|c| Target::Object(c.object))
+                .collect(),
+        }),
+        GeneralChoiceV36::Color { choice, .. } => Ok(Decision::ChooseEntryColorV36 {
+            player: choice.controller,
+            entry_ordinal: choice.ordinal,
+            colors: crate::heraldic_banner_v1::COLORS,
+        }),
+    }
+}
+fn answer_equipment_checkpoint_v48(
+    choice: &GeneralChoiceV36,
+    action: Action,
+) -> Result<GeneralAnswerV36, String> {
+    match (choice, action) {
+        (
+            GeneralChoiceV36::TokenEquipmentV48 { choice, .. },
+            Action::ChooseEffectTarget(Target::Object(id)),
+        ) => Ok(GeneralAnswerV36::TokenEquipmentV48 {
+            choice: choice.clone(),
+            selected: *choice
+                .candidates
+                .iter()
+                .find(|c| c.object == id)
+                .ok_or("selected token outside complete original roster")?,
+        }),
+        (GeneralChoiceV36::Host { choice, .. }, Action::ChooseEffectTarget(Target::Object(id))) => {
+            Ok(GeneralAnswerV36::Host(AnswerV1 {
+                choice: choice.clone(),
+                host: *choice
+                    .original_candidates
+                    .iter()
+                    .find(|c| c.object == id)
+                    .ok_or("host outside original menu")?,
+            }))
+        }
+        (GeneralChoiceV36::Color { choice, .. }, Action::ChooseEffectOption(index)) => {
+            Ok(GeneralAnswerV36::Color {
+                choice: choice.clone(),
+                color: *crate::heraldic_banner_v1::COLORS
+                    .get(index as usize)
+                    .ok_or("color outside WUBRG")?,
+            })
+        }
+        _ => Err("only the exact current operation owner may answer".into()),
+    }
+}
+
+pub(crate) fn choose_created_token_v48(
+    state: &mut GameState,
+    choice: crate::season_token_attachment_v48::ChoiceV48,
+) -> Result<Option<EffectObjectBinding>, String> {
+    crate::season_token_attachment_v48::validate_choice(state, &choice)?;
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("expanded token attachment has no genuine enclosing operation")?;
+    if runner.checkpoint.is_some() {
+        return Ok(None);
+    }
+    let input = crate::season_token_attachment_v48::InputV48 {
+        original: runner
+            .original_world_v48
+            .clone()
+            .ok_or("token attachment lost actual preoperation Season input")?,
+        operation: runner.operation.clone(),
+        prior_answers: runner.answers[..runner.cursor].to_vec(),
+        choice: choice.clone(),
+    };
+    let answer = runner.answers.get(runner.cursor).cloned();
+    let at = crate::season_token_attachment_v48::record(
+        state,
+        crate::season_token_attachment_v48::JournalV48::Input {
+            input: Box::new(input),
+        },
+    );
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .attachment_input_v48 = Some(at);
+    match answer {
+        Some(GeneralAnswerV36::TokenEquipmentV48 {
+            choice: original,
+            selected,
+        }) => {
+            if *original != choice || !choice.candidates.contains(&selected) {
+                return Err("confirmed token attachment changed original roster".into());
+            }
+            state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap()
+                .cursor += 1;
+            Ok(Some(selected))
+        }
+        Some(_) => Err("token attachment replay changed confirmed answer kind".into()),
+        None => {
+            let mut snapshot = state.clone();
+            let runner = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .unwrap();
+            if let Some(original) = runner.original_stack.last() {
+                let absent = !snapshot
+                    .stack
+                    .iter()
+                    .any(|row| row.v4.stack_item_id == original.v4.stack_item_id);
+                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
+                if absent && !departed {
+                    snapshot.stack.insert(
+                        runner
+                            .original_stack
+                            .len()
+                            .saturating_sub(1)
+                            .min(snapshot.stack.len()),
+                        original.clone(),
+                    );
+                }
+            }
+            snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+            state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap()
+                .checkpoint = Some((
+                Box::new(snapshot),
+                GeneralChoiceV36::TokenEquipmentV48 {
+                    choice: Box::new(choice),
+                    input: at,
+                },
+            ));
+            Ok(None)
+        }
+    }
 }

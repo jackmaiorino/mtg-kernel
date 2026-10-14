@@ -71,6 +71,24 @@ pub(crate) fn candidates_panda_scoped_v47(
     accept_hunter: bool,
     accept_panda: bool,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_conqueror_scoped_v49(state, surface, decision, accept_hunter, accept_panda, false)
+}
+
+pub(crate) fn candidates_conqueror_scoped_v49(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    if accept_conqueror {
+        crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+            .map_err(RlContractError)?;
+    }
+
     if accept_panda {
         crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
     }
@@ -254,11 +272,12 @@ pub(crate) fn candidates_panda_scoped_v47(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = crate::rl::core_policy_action_candidates_panda_scoped_v47(
+                let old = crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
                     decision,
                     state,
                     accept_hunter,
                     accept_panda,
+                    accept_conqueror,
                 )?;
                 let feasible = if matches!(
                     decision,

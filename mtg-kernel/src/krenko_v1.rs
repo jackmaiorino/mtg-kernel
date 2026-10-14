@@ -460,7 +460,16 @@ pub(crate) fn resolve(state: &mut GameState, owner: OwnerV1, ctx: &ExecCtx) -> R
     }
     let token_history=state.engine.event_history[start..].iter().enumerate().filter_map(|(i,e)|
         matches!(e,CommittedEvent::CreateToken {token_def,controller,..} if *token_def==token && *controller==owner.item.controller).then_some((start+i) as u64)).collect::<Vec<_>>();
-    if token_history.len() != count {
+    if token_history.len()
+        != crate::doubling_season_v48::expected_tokens(
+            state,
+            start,
+            state.engine.event_history.len(),
+            token,
+            owner.item.controller,
+            count,
+        )?
+    {
         return Err("Krenko actual token batch differs from sampled count".into());
     }
     let index = state.engine.event_history.len() as u64;
@@ -621,7 +630,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                             || s.members.iter().enumerate().any(|(i, m)| {
                                 s.members[..i].contains(m) || m.expected_zone != Zone::Battlefield
                             })
-                            || c.token_history.len() != s.members.len()
+                            || c.token_history.len()
+                                != crate::doubling_season_v48::expected_tokens(
+                                    state,
+                                    s.index as usize,
+                                    c.index as usize,
+                                    token_definition()?,
+                                    p.item.controller,
+                                    s.members.len(),
+                                )?
                         {
                             return Err("Krenko completion redirected count sample".into());
                         }

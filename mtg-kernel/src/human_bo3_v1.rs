@@ -61,8 +61,10 @@ pub use raid_v9::*;
 pub use soul_shackled_zombie_v13::*;
 pub use visible::*;
 
+pub mod conqueror_v49;
 pub mod eaten_v46;
 pub mod panda_v47;
+pub mod season_v48;
 pub use panda_v47::{
     HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,
 };

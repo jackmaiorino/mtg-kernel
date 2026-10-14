@@ -165,7 +165,7 @@ pub(crate) fn record_resolved(
     let counters: Vec<_> = rows.iter().enumerate().filter_map(|(offset, event)| {
         matches!(event, CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count }
             if *object == source.source && *zone_change_count == source.zone_change_count
-                && *player == source.controller && *count == 2).then_some(start + offset)
+                && *player == source.controller && crate::doubling_season_v48::expected_plus_at(state,(start+offset) as u64,*object,*player,2).ok()==Some(*count)).then_some(start + offset)
     }).collect();
     let surviving = state.objects.try_get(source.source).filter(|live| {
         live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count
@@ -410,7 +410,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         if counter <= index || counter >= draw || !matches!(state.engine.event_history.get(counter),
                             Some(CommittedEvent::PlusOneCountersAdded { object, zone_change_count, player, count })
                             if *object == source.source && *zone_change_count == source.zone_change_count
-                                && *player == source.controller && *count == 2) {
+                                && *player == source.controller && crate::doubling_season_v48::expected_plus_at(state,counter as u64,*object,*player,2).ok()==Some(*count)) {
                             return Err("Librarian completion lost its actual source counter placement".into());
                         }
                     } else if !state.engine.event_history[index+1..draw].iter().any(|event|

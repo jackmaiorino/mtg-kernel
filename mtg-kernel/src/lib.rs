@@ -44,6 +44,7 @@ pub mod async_rollout_v2;
 pub mod attack_target_v1;
 pub mod banishing_light_v1;
 pub mod banner_observation_v1;
+pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -137,6 +138,7 @@ pub mod hunter_observation_v45;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;
+pub mod rules_meaning_bloodthirsty_conqueror_v49;
 pub mod rules_meaning_crystal_ordering_v1;
 pub mod rules_meaning_fiery_v1;
 pub mod rules_meaning_gourmand_v1;
@@ -661,8 +663,12 @@ pub mod ajani_full_v42;
 pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
+pub mod conqueror_observation_v49;
+pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
+pub mod doubling_season_v48;
 pub mod rules_meaning_akroma_v1;
+pub mod rules_meaning_doubling_season_v48;
 pub mod twinflame_observation_v1;
 pub mod twinflame_tyrant_v1;
 
@@ -676,3 +682,8 @@ pub mod faebloom_observation_v43;
 
 pub mod eaten_alive_v1;
 pub mod rules_meaning_eaten_alive_v1;
+
+pub mod doubling_season_public_v48;
+pub mod season_observation_v48;
+
+pub mod season_token_attachment_v48;

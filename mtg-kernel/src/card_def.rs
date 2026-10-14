@@ -2065,6 +2065,13 @@ pub enum DamageReplacementDefV1 {
     DoubleControlledSourceToOpponent,
 }
 
+/// Token creation and counter placement are distinct replacement events.
+/// Counter payments are not effect counter placements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TokenCounterReplacementDefV48 {
+    DoubleEffectTokensAndControlledPermanentCounters,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2287,6 +2294,7 @@ pub struct CardDef {
     pub as_enters_color_choice_v1: Option<AsEntersColorChoiceDefV1>,
     pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
     pub damage_replacement_v1: Option<DamageReplacementDefV1>,
+    pub token_counter_replacement_v48: Option<TokenCounterReplacementDefV48>,
 }
 
 impl CardDef {

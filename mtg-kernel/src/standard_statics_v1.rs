@@ -71,29 +71,97 @@ pub(crate) fn conditional_self_keywords(state: &GameState, id: ObjectId) -> Keyw
 
 /// Counters a permanent enters with beyond `CardDef::enters_with_plus_one_counters`,
 /// applied in the same entry step before triggers and state-based actions.
-pub(crate) fn apply_conditional_entry_counters(state: &mut GameState, id: ObjectId) {
+pub(crate) fn apply_conditional_entry_counters(
+    state: &mut GameState,
+    id: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let Some(name) = battlefield_definition_name(state, id) else {
         return;
     };
     let controller = state.objects.get(id).controller;
-    let count = crate::standard_cards_v1::scale_counters(state, controller, 1);
-    match name {
-        // "This creature enters with a +1/+1 counter on it if you control a
-        // permanent with mana value 4 or greater."
+    // Do not quote an unrequested counter for every ordinary entry.
+    let requested = match name {
         "Ascendant Packleader" => {
-            let controls_big_permanent = state.players[controller.index()]
-                .battlefield
-                .iter()
-                .any(|&other| other != id && crate::engine::object_mana_value(state, other) >= 4);
-            if controls_big_permanent {
+            if crate::doubling_season_v48::requires_successor(state)
+                || input.is_some_and(|input| !input.seasons.is_empty())
+            {
+                input
+                    .and_then(|input| input.entry_controls_big)
+                    .unwrap_or_else(|| {
+                        state.players[controller.index()]
+                            .battlefield
+                            .iter()
+                            .any(|other| {
+                                *other != id && crate::engine::object_mana_value(state, *other) >= 4
+                            })
+                    })
+            } else {
+                state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .any(|other| {
+                        *other != id && crate::engine::object_mana_value(state, *other) >= 4
+                    })
+            }
+        }
+        "Evolving Adaptive" => true,
+        _ => false,
+    };
+    if !requested {
+        return;
+    }
+    let count = match crate::doubling_season_v48::entry_amount(state, input, controller, 1) {
+        Ok(count) => count,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                id,
+            ));
+            return;
+        }
+    };
+    let checked = crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty());
+    match name {
+        "Ascendant Packleader" => {
+            if checked {
+                let Some(total) = state
+                    .objects
+                    .get(id)
+                    .counters
+                    .plus1_plus1
+                    .checked_add(count)
+                else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                };
+                state.objects.get_mut(id).counters.plus1_plus1 = total;
+            } else {
                 state.objects.get_mut(id).counters.plus1_plus1 += count;
             }
         }
-        // "This creature enters with an oil counter on it."
         "Evolving Adaptive" => {
-            state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX)
+            if checked {
+                let total = i16::try_from(count)
+                    .ok()
+                    .and_then(|count| state.objects.get(id).counters.oil.checked_add(count));
+                let Some(total) = total else {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                };
+                state.objects.get_mut(id).counters.oil = total;
+            } else {
+                state.objects.get_mut(id).counters.oil += i16::try_from(count).unwrap_or(i16::MAX);
+            }
         }
-        _ => {}
+        _ => unreachable!("only actual requested conditional counter families reach commit"),
     }
 }
 

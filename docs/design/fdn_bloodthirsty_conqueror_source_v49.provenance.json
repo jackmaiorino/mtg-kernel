@@ -1,0 +1,77 @@
+{
+  "state": "unregistered_core_custody_precise_meaning_source",
+  "base_commit": "c8ceb82e7528ca6b5a4c378f9a29f4ef787486f1",
+  "reference_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "references": [
+    {
+      "path": "Mage.Sets/src/mage/cards/b/BloodthirstyConqueror.java",
+      "blob": "7b79ec2d3268ac18772cc780908dfff8913490d3",
+      "bytes": 1498,
+      "sha256": "8373bd726bcfd0ee927d7ea4ea418bfdc79e1a946c8e39d3b07ac449f13d81c4"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/common/LoseLifeTriggeredAbility.java",
+      "blob": "e3b4d198b69252afcbac94e77c0c666ae0d69cbe",
+      "bytes": 3004,
+      "sha256": "fdce7587ac4514c2abc3e817ebec2f909ebe6fb6a708b87e89718b88a693b344"
+    },
+    {
+      "path": "Mage/src/main/java/mage/game/events/LifeLostBatchForOnePlayerEvent.java",
+      "blob": "fe521928a6d2f84ff40896d4f95bd84af50953d0",
+      "bytes": 301,
+      "sha256": "df1f8dff28e6207af8385cba2b2ccc2e904dc9816478482aee518be4540e29bf"
+    },
+    {
+      "path": "Mage/src/main/java/mage/game/events/BatchEvent.java",
+      "blob": "704f1f5e66a64c4e1871ac1029fe2aee0709489e",
+      "bytes": 5224,
+      "sha256": "31e487f04d83fc372363d55b2641e021dee5d26ddd94047a8fa36ed180ac663c"
+    },
+    {
+      "path": "Mage/src/main/java/mage/game/GameState.java",
+      "blob": "0e103b48e4c35d1efdb118e4516d4a42f0dea77a",
+      "bytes": 75622,
+      "sha256": "e81aa4d4c1be3043f133d99baa5383fa1f0c5e15f74ce537fedf9800a0afd176"
+    },
+    {
+      "path": "Mage/src/main/java/mage/game/GameImpl.java",
+      "blob": "f3c2e4ff7e6b4e17d1b69ac5ec672ea3341480a6",
+      "bytes": 180926,
+      "sha256": "6eded667ed0d4ce1d661f3fd4c951694458e5938b495c81519ba8d6f5c7d15c9"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/AbilityImpl.java",
+      "blob": "48636a976e64397e2046b6ffb4ae6ad5da56ce21",
+      "bytes": 77667,
+      "sha256": "43039a5b080546bcfc2ade654743c68dd004ce4359e788c010da945b4911add0"
+    },
+    {
+      "path": "Mage/src/main/java/mage/players/PlayerImpl.java",
+      "blob": "1fc883515410e4b6df6255e5be44547f82617784",
+      "bytes": 288142,
+      "sha256": "a01abe0c394d83ef88414d20a069bede2ea4ebcb89310ad355460a86d4ab30de"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/costs/common/PayLifeCost.java",
+      "blob": "65ef04d0d86c2c8f037d9fc942a1bf687a431e34",
+      "bytes": 2557,
+      "sha256": "c8f22864cdcf8fec2928294b6d19e9cc92ca303cdeee82d00f422c9ebe8350c4"
+    }
+  ],
+  "printing": {
+    "set": "FDN",
+    "collector_number": "58",
+    "scryfall_id": "ce860ed4-a5bd-4347-9eab-dd716ea84db1",
+    "oracle_id": "fd505c02-c59e-476d-8e88-35da862ddc23"
+  },
+  "rust": "1.94.1",
+  "compilation": "unrun",
+  "gameplay": "unrun",
+  "registration": "absent",
+  "complete_publication_custody": "implemented_source_unrun",
+  "safe_consumer_admitted": false,
+  "historical_superseded_preoperation_checkpoint": "c185b3016370a040acb332b880dff22adef5d06c",
+  "observer_timing": "original post-event battlefield before state-based actions; ordinary CR603.10",
+  "rules_primary_url": "https://media.wizards.com/2026/downloads/MagicCompRules%2020260619.pdf",
+  "consumer_v49": "design_only_pending_complete_Season_V48"
+}
