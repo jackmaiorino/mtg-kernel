@@ -10746,9 +10746,19 @@ pub(crate) fn akroma_crystal_resolving_source_ref_v40(
     state: &GameState,
     item: &StackItem,
 ) -> Result<CardStableRefV1> {
-    akroma_crystal_resolving_source_ref_fake_scoped_v50(state, item, false)
+    akroma_crystal_resolving_source_ref_inner_v50(state, item, false)
 }
 pub(crate) fn akroma_crystal_resolving_source_ref_fake_scoped_v50(
+    state: &GameState,
+    item: &StackItem,
+    accept_fake: bool,
+) -> Result<CardStableRefV1> {
+    if !accept_fake {
+        return akroma_crystal_resolving_source_ref_v40(state, item);
+    }
+    akroma_crystal_resolving_source_ref_inner_v50(state, item, true)
+}
+fn akroma_crystal_resolving_source_ref_inner_v50(
     state: &GameState,
     item: &StackItem,
     accept_fake: bool,

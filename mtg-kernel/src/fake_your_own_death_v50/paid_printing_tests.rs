@@ -58,6 +58,10 @@ fn paid_on(
         if player == actor && legal_targets.contains(&Target::Object(target)))
     );
     engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
     assert_eq!(
         state.players[actor.index()].mana_pool[ManaColor::B.pool_index()],
         0
