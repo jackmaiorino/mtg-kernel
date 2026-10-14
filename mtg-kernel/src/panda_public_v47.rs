@@ -68,17 +68,21 @@ pub struct FactsV47 {
     pub trigger_order: Vec<TriggerOrderV47>,
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("panda_public_v47.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-    ] {
-        hash.update((source.len() as u64).to_le_bytes());
-        hash.update(source.as_bytes());
-    }
-    hash.update(meaning::producer_sha256().as_bytes());
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("panda_public_v47.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+        ] {
+            hash.update((source.len() as u64).to_le_bytes());
+            hash.update(source.as_bytes());
+        }
+        hash.update(meaning::producer_sha256().as_bytes());
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 fn binding(effect: &EffectOp) -> Option<u64> {
     match effect {
