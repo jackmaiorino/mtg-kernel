@@ -10,4 +10,25 @@ The second component installs the ordinary exact-incarnation +2/+0 modifier and 
 
 Next source work must bind the actual paid spell/target/turn and cleanup to those operands; own each mandatory trigger through collection, APNAP, publication, counter/removal, return/entry suspension and Treasure completion; and supply precise ordered meaning plus complete V50 public/backend/Human privacy and restore adapters. Legacy modes and samplers must refuse unsupported original or retained facts. Printing registration and native qualification follow those components.
 
-Eleven authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. Four grant groups use only the retained base catalog; the Witness group needs pure Limited. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are source verification; compilation, these groups and all genuine Fake printing/custody/consumer cases remain unrun.
+Fourteen authored primitive groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death and paid Witness Protection ability-removal ordering. They preserve both seats and restore/replay. The Witness group needs pure Limited; the new death-binding groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are source verification; compilation, these groups and all genuine Fake printing/custody/consumer cases remain unrun.
+
+## Committed death binding
+
+The new primitive binds a pre-death lookback immediately after its exact
+battlefield-to-graveyard occurrence, before another move or token state-based
+action. It checks the original recipient generation, actual committed controller,
+current graveyard generation/owner/token fact and owner-zone membership. An older
+move of that physical object cannot substitute for this death. The returned
+context freezes the real graveyard source and controller at death separately.
+Later resolution uses that context; it does not recapture a moved or reentered
+source.
+
+Three new groups prepare actual control transfer, two independent grants with
+one owner return and two controller Treasures, later exile with Treasure retained,
+owning serialized replay, older-occurrence refusal and changed-capture refusal.
+The copied-token group uses the same binder. This closes the primitive handoff
+between pre-death capture and resolution context. The future printing owner must
+still authenticate the actual paid cast, original grant and committed event and
+own collection, publication, removal, cleanup and completion. No primitive
+operand is executable trigger authority. Source review is scoped CLEAR; native
+qualification remains pending.
