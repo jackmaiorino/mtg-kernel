@@ -427,10 +427,42 @@ class CellFit(Temp):
         r1 = {name: v["per_lineage"]["r1"]["ordering"] for name, v in out["against_u0"].items()}
         self.assertEqual((r1["U-lr"], r1["U-a4"], r1["U-a16"]), (cells.NOT_ORDERED, cells.LATER, cells.LATER))
         self.assertEqual(out["against_u0"]["U-lr"]["per_lineage"]["r2"]["ordering"], cells.EARLIER)
+        self.assertEqual(out["against_u0"]["U-lr"]["across_lineages"], "not ordered in r1")
         held = cells.contrasts(cells.fit_cells(self.spec(self.runs(**{"U0": {}, "U-a4": {}}))))
         self.assertEqual(held["against_u0"]["U-a4"]["across_lineages"], cells.NEITHER)
         broken = cells.contrasts(cells.fit_cells(self.spec(self.runs(**{"U-a4": {"rerun_hash": "other"}}))))
-        self.assertEqual(broken["against_u0"]["U-a4"]["across_lineages"], cells.NOT_EVIDENCE)
+        self.assertEqual(broken["against_u0"]["U-a4"]["per_lineage"]["r1"]["ordering"], cells.NOT_EVIDENCE)
+        self.assertEqual(broken["against_u0"]["U-a4"]["across_lineages"], "not evidence in r1 and r2")
+        runs = self.runs()
+        runs["r2"]["U-a4"] = {"rerun_hash": "other"}
+        one = cells.contrasts(cells.fit_cells(self.spec(runs)))
+        self.assertEqual(one["against_u0"]["U-a4"]["across_lineages"], "not evidence in r2")
+
+    def test_a_shared_collapse_interval_reads_as_a_change_only_if_the_support_cell_moved_against_u0(self):
+        def control(**override):
+            out = cells.contrasts(cells.fit_cells(self.spec({"r1": {"U0": {"fail_from": 189}, **override}})))
+            return out["count_controls"]["U-s32"]["per_lineage"]["r1"]
+        null = control(**{"U-s32": {"fail_from": 189}, "U-c32": {"fail_from": 189}})
+        self.assertEqual((null["ordering"], null["support_against_u0"], null["wording"]),
+                         (cells.SAME, cells.SAME, cells.NO_CHANGE))
+        moved = control(**{"U-s32": {"fail_from": 512}, "U-c32": {"fail_from": 512}})
+        self.assertEqual((moved["ordering"], moved["support_against_u0"], moved["wording"]),
+                         (cells.SAME, cells.LATER, cells.WORDING["count_control"][cells.SAME]))
+        earlier = control(**{"U-s32": {"fail_from": 64}, "U-c32": {"fail_from": 64}})
+        self.assertEqual((earlier["support_against_u0"], earlier["wording"]),
+                         (cells.EARLIER, cells.WORDING["count_control"][cells.SAME]))
+        neither = control(**{"U-s32": {}, "U-c32": {}})
+        self.assertEqual((neither["ordering"], neither["support_against_u0"], neither["wording"]),
+                         (cells.NEITHER, cells.LATER, cells.WORDING["count_control"][cells.NEITHER]))
+        later = control(**{"U-s32": {"fail_from": 512}, "U-c32": {"fail_from": 189}})
+        self.assertEqual(later["wording"], cells.WORDING["count_control"][cells.LATER])
+        out = cells.contrasts(cells.fit_cells(self.spec({"r1": {"U0": {"fail_from": 189, "rerun_hash": "other"},
+                                                                "U-s32": {"fail_from": 512},
+                                                                "U-c32": {"fail_from": 512}}})))
+        broken = out["count_controls"]["U-s32"]["per_lineage"]["r1"]
+        self.assertEqual((broken["ordering"], broken["support_against_u0"]), (cells.SAME, cells.NOT_EVIDENCE))
+        self.assertIn("same checkpoint interval", broken["wording"])
+        self.assertIn(cells.NOT_EVIDENCE, broken["wording"])
 
 
 if __name__ == "__main__":
