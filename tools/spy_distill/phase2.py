@@ -69,6 +69,11 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
         require({k: v for k, v in source.items() if k != "checkpoint"}
                 == {k: v for k, v in parent.items() if k != "checkpoint"},
                 "the phase-1 source differs from the parent's import or feature transfer")
+        # A U collapse diagnostic cell's checkpoints are read offline only;
+        # a phase 2 from one needs its own reviewed design.
+        saved = read_json(source["checkpoint"]["path"])
+        require(((saved.get("archive_distillation") or {}).get("cell")) is None,
+                "a U collapse diagnostic cell's checkpoint does not start phase 2")
         value["initial_source"] = source
     value["collection_workers"] = workers
     value["preparation_workers"] = workers
