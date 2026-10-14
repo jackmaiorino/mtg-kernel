@@ -742,7 +742,8 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnFollowingSourceBatch
         | NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
         | NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
-        | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch => {
+        | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch
+        | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
