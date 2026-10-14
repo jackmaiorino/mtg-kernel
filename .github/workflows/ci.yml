@@ -89,6 +89,11 @@ jobs:
 
   rust-quality:
     name: Rust formatting and lint
+    needs: detect-changes
+    # Same path rule as the Rust test groups: a change that touches only
+    # docs, markdown, Python tests or non-embedded Python tools cannot
+    # change what rustfmt or Clippy see. Pushes to main always run it.
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
