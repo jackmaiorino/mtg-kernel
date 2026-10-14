@@ -424,7 +424,79 @@ pub(super) fn record_input(
     Some((index, stack_item_id))
 }
 
+/// Actual payment may pause at an immediate linked-Aura owner choice. The
+/// complete checkpoint is reconstructed from the independent original operation;
+/// no raw input without that owner can waive publication or live-source custody.
+pub(crate) fn linked_payment_input(state: &GameState) -> Result<Option<&PendingCast>, String> {
+    if !crate::linked_aura_operation_v1::has_pending(state) {
+        return Ok(None);
+    }
+    let owned = &state.engine.linked_aura_operation_v1;
+    let original = if let Some(checkpoint) = owned.pending.as_ref() {
+        checkpoint.original.as_ref()
+    } else if let Some(checkpoint) = owned.pending_general_v36.as_ref() {
+        checkpoint.original.as_ref()
+    } else {
+        return Ok(None);
+    };
+    let Some(original_pending) = original
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|p| p.mandatory_additional_cost.is_some())
+    else {
+        return Ok(None);
+    };
+    let start = original.engine.event_history.len();
+    let inputs = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .skip(start)
+        .filter_map(|(index, event)| match event {
+            CommittedEvent::MandatoryCastPaymentInputV1 { pending, item }
+                if pending.spell == original_pending.spell
+                    && pending.source_contract == original_pending.source_contract =>
+            {
+                Some((index, pending.as_ref(), item.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(index, pending, item)] = inputs.as_slice() else {
+        if inputs.is_empty() {
+            return Ok(None);
+        }
+        return Err("linked mandatory payment has duplicate original input".into());
+    };
+    if !matches!(pending.mandatory_additional_cost, Some(ChoiceV1 { pay_mana: Some(false), creature: Some(_) }))
+        || original.stack.iter().filter(|row| *row == *item).count() != 1
+        || state.stack.iter().filter(|row| *row == *item).count() != 1
+        || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { choice, .. } if choice.input_index == *index)) {
+        return Err("linked mandatory cost lost its exact pre-payment placeholder/input".into());
+    }
+    // The original has no linked owner. Its ordinary guard remains mandatory.
+    // Replaying it validates the real selected action and produces the entire
+    // current input, payment prefix, departed sacrifice and attachment menu.
+    validate_state(original)?;
+    crate::linked_aura_operation_v1::validate(state)?;
+    Ok(Some(*pending))
+}
+/// Only the exact genuine pre-payment row borrowed at a verified attachment
+/// checkpoint retains placeholder semantics while the local cast owner is absent.
+pub(crate) fn linked_placeholder(state: &GameState, item: &StackItem) -> Result<bool, String> {
+    Ok(linked_payment_input(state)?.is_some_and(|pending| {
+        item.kind == StackItemKind::Spell
+            && item.source == pending.spell
+            && item.v4.source_contract == Some(pending.source_contract)
+    }))
+}
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if linked_payment_input(state)?.is_some() {
+        return Ok(());
+    }
+
     if state.engine.event_log.iter().any(|event| {
         matches!(
             event,

@@ -759,6 +759,11 @@ mod tests {
             &mut state,
             crate::event::ProposedEvent::zone_change(sacrifice, Zone::Battlefield),
         );
+        let other = put(&mut state, actor, "Tolarian Terror", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(other, Zone::Battlefield),
+        );
         let target = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
         crate::event::propose_and_commit(
             &mut state,

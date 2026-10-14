@@ -1454,6 +1454,8 @@ pub struct HumanEatenPendingV46 {
     pub source: HumanCardRefV1,
     pub controller: PlayerSeatV1,
     pub selected_branch: Option<crate::eaten_public_v46::BranchV46>,
+    pub in_progress_payment: bool,
+    pub selected_sacrifice: Option<String>,
     pub payable_branches: Vec<crate::eaten_public_v46::BranchV46>,
     pub selected_creature: Option<HumanCardRefV1>,
     pub sacrifice_candidates: Vec<HumanCardRefV1>,
@@ -1486,6 +1488,11 @@ fn project_eaten(
                 source: handles.get(&row.source)?.clone(),
                 controller: row.controller,
                 selected_branch: row.selected_branch,
+                in_progress_payment: row.in_progress_payment,
+                selected_sacrifice: row
+                    .selected_sacrifice
+                    .as_ref()
+                    .map(|_| "selected_sacrifice".into()),
                 payable_branches: row.payable_branches.clone(),
                 selected_creature: row
                     .selected_creature

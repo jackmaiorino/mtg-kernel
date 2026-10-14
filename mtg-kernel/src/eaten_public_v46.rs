@@ -22,6 +22,8 @@ pub struct PendingV46 {
     pub source: CardStableRefV1,
     pub controller: PlayerSeatV1,
     pub selected_branch: Option<BranchV46>,
+    pub in_progress_payment: bool,
+    pub selected_sacrifice: Option<IncarnationV46>,
     pub payable_branches: Vec<BranchV46>,
     pub selected_creature: Option<CardStableRefV1>,
     pub sacrifice_candidates: Vec<CardStableRefV1>,
@@ -82,11 +84,15 @@ pub fn meanings() -> Result<Vec<crate::rules_meaning_eaten_alive_v1::MeaningV1>,
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::engine::mandatory_cast_cost_v1::validate_state(state)?;
+    let linked = crate::engine::mandatory_cast_cost_v1::linked_payment_input(state)?;
+    if let Some(pending) = linked {
+        crate::eaten_alive_v1::exact_recipe(pending.source_contract.card_def)?;
+    }
     if let Some(p) = state
         .engine
         .pending_cast
         .as_ref()
-        .filter(|p| p.mandatory_additional_cost.is_some())
+        .filter(|p| linked.is_none() && p.mandatory_additional_cost.is_some())
     {
         crate::eaten_alive_v1::exact_recipe(p.source_contract.card_def)?;
         crate::engine::validate_pending_cast(state, p)?;
@@ -113,6 +119,8 @@ pub fn producer_sha256() -> String {
         include_str!("continuous_characteristics_v1.rs"),
         include_str!("standard_cards_v1.rs"),
         include_str!("standard_statics_v1.rs"),
+        include_str!("sower_restriction_capture_v1.rs"),
+        include_str!("linked_aura_operation_v1.rs"),
     ] {
         h.update([0]);
         h.update(text.as_bytes());
@@ -122,23 +130,34 @@ pub fn producer_sha256() -> String {
 }
 pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, RlContractError> {
     validate_state(state).map_err(RlContractError)?;
-    let pending = state
-        .engine
-        .pending_cast
-        .as_ref()
-        .filter(|p| p.mandatory_additional_cost.is_some())
+    let linked = crate::engine::mandatory_cast_cost_v1::linked_payment_input(state)
+        .map_err(RlContractError)?;
+    let pending_source = linked.or_else(|| {
+        state
+            .engine
+            .pending_cast
+            .as_ref()
+            .filter(|p| p.mandatory_additional_cost.is_some())
+    });
+    let pending = pending_source
         .map(|p| -> Result<PendingV46, RlContractError> {
             let choice = p
                 .mandatory_additional_cost
                 .as_ref()
                 .ok_or_else(|| RlContractError("mandatory choice erased".into()))?;
-            let payable_branches =
+            let payable_branches = if linked.is_some() {
+                Vec::new()
+            } else {
                 crate::engine::mandatory_cast_cost_v1::consumer_branches(state, p)
                     .map_err(RlContractError)?
                     .into_iter()
                     .map(branch)
-                    .collect();
-            let sacrifice_candidates = if p.controller == actor && choice.pay_mana != Some(true) {
+                    .collect()
+            };
+            let sacrifice_candidates = if linked.is_none()
+                && p.controller == actor
+                && choice.pay_mana != Some(true)
+            {
                 state.players[p.controller.index()]
                     .battlefield
                     .iter()
@@ -162,6 +181,13 @@ pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, Rl
             };
             let selected_creature = choice
                 .creature
+                .filter(|b| {
+                    linked.is_none()
+                        && state.objects.try_get(b.object).is_some_and(|o| {
+                            o.zone == b.expected_zone
+                                && o.zone_change_count == b.expected_zone_change_count
+                        })
+                })
                 .map(|b| {
                     crate::sower_restriction_capture_v1::masked_ref(
                         b.object,
@@ -173,6 +199,11 @@ pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, Rl
                 source: original(&p.source_contract),
                 controller: p.controller.into(),
                 selected_branch: choice.pay_mana.map(branch),
+                in_progress_payment: linked.is_some(),
+                selected_sacrifice: choice.creature.map(|b| IncarnationV46 {
+                    object: b.object.0,
+                    zone_change_count: b.expected_zone_change_count,
+                }),
                 payable_branches,
                 selected_creature,
                 sacrifice_candidates,

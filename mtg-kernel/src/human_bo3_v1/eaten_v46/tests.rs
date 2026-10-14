@@ -1,18 +1,6 @@
 use super::*;
-#[cfg(all(
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
 use crate::ids::PlayerId;
-#[cfg(all(
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
 use crate::policy_observation_v6::tests::{put, ready_state_for};
-#[cfg(all(
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
 use crate::state::Zone;
 
 #[cfg(all(
@@ -511,6 +499,11 @@ mod limited {
             &mut state,
             crate::event::ProposedEvent::zone_change(sacrifice, Zone::Battlefield),
         );
+        let other = put(&mut state, actor, "Tolarian Terror", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(other, Zone::Battlefield),
+        );
         let target = put(&mut state, actor.opponent(), "Llanowar Elves", Zone::Hand);
         crate::event::propose_and_commit(
             &mut state,
@@ -821,6 +814,15 @@ mod limited {
             assert_eq!(public.divine.pending.as_ref().unwrap().selected.len(), 3);
             assert_eq!(public.eaten.payments.len(), 1);
             assert!(public.eaten.payments[0].original_spell_departed);
+            let selected = public
+                .divine
+                .pending
+                .as_ref()
+                .unwrap()
+                .selected
+                .iter()
+                .map(|r| crate::ids::ObjectId(r.arena_id))
+                .collect::<Vec<_>>();
             let save = session.snapshot_v46();
             session.restore_v46(&save).unwrap();
             let restored = session.public_observation(expected(&session)).unwrap();
@@ -843,23 +845,302 @@ mod limited {
                 session.inner.eaten_fixture_state().objects.get(divine).zone,
                 Zone::Graveyard
             );
-            for id in session.inner.eaten_fixture_state().players[actor.index()]
-                .battlefield
-                .iter()
-                .copied()
-            {
-                if crate::engine::object_has_type(
+            for id in selected {
+                assert!(crate::engine::has_effective_keyword(
                     session.inner.eaten_fixture_state(),
                     id,
-                    crate::card_def::CardType::Creature,
-                ) {
-                    assert!(crate::engine::has_effective_keyword(
-                        session.inner.eaten_fixture_state(),
-                        id,
-                        crate::card_def::Keywords::INDESTRUCTIBLE
+                    crate::card_def::Keywords::INDESTRUCTIBLE
+                ));
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires serial Eaten Alive registration and native qualification"]
+    fn genuine_copied_banishing_sacrifice_retains_real_linked_payment_host_choice_and_v46_restore_both_seats(
+    ) {
+        use crate::effect::{EffectObjectBinding, ExecCtx};
+        use crate::state::{AbilitySourceContractV4, ObjectLinkV4, Target};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, banishing, aura, host) =
+                crate::banishing_light_v1::tests::linked_aura(actor);
+            // Accepted typed Aegis characteristic substrate with actual registered operands,
+            // not an invented printed Longbow copy spell or permission receipt.
+            let attachment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+            let donor = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(donor, Zone::Exile),
+            );
+            let generation = state.objects.get(banishing).zone_change_count;
+            state
+                .attach_object_exact(attachment, 0, banishing, generation)
+                .unwrap();
+            let grant = AbilitySourceContractV4::capture(&state, attachment);
+            state.objects.get_mut(donor).v4.exiled_by = Some(ObjectLinkV4 {
+                object: attachment,
+                zone_change_count: grant.zone_change_count,
+            });
+            let mut ctx = ExecCtx::no_targets(attachment, actor);
+            ctx.ability_source_contract = Some(grant);
+            let binding = ObjectLinkV4 {
+                object: banishing,
+                zone_change_count: generation,
+            };
+            let timestamp = state.objects.get(attachment).v4.layer_timestamp.unwrap();
+            let copied = EffectObjectBinding {
+                object: donor,
+                expected_zone: Zone::Exile,
+                expected_zone_change_count: state.objects.get(donor).zone_change_count,
+            };
+            assert!(crate::standard_cards_v1::aegis_copy_candidates(
+                &state, &ctx, binding, timestamp
+            )
+            .contains(&copied));
+            crate::standard_cards_v1::apply_aegis_copy(
+                &mut state, &ctx, binding, timestamp, copied,
+            );
+            assert!(crate::engine::object_has_type(
+                &state,
+                banishing,
+                crate::card_def::CardType::Creature
+            ));
+            let other = put(&mut state, actor, "Savannah Lions", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(other, Zone::Battlefield),
+            );
+            let recipient = put(&mut state, actor.opponent(), "Savannah Lions", Zone::Hand);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(recipient, Zone::Battlefield),
+            );
+            let spell = put(&mut state, actor, "Eaten Alive", Zone::Hand);
+            put(&mut state, actor, "Forest", Zone::Hand);
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()] = 1;
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                crate::engine::advance_until_decision(&mut state),
+                crate::engine::Decision::ChooseTargets { .. }
+            ));
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ChooseTarget(Target::Object(recipient)),
+            )
+            .unwrap();
+            assert!(
+                matches!(crate::engine::advance_until_decision(&mut state), crate::engine::Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&banishing) && candidates.contains(&other))
+            );
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ChooseCostTarget(banishing),
+            )
+            .unwrap();
+            assert!(
+                matches!(crate::engine::advance_until_decision(&mut state), crate::engine::Decision::ChooseEffectTargets { player, source, legal_targets, .. } if player == actor.opponent() && source == aura && legal_targets.contains(&Target::Object(host)))
+            );
+            crate::engine::mandatory_cast_cost_v1::validate_state(&state).unwrap();
+            assert!(
+                crate::engine::mandatory_cast_cost_v1::linked_payment_input(&state)
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(!state.engine.event_history.iter().any(|e| matches!(
+                e,
+                crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+            )));
+            let serialized = serde_json::to_vec(&state).unwrap();
+            for case in 0..3 {
+                let mut bad: crate::state::GameState = serde_json::from_slice(&serialized).unwrap();
+                match case {
+                    0 => bad.engine.linked_aura_operation_v1 = Default::default(),
+                    1 => {
+                        let input = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| match e {
+                                crate::event::CommittedEvent::MandatoryCastPaymentInputV1 {
+                                    pending,
+                                    ..
+                                } => Some(pending),
+                                _ => None,
+                            })
+                            .unwrap();
+                        input.mandatory_additional_cost.as_mut().unwrap().pay_mana = Some(true);
+                    }
+                    _ => bad.objects.get_mut(spell).controller = actor.opponent(),
+                }
+                let before = serde_json::to_vec(&bad).unwrap();
+                assert!(crate::engine::step(
+                    &mut bad,
+                    crate::engine::Action::ChooseEffectTarget(Target::Object(host))
+                )
+                .is_err());
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), before);
+                assert!(crate::eaten_observation_v46::validate_state(&bad).is_err());
+                for _ in 0..2 {
+                    let mut restored: crate::state::GameState =
+                        serde_json::from_slice(&before).unwrap();
+                    let mut expected_halt = restored.clone();
+                    expected_halt.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        crate::ids::ObjectId(0),
                     ));
+                    assert!(matches!(
+                        crate::engine::advance_until_decision(&mut restored),
+                        crate::engine::Decision::Halted {
+                            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ..
+                        }
+                    ));
+                    assert_eq!(
+                        serde_json::to_vec(&restored).unwrap(),
+                        serde_json::to_vec(&expected_halt).unwrap()
+                    );
                 }
             }
+            let mut session = HumanEatenSessionV46::from_session(
+                FastActorSessionV1::from_eaten_v46_fixture_state(state),
+                actor.opponent().into(),
+            )
+            .unwrap();
+            let mut projector = HumanEatenProjectorV46::new(actor.opponent().into());
+            let old = expected(&session);
+            let public = session.public_observation(old).unwrap();
+            let cost = public.eaten.pending.as_ref().unwrap();
+            assert!(cost.in_progress_payment);
+            assert_eq!(
+                cost.selected_branch,
+                Some(crate::eaten_public_v46::BranchV46::SacrificeCreature)
+            );
+            assert!(cost.selected_sacrifice.is_some());
+            assert!(
+                cost.payable_branches.is_empty()
+                    && cost.sacrifice_candidates.is_empty()
+                    && cost.selected_creature.is_none()
+            );
+            let menu = projector.project_current(&session, old).unwrap();
+            assert!(
+                menu.state
+                    .extensions
+                    .eaten
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .in_progress_payment
+            );
+            let save = session.snapshot_v46();
+            for _ in 0..3 {
+                session.restore_v46(&save).unwrap();
+                let before = session.inner.privileged_core_environment_hash();
+                assert!(projector
+                    .submit(
+                        &mut session,
+                        HumanActionRequestV1 {
+                            prompt_seq: menu.prompt_seq,
+                            action_index: 0
+                        }
+                    )
+                    .is_err());
+                assert_eq!(session.inner.privileged_core_environment_hash(), before);
+            }
+            let current = expected(&session);
+            let (observation, actions, binding) = session
+                .inner
+                .eaten_current_decision_input_v46(current, actor.opponent().into())
+                .unwrap();
+            let index = actions.iter().position(|a| matches!(a, ActionSemanticV1::ChooseEffectTarget { target: crate::rl::TargetRefV1::Object { object }, .. } if object.arena_id == host.0)).unwrap();
+            let (_, _, indexes) = project_base(
+                &observation,
+                &actions,
+                actor.opponent().into(),
+                &binding.families,
+            )
+            .unwrap();
+            let human_index = indexes
+                .iter()
+                .position(|candidate| *candidate == index as u32)
+                .unwrap();
+            let menu = projector.project_current(&session, current).unwrap();
+            projector
+                .submit(
+                    &mut session,
+                    HumanActionRequestV1 {
+                        prompt_seq: menu.prompt_seq,
+                        action_index: human_index as u32,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                session
+                    .inner
+                    .eaten_fixture_state()
+                    .objects
+                    .get(banishing)
+                    .zone,
+                Zone::Graveyard
+            );
+            assert_eq!(
+                session.inner.eaten_fixture_state().objects.get(aura).zone,
+                Zone::Battlefield
+            );
+            assert_eq!(
+                session
+                    .inner
+                    .eaten_fixture_state()
+                    .objects
+                    .get(aura)
+                    .v4
+                    .attached_to,
+                Some(ObjectLinkV4 {
+                    object: host,
+                    zone_change_count: session
+                        .inner
+                        .eaten_fixture_state()
+                        .objects
+                        .get(host)
+                        .zone_change_count
+                })
+            );
+            assert!(session
+                .inner
+                .eaten_fixture_state()
+                .engine
+                .event_history
+                .iter()
+                .any(|e| matches!(
+                    e,
+                    crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+                )));
+            for _ in 0..24 {
+                if !session
+                    .inner
+                    .eaten_fixture_state()
+                    .stack
+                    .iter()
+                    .any(|item| item.source == spell)
+                {
+                    break;
+                }
+                pass(&mut session, &mut projector, actor.opponent());
+            }
+            assert_eq!(
+                session
+                    .inner
+                    .eaten_fixture_state()
+                    .objects
+                    .get(recipient)
+                    .zone,
+                Zone::Exile
+            );
+            assert_eq!(
+                session.inner.eaten_fixture_state().objects.get(spell).zone,
+                Zone::Graveyard
+            );
+            crate::engine::mandatory_cast_cost_v1::validate_state(
+                session.inner.eaten_fixture_state(),
+            )
+            .unwrap();
         }
     }
 }

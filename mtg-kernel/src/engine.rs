@@ -2060,7 +2060,8 @@ fn validate_physical_spell_cast_origin(
         .engine
         .pending_cast
         .as_ref()
-        .is_some_and(|pending| pending.spell == item.source);
+        .is_some_and(|pending| pending.spell == item.source)
+        || mandatory_cast_cost_v1::linked_placeholder(state, item)?;
     if if is_pending_placeholder {
         origin.finalized_method.is_some()
     } else {

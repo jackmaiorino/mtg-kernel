@@ -1958,7 +1958,9 @@ fn flat_validate_origin_decision_common_scoped_v42(
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
-    if (if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
+    if (if scope == crate::rl::CommonProjectionScopeV42::EatenV46 {
+        crate::eaten_observation_v46::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
         crate::faebloom_observation_v43::validate_state(state)
     } else if scope == crate::rl::CommonProjectionScopeV42::HunterV45 {
         crate::hunter_observation_v45::validate_state(state)
