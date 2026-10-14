@@ -760,6 +760,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     for row in &state.stack {
         if selected_item(state, row) {
+            if let Some(pending) =
+                state.engine.pending_cast.as_ref().filter(|pending| {
+                    row.kind == StackItemKind::Spell && pending.spell == row.source
+                })
+            {
+                // The real cast placeholder precedes payment/finalization.
+                // Authenticate the complete staged cast instead of inventing
+                // the finalized publication it has not issued yet.
+                crate::engine::validate_pending_cast(state, pending)?;
+                if row.v4.source_contract != Some(pending.source_contract)
+                    || publication_for(state, row).is_some()
+                {
+                    return Err("Faebloom pending cast overlaps finalized publication".into());
+                }
+                continue;
+            }
             let (_, original) =
                 publication_for(state, row).ok_or("Faebloom live row lost original publication")?;
             if original != row {

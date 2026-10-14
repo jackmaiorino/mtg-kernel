@@ -21962,6 +21962,31 @@ fn push_paid_activation(
         return;
     }
     crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
+    // Final targeting validates mandatory paid ownership. Ajani's original
+    // payment and use must be recorded before that finalized-row boundary.
+    let ajani_paid = frozen.ajani_payment_owner.is_some();
+    if ajani_paid {
+        if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+            state
+                .objects
+                .get_mut(pending.source)
+                .v4
+                .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+        }
+        if crate::ajani_full_v42::lifecycle::record_paid(
+            state,
+            stack_item_id,
+            frozen.ajani_payment_owner,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    }
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -21973,26 +21998,14 @@ fn push_paid_activation(
     // state. Never stamp the old activation onto Lorien's new graveyard
     // incarnation (or any sacrificed/exiled source); the stack provenance
     // above owns that historical fact instead.
-    if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+    if !ajani_paid
+        && state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count
+    {
         state
             .objects
             .get_mut(pending.source)
             .v4
             .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
-    }
-
-    if crate::ajani_full_v42::lifecycle::record_paid(
-        state,
-        stack_item_id,
-        frozen.ajani_payment_owner,
-    )
-    .is_err()
-    {
-        state.engine.halted = Some((
-            UnsupportedMechanic::InvalidEffectContinuation,
-            pending.source,
-        ));
-        return;
     }
 
     // No ability in this increment's pool triggers off another ability

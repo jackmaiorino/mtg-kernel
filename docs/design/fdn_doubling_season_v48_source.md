@@ -307,3 +307,21 @@ catalog behavior keeps its original one-counter amount. A real Default Wall of
 Roots both-seat fixture checks untapped payment, one green mana and three
 restored readonly native-overflow refusals. The unavailable joint
 Talent/Season/Wall-of-Roots printing catalog is not represented as qualified.
+
+
+## Current predecessor join
+
+The owned Season branch absorbs parent d603df0b823514a34163d7cb9403eb4034f037fc:
+current default/public source plus source-reviewed Fish Token blueprint,
+Faebloom placeholder, Panda actual-zone/catalog fixtures and Ajani paid ownership
+before final targeting. The merge has no conflicts. Season remains unregistered;
+the inherited prepared 442-definition roster and frozen 286 printing identities
+plus 24 external token dependencies are unchanged. No new profile/hash/native
+claim follows from source composition. All earlier sections describe successive
+checkpoints, not an assertion that their historical remaining-work lists are
+current. The retained V48 public/backend/Human contracts are source prepared.
+Current unqualified scope includes actual Season catalog/runtime admission,
+joint Standard Talent/Saga/Impending/Role/Incubator/Equipment issuers, attacking
+token planeswalker destination agency for a future compatible Adeline producer,
+and broad mixed-family gameplay/model/sampler qualification. New source proofs
+and counter/tail adapters still require named source review and real execution.
