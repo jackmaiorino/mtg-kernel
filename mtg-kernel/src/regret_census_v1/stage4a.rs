@@ -24,6 +24,7 @@
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
 
+mod allocation_experiment;
 mod arms;
 mod bank;
 mod bank_trace;
@@ -36,10 +37,13 @@ mod interchange;
 mod labels;
 mod pathlog;
 mod play;
+mod process_cpu;
 mod profile_roots;
 mod refresh;
 mod replay_labels;
+mod root_allocation;
 mod seeds;
+mod sharing;
 mod tree;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
@@ -101,6 +105,22 @@ pub(crate) fn decision_replay_key(
     d: crate::rl_session::FastActorDecisionV1,
 ) -> Result<(String, String), String> {
     replay_key(s, d)
+}
+
+/// Spy line flags of every legal action of the current menu, as (casts
+/// Spy, Spy targets `focal`, Dread Return targets Lotleth Giant): the same
+/// classifier and missing-semantics rule as the archive games' decision
+/// records, for archive distillation's binding checks and probes.
+pub(crate) fn spy_menu_flags_v1(
+    s: &crate::rl_session::FastActorSessionV1,
+    focal: u8,
+) -> Vec<(bool, bool, bool)> {
+    let defs = spy_defs();
+    s.diagnostic_current_action_semantics()
+        .unwrap_or_default()
+        .iter()
+        .map(|x| labels::classify(x, s.game_state(), crate::ids::PlayerId(focal), &defs))
+        .collect()
 }
 
 /// Replay key of a focal decision: canonical observation and menu hashes.

@@ -7,7 +7,9 @@ use super::labels::{SpyDefs, Suffix};
 use super::play::{
     act, acting, apply, decision, observe, plain_to_end, terminal, Counters, End, Meter, PlayErr,
 };
+use super::root_allocation::{RootAllocation, RootAllocator, SearchOptions};
 use super::seeds::{Purpose, RootSeeds};
+use super::sharing::{Cursor as SharingCursor, Sharing};
 use super::tree::{
     canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
     MAX_DEPTH,
@@ -703,6 +705,9 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: &mut SearchDiag,
         mut memo: Option<&mut KeyMemo>,
+        mut allocator: Option<&mut RootAllocator>,
+        mut sharing: Option<&mut Sharing>,
+        sharing_cursor: &mut SharingCursor,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, End), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -779,6 +784,20 @@ impl Roles {
                         let st = keyer.step_memo(&s, d, memo.as_deref_mut())?;
                         let (key, pk, pe, cn) = keyer.storage(&st);
                         drop(span);
+                        let sharing_probe = sharing
+                            .as_deref_mut()
+                            .map(|sharing| {
+                                sharing.probe(
+                                    sharing_cursor,
+                                    &s,
+                                    d,
+                                    cn,
+                                    key,
+                                    depth,
+                                    meter.spent - spent0,
+                                )
+                            })
+                            .transpose()?;
                         let span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::TreeFind,
                         );
@@ -794,7 +813,17 @@ impl Roles {
                                 if staged.contains(&key) {
                                     rec.staged_hits += 1;
                                 }
-                                let e = select_observed(node, ctx.urgency, &mut trace);
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, node))
+                                } else {
+                                    None
+                                }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| sharing.select(probe, node, ctx.urgency),
+                                    )
+                                })
+                                .unwrap_or_else(|| select_observed(node, ctx.urgency, &mut trace));
                                 supported = node.n[e] >= super::tree::MIN_EXEC_BACKUPS;
                                 (e, cn.edges[e].clone())
                             }
@@ -815,7 +844,19 @@ impl Roles {
                                 if let Some(log) = path_log.as_mut() {
                                     log.created(key, &s, cn, ctx.focal);
                                 }
-                                let e = select_observed(&node, ctx.urgency, &mut trace);
+                                let e = if path.is_empty() {
+                                    allocator.as_deref_mut().map(|a| a.select(key, &node))
+                                } else {
+                                    None
+                                }
+                                .or_else(|| {
+                                    sharing.as_deref_mut().zip(sharing_probe.as_ref()).and_then(
+                                        |(sharing, probe)| {
+                                            sharing.select(probe, &node, ctx.urgency)
+                                        },
+                                    )
+                                })
+                                .unwrap_or_else(|| select_observed(&node, ctx.urgency, &mut trace));
                                 drop(span);
                                 new.push((key, node));
                                 in_tree = false;
@@ -828,6 +869,9 @@ impl Roles {
                         path.push((key, edge_index));
                         legacy_path.push(st.legacy_key);
                         let live = live_index(cn, &edge)?;
+                        if let Some(probe) = sharing_probe {
+                            sharing_cursor.advance(probe, live, edge_index, meter.spent - spent0);
+                        }
                         parent = (key, edge);
                         let _span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::KeyAdvance,
@@ -970,8 +1014,69 @@ impl Roles {
         mut capture: Option<&mut Capture>,
         diag: Option<&mut SearchDiag>,
     ) -> (Selection, Tree) {
+        self.select_e_options(
+            ctx,
+            trace.take(),
+            retain,
+            records.take(),
+            capture.take(),
+            diag,
+            &SearchOptions::default(),
+        )
+    }
+
+    /// Explicit experiment controls; defaults preserve the production path.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "existing search roles and opt-in controls"
+    )]
+    pub(crate) fn select_e_options(
+        &mut self,
+        ctx: &RootCtx,
+        mut trace: Option<&mut Trace>,
+        retain: usize,
+        mut records: Option<&mut Vec<SimRecord>>,
+        mut capture: Option<&mut Capture>,
+        diag: Option<&mut SearchDiag>,
+        options: &SearchOptions,
+    ) -> (Selection, Tree) {
         let mut own = SearchDiag::default();
         let diag = diag.unwrap_or(&mut own);
+        if options.sharing
+            && (options.allocation != RootAllocation::Uct
+                || retain > 1
+                || trace.is_some()
+                || capture.is_some())
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec![
+                        "sharing requires UCT, one-node expansion, and no trace/capture".into(),
+                    ],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
+        let cpu_start = match super::process_cpu::seconds() {
+            Ok(t) => t,
+            Err(e) if options.cpu_seconds.is_some() => {
+                return (
+                    Selection {
+                        incomplete: true,
+                        faults: vec![e],
+                        ..Selection::default()
+                    },
+                    Tree::default(),
+                );
+            }
+            Err(_) => 0.0,
+        };
+        let mut allocator =
+            (options.allocation == RootAllocation::Halving).then(RootAllocator::default);
+        let mut sharing = options.sharing.then(Sharing::default);
+        let mut stop_reason = None;
         if diag.path_log.is_none() {
             diag.path_log = super::pathlog::dir().map(super::pathlog::PathLog::new);
         }
@@ -987,6 +1092,24 @@ impl Roles {
         let mut consecutive = 0u64;
         let mut i = 0u64;
         loop {
+            if options.work_limit.is_some_and(|limit| i >= limit) {
+                stop_reason = Some("work_limit");
+                break;
+            }
+            if let Some(limit) = options.cpu_seconds {
+                match super::process_cpu::seconds() {
+                    Ok(t) if t - cpu_start >= limit => {
+                        stop_reason = Some("cpu_budget");
+                        break;
+                    }
+                    Err(e) => {
+                        sel.incomplete = true;
+                        sel.faults.push(e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
             if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
                 break;
@@ -1026,6 +1149,7 @@ impl Roles {
             if let Some(log) = diag.path_log.as_mut() {
                 log.begin_sim();
             }
+            let mut sharing_cursor = SharingCursor::default();
             let (spent0, calls0) = (meter.spent, c.inference);
             if let Some(cap) = capture.as_deref_mut() {
                 cap.begin(index);
@@ -1044,6 +1168,9 @@ impl Roles {
                 capture.as_deref_mut(),
                 diag,
                 memo.as_mut(),
+                allocator.as_mut(),
+                sharing.as_mut(),
+                &mut sharing_cursor,
             );
             if let Some(cap) = capture.as_deref_mut() {
                 cap.end(matches!(&r, Ok((_, _, End::Natural { .. }))));
@@ -1090,6 +1217,9 @@ impl Roles {
                         log.natural(index, &path, &new, win, &rec);
                     }
                     tree.backup(&path, new, win);
+                    if let Some(sharing) = sharing.as_mut() {
+                        sharing.backup(&sharing_cursor, index, win);
+                    }
                     sel.completed += 1;
                 }
                 Ok((_, _, End::NonNatural)) => {
@@ -1121,6 +1251,24 @@ impl Roles {
             }
         }
         sel.extra = json!({"tree":tree_stats(&tree)});
+        if let Some(sharing) = sharing.as_ref() {
+            sel.extra["sharing"] = sharing.json();
+        }
+        if let Some(allocator) = &allocator {
+            if let Some((key, node)) = tree
+                .nodes
+                .iter()
+                .find(|(_, n)| n.depth == 1 && n.parent == [0; 32])
+            {
+                sel.choice = allocator
+                    .choice(key, node)
+                    .map(|a| node.canon.edges[a].clone());
+            }
+            sel.extra["root_allocation"] = json!("successive-halving-v1");
+        }
+        if options.cpu_seconds.is_some() || options.work_limit.is_some() {
+            sel.extra["stop_reason"] = json!(stop_reason);
+        }
         sel.wall = started.elapsed().as_secs_f64();
         (sel, tree)
     }
