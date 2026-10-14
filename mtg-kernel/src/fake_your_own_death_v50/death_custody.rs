@@ -310,50 +310,50 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
         }
     }
     for event in &state.engine.event_history {
-        match journal(event) {
-            Some(JournalV50::DeathCollected { capture, .. }) => {
-                let pending = held_triggers(state)
-                    .filter(|pending| effect_capture(&pending.effect) == Some(*capture))
-                    .collect::<Vec<_>>();
-                let published = state
-                    .engine
-                    .event_history
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, event)| match journal(event) {
-                        Some(JournalV50::DeathPublished {
-                            capture: original,
-                            item,
-                            ..
-                        }) if original == capture => Some((index as u64, item.as_ref())),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                match (pending.as_slice(), published.as_slice()) {
-                    ([held], []) => validate_pending_shape(state, held, *capture)?,
-                    ([], [(publication, original)]) => {
-                        let rows = state
-                            .stack
-                            .iter()
-                            .filter(|row| row.v4.stack_item_id == original.v4.stack_item_id)
-                            .collect::<Vec<_>>();
-                        let closed = counter_inputs(state, *publication);
-                        if (closed.is_empty() && rows.as_slice() != [*original])
-                            || (closed.len() == 1 && !rows.is_empty())
-                            || closed.len() > 1
-                        {
-                            return Err("Fake published gained trigger changed or lost its unique live owner".into());
-                        }
-                    }
-                    _ => {
+        if let Some(JournalV50::DeathCollected { capture, .. }) = journal(event) {
+            let pending = held_triggers(state)
+                .filter(|pending| effect_capture(&pending.effect) == Some(*capture))
+                .collect::<Vec<_>>();
+            let published = state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter_map(|(index, event)| match journal(event) {
+                    Some(JournalV50::DeathPublished {
+                        capture: original,
+                        item,
+                        ..
+                    }) if original == capture => Some((index as u64, item.as_ref())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            match (pending.as_slice(), published.as_slice()) {
+                ([held], []) => validate_pending_shape(state, held, *capture)?,
+                ([], [(publication, original)]) => {
+                    let rows = state
+                        .stack
+                        .iter()
+                        .filter(|row| row.v4.stack_item_id == original.v4.stack_item_id)
+                        .collect::<Vec<_>>();
+                    let closed = counter_inputs(state, *publication);
+                    if (closed.is_empty() && rows.as_slice() != [*original])
+                        || (closed.len() == 1 && !rows.is_empty())
+                        || closed.len() > 1
+                    {
                         return Err(
-                            "Fake collected gained trigger lost or duplicated its mandatory owner"
+                            "Fake published gained trigger changed or lost its unique live owner"
                                 .into(),
-                        )
+                        );
                     }
                 }
+                _ => {
+                    return Err(
+                        "Fake collected gained trigger lost or duplicated its mandatory owner"
+                            .into(),
+                    )
+                }
             }
-            _ => {}
         }
     }
     Ok(())
