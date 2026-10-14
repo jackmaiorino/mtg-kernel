@@ -4227,6 +4227,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Billowing Shriekmass"
         | "Dreadwing Scavenger"
         | "Arbiter of Woe"
+        | "High-Society Hunter"
         | "Skyship Buccaneer" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"

@@ -50,6 +50,14 @@ fn attack_state(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     state.step = crate::state::Step::DeclareAttackers;
     // True-definition physical setup; the integration suite separately pays 3BB.
     let hunter = put(&mut state, actor, "High-Society Hunter", Zone::Battlefield);
+    assert!(crate::high_society_hunter_v1::owns_definition(
+        state.objects.get(hunter).card_def
+    ));
+    assert!(engine::has_effective_keyword(
+        &state,
+        hunter,
+        crate::card_def::Keywords::FLYING
+    ));
     let other = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
     put(&mut state, actor, "Forest", Zone::Hand);
     engine::step(&mut state, Action::DeclareAttackers(vec![hunter])).unwrap();
@@ -198,7 +206,10 @@ fn original_journals_preserved_fresh_published_suspended_and_answer_erasure_refu
 fn genuine_counter_retains_full_removal_input_and_manufactured_marker_only_closure_refuses() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, _, _) = attack_state(actor);
-        engine::advance_until_decision(&mut state);
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         let original = state.stack.last().unwrap().clone();
         let published = publication(&state, &original).unwrap().0;
         let mut fake = state.clone();
