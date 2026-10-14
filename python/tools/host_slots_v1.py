@@ -568,7 +568,8 @@ def live_tickets() -> list[dict]:
     return _live("queue-*.json")
 
 
-def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True) -> list[int]:
+def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True,
+              core_pool: list[int] | None = None) -> list[int]:
     """Cores a new claim may take now, in preference order."""
     if timed["held"] and timed["cores"] is None:
         return []
@@ -577,7 +578,8 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
     used = {core for claim in claims if background or not claim.get("background", False)
             for core in claim["cores"]}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
-    free = [core for core in allowed if core not in blocked and core not in used]
+    free = [core for core in allowed if core not in blocked and core not in used
+            and (core_pool is None or core in core_pool)]
     return free[:max(0, room)]
 
 
@@ -830,9 +832,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                 tickets = live_tickets()
                 tickets.sort(key=lambda ticket: bool(ticket.get("background", False)))
                 if tickets and tickets[0]["id"] == claim_id:
-                    room = available(config, timed_state(), live_claims(), background=background)
-                    if core_pool is not None:
-                        room = [core for core in room if core in core_pool]
+                    room = available(config, timed_state(), live_claims(), background=background, core_pool=core_pool)
                     if len(room) >= cores_wanted:
                         cores = sorted(room[:cores_wanted])
                         write_json(claim, {**base, "cores": cores, "priority": priority, "state": "running",

@@ -293,6 +293,8 @@ class HostSlotsTests(unittest.TestCase):
     @needs_two
     def test_request_core_pool_is_contained_and_cannot_borrow_timed_cores(self):
         chosen = CPUS[0]
+        slots.write_json(self.host / "TESTHOST.slots/config.json",
+                         {"cores": ",".join(map(str, reversed(CPUS))), "keep_free": 1})
         probe = script(self.tmp_path, "pool.py", "print(json.dumps({'affinity': h.current_affinity()}))\n")
         arguments = ["run", "--lane", "pool", "--work-id", "bounded", "--cores", "1",
                      "--core-pool", str(chosen), "--", sys.executable, probe]
