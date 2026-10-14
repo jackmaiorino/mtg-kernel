@@ -45,6 +45,11 @@ pub(super) const REFRESH_BUDGET: u64 = 64_000;
 /// Row label of the opt-in interchangeable-choice merging (`interchange.rs`).
 pub(super) const INTERCHANGE_RULE: &str = "interchange-orbit-v1";
 
+/// Row label of the opt-in best-line backup with threshold `m` (`tree.rs`).
+pub(super) fn bestline_rule(m: u64) -> String {
+    format!("bestline-m{m}")
+}
+
 /// One arm's search allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Allocation {
@@ -121,6 +126,9 @@ pub(super) struct GuideRun {
     /// Merge interchangeable choices (`interchange.rs`) in every search and
     /// in the cursor that walks its tree.
     pub(super) interchange: bool,
+    /// Best-line backup threshold in every search (`tree.rs` `BestLine`);
+    /// None is the formal mean backup.
+    pub(super) bestline: Option<u64>,
 }
 
 impl GuideRun {
@@ -128,6 +136,7 @@ impl GuideRun {
         opening: false,
         mode: KeyMode::Legacy,
         interchange: false,
+        bestline: None,
     };
 }
 
@@ -246,6 +255,7 @@ struct Searches<'a> {
     records: Vec<Value>,
     mode: KeyMode,
     interchange: bool,
+    bestline: Option<u64>,
     keys: KeyStats,
 }
 
@@ -275,6 +285,7 @@ impl Searches<'_> {
         let mut ctx = guide_ctx(s, self.focal, self.opp, &seeds, &self.sh.prior, limits)?;
         ctx.key_mode = self.mode;
         ctx.interchange = self.interchange;
+        ctx.bestline = self.bestline;
         let started = Instant::now();
         let mut diag = super::arms::SearchDiag::default();
         #[cfg(feature = "viewer-recording-v1")]
@@ -424,6 +435,7 @@ fn guide_inner(
         records: Vec::new(),
         mode: run.mode,
         interchange: run.interchange,
+        bestline: run.bestline,
         keys: KeyStats::default(),
     };
     let (first, kept) = if run.opening {
@@ -631,6 +643,10 @@ fn guide_inner(
 /// first focal choice with two or more legal actions, then 64,000 per
 /// support-triggered refresh, within `total`. Seeds come from the case, never
 /// from the ceiling.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit case and opt-in search controls"
+)]
 pub(super) fn budget_case(
     sh: &BankShared,
     policy: &FrozenPlayPolicyV1,
@@ -638,6 +654,7 @@ pub(super) fn budget_case(
     total: u64,
     mode: KeyMode,
     interchange: bool,
+    bestline: Option<u64>,
     binding: &str,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -669,6 +686,7 @@ pub(super) fn budget_case(
             opening: true,
             mode,
             interchange,
+            bestline,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -680,6 +698,9 @@ pub(super) fn budget_case(
     // Present only when merging was on, so default rows are unchanged.
     if interchange {
         row["interchange"] = json!(INTERCHANGE_RULE);
+    }
+    if let Some(m) = bestline {
+        row["backup"] = json!(bestline_rule(m));
     }
     Ok(row)
 }
@@ -904,6 +925,7 @@ mod tests {
 
     use super::super::world::{sample, DeckPrior};
     use crate::runtime_decks::RUNTIME_DECKS;
+    use std::collections::HashMap;
 
     fn game(seed: u64) -> FastActorSessionV1 {
         let decks = [&RUNTIME_DECKS[4], &RUNTIME_DECKS[5]];
@@ -1048,6 +1070,132 @@ mod tests {
         }
         assert_eq!(nodes.iter().filter(|x| x["parent"] == -1).count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The best-line test's formal untried-first search (`urgency` None),
+    /// pinned from the code before Step 1 (main at 7c700c61).
+    const UNTRIED_FIRST_PIN: &str =
+        "a12b94f260a43dbbe8ed3d93d4ba5b3c3bb329ab9757d328ae81009ea57b120e";
+    const UNTRIED_FIRST_COUNTS: (u64, u64) = (6_000, 23);
+
+    /// Step 1 of the best-line proposal is exact when off: the default search,
+    /// with and without finite urgency, builds the tree pinned from the code
+    /// before the rule existed. On, every stored node carries best-line values
+    /// that equal a from-scratch recomputation, each attempt's result is
+    /// tallied clean or rollout by its logged rollout choices, and the root
+    /// has a frozen pick.
+    #[test]
+    #[ignore = "native qualification: fixture games and a small search"]
+    fn best_line_rule_is_exact_when_off_and_consistent_when_on() {
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let mut s = game(11);
+        advance(&mut s, |d| {
+            d.legal_action_count >= 2 && d.acting_player == crate::rl::PlayerSeatV1::P0
+        });
+        let prior = DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>());
+        let seeds = RootSeeds {
+            model: "test".into(),
+            root: "path-log".into(),
+        };
+        let limits = Limits {
+            select_cap: 6_000,
+            ..Limits::FORMAL
+        };
+        let mut ctx = guide_ctx(&s, PlayerId(0), 0, &seeds, &prior, limits).unwrap();
+        let (off, off_tree) = roles(&policy).select_e(&ctx);
+        // Pinned from the same search on the code before Step 1 (main at
+        // ecf5282c, `path_log_is_passive_and_rebuilds_the_tree`'s plain search).
+        assert_eq!(
+            off_tree.hash(),
+            "63957afec560de632059cc0f5ca25b18fa6def55951a7013c328d69452a286e7"
+        );
+        assert_eq!((off.transitions, off.completed), (6_000, 20));
+        assert!(off_tree.nodes.values().all(|n| n.bl.is_none()));
+        // The formal untried-first rule (no finite urgency), pinned the same way.
+        let urgency = ctx.urgency.take();
+        let (plain, plain_tree) = roles(&policy).select_e(&ctx);
+        assert_eq!(plain_tree.hash(), UNTRIED_FIRST_PIN);
+        assert_eq!((plain.transitions, plain.completed), UNTRIED_FIRST_COUNTS);
+        ctx.urgency = urgency;
+        ctx.limits.select_cap = 40_000;
+        for m in [3, 8] {
+            ctx.bestline = Some(m);
+            let dir = std::env::temp_dir().join(format!("s4a-bestline-{}-{m}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut diag = super::super::arms::SearchDiag::default();
+            diag.path_log = Some(super::super::pathlog::PathLog::new(dir.clone()));
+            let (on, tree) =
+                roles(&policy).select_e_diagnosed(&ctx, None, 1, None, None, Some(&mut diag));
+            assert!(on.completed > 100, "m={m}: {}", on.completed);
+            let bad = tree.best_line_mismatches();
+            assert!(
+                bad.is_empty(),
+                "m={m}: {} of {}: {:?}",
+                bad.len(),
+                tree.nodes.len(),
+                &bad[..bad.len().min(3)]
+            );
+            let root = tree
+                .nodes
+                .values()
+                .find(|n| n.parent == [0; 32])
+                .expect("root");
+            assert_eq!(root.visits, on.completed, "m={m}");
+            assert!(root.frozen_choice().is_some(), "m={m}: no frozen pick");
+            // Each attempt's result is a clean or rollout result of the last
+            // edge on its path, by the logged rollout-choice count.
+            let files: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            assert_eq!(files.len(), 1, "{files:?}");
+            let v: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+            assert_eq!(v["backup"], json!(bestline_rule(m)));
+            let by_hex: HashMap<String, super::super::tree::Key> = tree
+                .nodes
+                .keys()
+                .map(|k| (super::super::pathlog::key_hex(k), *k))
+                .collect();
+            let keys: Vec<_> = v["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| by_hex[x["key"].as_str().unwrap()])
+                .collect();
+            let mut want: HashMap<(usize, usize), super::super::tree::DirectResults> =
+                HashMap::new();
+            let mut rollout_results = 0;
+            for sim in v["sims"].as_array().unwrap() {
+                let win = sim[1].as_u64().unwrap();
+                let flat = sim[4].as_array().unwrap();
+                let (id, a) = (
+                    flat[flat.len() - 2].as_u64().unwrap() as usize,
+                    flat[flat.len() - 1].as_u64().unwrap() as usize,
+                );
+                let x = want.entry((id, a)).or_default();
+                let t = if sim[3].as_u64().unwrap() == 0 {
+                    &mut x.0
+                } else {
+                    rollout_results += 1;
+                    &mut x.1
+                };
+                t.0 += 1;
+                t.1 += win;
+            }
+            assert!(
+                rollout_results > 0,
+                "m={m}: the fixture has rollout choices"
+            );
+            for (id, k) in keys.iter().enumerate() {
+                let n = &tree.nodes[k];
+                for a in 0..n.n.len() {
+                    let got = n.best_line_direct(a).expect("best-line node");
+                    let exp = want.get(&(id, a)).copied().unwrap_or_default();
+                    assert_eq!(got, exp, "m={m}: node {id} edge {a}");
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// A refresh root at a nonzero substep samples only the actor's
