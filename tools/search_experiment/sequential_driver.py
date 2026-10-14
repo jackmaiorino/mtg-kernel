@@ -2,6 +2,7 @@
 import argparse
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -11,6 +12,8 @@ import time
 
 def run(plan):
     root = Path(plan["root"])
+    log = (root / plan.get("log_filename", "LADDER-DRIVER.log")).open("a", buffering=1)
+    sys.stdout = sys.stderr = log
     module = importlib.util.spec_from_file_location("frozen_runtime", plan["launcher"])
     runtime = importlib.util.module_from_spec(module)
     module.loader.exec_module(runtime)
@@ -41,9 +44,11 @@ def run(plan):
         return plan["external_cpu_seconds"] + runtime.accounted_cpu(rows)
 
     def checkpoint_cpu():
+        cpu = time.process_time() - own_start + cli_cpu
         with runtime.ledger_owner(root / "CPU-LEDGER.jsonl"):
-            runtime.append_ledger(root / "CPU-LEDGER.jsonl", {"label": "approved-ladder-control-r1", "phase": "control",
-                "cpu_seconds": time.process_time() - own_start + cli_cpu, "error": None})
+            runtime.append_ledger(root / "CPU-LEDGER.jsonl", {"label": plan["control_label"], "phase": "control",
+                "cpu_seconds": cpu, "reserved_cpu_seconds": math.ceil(cpu) + 1,
+                "accounting_basis": "observed control CPU plus one second finalization reserve", "error": None})
 
     def inspect(batch, spec, cost):
         require(not batch["error"], "guarded batch failed")
@@ -68,7 +73,7 @@ def run(plan):
                         "fresh evaluation schedule incomplete")
             teacher = row["teacher"]
             backs = teacher.get("edge_backups", [])
-            sharing = row["selection"].get("sharing", {})
+            sharing = row["selection"].get("extra", {}).get("sharing", {})
             diagnostics.append({"id": job["id"], "arm": row["arm"], "native_cpu_seconds": job["cpu_seconds"],
                 "wall_seconds": job["wall_seconds"], "work_attempts": row["work_attempts"],
                 "transitions": row["selection"]["transitions"], "pure_evaluation_cpu_seconds": row["pure_evaluation_cpu_seconds"],
@@ -119,7 +124,7 @@ def run(plan):
                     projection = max(previous["cpu_seconds"], reference["cpu_seconds"]) * 1.5
                     require(projection <= 1200, "projected qualification CPU exceeds phase bound")
                     require(accounted() + projection < 43200, "remaining aggregate CPU cannot fit projected stage")
-                label = f"{ladder['label_prefix']}-w{workers}-r1"
+                label = f"{ladder['label_prefix']}-w{workers}-{plan['attempt']}"
                 path, previous = execute(manifest, "qualify", workers, label, ladder["cost_only"],
                     already_issued=ladder.get("adopt_first") is True and index == 0)
                 reference = reference or previous
@@ -143,7 +148,7 @@ def run(plan):
             spec[key] = load(plan["ladders"][1]["manifest"])[key]
         spec["inputs"] += remaining["extra_inputs"]
         publish(output, spec)
-        path, _ = execute(output, "calibrate", selections["cost"]["fastest_workers"], "cal-remaining-anchors-r1", True)
+        path, _ = execute(output, "calibrate", selections["cost"]["fastest_workers"], f"cal-remaining-anchors-{plan['attempt']}", True)
         invoke([plan["calibrator"], "--completion", selections["cost"]["serial_completion"], "--completion", str(path),
                 "--out", str(root / "COST-CALIBRATION.json")])
         require(len(load(root / "COST-CALIBRATION.json")["roots"]) == 9, "full calibration missing roots")
@@ -152,6 +157,8 @@ def run(plan):
         save()
     except BaseException as error:
         state.update(state="stopped", error=f"{type(error).__name__}: {error}")
+        if not (root / "CPU-LEDGER.jsonl.lock").exists():
+            checkpoint_cpu()
         save()
         raise
 
