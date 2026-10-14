@@ -572,7 +572,9 @@ class BackgroundProcessTests(unittest.TestCase):
         body = script(self.tmp_path, "existing-worker.py", "from pathlib import Path\n"
                       "Path(sys.argv[1]).write_text('up')\n"
                       "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
-        worker = subprocess.Popen([sys.executable, body, str(started), str(release)])
+        # The fixture is an existing native worker, not the Windows venv
+        # redirector and its separately contained interpreter descendant.
+        worker = subprocess.Popen([getattr(sys, "_base_executable", sys.executable), body, str(started), str(release)])
         controller = None
         try:
             self.assertTrue(wait_for(started.exists))
@@ -581,7 +583,12 @@ class BackgroundProcessTests(unittest.TestCase):
             slots.write_json(identity, {"pid": worker.pid, "creation": stamp, "descendants": []})
             controller = cli("adopt", "--background", "--priority", "idle", "--lane", "ci", "--work-id", "adopt",
                              "--cores", "1", "--worker", str(identity), "--ready", str(ready))
-            self.assertTrue(wait_for(ready.exists))
+            wait_for(lambda: ready.exists() or controller.poll() is not None)
+            if not ready.exists():
+                if controller.poll() is None:
+                    controller.terminate()
+                out, err = controller.communicate(timeout=30)
+                self.fail(f"adoption did not become ready; exit={controller.returncode}; stdout={out}; stderr={err}")
             admitted = slots.read_json(ready)
             self.assertEqual(admitted["worker_creation"], stamp)
             handle = slots._OpenProcess(slots.PROCESS_QUERY_LIMITED_INFORMATION, False, worker.pid)
@@ -595,7 +602,8 @@ class BackgroundProcessTests(unittest.TestCase):
                 slots._CloseHandle(handle)
             release.write_text("go")
             self.assertEqual(worker.wait(timeout=30), 0)
-            self.assertEqual(controller.wait(timeout=30), 0)
+            out, err = controller.communicate(timeout=30)
+            self.assertEqual(controller.returncode, 0, f"stdout={out}; stderr={err}")
             self.assertEqual(slots.status()["claims"], [])
             self.assertFalse(ready.exists())
         finally:
