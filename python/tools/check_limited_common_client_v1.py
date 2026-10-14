@@ -22,6 +22,7 @@ def check(binary: Path, *, seed: int = 123) -> dict:
     catalog = _uint(identity.get("card_db_hash"), "card_db_hash")
     decks = (parse_dck("40 Forest"), parse_dck("40 Island"))
     transcripts = []
+    server_timings = []
     terminal = None
     for _ in range(2):
         with LimitedCommonClientV1(command, expected_card_db_hash=catalog,
@@ -57,11 +58,18 @@ def check(binary: Path, *, seed: int = 123) -> dict:
             else:
                 raise LimitedSessionError("plumbing game exceeded its bound")
             transcripts.append(client.transcript.hexdigest())
+        for line in client.stderr:
+            prefix = b"LIMITED_COMMON_TIMING_V1 "
+            if line.startswith(prefix):
+                server_timings.append(load_json(line[len(prefix):]))
     if transcripts[0] != transcripts[1]:
         raise LimitedSessionError("same-seed process transcripts differed")
-    return {"schema": "limited-common-client-check/v1", "seed": seed,
+    result = {"schema": "limited-common-client-check/v1", "seed": seed,
             "card_db_hash": catalog, "transcript_sha256": transcripts[0],
             "terminal": terminal}
+    if server_timings:
+        result["server_timings_v1"] = server_timings
+    return result
 
 
 def main() -> None:

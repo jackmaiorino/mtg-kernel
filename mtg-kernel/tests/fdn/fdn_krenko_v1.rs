@@ -94,6 +94,7 @@ fn naturally_ready(state: &mut GameState, actor: PlayerId, source: ObjectId) {
         let decision = next(state);
         if state.active_player == actor
             && state.priority_player == actor
+            && state.step == Step::Main1
             && !state.objects.get(source).summoning_sick
             && matches!(decision, Decision::CastSpellOrPass { .. })
         {

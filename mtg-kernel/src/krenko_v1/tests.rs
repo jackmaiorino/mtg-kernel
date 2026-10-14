@@ -1,6 +1,6 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::{put, ready_state, ready_state_for};
 
 #[test]
 #[cfg(all(
@@ -100,9 +100,7 @@ fn registered_token_batch_has_one_complete_entry_roster_and_original_controller_
 #[test]
 fn unrelated_registered_activation_and_hooks_emit_no_krenko_bytes_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_for(actor);
         let source = put(&mut state, actor, "Quirion Ranger", Zone::Battlefield);
         let target = source;
         put(&mut state, actor, "Forest", Zone::Battlefield);
@@ -192,9 +190,7 @@ mod future {
     use crate::engine::{self, Action, Decision};
 
     fn paid_primitive(actor: PlayerId) -> (GameState, StackItem) {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = ready_state_for(actor);
         // Genuine registered activation on a physical permanent; full casting
         // and natural untap traversal live in the external printed fixtures.
         let source = put(&mut state, actor, "Krenko, Mob Boss", Zone::Battlefield);

@@ -100,6 +100,9 @@ pub(crate) struct RootCtx<'a> {
     /// Merge interchangeable choices into one edge (`interchange.rs`);
     /// selection and frozen execution always agree on it.
     pub(crate) interchange: bool,
+    /// Opt-in best-line backup with try threshold m (`tree.rs` `BestLine`);
+    /// None is the formal mean backup.
+    pub(crate) bestline: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -717,6 +720,11 @@ impl Roles {
                 "depth retention and capture use legacy keys only".into(),
             ));
         }
+        if ctx.bestline.is_some() && retain > 1 {
+            return Err(PlayErr::Fault(
+                "depth retention does not use the best-line backup".into(),
+            ));
+        }
         if ctx.interchange && (retain > 1 || capturing || !ctx.visible_history.is_empty()) {
             return Err(PlayErr::Fault(
                 "depth retention, capture and E history do not merge interchangeable choices"
@@ -841,6 +849,10 @@ impl Roles {
                                 let perm = keyer.perm(&st, ctx.seeds)?;
                                 let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
                                 node.skip = keyer.skipped(&st);
+                                if let Some(m) = ctx.bestline {
+                                    let k = node.n.len();
+                                    node.bl = Some(Box::new(super::tree::BestLine::new(k, m)));
+                                }
                                 if let Some(log) = path_log.as_mut() {
                                     log.created(key, &s, cn, ctx.focal);
                                 }
@@ -1059,6 +1071,17 @@ impl Roles {
                 Tree::default(),
             );
         }
+        if ctx.bestline.is_some() && (options.sharing || options.allocation != RootAllocation::Uct)
+        {
+            return (
+                Selection {
+                    incomplete: true,
+                    faults: vec!["the best-line backup runs with UCT and no sharing".into()],
+                    ..Selection::default()
+                },
+                Tree::default(),
+            );
+        }
         let cpu_start = match super::process_cpu::seconds() {
             Ok(t) => t,
             Err(e) if options.cpu_seconds.is_some() => {
@@ -1216,7 +1239,7 @@ impl Roles {
                     if let Some(log) = diag.path_log.as_mut() {
                         log.natural(index, &path, &new, win, &rec);
                     }
-                    tree.backup(&path, new, win);
+                    tree.backup_observed(&path, new, win, rec.rollout_choices == 0);
                     if let Some(sharing) = sharing.as_mut() {
                         sharing.backup(&sharing_cursor, index, win);
                     }

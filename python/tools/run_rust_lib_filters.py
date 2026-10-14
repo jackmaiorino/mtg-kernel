@@ -26,12 +26,18 @@ def main() -> int:
         if len(sys.argv) != 3:
             raise ValueError("Cargo runner expects exactly one library test executable")
         filters = valid_filters(json.loads(os.environ[FILTERS_ENV]))
+        failed_filters = []
+        first_failure = 0
         for test_filter in filters:
             print(f"Running compiled library filter: {test_filter}", flush=True)
             result = subprocess.run([sys.argv[2], test_filter], check=False)
             if result.returncode:
-                return result.returncode
-        return 0
+                failed_filters.append(test_filter)
+                if not first_failure:
+                    first_failure = result.returncode
+        if failed_filters:
+            print("Failed compiled library filters: " + json.dumps(failed_filters), flush=True)
+        return first_failure
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--features", required=True)

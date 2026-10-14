@@ -14,7 +14,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request replaces its running CI. Runs on main,
+  # tags and manual dispatches finish, because they carry the Windows
+  # feature groups that pull requests skip.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -89,6 +92,11 @@ jobs:
 
   rust-quality:
     name: Rust formatting and lint
+    needs: detect-changes
+    # Same path rule as the Rust test groups: a change that touches only
+    # docs, markdown, Python tests or non-embedded Python tools cannot
+    # change what rustfmt or Clippy see. Pushes to main always run it.
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -209,17 +217,24 @@ jobs:
           - trace
           - saved-input
           - limited-store
+        # Pull requests run Windows only for the workspace suite and the
+        # native Store group, whose production writer is Windows-only code.
+        # The other Windows groups never failed without Linux failing too
+        # (2026-10-10 to 10-14), so they run on main, tags and manual
+        # dispatches, which still cover every group on both systems.
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
           # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
             runner: '"ubuntu-24.04"'
-          # Windows jobs borrow preemptible CPU slots at Idle priority through
-          # the runner's job-started hook. Idle listeners hold no CPU slots.
-          # The repository variable remains an explicit routing override.
+          # Windows groups default to GitHub's hosted runners: on the local
+          # pool they queued for over an hour behind research claims. The
+          # repository variable routes them elsewhere, for example
+          # '["self-hosted", "mtg-ci-windows"]' for the local pool.
           - os: windows-2025
-            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '["self-hosted", "mtg-ci-windows"]' }}
+            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
@@ -410,7 +425,8 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             binary_suffix=".exe"
           fi
-          python python/tools/check_limited_common_client_v1.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env$binary_suffix"
+          # Profile the existing two replays to separate Python work from engine waits.
+          MTG_LIMITED_COMMON_TIMING_V1=1 python -m cProfile -s cumulative python/tools/check_limited_common_client_v1.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env$binary_suffix"
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
@@ -449,8 +465,9 @@ jobs:
           - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-    # Fork pull requests stay hosted; trusted Windows jobs use the local pool.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '["self-hosted", "mtg-ci-windows"]') || matrix.os }}
+    # Fork pull requests stay hosted; trusted Windows jobs follow the same
+    # routing variable as the Rust groups, hosted by default.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
     steps:
