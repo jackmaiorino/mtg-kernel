@@ -11,6 +11,7 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 import launch
 import analyze
+import certify_qualification
 
 
 class QualificationTests(unittest.TestCase):
@@ -141,6 +142,56 @@ class QualificationTests(unittest.TestCase):
                 paths.append(path)
             with self.assertRaisesRegex(ValueError, "same observed core pool"):
                 launch.qualify(paths, Path(directory) / "receipt.json")
+
+    def test_legacy_certification_preserves_sources_and_rejects_claim_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = self.calibrated_spec(directory)
+            target.update(commit="same-native", runtime_commit="new-guard")
+            guard = root / "guard.py"
+            guard.write_bytes(b"old guard")
+            asset = lambda path: {"path": str(path), "sha256": launch.digest(path)}
+            target["host_reservation"] = asset(HERE.parents[1] / "python/tools/host_reservation_v1.py")
+            old = json.loads(json.dumps(target))
+            old.pop("core_pool")
+            old.update(runtime_commit="old-guard", runtime_helper=asset(guard))
+            old["inputs"].append(old["runtime_helper"])
+            source = root / "source.json"
+            launch.publish(source, old)
+            guard.write_bytes(b"new pool guard")
+            target["runtime_helper"] = asset(guard)
+            target["inputs"].append(target["runtime_helper"])
+            manifest = root / "bound.json"
+            launch.publish(manifest, target)
+            paths = []
+            for workers in (1, 2):
+                label = f"legacy{workers}"
+                folder = root / label
+                folder.mkdir()
+                rows = []
+                for number in range(2):
+                    output = folder / f"{number}.jsonl"
+                    output.write_bytes(b"immutable native output")
+                    rows.append({"id": str(number + 1), "primary_sha256": str(number), "exit_code": 0,
+                                 "affinity_core": number, "output": str(output), "output_sha256": launch.digest(output)})
+                batch = folder / "completion.json"
+                launch.publish(batch, {"label": label, "workers": workers, "compatible": launch.compatibility(old),
+                                      "error": None, "results": rows, "peak_active_workers": workers,
+                                      "wall_seconds": 2 / workers, "cpu_seconds": 1, "cores_claimed": 2})
+                log = root / f"DISPATCH-{label}.log"
+                log.write_text(json.dumps({"claimed": label, "cores": "0-1"}))
+                launch.publish(root / f"DISPATCH-{label}.json", {"state": "completed", "claim_release_verified": True,
+                    "completion": str(batch), "manifest": asset(source), "claim_id": label, "log": str(log)})
+                paths.append(batch)
+            originals = [launch.digest(path) for path in paths]
+            with patch.object(launch, "storage_guard"):
+                receipt = certify_qualification.certify(manifest, paths, root / "certified.json")
+                self.assertEqual(receipt["compatible"], launch.compatibility(target))
+                self.assertEqual([launch.digest(path) for path in paths], originals)
+                self.assertTrue(all(row["legacy_metadata_added"] for row in receipt["certification_provenance"]))
+                log.write_text(json.dumps({"claimed": "legacy2", "cores": "2-3"}))
+                with self.assertRaisesRegex(ValueError, "outer claim differs"):
+                    certify_qualification.certify(manifest, paths, root / "bad.json")
 
     def test_fastest_eligible_and_changed_workload(self):
         with tempfile.TemporaryDirectory() as directory:

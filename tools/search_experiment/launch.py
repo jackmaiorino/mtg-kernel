@@ -549,6 +549,12 @@ def execute(spec, workers, phase, label):
 
 def qualify(paths, out):
     batches = [load(path) for path in paths]
+    receipt = qualify_records(batches, paths)
+    publish(out, receipt)
+    return receipt
+
+
+def qualify_records(batches, paths):
     require(len(batches) >= 2, "need serial and parallel batches")
     first = batches[0]
     require(all(not row["error"] and row["compatible"] == first["compatible"] for row in batches),
@@ -568,7 +574,6 @@ def qualify(paths, out):
     require("1" in rates and any(int(n) > 1 for n in rates), "serial and parallel counts required")
     receipt = {"schema": SCHEMA, "compatible": first["compatible"], "parity": True, "rates": rates,
                "batches": [{"path": str(path), "sha256": digest(path)} for path in paths]}
-    publish(out, receipt)
     return receipt
 
 

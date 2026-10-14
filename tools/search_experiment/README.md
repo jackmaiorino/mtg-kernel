@@ -225,3 +225,22 @@ qualification with `--representative-qualification --qualification-cpu-cap 2400`
 The driver applies its 1.5 times measured CPU projection against the declared
 batch ceiling. This does not change the aggregate 12-hour cap, cost-only bound,
 workload, or formal analysis gates. Do not split batches to evade either bound.
+For a stable Windows P-core allocation, prepare with `--core-pool 8-15` and
+`--cores-claimed 8`. The allocator restricts this request under its existing
+mutex and reservations. The runtime verifies the actual outer affinity before
+native work and records that pool and physical topology. Qualification compares
+only batches with the same observed pool. Formal and substantial calibration
+dispatch require the explicit qualified pool.
+
+The lead-approved guard repair may reuse immutable legacy P1/P4 evidence:
+
+```powershell
+python tools/search_experiment/certify_qualification.py --manifest BOUND-MANIFEST.json --batch qual-abc512-w1-r3/completion.json --batch qual-abc512-w4-r3/completion.json --out P-THROUGHPUT.json
+```
+
+This writes a new receipt, checks the original source manifest and completed
+dispatch, exact claimed pool, every native affinity and output hash, and equal
+native/workload/model/storage identities. It records both guard pins and leaves
+original compatibility fields and artifacts intact. Only the explicitly bound
+launcher guard asset may change. Add the missing same-pool eight-worker batch
+to that command after it completes; retain the eight-E-core result separately.
