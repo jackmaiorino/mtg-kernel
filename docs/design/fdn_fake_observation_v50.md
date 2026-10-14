@@ -36,8 +36,11 @@ activation after actual Fake history, reaches a genuine competing Barricade
 prevention menu, requires the original historical source, rejects a forged
 passed row and checks mixed observation equality after restore. The competing
 shield uses an existing typed setup operand, not another paid-printing claim.
-Earlier 15 groups remain. Follow-up source consultation and native
-compilation/runtime are pending.
-Complete executable V50 backend/Human bindings, broader coexistence and model,
-sampler, search/training/profile qualification remain unfinished. Fake remains
-Partial and Full-deck preflight still refuses it.
+Earlier 15 groups remain. Predecessor Native128 currently has 37 passes and one
+paid Heartfire finalization fixture failure; its strict checks remain pending.
+The separate [executable backend checkpoint](fdn_fake_backend_v50.md) adds V50
+ordered binding, current-state application and owning restore preparation,
+four written backend groups and mandatory Aura session replay. It is uncompiled
+and unqualified. Human V50, broader coexistence and model, sampler,
+search/training/profile qualification remain unfinished. Fake remains Partial
+and Full-deck preflight still refuses it.
