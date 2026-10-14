@@ -46,6 +46,8 @@ pub fn producer_sha256() -> String {
         include_str!("life_gain_turn_v1.rs"),
         include_str!("fiendish_panda_v1.rs"),
         include_str!("fiendish_panda_v1/custody.rs"),
+        include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+        include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
         include_str!("../build.rs"),
     ] {
         h.update([0]);

@@ -15,6 +15,23 @@ fn latest(state: &GameState) -> (&BatchV49, usize) {
     };
     (batch, index)
 }
+/// Physical genuine amount-only history; it owns no printed Conqueror trigger.
+pub(crate) fn amount_only_sampler_state(actor: PlayerId) -> Option<GameState> {
+    if enabled() {
+        return None;
+    }
+    let mut state = ready(actor);
+    let recorder = RecorderV49::original(&state).unwrap();
+    event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 3));
+    recorder.finish(&mut state);
+    validate(&state).unwrap();
+    assert!(!matches!(
+        crate::engine::advance_until_decision(&mut state),
+        crate::engine::Decision::Halted { .. }
+    ));
+    assert!(state.engine.event_log.is_empty());
+    Some(state)
+}
 #[test]
 fn absent_printing_keeps_actual_registered_operations_bytes_and_no_new_history() {
     if enabled() {
@@ -185,7 +202,7 @@ fn physical_prevention_records_only_actual_surviving_player_loss() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod future_printed {
+pub(crate) mod future_printed {
     use super::*;
     use crate::effect::EffectOp;
     use crate::engine::{self, Action, Decision};
@@ -195,7 +212,7 @@ mod future_printed {
         assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
         decision
     }
-    fn finish(state: &mut GameState) {
+    pub(crate) fn finish(state: &mut GameState) {
         for _ in 0..50 {
             let decision = next(state);
             if state.stack.is_empty()
@@ -215,7 +232,7 @@ mod future_printed {
         }
         panic!("actual completion missing");
     }
-    fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+    pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
         let mut state = ready(actor);
         put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
         let source = put(&mut state, actor, "Bloodthirsty Conqueror", Zone::Hand);

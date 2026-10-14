@@ -557,6 +557,19 @@ pub(crate) fn validate_source(
     }
     Ok(())
 }
+/// Every retained private Conqueror record requires a separate qualified sampler.
+pub(crate) fn has_history(state: &GameState) -> bool {
+    state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::ConquerorObserverInputV49 { .. }
+                | CommittedEvent::ConquerorLossBatchV49 { .. }
+                | CommittedEvent::ConquerorCapturedV49 { .. }
+                | CommittedEvent::ConquerorCollectedV49 { .. }
+                | CommittedEvent::ConquerorJournalV49 { .. }
+        )
+    })
+}
 pub(crate) fn require_legacy_consumer(state: &GameState) -> Result<(), String> {
     // The new catalog has an occurrence mechanic absent from every frozen
     // consumer contract. V49 will opt in through a distinct typed producer.
@@ -579,4 +592,4 @@ pub(crate) fn require_legacy_consumer(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

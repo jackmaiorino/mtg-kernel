@@ -970,6 +970,9 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+        return true;
+    }
     if state
         .engine
         .event_history

@@ -17,6 +17,7 @@ Authored source fixtures, all unrun:
 - Four registered physical amount-only groups cover both seats, distinct operations, simultaneous actual player sums, payment/gain/zero/object-damage separation, real prevention, restoration, and original-journal-preserving read-only forgeries. They return when the true printing is enabled and do not manufacture a printed Conqueror root.
 - Two ignored genuine paid child groups cover fresh/publication/counter/gain/closure erasure, coherent publication changes, preserved observer inputs, and both simultaneous source-departure orders.
 - Seven ignored consolidated FDN printing groups use actual 3BB casts plus real Bolt, Employment, Witness, Snap and life-Ward routes, lethal combat before SBA, real mixed Crystal/finite-shield replacement choice, original versus returned incarnation/controller, registered Pridemate gain side effects, both seats and serialized replay. Physical control, finite-shield and accepted counter primitives are explicitly labeled instead of substituted card recipes.
+- A registered retained amount-only sampler group and an ignored actual resolved/countered root sampler group check refusal before any hidden-owner mutation, including restored states with no transient/live Conqueror root.
 - A registered foreign-definition/schema/catalog refusal group and an ignored exact printed meaning group retain strict all-field/ordered-fact/unknown-field refusal.
 
 ## Scoped V49 consumer successor design
