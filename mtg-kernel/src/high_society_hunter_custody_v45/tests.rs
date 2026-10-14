@@ -86,14 +86,24 @@ fn menu(state: &mut GameState) {
     not(feature = "standard-magezero-fixtures")
 ))]
 fn readonly_refusal(state: &GameState, action: Action) {
+    readonly_refusal_at(state, action, "Hunter refusal");
+}
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn readonly_refusal_at(state: &GameState, action: Action, phase: &str) {
     let bytes = serde_json::to_vec(state).unwrap();
     let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
-    assert!(engine::step(&mut restored, action).is_err());
-    assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
-    assert!(matches!(
-        engine::advance_until_decision(&mut restored),
-        Decision::Halted { .. }
-    ));
+    assert!(engine::step(&mut restored, action).is_err(), "{phase}");
+    assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes, "{phase}");
+    assert!(
+        matches!(
+            engine::advance_until_decision(&mut restored),
+            Decision::Halted { .. }
+        ),
+        "{phase}"
+    );
     let halt = restored.engine.halted.take();
     assert!(halt.is_some());
     assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
@@ -163,15 +173,59 @@ fn genuine_capture_waiting_publication_menu_answer_and_cost_draw_completion_rest
 ))]
 fn original_journals_preserved_fresh_published_suspended_and_answer_erasure_refuse_readonly() {
     for actor in [PlayerId::P0, PlayerId::P1] {
+        // Exercise the actual capture primitive before the public action's
+        // automatic trigger collection, without inventing a capture receipt.
+        let mut uncollected = crate::extra_turn_v1::tests::ready(actor);
+        uncollected.step = crate::state::Step::DeclareAttackers;
+        let hunter = put(
+            &mut uncollected,
+            actor,
+            "High-Society Hunter",
+            Zone::Battlefield,
+        );
+        let declaration = CommittedEvent::DeclaredAttacker {
+            source: hunter,
+            source_zone_change_count: uncollected.objects.get(hunter).zone_change_count,
+            controller: actor,
+        };
+        let declaration_index = uncollected.engine.event_history.len();
+        uncollected.engine.event_history.push(declaration.clone());
+        uncollected.engine.event_log.push(declaration);
+        crate::high_society_hunter_v1::capture_attack(&mut uncollected, declaration_index);
+        let capture = captures(&uncollected).into_iter().next().unwrap();
+        assert!(collected(&uncollected, capture).is_empty());
+        validate(&uncollected).unwrap();
+        uncollected.engine.event_log.clear();
+        readonly_refusal_at(
+            &uncollected,
+            Action::Pass,
+            "uncollected original event erased",
+        );
+
         let (fresh, _, _) = attack_state(actor);
+        assert!(fresh.engine.event_log.is_empty());
+        let capture = captures(&fresh).into_iter().next().unwrap();
+        assert_eq!(collected(&fresh, capture).len(), 1);
+        assert_eq!(
+            fresh
+                .engine
+                .pending_triggers
+                .iter()
+                .filter(|trigger| binding(&trigger.effect) == Some((capture, true)))
+                .count(),
+            1
+        );
         let mut erased = fresh.clone();
-        erased.engine.event_log.clear();
-        readonly_refusal(&erased, Action::Pass);
+        erased
+            .engine
+            .pending_triggers
+            .retain(|trigger| binding(&trigger.effect) != Some((capture, true)));
+        readonly_refusal_at(&erased, Action::Pass, "collected held owner erased");
         let mut published = fresh.clone();
         engine::advance_until_decision(&mut published);
         let mut erased = published.clone();
         erased.stack.clear();
-        readonly_refusal(&erased, Action::Pass);
+        readonly_refusal_at(&erased, Action::Pass, "published stack erased");
         let mut suspended = fresh;
         menu(&mut suspended);
         for case in 0..7 {
@@ -189,12 +243,16 @@ fn original_journals_preserved_fresh_published_suspended_and_answer_erasure_refu
                 5=>{let publication=bad.engine.event_history.iter().find(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::Published{..}))).unwrap().clone();bad.engine.event_history.push(publication);},
                 _=>bad.stack.last_mut().unwrap().v4.high_society_hunter_started_v45.0=None,
             }
-            readonly_refusal(&bad, Action::FinishEffectSelection);
+            readonly_refusal_at(
+                &bad,
+                Action::FinishEffectSelection,
+                &format!("suspended case {case}"),
+            );
         }
         engine::step(&mut suspended, Action::FinishEffectSelection).unwrap();
         let mut erased = suspended;
         erased.engine.event_history.retain(|e|!matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::SelectionInput{..})));
-        readonly_refusal(&erased, Action::Pass);
+        readonly_refusal_at(&erased, Action::Pass, "completed answer input erased");
     }
 }
 

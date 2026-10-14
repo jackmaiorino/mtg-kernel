@@ -158,6 +158,31 @@ pub(crate) fn target_legal(state: &GameState, item: &StackItem) -> bool {
             && CARD_DEFS[usize::from(live.card_def)].types.contains(&CardType::Creature)
             && crate::engine::has_effective_subtype(state, *object, Subtype::Zombie)))
 }
+/// Authorize the original graveyard targeting event at final announcement.
+/// Full-state validation needs that event, so it cannot run before logging it.
+pub(crate) fn final_graveyard_targeting(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<bool, String> {
+    if !selected(item) {
+        return Ok(false);
+    }
+    metadata(state, item)?;
+    let publication = published(state, item.v4.stack_item_id)?;
+    if publication.item.as_ref() != item
+        || !matches!(state.engine.event_history.get(publication.index as usize),
+            Some(CommittedEvent::ZulAshurPublishedV1 { publication: original }) if original.as_ref() == publication)
+        || publication.payment.checked_add(1) != Some(publication.index)
+        || !matches!(state.engine.event_history.get(publication.payment as usize),
+            Some(CommittedEvent::Tap { object }) if *object == item.source)
+        || !target_legal(state, item)
+        || state.engine.event_history.iter().any(|event| matches!(event,
+            CommittedEvent::Targeted { targeting_stack_item, .. } if *targeting_stack_item == item.v4.stack_item_id))
+    {
+        return Err("Zul final targeting lost original paid publication or target".into());
+    }
+    Ok(true)
+}
 pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), String> {
     let Some(item) = state
         .stack
