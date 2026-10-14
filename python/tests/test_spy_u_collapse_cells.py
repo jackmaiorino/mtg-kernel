@@ -455,7 +455,23 @@ class CellFit(Temp):
         self.assertEqual((neither["ordering"], neither["support_against_u0"], neither["wording"]),
                          (cells.NEITHER, cells.LATER, cells.WORDING["count_control"][cells.NEITHER]))
         later = control(**{"U-s32": {"fail_from": 512}, "U-c32": {"fail_from": 189}})
-        self.assertEqual(later["wording"], cells.WORDING["count_control"][cells.LATER])
+        self.assertEqual((later["support_against_u0"], later["wording"]),
+                         (cells.LATER, cells.WORDING["count_control"][cells.LATER]))
+        # The support cell stays in U0's interval: the control's collapse moved, not the support rule's.
+        control_earlier = control(**{"U-s32": {"fail_from": 189}, "U-c32": {"fail_from": 64}})
+        self.assertEqual((control_earlier["ordering"], control_earlier["support_against_u0"],
+                          control_earlier["wording"]), (cells.LATER, cells.SAME, cells.CONTROL_MOVED[cells.LATER]))
+        control_later = control(**{"U-s32": {"fail_from": 189}, "U-c32": {"fail_from": 512}})
+        self.assertEqual((control_later["ordering"], control_later["support_against_u0"],
+                          control_later["wording"]), (cells.EARLIER, cells.SAME, cells.CONTROL_MOVED[cells.EARLIER]))
+        both_earlier = control(**{"U-s32": {"fail_from": 128}, "U-c32": {"fail_from": 64}})
+        self.assertEqual((both_earlier["ordering"], both_earlier["support_against_u0"]), (cells.LATER, cells.EARLIER))
+        self.assertEqual(both_earlier["wording"], 'the support cell collapsed later than the same number of random '
+                                                  'rows; against U0 it reads "collapsed earlier"')
+        support_earlier = control(**{"U-s32": {"fail_from": 64}, "U-c32": {"fail_from": 512}})
+        self.assertEqual((support_earlier["ordering"], support_earlier["support_against_u0"],
+                          support_earlier["wording"]),
+                         (cells.EARLIER, cells.EARLIER, cells.WORDING["count_control"][cells.EARLIER]))
         out = cells.contrasts(cells.fit_cells(self.spec({"r1": {"U0": {"fail_from": 189, "rerun_hash": "other"},
                                                                 "U-s32": {"fail_from": 512},
                                                                 "U-c32": {"fail_from": 512}}})))
@@ -463,6 +479,19 @@ class CellFit(Temp):
         self.assertEqual((broken["ordering"], broken["support_against_u0"]), (cells.SAME, cells.NOT_EVIDENCE))
         self.assertIn("same checkpoint interval", broken["wording"])
         self.assertIn(cells.NOT_EVIDENCE, broken["wording"])
+
+    def test_a_contrast_holds_across_lineages_only_with_the_same_ordering_and_wording(self):
+        runs = {"r1": {"U0": {"fail_from": 189}, "U-s32": {"fail_from": 189}, "U-c32": {"fail_from": 189}},
+                "r2": {"U0": {"fail_from": 64}, "U-s32": {"fail_from": 239}, "U-c32": {"fail_from": 239}}}
+        out = cells.contrasts(cells.fit_cells(self.spec(runs)))["count_controls"]["U-s32"]
+        self.assertEqual({lin: v["ordering"] for lin, v in out["per_lineage"].items()},
+                         {"r1": cells.SAME, "r2": cells.SAME})
+        self.assertEqual((out["per_lineage"]["r1"]["wording"], out["per_lineage"]["r2"]["wording"]),
+                         (cells.NO_CHANGE, cells.WORDING["count_control"][cells.SAME]))
+        self.assertEqual(out["across_lineages"], "lineage-dependent")
+        runs["r2"]["U0"] = {"fail_from": 239}
+        same = cells.contrasts(cells.fit_cells(self.spec(runs)))["count_controls"]["U-s32"]
+        self.assertEqual(same["across_lineages"], cells.SAME)
 
 
 if __name__ == "__main__":

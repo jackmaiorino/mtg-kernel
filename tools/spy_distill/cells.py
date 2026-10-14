@@ -31,10 +31,12 @@ cell against U0 by collapse step, where one run collapsed later than another
 when it passed G2 at a read checkpoint at or after the other's first G2
 failure, with the G2 metrics at every step both read; U-lr at 4N steps
 against U0 at N; each support cell against its count control, on G2 only,
-where a shared collapse interval reads as a change only if the support cell's
-own collapse moved against U0's; and each all-row cell's G2 metrics against
-its fit to its own rows. Across lineages, a lineage whose contrast is not
-evidence or not ordered is named rather than read as lineage-dependent.
+worded by the support cell's own contrast with U0, so that a change is
+credited to the support rule only when the support cell itself moved against
+U0; and each all-row cell's G2 metrics against its fit to its own rows. A
+contrast holds across lineages when both give the same ordering and wording;
+a lineage whose contrast is not evidence or not ordered is named rather than
+read as lineage-dependent.
 
 CLI:
   exactness --screen-dry DRY.json --dry DRY.json --screen-full PHASE1.json --rerun PHASE1.json --out OUT.json
@@ -446,6 +448,12 @@ WORDING = {"anchor": {LATER: "a larger ratio of the anchor term to the archive t
                              EARLIER: "keeping well-supported rows brought the collapse earlier than the same "
                                       "number of random rows, in this lineage"}}
 NO_CHANGE = "neither the support rule nor fewer rows changed the collapse at these checkpoints, in this lineage"
+# The support cell differs from its control while it stays in U0's interval:
+# the change is the control's, not the support rule's.
+CONTROL_MOVED = {LATER: "the same number of random rows brought the collapse earlier than U0, and the support rule "
+                        "did not, in this lineage",
+                 EARLIER: "the same number of random rows delayed the collapse past U0's, and the support rule did "
+                          "not, in this lineage"}
 COUNT_CONTROL_EXPLANATIONS = ["the support rule may keep rows that agree more with the parent "
                               "(see both cells' parent disagreement)",
                               "the support rule also changes which decisions are trained",
@@ -496,30 +504,38 @@ def contrast(cell: dict, reference: dict, kind: str | None, g2_only: bool = Fals
 
 
 def count_control_wording(ordering: str, support_against_u0: str) -> str | None:
-    """A shared collapse interval reads as a change only where the support
-    cell's own collapse moved against U0's."""
-    if ordering != SAME:
-        return WORDING["count_control"].get(ordering)
-    if support_against_u0 == SAME:
-        return NO_CHANGE
-    if support_against_u0 in (LATER, EARLIER):
-        return WORDING["count_control"][SAME]
-    return (f"the support rule and the same number of random rows collapsed in the same checkpoint interval; "
-            f"against U0 the support cell reads \"{support_against_u0}\"")
+    """A support cell against its count control reads as a change by the
+    support rule only where the support cell's own collapse moved against
+    U0's in the same direction; otherwise it says whose collapse moved."""
+    if ordering == SAME:
+        if support_against_u0 == SAME:
+            return NO_CHANGE
+        if support_against_u0 in (LATER, EARLIER):
+            return WORDING["count_control"][SAME]
+        return (f"the support rule and the same number of random rows collapsed in the same checkpoint interval; "
+                f"against U0 the support cell reads \"{support_against_u0}\"")
+    if ordering in (LATER, EARLIER):
+        if support_against_u0 == ordering:
+            return WORDING["count_control"][ordering]
+        if support_against_u0 == SAME:
+            return CONTROL_MOVED[ordering]
+        return (f"the support cell {ordering} than the same number of random rows; against U0 it reads "
+                f"\"{support_against_u0}\"")
+    return WORDING["count_control"].get(ordering)
 
 
 def across(per_lineage: dict) -> str:
-    """A contrast holds across lineages when it holds in both. A lineage
-    whose contrast is not evidence or not ordered is named, not read as a
-    difference between lineages."""
+    """A contrast holds across lineages when both lineages give the same
+    ordering and wording. A lineage whose contrast is not evidence or not
+    ordered is named, not read as a difference between lineages."""
     if len(per_lineage) < len(LINEAGES):
         return "one lineage only"
     for ordering, label in ((NOT_EVIDENCE, "not evidence"), (NOT_ORDERED, "not ordered")):
         named = [lin for lin, v in sorted(per_lineage.items()) if v["ordering"] == ordering]
         if named:
             return f"{label} in {' and '.join(named)}"
-    orderings = {v["ordering"] for v in per_lineage.values()}
-    return orderings.pop() if len(orderings) == 1 else "lineage-dependent"
+    readings = {(v["ordering"], v["wording"]) for v in per_lineage.values()}
+    return readings.pop()[0] if len(readings) == 1 else "lineage-dependent"
 
 
 def kind_of(name: str) -> str | None:
