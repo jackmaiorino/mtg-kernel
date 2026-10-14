@@ -466,6 +466,11 @@ fn real_eaten_cost_sacrifices_paid_panda_then_mandatory_return_and_exile_coexist
         let panda = put(&mut state, actor, "Fiendish Panda", Zone::Hand);
         let eaten = put(&mut state, actor, "Eaten Alive", Zone::Hand);
         let returned = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        let alternative = put(&mut state, actor, "Llanowar Elves", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(alternative, Zone::Battlefield),
+        );
         let exiled = put(
             &mut state,
             actor.opponent(),
@@ -509,6 +514,17 @@ fn real_eaten_cost_sacrifices_paid_panda_then_mandatory_return_and_exile_coexist
         choose(
             &mut session,
             |a| matches!(a,ActionSemanticV1::ChooseEffectOption{option_index,..}if usize::from(*option_index)==branch),
+        );
+        let e = expected(&session);
+        let (_, candidates, _) = session
+            .panda_current_decision_input_v47(e, actor.into())
+            .unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|action| matches!(action, ActionSemanticV1::ChooseCostTarget { .. }))
+                .count(),
+            2
         );
         let saved = session.snapshot_v1();
         let mut replay = session.clone();

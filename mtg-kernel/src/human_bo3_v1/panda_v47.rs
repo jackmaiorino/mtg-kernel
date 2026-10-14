@@ -7,12 +7,6 @@ use crate::rl_session::panda_v47::PandaDecisionBindingV47;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionSnapshotV1};
 use std::collections::BTreeMap;
 mod facts;
-#[cfg(all(
-    test,
-    feature = "limited-fdn-fixtures",
-    not(feature = "standard-magezero-fixtures")
-))]
-mod tests;
 use facts::{panda_label, project_panda};
 pub use facts::{HumanPandaFactsV47, HumanPandaOccurrenceV47};
 type Error = HumanDecisionErrorV1;
@@ -1659,3 +1653,10 @@ fn eaten_label(
     };
     Ok(result)
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;
