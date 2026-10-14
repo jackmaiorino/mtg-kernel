@@ -1118,3 +1118,300 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() {
+    use crate::card_def::ManaColor;
+    use crate::engine::{self, Action, Decision};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for copy_controller in [actor, actor.opponent()] {
+            let mut state = ready_state_for(actor);
+            for player in [actor, actor.opponent()] {
+                put(&mut state, player, "Forest", Zone::Hand);
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+            cast_season(&mut state, actor);
+            let source = put(&mut state, actor, "Arahbo, the First Fang", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()] = 3;
+            engine::step(&mut state, Action::CastSpell(source)).unwrap();
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            let (copy, copy_stack) =
+                engine::copy_spell_for(&mut state, source, copy_controller).unwrap();
+            assert_ne!(copy, source);
+            assert!(state.stack.iter().any(|row| row.source == copy
+                && row.v4.stack_item_id == copy_stack
+                && row.is_copy));
+            let start = state.engine.event_history.len();
+            let original = restore(&state);
+            for _ in 0..3 {
+                let mut branch = restore(&original);
+                for _ in 0..32 {
+                    let decision = engine::advance_until_decision(&mut branch);
+                    assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
+                    if branch.objects.get(copy).zone == Zone::Battlefield {
+                        break;
+                    }
+                    match decision {
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut branch, Action::Pass).unwrap()
+                        }
+                        Decision::OrderTriggers { pending, .. } => engine::step(
+                            &mut branch,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        )
+                        .unwrap(),
+                        other => panic!("unexpected permanent copy entry {other:?}"),
+                    }
+                }
+                let live = branch.objects.get(copy);
+                assert_eq!(live.zone, Zone::Battlefield);
+                assert_eq!(live.controller, copy_controller);
+                assert!(live.v4.is_token);
+                assert_eq!(branch.objects.get(source).zone, Zone::Stack);
+                assert_eq!(branch.engine.event_history[start..].iter().filter(|event| matches!(event, event::CommittedEvent::CreateToken { token_def, .. } if *token_def == live.card_def)).count(), 0);
+                let entries: Vec<_> = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == copy =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(entries.len(), 1);
+                assert!(entries[0].snapshot.v4.is_token);
+                assert_eq!(entries[0].snapshot.controller, copy_controller);
+                let captures: Vec<_> = branch.engine.event_history[start..]
+                    .iter()
+                    .filter_map(|event| match event {
+                        event::CommittedEvent::ArahboTokenCaptureV1 { capture }
+                            if capture.source.source == copy =>
+                        {
+                            Some(capture)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(captures.len(), 1);
+                assert_eq!(captures[0].root, crate::arahbo_v1::RootV1::OwnEntry);
+                assert_eq!(captures[0].source.controller, copy_controller);
+                crate::arahbo_v1::validate_state(&branch).unwrap();
+                validate_token_journals(&branch).unwrap();
+                assert_eq!(restore(&branch), branch);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for owner_controls_season in [false, true] {
+            let mut state = ready_state_for(actor);
+            let owner = actor.opponent();
+            let season_controller = if owner_controls_season { owner } else { actor };
+            let season = put(&mut state, season_controller, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let source = put(&mut state, owner, "Mossborn Hydra", Zone::Stack);
+            // Declared physical Stack-controller boundary. No synthetic cast
+            // permission or paid receipt is claimed for the foreign card.
+            state.objects.get_mut(source).controller = actor;
+            let proposal = ProposedEvent::zone_change(source, Zone::Battlefield);
+            let before = bytes(&state);
+            let input = entry_input(&state, &proposal).unwrap();
+            assert_eq!(input.controller, actor);
+            assert_eq!(input.seasons.len(), usize::from(!owner_controls_season));
+            assert_eq!(bytes(&state), before);
+            for _ in 0..3 {
+                let mut branch = restore(&state);
+                event::propose_and_commit(&mut branch, proposal.clone());
+                assert!(branch.engine.halted.is_none());
+                let live = branch.objects.get(source);
+                assert_eq!(live.owner, owner);
+                assert_eq!(live.controller, actor);
+                assert_eq!(live.zone, Zone::Battlefield);
+                assert_eq!(
+                    live.counters.plus1_plus1,
+                    if owner_controls_season { 1 } else { 2 }
+                );
+                let entry = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == source =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(entry.snapshot.owner, owner);
+                assert_eq!(entry.snapshot.controller, actor);
+                assert_eq!(
+                    entry.snapshot.counters.plus1_plus1,
+                    live.counters.plus1_plus1
+                );
+                assert_eq!(restore(&branch), branch);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn native_loyalty_effect_and_cost_quotes_remain_distinct_at_signed_boundary() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        // Explicit native counter primitive, not a fictional Forest loyalty ability.
+        crate::planeswalker_v1::add_loyalty_counters_u32_v48(&mut state, recipient, 1).unwrap();
+        assert_eq!(crate::planeswalker_v1::loyalty(&state, recipient), Some(2));
+        let original = restore(&state);
+        for _ in 0..3 {
+            let mut cost = restore(&original);
+            crate::planeswalker_v1::pay_loyalty_cost(&mut cost, recipient, i32::MAX);
+            assert!(cost.engine.halted.is_none());
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(&cost, recipient),
+                Some(i32::MAX as u32 + 2)
+            );
+            let mut effect = restore(&original);
+            crate::planeswalker_v1::change_loyalty_effect(&mut effect, recipient, i32::MAX);
+            assert!(effect.engine.halted.is_some());
+            effect.engine.halted = None;
+            assert_eq!(bytes(&effect), bytes(&original));
+            let mut added = restore(&original);
+            crate::planeswalker_v1::add_loyalty_counters(&mut added, recipient, i32::MAX);
+            assert!(added.engine.halted.is_some());
+            added.engine.halted = None;
+            assert_eq!(bytes(&added), bytes(&original));
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_before_actions() {
+    use crate::engine::{self, Action};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+            put(&mut state, player, "Forest", Zone::Library);
+        }
+        cast_season(&mut state, actor);
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        event::add_plus_one_counters(&mut state, recipient, actor.opponent(), 3).unwrap();
+        assert_eq!(state.objects.get(recipient).counters.plus1_plus1, 6);
+        validate_token_journals(&state).unwrap();
+        let placement_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                )
+            })
+            .unwrap();
+        let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+            &state.engine.event_history[placement_index]
+        else {
+            unreachable!()
+        };
+        let original_placement = placement.clone();
+        let input_index = original_placement.input as usize;
+        let counter_index = original_placement.counter_event as usize;
+        assert!(input_index < counter_index && counter_index < placement_index);
+        for _ in 0..3 {
+            let valid = restore(&state);
+            validate_token_journals(&valid).unwrap();
+            assert_eq!(bytes(&valid), bytes(&state));
+            for forgery in 0..5 {
+                let mut forged = restore(&state);
+                match forgery {
+                    0 => {
+                        if let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+                            &mut forged.engine.event_history[placement_index]
+                        {
+                            placement.original = 4;
+                            placement.after = 8;
+                        }
+                        if let event::CommittedEvent::PlusOneCountersAdded { count, .. } =
+                            &mut forged.engine.event_history[counter_index]
+                        {
+                            *count = 8;
+                        }
+                        forged.objects.get_mut(recipient).counters.plus1_plus1 = 8;
+                    }
+                    1 => {
+                        if let event::CommittedEvent::PlusCounterReplacementV48 { placement } =
+                            &mut forged.engine.event_history[placement_index]
+                        {
+                            placement.actor = actor;
+                        }
+                        if let event::CommittedEvent::PlusOneCountersAdded { player, .. } =
+                            &mut forged.engine.event_history[counter_index]
+                        {
+                            *player = actor;
+                        }
+                    }
+                    2 => {
+                        forged.engine.event_history[input_index] =
+                            event::CommittedEvent::Tap { object: recipient }
+                    }
+                    3 => {
+                        forged.engine.event_history[placement_index] =
+                            event::CommittedEvent::Tap { object: recipient }
+                    }
+                    4 => forged
+                        .engine
+                        .event_log
+                        .push(forged.engine.event_history[input_index].clone()),
+                    _ => unreachable!(),
+                }
+                let before = bytes(&forged);
+                assert!(validate_token_journals(&forged).is_err());
+                assert!(engine::step(&mut forged, Action::Pass).is_err());
+                assert_eq!(bytes(&forged), before);
+            }
+        }
+        let before = bytes(&state);
+        assert!(event::add_plus_one_counters(&mut state, recipient, actor, i32::MAX).is_err());
+        assert_eq!(bytes(&state), before);
+    }
+}

@@ -1415,6 +1415,9 @@ pub enum CommittedEvent {
     BaitTransferAppliedV48 {
         placement: Box<crate::doubling_season_v48::BaitTransferAppliedV48>,
     },
+    PlusCounterInputV48 {
+        input: Box<crate::doubling_season_v48::PlusCounterInputV48>,
+    },
     /// Private original simultaneous player-loss operation, never a public trigger event.
     ConquerorLossBatchV49 {
         batch: Box<crate::bloodthirsty_conqueror_v49::BatchV49>,
@@ -1583,10 +1586,28 @@ pub(crate) fn add_plus_one_counters(
         object,
         zone_change_count: live.zone_change_count,
     };
+    let replacement_input = if original > 0 && !replacement.seasons.is_empty() {
+        Some(crate::doubling_season_v48::PlusCounterInputV48::capture(
+            state, object, player, original,
+        )?)
+    } else {
+        None
+    };
+    let input_index = replacement_input.map(|mut input| {
+        input.index = state.engine.event_history.len() as u64;
+        let at = input.index;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PlusCounterInputV48 {
+                input: Box::new(input),
+            });
+        at
+    });
     state.objects.get_mut(object).counters.plus1_plus1 = total;
     let counter_event = state.engine.event_history.len() as u64;
     log_plus_one_counters_added(state, object, player, count);
-    if original > 0 && !replacement.seasons.is_empty() {
+    if let Some(input) = input_index {
         let index = state.engine.event_history.len() as u64;
         state
             .engine
@@ -1594,6 +1615,7 @@ pub(crate) fn add_plus_one_counters(
             .push(CommittedEvent::PlusCounterReplacementV48 {
                 placement: Box::new(crate::doubling_season_v48::PlusCounterPlacementV48 {
                     index,
+                    input,
                     recipient,
                     actor: player,
                     replacement,
@@ -4255,6 +4277,8 @@ fn commit_zone_change(
     ),
 ) {
     let (authority_observers, entering_characteristics, counter_input) = entry_context;
+    let season_entry_active = crate::doubling_season_v48::requires_successor(state)
+        || counter_input.is_some_and(|input| !input.seasons.is_empty());
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -4368,6 +4392,15 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // 707.10f: a resolving permanent spell copy becomes a token. This
+        // is a zone entry, not token creation, so no creation replacement applies.
+        if season_entry_active
+            && from_zone == Zone::Stack
+            && to_zone == Zone::Battlefield
+            && obj.spell_copy_origin.is_some()
+        {
+            obj.v4.is_token = true;
+        }
         if to_zone == Zone::Battlefield {
             if let Some(face_down) = entering_face_down {
                 obj.v4.face_down_v1 = Some(face_down);

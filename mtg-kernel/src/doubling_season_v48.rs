@@ -131,8 +131,14 @@ pub(crate) fn entry_input(
         crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
             let mut input = ReplacementInputV48::capture(
                 state,
-                z.battlefield_controller
-                    .unwrap_or_else(|| state.objects.get(z.object).owner),
+                z.battlefield_controller.unwrap_or_else(|| {
+                    let live = state.objects.get(z.object);
+                    if live.zone == Zone::Stack {
+                        live.controller
+                    } else {
+                        live.owner
+                    }
+                }),
             );
             if z.counter_origin_v48 == Some(CounterOriginV48::Rule) {
                 input.seasons.clear();
@@ -149,7 +155,12 @@ pub(crate) fn entry_amount(
     controller: PlayerId,
     amount: i32,
 ) -> Result<i32, String> {
-    let original = crate::standard_cards_v1::scale_counters(state, controller, amount);
+    let original =
+        if requires_successor(state) || input.is_some_and(|input| !input.seasons.is_empty()) {
+            crate::standard_cards_v1::scale_counters_checked_v48(state, controller, amount)?
+        } else {
+            crate::standard_cards_v1::scale_counters(state, controller, amount)
+        };
     match input {
         Some(input) => input.replaced_count(original),
         None => ReplacementInputV48::capture(state, controller).replaced_count(original),
@@ -229,11 +240,22 @@ pub(crate) fn entry_loyalty_amount(
     controller: PlayerId,
     amount: u16,
 ) -> Result<u32, String> {
-    let original = crate::standard_cards_v1::scale_counters(state, controller, i32::from(amount));
+    let original = if requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty())
+    {
+        crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, u32::from(amount))?
+    } else {
+        u32::try_from(crate::standard_cards_v1::scale_counters(
+            state,
+            controller,
+            i32::from(amount),
+        ))
+        .map_err(|_| "negative starting loyalty")?
+    };
     let replacement = input
         .cloned()
         .unwrap_or_else(|| ReplacementInputV48::capture(state, controller));
-    replacement.replaced_loyalty(u32::try_from(original).map_err(|_| "negative starting loyalty")?)
+    replacement.replaced_loyalty(original)
 }
 
 /// Check only placements the actual ordinary entry requests. A source entering
@@ -346,7 +368,11 @@ pub(crate) fn counter_amount(
     if live.zone != Zone::Battlefield {
         return Err("counter recipient is not a permanent".into());
     }
-    let scaled = crate::standard_cards_v1::scale_counters(state, actor, amount);
+    let scaled = if requires_successor(state) {
+        crate::standard_cards_v1::scale_counters_checked_v48(state, actor, amount)?
+    } else {
+        crate::standard_cards_v1::scale_counters(state, actor, amount)
+    };
     if origin != CounterOriginV48::Effect {
         return Ok(scaled);
     }
@@ -409,6 +435,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             event,
             crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
                 | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
                 | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
                 | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
                 | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
@@ -675,10 +702,48 @@ pub(crate) fn record_token_input(state: &mut GameState, mut input: TokenInputV48
     index
 }
 
+/// Original actor/recipient replacement world, captured before placement.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlusCounterInputV48 {
+    pub index: u64,
+    pub world: Box<GameState>,
+    pub recipient: crate::state::ObjectLinkV4,
+    pub actor: PlayerId,
+    pub original: i32,
+}
+impl PlusCounterInputV48 {
+    pub(crate) fn capture(
+        state: &GameState,
+        recipient: ObjectId,
+        actor: PlayerId,
+        original: i32,
+    ) -> Result<Self, String> {
+        let live = state.objects.get(recipient);
+        let link = crate::state::ObjectLinkV4 {
+            object: recipient,
+            zone_change_count: live.zone_change_count,
+        };
+        let mut world = state.clone();
+        world.engine.event_history.clear();
+        world.engine.event_log.clear();
+        let bytes = serde_json::to_vec(&world).map_err(|error| error.to_string())?;
+        let world = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        Ok(Self {
+            index: 0,
+            world: Box::new(world),
+            recipient: link,
+            actor,
+            original,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlusCounterPlacementV48 {
     pub index: u64,
+    pub input: u64,
     pub recipient: crate::state::ObjectLinkV4,
     pub actor: PlayerId,
     pub replacement: ReplacementInputV48,
@@ -862,6 +927,7 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             event,
             CommittedEvent::TokenCreationReplacementV48 { .. }
                 | CommittedEvent::PlusCounterReplacementV48 { .. }
+                | CommittedEvent::PlusCounterInputV48 { .. }
                 | CommittedEvent::TokenCreationInputV48 { .. }
         )
     }) {
@@ -882,12 +948,52 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             return Err("token creation lost unique original-world input/completion".into());
         }
     }
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::PlusCounterInputV48 { input } = event else {
+            continue;
+        };
+        if input.index != index as u64 || input.original <= 0
+            || !input.world.engine.event_history.is_empty() || !input.world.engine.event_log.is_empty()
+            || state.engine.event_history.iter().filter(|event| matches!(event,
+                CommittedEvent::PlusCounterReplacementV48 { placement } if placement.input == input.index)).count() != 1 {
+            return Err("counter placement lost its unique original world/completion".into());
+        }
+    }
     let mut counter_events = Vec::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::PlusCounterReplacementV48 { placement: p } = event else {
             continue;
         };
-        let count = p.replacement.replaced_count(p.original)?;
+        let Some(CommittedEvent::PlusCounterInputV48 { input }) =
+            state.engine.event_history.get(p.input as usize)
+        else {
+            return Err("effect counter original actor world absent".into());
+        };
+        let original_recipient = input
+            .world
+            .objects
+            .try_get(input.recipient.object)
+            .ok_or("counter original recipient absent")?;
+        if input.index != p.input
+            || p.input >= p.counter_event
+            || input.recipient != p.recipient
+            || input.actor != p.actor
+            || input.original != p.original
+            || original_recipient.zone != Zone::Battlefield
+            || original_recipient.zone_change_count != p.recipient.zone_change_count
+            || original_recipient.counters.plus1_plus1 != p.before
+            || p.replacement
+                != ReplacementInputV48::capture(&input.world, original_recipient.controller)
+        {
+            return Err("counter actor/recipient replacement input changed".into());
+        }
+        let count = counter_amount(
+            &input.world,
+            p.recipient.object,
+            p.actor,
+            CounterOriginV48::Effect,
+            p.original,
+        )?;
         if p.index != index as u64
             || p.original <= 0
             || p.replacement.seasons.is_empty()
