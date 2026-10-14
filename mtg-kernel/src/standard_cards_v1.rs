@@ -2833,6 +2833,23 @@ pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) ->
     (0..doublings).fold(count, |count, _| count.saturating_mul(2))
 }
 
+/// Checked signed placement for the explicitly selected replacement component.
+/// Old callers retain their historical scalar arithmetic.
+pub(crate) fn scale_counters_checked_v48(
+    state: &GameState,
+    player: PlayerId,
+    count: i32,
+) -> Result<i32, String> {
+    if count < 0 {
+        return Err("negative counter modifier input".into());
+    }
+    (0..controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)).try_fold(count, |amount, _| {
+        amount
+            .checked_mul(2)
+            .ok_or_else(|| "counter modifier overflow".into())
+    })
+}
+
 /// Native-width loyalty placement. The signed helper remains unchanged for
 /// old callers; the V48 transfer adapter must not narrow an unsigned ledger.
 pub(crate) fn scale_loyalty_counters_v48(

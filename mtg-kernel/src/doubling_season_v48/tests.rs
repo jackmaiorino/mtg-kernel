@@ -1212,3 +1212,108 @@ fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() 
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for owner_controls_season in [false, true] {
+            let mut state = ready_state_for(actor);
+            let owner = actor.opponent();
+            let season_controller = if owner_controls_season { owner } else { actor };
+            let season = put(&mut state, season_controller, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let source = put(&mut state, owner, "Mossborn Hydra", Zone::Stack);
+            // Declared physical Stack-controller boundary. No synthetic cast
+            // permission or paid receipt is claimed for the foreign card.
+            state.objects.get_mut(source).controller = actor;
+            let proposal = ProposedEvent::zone_change(source, Zone::Battlefield);
+            let before = bytes(&state);
+            let input = entry_input(&state, &proposal).unwrap();
+            assert_eq!(input.controller, actor);
+            assert_eq!(input.seasons.len(), usize::from(!owner_controls_season));
+            assert_eq!(bytes(&state), before);
+            for _ in 0..3 {
+                let mut branch = restore(&state);
+                event::propose_and_commit(&mut branch, proposal.clone());
+                assert!(branch.engine.halted.is_none());
+                let live = branch.objects.get(source);
+                assert_eq!(live.owner, owner);
+                assert_eq!(live.controller, actor);
+                assert_eq!(live.zone, Zone::Battlefield);
+                assert_eq!(
+                    live.counters.plus1_plus1,
+                    if owner_controls_season { 1 } else { 2 }
+                );
+                let entry = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        event::CommittedEvent::GarrukEntryObservationV1 { entry, .. }
+                            if entry.object == source =>
+                        {
+                            Some(entry)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(entry.snapshot.owner, owner);
+                assert_eq!(entry.snapshot.controller, actor);
+                assert_eq!(
+                    entry.snapshot.counters.plus1_plus1,
+                    live.counters.plus1_plus1
+                );
+                assert_eq!(restore(&branch), branch);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn native_loyalty_effect_and_cost_quotes_remain_distinct_at_signed_boundary() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        // Explicit native counter primitive, not a fictional Forest loyalty ability.
+        crate::planeswalker_v1::add_loyalty_counters_u32_v48(&mut state, recipient, 1).unwrap();
+        assert_eq!(crate::planeswalker_v1::loyalty(&state, recipient), Some(2));
+        let original = restore(&state);
+        for _ in 0..3 {
+            let mut cost = restore(&original);
+            crate::planeswalker_v1::pay_loyalty_cost(&mut cost, recipient, i32::MAX);
+            assert!(cost.engine.halted.is_none());
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(&cost, recipient),
+                Some(i32::MAX as u32 + 2)
+            );
+            let mut effect = restore(&original);
+            crate::planeswalker_v1::change_loyalty_effect(&mut effect, recipient, i32::MAX);
+            assert!(effect.engine.halted.is_some());
+            effect.engine.halted = None;
+            assert_eq!(bytes(&effect), bytes(&original));
+            let mut added = restore(&original);
+            crate::planeswalker_v1::add_loyalty_counters(&mut added, recipient, i32::MAX);
+            assert!(added.engine.halted.is_some());
+            added.engine.halted = None;
+            assert_eq!(bytes(&added), bytes(&original));
+        }
+    }
+}

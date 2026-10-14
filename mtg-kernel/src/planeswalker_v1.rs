@@ -125,20 +125,20 @@ fn change_loyalty_with_origin(
         return;
     };
     let counters = if delta >= 0 {
-        let original = crate::standard_cards_v1::scale_counters(
-            state,
-            state.objects.get(object).controller,
-            delta,
-        );
-        let amount = if origin == crate::doubling_season_v48::CounterOriginV48::Effect {
-            crate::doubling_season_v48::ReplacementInputV48::capture(
-                state,
-                state.objects.get(object).controller,
-            )
-            .replaced_loyalty(original as u32)
+        let controller = state.objects.get(object).controller;
+        let original = if crate::doubling_season_v48::requires_successor(state) {
+            crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, delta as u32)
         } else {
-            Ok(original as u32)
+            Ok(crate::standard_cards_v1::scale_counters(state, controller, delta) as u32)
         };
+        let amount = original.and_then(|original| {
+            if origin == crate::doubling_season_v48::CounterOriginV48::Effect {
+                crate::doubling_season_v48::ReplacementInputV48::capture(state, controller)
+                    .replaced_loyalty(original)
+            } else {
+                Ok(original)
+            }
+        });
         let amount = match amount {
             Ok(amount) => amount,
             Err(_) => {
@@ -190,30 +190,13 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
         return;
     }
     if crate::doubling_season_v48::requires_successor(state) {
-        let original = crate::standard_cards_v1::scale_counters(
-            state,
-            state.objects.get(object).controller,
-            amount,
-        );
-        let placed = crate::doubling_season_v48::ReplacementInputV48::capture(
-            state,
-            state.objects.get(object).controller,
-        )
-        .replaced_loyalty(original as u32);
-        if placed.is_err()
-            || placed.is_ok_and(|placed| {
-                loyalty(state, object)
-                    .unwrap_or(0)
-                    .checked_add(placed)
-                    .is_none()
-            })
-        {
+        if add_loyalty_counters_u32_v48(state, object, amount as u32).is_err() {
             state.engine.halted = Some((
                 engine::UnsupportedMechanic::InvalidEffectContinuation,
                 object,
             ));
-            return;
         }
+        return;
     }
     if loyalty(state, object).is_none() {
         let permanent = ObjectLinkV4 {

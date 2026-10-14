@@ -131,8 +131,14 @@ pub(crate) fn entry_input(
         crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
             let mut input = ReplacementInputV48::capture(
                 state,
-                z.battlefield_controller
-                    .unwrap_or_else(|| state.objects.get(z.object).owner),
+                z.battlefield_controller.unwrap_or_else(|| {
+                    let live = state.objects.get(z.object);
+                    if live.zone == Zone::Stack {
+                        live.controller
+                    } else {
+                        live.owner
+                    }
+                }),
             );
             if z.counter_origin_v48 == Some(CounterOriginV48::Rule) {
                 input.seasons.clear();
@@ -149,7 +155,12 @@ pub(crate) fn entry_amount(
     controller: PlayerId,
     amount: i32,
 ) -> Result<i32, String> {
-    let original = crate::standard_cards_v1::scale_counters(state, controller, amount);
+    let original =
+        if requires_successor(state) || input.is_some_and(|input| !input.seasons.is_empty()) {
+            crate::standard_cards_v1::scale_counters_checked_v48(state, controller, amount)?
+        } else {
+            crate::standard_cards_v1::scale_counters(state, controller, amount)
+        };
     match input {
         Some(input) => input.replaced_count(original),
         None => ReplacementInputV48::capture(state, controller).replaced_count(original),
@@ -229,11 +240,22 @@ pub(crate) fn entry_loyalty_amount(
     controller: PlayerId,
     amount: u16,
 ) -> Result<u32, String> {
-    let original = crate::standard_cards_v1::scale_counters(state, controller, i32::from(amount));
+    let original = if requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty())
+    {
+        crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, u32::from(amount))?
+    } else {
+        u32::try_from(crate::standard_cards_v1::scale_counters(
+            state,
+            controller,
+            i32::from(amount),
+        ))
+        .map_err(|_| "negative starting loyalty")?
+    };
     let replacement = input
         .cloned()
         .unwrap_or_else(|| ReplacementInputV48::capture(state, controller));
-    replacement.replaced_loyalty(u32::try_from(original).map_err(|_| "negative starting loyalty")?)
+    replacement.replaced_loyalty(original)
 }
 
 /// Check only placements the actual ordinary entry requests. A source entering
@@ -346,7 +368,11 @@ pub(crate) fn counter_amount(
     if live.zone != Zone::Battlefield {
         return Err("counter recipient is not a permanent".into());
     }
-    let scaled = crate::standard_cards_v1::scale_counters(state, actor, amount);
+    let scaled = if requires_successor(state) {
+        crate::standard_cards_v1::scale_counters_checked_v48(state, actor, amount)?
+    } else {
+        crate::standard_cards_v1::scale_counters(state, actor, amount)
+    };
     if origin != CounterOriginV48::Effect {
         return Ok(scaled);
     }
