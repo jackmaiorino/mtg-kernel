@@ -202,15 +202,11 @@ jobs:
           # cores, so they pause for any host reservation.
           - os: ubuntu-24.04
             runner: '"ubuntu-24.04"'
-          # Windows groups also default to hosted runners. The self-hosted
-          # Windows runners go offline whenever their host is reserved, which
-          # left these jobs queued for hours. Setting the repository variable
-          # MTG_CI_WINDOWS_RUNNER to '["self-hosted", "mtg-ci-windows"]'
-          # sends them to the self-hosted runners (the primary desktop, the
-          # compute host), which keep a per-group cargo target directory
-          # between runs, so most builds are incremental.
+          # Windows jobs borrow preemptible CPU slots at Idle priority through
+          # the runner's job-started hook. Idle listeners hold no CPU slots.
+          # The repository variable remains an explicit routing override.
           - os: windows-2025
-            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"' }}
+            runner: ${{ vars.MTG_CI_WINDOWS_RUNNER || '["self-hosted", "mtg-ci-windows"]' }}
     # Pull requests from forks never run on the self-hosted runners.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runner) || matrix.os }}
     steps:
@@ -378,7 +374,8 @@ jobs:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     needs: detect-changes
     if: needs.detect-changes.outputs.python_relevant == 'true'
-    timeout-minutes: 60
+    # Includes waiting for the same low-priority CPU admission as Rust jobs.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -390,10 +387,16 @@ jobs:
           - {os: windows-2025, shard: 0, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 1, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
           - {os: windows-2025, shard: 2, shard_count: 3, kernel_bin: target/release/kernel_rl_env.exe}
-    runs-on: ${{ matrix.os }}
+    # Fork pull requests stay hosted; trusted Windows jobs use the local pool.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.MTG_CI_WINDOWS_RUNNER || '["self-hosted", "mtg-ci-windows"]') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/${{ matrix.kernel_bin }}
     steps:
+      - name: Use Git Bash for bash steps on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: echo C:\Program Files\Git\bin>>"%GITHUB_PATH%"
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
@@ -402,6 +405,13 @@ jobs:
         env:
           RUSTUP_HOME: ${{ runner.temp }}/fdn-rustup
         run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            ci_root="$MTG_CI_TARGET_ROOT"
+            if [ "$RUNNER_OS" = Windows ]; then
+              ci_root="$(cygpath -u "$ci_root")"
+            fi
+            RUSTUP_HOME="${ci_root%/}-fdn-rustup"
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             export RUSTUP_HOME="$(cygpath -w "$RUSTUP_HOME")"
           fi
@@ -411,6 +421,7 @@ jobs:
           rustup toolchain install "$fdn_rust_channel" --profile minimal --component clippy --component rustfmt --no-self-update
 
       - name: Cache cargo registry
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -435,7 +446,24 @@ jobs:
         if: matrix.shard == 0
         run: uv run --no-sync python python/tools/generate_pauper_manifests.py --check --repo-root .
 
+      - name: Use the runner's persistent Python environment build
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
+            target_dir="$MTG_CI_TARGET_ROOT/python-env"
+            kernel_bin="$target_dir/release/kernel_rl_env"
+            if [ "$RUNNER_OS" = Windows ]; then
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/python-env")"
+              kernel_bin="$target_dir/release/kernel_rl_env.exe"
+            fi
+            printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+            printf 'MTG_KERNEL_RL_ENV_BIN=%s\n' "$kernel_bin" >> "$GITHUB_ENV"
+            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+          fi
+
       - name: Cache compiled Python environment
+        if: runner.environment == 'github-hosted'
         uses: ./.github/actions/cargo-build-cache
         with:
           scope: python-env

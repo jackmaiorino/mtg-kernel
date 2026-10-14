@@ -4,7 +4,7 @@ use crate::effect::{self, ExecCtx};
 use crate::engine::{self, Action};
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::{GameState, Step, Zone};
 use crate::trigger::{self, TriggerCondition};
 
@@ -12,10 +12,8 @@ use crate::trigger::{self, TriggerCondition};
 fn end_step_raid_primitive_checks_real_declarations_and_captured_controller() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for declaration in 0..3 {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
-            state.turn = 3;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             state.step = Step::DeclareAttackers;
             let source = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
             if declaration == 2 {
@@ -104,10 +102,7 @@ fn end_step_raid_primitive_checks_real_declarations_and_captured_controller() {
 #[test]
 fn resolving_raid_token_uses_capture_after_source_departure_and_refuses_stale_turn() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
-        state.turn = 3;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         state.step = Step::DeclareAttackers;
         let source = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
         engine::step(&mut state, Action::DeclareAttackers(vec![source])).unwrap();

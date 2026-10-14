@@ -49,7 +49,7 @@ mod fdn {
     use crate::event::{self, ProposedEvent};
     use crate::ids::PlayerId;
     use crate::mana::ManaColor;
-    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::policy_observation_v6::tests::put;
     use crate::state::{Target, Zone};
     use std::collections::BTreeSet;
 
@@ -68,9 +68,8 @@ mod fdn {
             crate::rules_vector_v1::RULES_VECTOR_SCHEMA_V1
         );
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             let elf = put(
                 &mut state,
                 actor.opponent(),

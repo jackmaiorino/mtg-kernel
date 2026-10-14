@@ -1,12 +1,10 @@
 use super::*;
 use crate::ids::PlayerId;
-use crate::policy_observation_v6::tests::{put, ready_state};
+use crate::policy_observation_v6::tests::put;
 use crate::state::Zone;
 
 fn basic(actor: PlayerId, hidden: &str) -> crate::state::GameState {
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     put(&mut state, actor, "Forest", Zone::Hand);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     state
@@ -161,9 +159,7 @@ fn actual_capture(
     crate::ids::ObjectId,
 ) {
     use crate::engine::{self, Action, Decision};
-    let mut state = ready_state();
-    state.active_player = actor;
-    state.priority_player = actor;
+    let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
     put(&mut state, actor.opponent(), hidden, Zone::Hand);
     let recipient = if reverse {
         put(&mut state, actor, "Forest", Zone::Battlefield);

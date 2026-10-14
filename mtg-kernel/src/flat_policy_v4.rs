@@ -179,16 +179,14 @@ mod tests {
     fn stack_fixture_v1(actor: PlayerId, hidden_variant: bool) -> FastActorSessionV1 {
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::{Target, Zone};
         let opponent = if actor == PlayerId::P0 {
             PlayerId::P1
         } else {
             PlayerId::P0
         };
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         if hidden_variant {
             put(&mut state, opponent, "Gut Shot", Zone::Hand);
         }
@@ -414,16 +412,14 @@ mod tests {
     ) -> FastActorSessionV1 {
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::{Target, Zone};
         let opponent = if actor == PlayerId::P0 {
             PlayerId::P1
         } else {
             PlayerId::P0
         };
-        let mut state = ready_state();
-        state.active_player = actor;
-        state.priority_player = actor;
+        let mut state = crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
         if hidden {
             put(&mut state, opponent, "Gut Shot", Zone::Hand);
         }
@@ -632,11 +628,11 @@ mod tests {
     fn public_stack_engine_cast_kicker_without_targets_is_present() {
         use crate::engine::{self, Action, Decision};
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::public_stack_features_v1::*;
         use crate::state::Zone;
         for kicked in [false, true] {
-            let mut state = ready_state();
+            let mut state = crate::policy_observation_v6::tests::ready_state();
             state.players[0].mana_pool[ManaColor::R.pool_index()] = 5;
             let spell = put(&mut state, PlayerId::P0, "Goblin Bushwhacker", Zone::Hand);
             put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
@@ -671,7 +667,7 @@ mod tests {
     fn v4_structured_public_features_use_visible_nodes_and_explicit_colors() {
         use crate::event::install_color_damage_prevention;
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::public_cost_features_v1::{catalog_v1, from_actor_v4_v1};
         use crate::state::Zone;
         let mut samples = Vec::new();
@@ -684,7 +680,7 @@ mod tests {
             for colors in [vec![], vec![ManaColor::W], vec![ManaColor::B, ManaColor::R]] {
                 let mut paired = Vec::new();
                 for hidden in [false, true] {
-                    let mut state = ready_state();
+                    let mut state = crate::policy_observation_v6::tests::ready_state();
                     state.active_player = actor;
                     state.priority_player = actor;
                     // Different hidden identities and allocation before visible cards.
@@ -801,7 +797,7 @@ mod tests {
         use crate::event::{install_color_damage_prevention, propose_and_commit, ProposedEvent};
         use crate::ids::PlayerId;
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::{Target, Zone};
         for actor in [PlayerId::P0, PlayerId::P1] {
             let opponent = if actor == PlayerId::P0 {
@@ -809,9 +805,8 @@ mod tests {
             } else {
                 PlayerId::P0
             };
-            let mut plain = ready_state();
-            plain.active_player = actor;
-            plain.priority_player = actor;
+            let mut plain =
+                crate::policy_observation_v6::tests::ready_state_with_turn_authority(actor);
             let strands = put(&mut plain, actor, "Prismatic Strands", Zone::Graveyard);
             put(&mut plain, actor, "Sacred Cat", Zone::Battlefield);
             let red = put(&mut plain, opponent, "Voldaren Epicure", Zone::Battlefield);
@@ -901,9 +896,9 @@ mod tests {
     fn v4_prevention_aggregation_hides_source_and_replacement_allocation() {
         use crate::event::install_color_damage_prevention;
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::Zone;
-        let mut a = ready_state();
+        let mut a = crate::policy_observation_v6::tests::ready_state();
         put(&mut a, PlayerId::P0, "Sacred Cat", Zone::Battlefield);
         let first = put(&mut a, PlayerId::P1, "Prismatic Strands", Zone::Library);
         let second = put(&mut a, PlayerId::P1, "Mountain", Zone::Library);
@@ -941,7 +936,7 @@ mod tests {
     fn v4_prevention_expires_on_either_turn_counter_or_active_player_change() {
         use crate::event::install_color_damage_prevention;
         use crate::mana::ManaColor;
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::Zone;
         for color in [
             ManaColor::W,
@@ -950,7 +945,7 @@ mod tests {
             ManaColor::R,
             ManaColor::G,
         ] {
-            let mut original = ready_state();
+            let mut original = crate::policy_observation_v6::tests::ready_state();
             let source = put(
                 &mut original,
                 PlayerId::P0,
@@ -973,11 +968,40 @@ mod tests {
                 crate::card_def::mana_color_mask(color)
             );
             let mut next_counter = original.clone();
-            next_counter.turn += 1;
+            if cfg!(all(
+                feature = "limited-fdn-fixtures",
+                not(feature = "standard-magezero-fixtures")
+            )) {
+                for player in [PlayerId::P0, PlayerId::P1] {
+                    put(&mut next_counter, player, "Forest", Zone::Library);
+                }
+                crate::policy_observation_v6::tests::advance_to_next_main_for(
+                    &mut next_counter,
+                    PlayerId::P0,
+                );
+                assert_ne!(next_counter.turn, original.turn);
+                assert_eq!(next_counter.active_player, original.active_player);
+            } else {
+                next_counter.turn += 1;
+            }
             assert_eq!(mask(next_counter), 0);
             let mut next_actor = original;
-            next_actor.active_player = PlayerId::P1;
-            next_actor.priority_player = PlayerId::P1;
+            if cfg!(all(
+                feature = "limited-fdn-fixtures",
+                not(feature = "standard-magezero-fixtures")
+            )) {
+                let original_turn = next_actor.turn;
+                put(&mut next_actor, PlayerId::P1, "Forest", Zone::Library);
+                crate::policy_observation_v6::tests::advance_to_next_main_for(
+                    &mut next_actor,
+                    PlayerId::P1,
+                );
+                assert_eq!(next_actor.turn, original_turn);
+                assert_eq!(next_actor.active_player, PlayerId::P1);
+            } else {
+                next_actor.active_player = PlayerId::P1;
+                next_actor.priority_player = PlayerId::P1;
+            }
             assert_eq!(mask(next_actor), 0);
         }
     }
@@ -1150,7 +1174,7 @@ mod tests {
         };
 
         // A real, working ChooseTargets decision with actual objects and no
-        // hidden/extension content -- `ready_state()` alone (no objects at
+        // hidden/extension content -- `crate::policy_observation_v6::tests::ready_state()` alone (no objects at
         // all) does not reach an active decision through
         // `FastActorSessionV1::from_v3_fixture_state`'s
         // `advance_to_decision_or_terminal`.
@@ -1269,10 +1293,10 @@ mod tests {
     #[ignore = "fixture reaches an immediate natural terminal before the decision under test; the fix is proven by the real-game regression campaign_002_b_block3_iteration_5_slot_8_elves_vs_spy_surface_encoding_completes_naturally; repair the fixture separately"]
     fn v4_exiled_by_resolves_when_its_source_has_no_independent_historical_registration() {
         use crate::event::{self, ProposedEvent};
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::put;
         use crate::state::{AbilitySourceContractV4, LinkedExileRecordV4, ObjectLinkV4, Zone};
 
-        let mut state = ready_state();
+        let mut state = crate::policy_observation_v6::tests::ready_state();
         state.starting_player = PlayerId::P0;
         let fiend_owner = PlayerId::P1;
 
