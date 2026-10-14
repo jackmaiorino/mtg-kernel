@@ -35,7 +35,9 @@ def inference(raw):
         tree = {(c['step'], c['physical'], c['substep']) for c in s['choices']}
         events = [(m['inference'], (m['step'], m['physical'], m['substep']) in tree) for m in s['rollout']]
         if tail is not None:
-            events.append((tail, len(s['choices']) > 0 and tail.get('kind') == 'uct'))
+            applied = {(m['step'], m['physical'], m['substep']) for m in s['rollout']}
+            last = s['choices'][-1] if s['choices'] else None
+            events.append((tail, last is not None and (last['step'], last['physical'], last['substep']) not in applied))
         for e, at_tree in events:
             k = e.get('kind')
             if (k == 'uct') != at_tree:

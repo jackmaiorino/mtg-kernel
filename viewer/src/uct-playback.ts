@@ -131,6 +131,41 @@ export function validateUct(f:Frame,r:Recording){
   if(completed!==f.search!.simulations||transitions!==f.search!.transitions||n.filter(v=>v.committed).length!==f.search!.nodes||u.firstCombo!==firstCombo)throw new Error('UCT accounting or discovery marker differs');
   for(const [i,a] of n[0].actions.entries())if(JSON.stringify(a)!==JSON.stringify({...f.actions[n[0].liveOrder[i]],index:i}))throw new Error('UCT root semantic action mapping differs');
   for(const stat of f.search!.stats){const a=n[0].liveOrder.indexOf(stat.index);if(a<0||stat.visits!==n[0].edgeVisits[a]||BigInt(stat.valueSum)!==BigInt(n[0].edgeWins[a])*1000000n)throw new Error('UCT root live-action table differs');}
+  validateInference(u);
+}
+
+// Scoring-call labels must follow the tree path, use input groups in
+// first-use order, never hit on a first use, stay within the cache budget
+// and reconcile the exported totals (and a matched pair's totals).
+export function validateInference(u:UctReplay){
+  const block=u.inference,marked=u.simulations.filter(s=>s.inference).length;
+  if(!block){if(marked)throw new Error('UCT inference events lack their summary');return;}
+  if(marked!==u.simulations.length||(block.mode==='cache')!==(block.budgetBytes!==null))throw new Error('UCT inference events are incomplete');
+  const t={requests:0,hits:0,misses:0,forwards:0,uct:0,forced:0};let seen=0;
+  const at=(m:{step:number;physical:number;substep:number}|readonly (number|null)[])=>"step" in m?`${m.step}:${m.physical}:${m.substep}`:`${m[1]}:${m[2]}:${m[3]}`;
+  for(const s of u.simulations){
+    const e=s.inference!;
+    if(e.codes.length!==s.rollout.length+Number(e.unapplied)||e.unapplied&&!['truncated','fault'].includes(s.reason))throw new Error('UCT inference events differ from the rollout');
+    const tree=new Set(s.choices.map(at)),applied=new Set(s.rollout.map(at)),last=s.choices.at(-1);
+    let g=0,b=0;
+    for(let i=0;i<e.codes.length;i++){
+      const code=e.codes[i],atTree=i<s.rollout.length?tree.has(at(s.rollout[i])):last!==undefined&&!applied.has(at(last));
+      if((code==='u')!==atTree)throw new Error('UCT inference code differs from the tree path');
+      if(code==='u'){t.uct++;continue;}
+      if(code==='f'){t.forced++;continue;}
+      if((code==='x')!==(block.mode==='uncached'))throw new Error('UCT inference call differs from the capture mode');
+      const group=e.groups[g++];
+      if(group===undefined||group>seen)throw new Error('UCT inference groups are not in first-use order');
+      if(group===seen){seen++;if(code==='h')throw new Error('UCT cache hit on a first use');}
+      t.requests++;t.hits+=Number(code==='h');t.misses+=Number(code==='m');t.forwards+=Number(code!=='h');
+      if(block.mode==='cache'){const bytes=e.cacheBytes[b++];if(bytes===undefined||bytes>block.budgetBytes!)throw new Error('UCT cache bytes exceed the budget');}
+    }
+    if(g!==e.groups.length||b!==e.cacheBytes.length)throw new Error('UCT inference events differ from the rollout');
+  }
+  const totals=block.totals;
+  if(seen!==block.groups||(Object.keys(t) as (keyof typeof t)[]).some(k=>t[k]!==totals[k]))throw new Error('UCT inference totals do not reconcile');
+  const p=block.paired;
+  if(p&&(p.mode===block.mode||p.requests!==t.requests||p.hits+p.forwards!==p.requests||p.mode==='uncached'&&p.hits!==0))throw new Error('UCT paired inference totals differ');
 }
 
 export async function verifyUctDigest(u:UctReplay){
