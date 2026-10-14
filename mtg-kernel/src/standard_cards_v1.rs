@@ -1128,7 +1128,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
-            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+            if crate::doubling_season_v48::requires_successor(state) {
                 let live = state.objects.get(object);
                 let (definition, face) = if live.v4.face_down_v1.is_some() {
                     let Some(anonymous) = crate::card_def::card_id_by_name(
@@ -1275,7 +1275,7 @@ pub(crate) fn create_token_copy_without_banner_owner(
 ) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
-    if !crate::doubling_season_v48::sources(state, controller).is_empty() {
+    if crate::doubling_season_v48::requires_successor(state) {
         let (card_def, face) = if live.v4.face_down_v1.is_some() {
             let anonymous =
                 crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)?;

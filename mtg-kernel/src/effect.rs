@@ -17390,7 +17390,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             };
-            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+            if crate::doubling_season_v48::requires_successor(state) {
                 let mut proposal = event::ProposedEvent::create_token(incubator, ctx.controller);
                 if let event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
@@ -17561,7 +17561,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
                 return;
             }
-            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+            if crate::doubling_season_v48::requires_successor(state) {
                 let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
                 if let event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.entry_tapped = true;
@@ -18302,7 +18302,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let host_generation = state.objects.get(host).zone_change_count;
-            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+            if crate::doubling_season_v48::requires_successor(state) {
                 let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
                 if let event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
@@ -18639,7 +18639,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             );
             let controller = ctx.resolve_player(*controller, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller).max(0);
-            if !crate::doubling_season_v48::sources(state, controller).is_empty()
+            if crate::doubling_season_v48::requires_successor(state)
                 || crate::doubling_season_v48::owns_definition(*token_def)
             {
                 let events = (0..count)
@@ -18800,7 +18800,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             event::propose_and_commit_batch(state, events);
         }
         EffectOp::CreateTokensWithHasteUntilEndOfTurnV1 { token_def, count } => {
-            if !crate::doubling_season_v48::sources(state, ctx.controller).is_empty() {
+            if crate::doubling_season_v48::requires_successor(state) {
                 let mut proposal = event::ProposedEvent::create_token(*token_def, ctx.controller);
                 if let event::ProposedEvent::CreateToken(token) = &mut proposal {
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {

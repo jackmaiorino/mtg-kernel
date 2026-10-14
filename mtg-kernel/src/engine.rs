@@ -20838,7 +20838,7 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if !crate::doubling_season_v48::sources(state, player).is_empty() {
+    if crate::doubling_season_v48::requires_successor(state) {
         // Playing a land remains a special action even under a resolution-time
         // play permission. Its entry is not an effect placing counters.
         let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
