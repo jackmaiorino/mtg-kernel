@@ -5855,7 +5855,12 @@ pub(crate) fn test_fixture_bytes_fdn_ajani_faebloom_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_ajani_faebloom_batch()
 }
 
-#[cfg(all(test, windows, feature = "limited-fdn-fixtures"))]
+#[cfg(all(
+    test,
+    windows,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn test_fixture_bytes_fdn_hunter_eaten_panda_batch_v1() -> Vec<u8> {
     tests::fixture_bytes_fdn_hunter_eaten_panda_batch()
 }

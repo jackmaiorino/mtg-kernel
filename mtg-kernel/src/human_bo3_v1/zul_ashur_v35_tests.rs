@@ -388,7 +388,13 @@ mod future_printed {
             assert_safe(&serde_json::to_value(&prompt).unwrap());
             assert_eq!(prompt.state.extensions.permissions.len(), 1);
             let before = session.snapshot_v35();
-            let cast = request(&prompt, "Cast Diregraf Ghoul from your graveyard");
+            assert!(prompt.actions.iter().any(|action| action
+                .label
+                .starts_with("Cast Diregraf Ghoul ")
+                && action.label.contains(
+                    "from your graveyard with ordinary timing and costs; permission ends this turn"
+                )));
+            let cast = request(&prompt, "Cast Diregraf Ghoul ");
             projector.submit(&mut session, cast.clone()).unwrap();
             assert_eq!(
                 session
@@ -410,10 +416,7 @@ mod future_printed {
                 .project_current(&session, expected(&session))
                 .unwrap();
             projector
-                .submit(
-                    &mut session,
-                    request(&prompt, "Cast Diregraf Ghoul from your graveyard"),
-                )
+                .submit(&mut session, request(&prompt, "Cast Diregraf Ghoul "))
                 .unwrap();
             pass_until_empty(&mut session, &mut projector, actor);
             assert_eq!(
