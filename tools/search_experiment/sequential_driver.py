@@ -96,14 +96,15 @@ def run(plan):
         while True:
             if receipt.exists():
                 dispatch = load(receipt)
-                state["current"]["dispatch"] = {k: dispatch.get(k) for k in ("state", "pid", "slots_pid", "claim_id")}
+                state["current"]["dispatch"] = {k: dispatch.get(k) for k in
+                    ("state", "pid", "slots_pid", "claim_id", "claim_release_verified", "slots_exit_code", "error")}
                 if dispatch["state"] in ("completed", "failed"):
                     break
             save()
             time.sleep(5)
-        require(dispatch["state"] == "completed" and dispatch.get("claim_release_verified") is True,
-                "dispatch failed or claim was not released")
         batch = load(dispatch["completion"])
+        require(dispatch["state"] == "completed", batch.get("error") or dispatch.get("error") or "dispatch failed")
+        require(dispatch.get("claim_release_verified") is True, "claim release was not verified")
         diagnostics = inspect(batch, spec, cost)
         state["stages"].append({"label": label, "workers": workers, "cpu_seconds": batch["cpu_seconds"],
             "wall_seconds": batch["wall_seconds"], "guard_cpu_seconds": dispatch["guard_cpu_seconds"], "diagnostics": diagnostics})

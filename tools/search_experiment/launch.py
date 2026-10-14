@@ -418,7 +418,14 @@ def execute(spec, workers, phase, label):
                     options = {"preexec_fn": before_exec}
                 child = subprocess.Popen(command, env=env, stdout=stream, stderr=subprocess.STDOUT,
                                          cwd=root, **options)
-                active[index] = {"child": child, "clock": ProcessClock(child), "stream": stream,
+                try:
+                    clock = ProcessClock(child)
+                except BaseException:
+                    child.kill()
+                    child.wait()
+                    stream.close()
+                    raise
+                active[index] = {"child": child, "clock": clock, "stream": stream,
                                  "output": output, "started": time.monotonic(), "command": command, "core": core}
                 native = psutil.Process(child.pid)
                 if os.name == "nt":
