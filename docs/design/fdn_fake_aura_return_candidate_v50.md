@@ -43,3 +43,10 @@ allocation. This separate source is not included in PR266 and cannot borrow its
 qualification. Existing Banner/token entry coexistence, other departure outcomes,
 complete V50 public/Human/meaning/model/sampler/fair-search/training consumers and
 full pool acceptance remain open. No training or playing-strength claim is made.
+
+Scoped source review found that a successful Aura chain could be erased entirely,
+and a no-host completion could be moved after Treasure. Closure now requires
+exactly one linked Aura input and completion for every closed Aura-capable return
+program, with resolution/input/completion/Treasure/death-closure ordering and the
+same actual return result. Original-journal-preserving erase-all and reordered
+no-host negatives are written. Runtime verification remains pending.

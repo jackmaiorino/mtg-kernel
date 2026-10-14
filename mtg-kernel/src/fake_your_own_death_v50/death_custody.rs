@@ -868,6 +868,20 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
                     let returns = state.engine.event_history.iter().enumerate().take(treasure_at).skip(index+1).filter_map(|(at, event)|
                         matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
                             if *object == item.source).then_some(at as u64)).collect::<Vec<_>>();
+                    if matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2)
+                        && original_source.as_ref().is_some_and(|source| {
+                            crate::card_def::CARD_DEFS
+                                .get(usize::from(source.card_def))
+                                .is_some_and(|definition| definition.attachment.is_some())
+                        })
+                    {
+                        super::return_aura::validate_resolution_closed(
+                            state,
+                            index as u64,
+                            *treasure,
+                            *returned,
+                        )?;
+                    }
                     let expects_return = matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2)
                         && !super::return_aura::no_host_outcome(state, index as u64);
                     if *resolution != index as u64

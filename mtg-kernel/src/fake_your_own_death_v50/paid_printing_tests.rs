@@ -537,6 +537,33 @@ fn actual_paid_fake_aura_zero_single_multiple_untargeted_hosts_return_tapped_bef
                     } else {
                         assert_eq!(host_count, 0);
                     }
+                    let mut erased = game.clone();
+                    for event in &mut erased.engine.event_history {
+                        if matches!(
+                            spell_custody::journal(event),
+                            Some(
+                                spell_custody::JournalV50::AuraReturnInput { .. }
+                                    | spell_custody::JournalV50::AuraAttachmentCommitted { .. }
+                                    | spell_custody::JournalV50::AuraReturnCompleted { .. }
+                            )
+                        ) {
+                            *event = CommittedEvent::Tap { object: aura };
+                        }
+                    }
+                    let before = serde_json::to_vec(&erased).unwrap();
+                    assert!(engine::step(&mut erased, Action::Pass).is_err());
+                    assert_eq!(serde_json::to_vec(&erased).unwrap(), before);
+                    if host_count == 0 {
+                        let mut reordered = game.clone();
+                        let completion = std::mem::replace(
+                            &mut reordered.engine.event_history[completed.0],
+                            CommittedEvent::Tap { object: aura },
+                        );
+                        reordered.engine.event_history.push(completion);
+                        let before = serde_json::to_vec(&reordered).unwrap();
+                        assert!(engine::step(&mut reordered, Action::Pass).is_err());
+                        assert_eq!(serde_json::to_vec(&reordered).unwrap(), before);
+                    }
                 }
                 assert_eq!(
                     serde_json::to_vec(&state).unwrap(),

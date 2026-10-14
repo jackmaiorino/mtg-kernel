@@ -65,8 +65,9 @@ pub(crate) fn pending(state: &GameState) -> Option<&CheckpointV50> {
 }
 
 fn hosts(state: &GameState, aura: EffectObjectBinding) -> Result<Vec<EffectObjectBinding>, String> {
+    let candidates = crate::effect::returning_aura_hosts(state, aura)?;
     let colors = crate::engine::object_color_mask(state, aura.object);
-    Ok(crate::effect::returning_aura_hosts(state, aura)?
+    Ok(candidates
         .into_iter()
         .filter(|host| {
             !crate::controlled_creature_grants_v1::protects_from_colors(state, host.object, colors)
@@ -104,7 +105,7 @@ pub(crate) fn prepare(state: &GameState, resolution: u64) -> Result<ChoiceV50, S
         expected_zone: Zone::Graveyard,
         expected_zone_change_count: source.zone_change_count,
     };
-    if state.objects.get(aura.object) != original.as_ref()
+    if state.objects.try_get(aura.object) != Some(original.as_ref())
         || source.zone != Zone::Graveyard
         || original.zone != Zone::Graveyard
         || original.zone_change_count != source.zone_change_count
@@ -392,6 +393,61 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Every closed Aura-capable death resolution owns this mandatory chain, even
+/// when an adversary erases all of its new records rather than leaving orphans.
+pub(crate) fn validate_resolution_closed(
+    state: &GameState,
+    resolution: u64,
+    treasure: u64,
+    returned: Option<u64>,
+) -> Result<(), String> {
+    let inputs = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match journal(event) {
+            Some(JournalV50::AuraReturnInput { input })
+                if input.choice.resolution == resolution =>
+            {
+                Some(at as u64)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [input] = inputs.as_slice() else {
+        return Err("Fake closed Aura resolution lost its unique mandatory return input".into());
+    };
+    let completions = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match journal(event) {
+            Some(JournalV50::AuraReturnCompleted {
+                input: original,
+                returned,
+                ..
+            }) if original == input => Some((at as u64, *returned)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(completion, aura_returned)] = completions.as_slice() else {
+        return Err("Fake closed Aura resolution lost its unique mandatory completion".into());
+    };
+    if *input <= resolution
+        || *completion <= *input
+        || *completion >= treasure
+        || *aura_returned != returned
+    {
+        return Err(
+            "Fake Aura input/completion must precede Treasure and bind the actual return result"
+                .into(),
+        );
     }
     Ok(())
 }
