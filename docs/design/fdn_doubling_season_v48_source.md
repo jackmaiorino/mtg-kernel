@@ -362,3 +362,14 @@ and departed Seasons, both original/copy controllers and three serialized
 restores, exact before/entry flags, original spell remaining on Stack, genuine
 Garruk token snapshots and captured Arahbo self-entry. The no-Season group uses
 already registered printing metadata; Season groups remain ignored/unrun.
+
+
+Token creation has the corresponding intrinsic original-input binding on each
+actual created member of a replaced batch. The private entry commit context
+carries the genuine already-recorded input index through complete entry; it is
+never a deserializable proposal permission. Marked actual members require their
+unique original world and matching complete roster even if both proof records
+are erased after Season departs. Old unmarked creations preserve their exact
+three-field serde shape and original derived Hash sequence. Prepared both-seat
+source-departure/serialized both-record erasure negatives keep every original
+CreateToken occurrence and live token, and assert Step readonly/Advance halt-only.

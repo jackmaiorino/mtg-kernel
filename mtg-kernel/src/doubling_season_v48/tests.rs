@@ -551,9 +551,48 @@ fn actual_original_world_rejects_rewritten_replacement_roster_after_source_depar
         );
         validate_token_journals(&restore(&state)).unwrap();
         let original = state.engine.event_history.clone();
-        for erase_input in [false, true] {
+        let input_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| matches!(event, event::CommittedEvent::TokenCreationInputV48 { .. }))
+            .unwrap();
+        let completion_index = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                )
+            })
+            .unwrap();
+        let original_creations = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| {
+                matches!(event, event::CommittedEvent::CreateToken { .. })
+                    .then_some((index, event.clone()))
+            })
+            .collect::<Vec<_>>();
+        for forgery in 0..3 {
             let mut forged = restore(&state);
-            if erase_input {
+            if forgery == 2 {
+                forged.engine.event_history[input_index] =
+                    event::CommittedEvent::Tap { object: season };
+                forged.engine.event_history[completion_index] =
+                    event::CommittedEvent::Tap { object: season };
+                for (index, original) in &original_creations {
+                    assert_eq!(&forged.engine.event_history[*index], original);
+                }
+                assert!(
+                    requires_successor(&forged),
+                    "actual marked token retains the component after source departure"
+                );
+            } else if forgery == 1 {
                 let input = forged
                     .engine
                     .event_history
@@ -583,6 +622,13 @@ fn actual_original_world_rejects_rewritten_replacement_roster_after_source_depar
                 let before = bytes(&branch);
                 assert!(engine::step(&mut branch, Action::Pass).is_err());
                 assert_eq!(bytes(&branch), before);
+                let mut automatic = restore(&forged);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut automatic),
+                    engine::Decision::Halted { .. }
+                ));
+                automatic.engine.halted = None;
+                assert_eq!(bytes(&automatic), before);
             }
         }
         assert_eq!(state.engine.event_history, original);
@@ -936,6 +982,7 @@ fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_
                     object,
                     token_def,
                     controller,
+                    ..
                 } if *token_def == state.objects.get(source).card_def && *controller == actor => {
                     Some(*object)
                 }
@@ -1563,6 +1610,7 @@ fn retained_replacement_history_keeps_single_token_initialization_before_entry()
                         object,
                         token_def: actual,
                         controller,
+                        ..
                     } if *actual == token_def && *controller == actor => Some(*object),
                     _ => None,
                 })
@@ -1739,6 +1787,52 @@ fn ordinary_real_counter_occurrence_keeps_legacy_bytes_and_derived_hash() {
             .get("replacement_input_v48")
             .is_none());
         assert_eq!(value["PlusOneCountersAdded"].as_object().unwrap().len(), 4);
+        let legacy: event::CommittedEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(&legacy, occurrence);
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+fn ordinary_actual_token_occurrence_keeps_legacy_bytes_and_derived_hash() {
+    use std::hash::{Hash, Hasher};
+    let token_def = CARD_DEFS
+        .iter()
+        .position(|d| d.is_token && d.has_full_support())
+        .unwrap() as u16;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![ProposedEvent::create_token(token_def, actor)],
+        );
+        let occurrence = state
+            .engine
+            .event_history
+            .iter()
+            .find(|event| matches!(event, event::CommittedEvent::CreateToken { .. }))
+            .unwrap();
+        let event::CommittedEvent::CreateToken {
+            object,
+            token_def,
+            controller,
+            replacement_input_v48,
+        } = occurrence
+        else {
+            unreachable!()
+        };
+        assert!(replacement_input_v48.is_none());
+        let mut predecessor = std::collections::hash_map::DefaultHasher::new();
+        std::mem::discriminant(occurrence).hash(&mut predecessor);
+        object.hash(&mut predecessor);
+        token_def.hash(&mut predecessor);
+        controller.hash(&mut predecessor);
+        let mut current = std::collections::hash_map::DefaultHasher::new();
+        occurrence.hash(&mut current);
+        assert_eq!(predecessor.finish(), current.finish());
+        let value = serde_json::to_value(occurrence).unwrap();
+        assert!(value["CreateToken"].get("replacement_input_v48").is_none());
+        assert_eq!(value["CreateToken"].as_object().unwrap().len(), 3);
         let legacy: event::CommittedEvent = serde_json::from_value(value).unwrap();
         assert_eq!(&legacy, occurrence);
         assert_eq!(restore(&state), state);

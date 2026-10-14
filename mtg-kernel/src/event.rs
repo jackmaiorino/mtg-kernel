@@ -484,6 +484,11 @@ pub enum CommittedEvent {
         object: ObjectId,
         token_def: u16,
         controller: PlayerId,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::doubling_season_v48::TokenInputRefV48::is_none"
+        )]
+        replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48,
     },
     /// Logged by `engine::finalize_cast` the moment a spell is placed on
     /// the stack (not routed through `propose_and_commit`: casting a spell
@@ -2694,7 +2699,7 @@ fn commit_with_ability_lki_and_entry_batch(
         frozen_death_captures,
         authority_batch,
         entry_batches,
-        (entry_context, None, None),
+        (entry_context, None, None, None),
     );
 }
 type EntryContextWithSourceColorV1 = (
@@ -2704,6 +2709,7 @@ type EntryContextWithSourceColorV1 = (
     ),
     Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
     Option<crate::doubling_season_v48::ReplacementInputV48>,
+    Option<u64>,
 );
 fn commit_with_entry_batch_and_source_color(
     state: &mut GameState,
@@ -2717,7 +2723,8 @@ fn commit_with_entry_batch_and_source_color(
     ),
     entry_context: EntryContextWithSourceColorV1,
 ) {
-    let (mut entry_context, frozen_source_color, frozen_counter_input) = entry_context;
+    let (mut entry_context, frozen_source_color, frozen_counter_input, token_input_index) =
+        entry_context;
     if let ProposedEvent::ZoneChange(change) = &event {
         if let Some(request) = change.battlefield_x_v48.as_ref() {
             if change.to_zone != Zone::Battlefield || request.original < 0 {
@@ -3264,6 +3271,9 @@ fn commit_with_entry_batch_and_source_color(
                 object,
                 token_def: t.token_def,
                 controller: t.controller,
+                replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48(
+                    token_input_index,
+                ),
             }
         }
         ProposedEvent::Transform(t) if t.face_index == 0 => {
@@ -3792,7 +3802,7 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input),
+                ((None, true), frozen_color, counter_input, token_input_index),
             );
         }
     } else {
@@ -3812,7 +3822,7 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input),
+                ((None, true), frozen_color, counter_input, token_input_index),
             );
         }
     }
@@ -3925,7 +3935,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 Some(captures),
                 None,
                 (None, None),
-                ((None, false), frozen_color, None),
+                ((None, false), frozen_color, None, None),
             );
         }
     }
@@ -3972,7 +3982,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     None,
                     None,
                     (None, None),
-                    ((None, false), frozen_color, None),
+                    ((None, false), frozen_color, None, None),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -3998,7 +4008,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             Some(captures),
             None,
             (None, None),
-            ((None, false), frozen_color, None),
+            ((None, false), frozen_color, None, None),
         );
     }
     crate::linked_aura_operation_v1::end_batch(state);

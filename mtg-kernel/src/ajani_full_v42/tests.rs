@@ -335,6 +335,7 @@ mod future {
                         object,
                         token_def,
                         controller,
+                        ..
                     } if *token_def == token => {
                         assert_eq!(*controller, actor);
                         Some(*object)
@@ -751,6 +752,7 @@ mod future {
                         object,
                         token_def,
                         controller: c,
+                        ..
                     } if *token_def == token => {
                         assert_eq!(*c, controller);
                         Some(*object)

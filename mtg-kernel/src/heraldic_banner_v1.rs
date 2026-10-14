@@ -273,6 +273,7 @@ fn validate_entered(state: &GameState, entered: &EnteredV1, at: usize) -> Result
                 object,
                 token_def,
                 controller,
+                ..
             },
         ) if *object == entered.object.source
             && *token_def == token.token_def

@@ -18401,6 +18401,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                             object,
                             token_def: actual,
                             controller,
+                            ..
                         } if actual == token_def && *controller == ctx.controller => Some((
                             (start + offset) as u64,
                             EffectObjectBinding {

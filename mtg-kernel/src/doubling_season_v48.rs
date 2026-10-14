@@ -474,6 +474,10 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         matches!(event,
         crate::event::CommittedEvent::PlusOneCountersAdded { replacement_input_v48, .. }
         if !replacement_input_v48.is_none())
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        crate::event::CommittedEvent::CreateToken { replacement_input_v48, .. }
+        if !replacement_input_v48.is_none())
     }) || state.stack.iter().any(|item| {
         item.v4
             .source_contract
@@ -750,6 +754,24 @@ impl std::hash::Hash for CounterInputRefV48 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         if let Some(input) = self.0 {
             std::hash::Hash::hash(b"counter_input_v48", state);
+            std::hash::Hash::hash(&input, state);
+        }
+    }
+}
+
+/// Intrinsic binding for an actual created member of a replaced token batch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TokenInputRefV48(pub Option<u64>);
+impl TokenInputRefV48 {
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl std::hash::Hash for TokenInputRefV48 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if let Some(input) = self.0 {
+            std::hash::Hash::hash(b"token_input_v48", state);
             std::hash::Hash::hash(&input, state);
         }
     }
@@ -1140,6 +1162,32 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
         }
         counter_events.push(p.counter_event);
     }
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::CreateToken {
+            replacement_input_v48: TokenInputRefV48(Some(input_index)),
+            ..
+        } = event
+        else {
+            continue;
+        };
+        if *input_index >= index as u64
+            || !matches!(state.engine.event_history.get(*input_index as usize),
+                Some(CommittedEvent::TokenCreationInputV48 { input }) if input.index == *input_index)
+            || state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                CommittedEvent::TokenCreationReplacementV48 { creation }
+                if creation.input == *input_index && creation.created.contains(&(index as u64)))
+                })
+                .count()
+                != 1
+        {
+            return Err("issued replaced token lost original input/completion".into());
+        }
+    }
     let mut all_created = Vec::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
         let CommittedEvent::TokenCreationReplacementV48 { creation: c } = event else {
@@ -1191,7 +1239,7 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
                 if at >= c.index
                     || cursor > 0 && c.created[cursor - 1] >= at
                     || all_created.contains(&at)
-                    || !matches!(state.engine.event_history.get(at as usize),Some(CommittedEvent::CreateToken {token_def,controller,..}) if *token_def==request.template.definition && *controller==request.template.controller)
+                    || !matches!(state.engine.event_history.get(at as usize),Some(CommittedEvent::CreateToken {token_def,controller,replacement_input_v48,..}) if replacement_input_v48.0==Some(c.input) && *token_def==request.template.definition && *controller==request.template.controller)
                 {
                     return Err("token replacement actual creation changed".into());
                 }
