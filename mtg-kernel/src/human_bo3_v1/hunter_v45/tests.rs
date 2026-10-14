@@ -157,7 +157,6 @@ fn registered_public_facts_and_entire_executable_menu_rederive_before_submit_bot
     }
 }
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn actual_paid_hunter_optional_menu_and_closed_draw_safe_source_restore_retry_and_predecessor_refusal_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {

@@ -88,7 +88,6 @@ mod printed {
         panic!("Panda actual resolution did not finish");
     }
     #[test]
-    #[ignore = "Requires genuine Panda printing and current native qualification"]
     fn genuine_paid_gain_phases_exact_counter_restore_hidden_swap_and_owner_forgery() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -138,7 +137,6 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires genuine Panda printing and current native qualification"]
     fn genuine_death_original_target_and_signed_power_survive_return_and_restore() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -218,7 +216,6 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires genuine Panda printing and current native qualification"]
     fn original_public_graveyard_target_remains_bound_after_hidden_departure_and_fizzle() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);

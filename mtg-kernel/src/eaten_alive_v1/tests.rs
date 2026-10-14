@@ -91,7 +91,6 @@ fn absent_definition_and_foreign_mandatory_stage_refuse() {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_printed_cost_and_complete_root_forgery_refusal() {
     let id = crate::card_def::card_id_by_name("Eaten Alive").unwrap();
     exact_recipe(id).unwrap();
@@ -126,7 +125,6 @@ fn actual_printed_cost_and_complete_root_forgery_refusal() {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_both_branches_payment_restore_exile_and_receipt_refusal_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay_mana in [false, true] {
@@ -213,7 +211,6 @@ fn actual_both_branches_payment_restore_exile_and_receipt_refusal_both_seats() {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_mana_branch_needs_two_black_and_cost_reducer_changes_only_generic_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -263,7 +260,6 @@ fn actual_mana_branch_needs_two_black_and_cost_reducer_changes_only_generic_both
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_target_sacrificed_as_cost_or_reentered_fizzles_without_refund_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for self_target in [false, true] {
@@ -311,7 +307,6 @@ fn actual_target_sacrificed_as_cost_or_reentered_fizzles_without_refund_both_sea
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_planeswalker_target_and_an_offer_response_keep_paid_costs_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for counter in [false, true] {
@@ -376,7 +371,6 @@ fn actual_planeswalker_target_and_an_offer_response_keep_paid_costs_both_seats()
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_sacrifice_current_control_keeps_physical_owner_and_accepted_copy_pays_nothing_both_seats()
 {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -428,7 +422,6 @@ fn actual_sacrifice_current_control_keeps_physical_owner_and_accepted_copy_pays_
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_snakeskin_response_protects_target_without_refunding_mana_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -468,7 +461,6 @@ fn actual_snakeskin_response_protects_target_without_refunding_mana_both_seats()
 }
 
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_unpayable_selected_branch_refuses_without_rewinding_cast_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -527,7 +519,6 @@ fn actual_unpayable_selected_branch_refuses_without_rewinding_cast_both_seats() 
 }
 
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_finalized_publication_requires_unique_original_row_until_real_departure_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay_mana in [false, true] {

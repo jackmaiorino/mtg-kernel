@@ -139,7 +139,6 @@ fn registered_nine_distinct_trigger_labels_retry_restore_and_final_aggregate_bot
     }
 }
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn real_simultaneous_hunter_death_nine_draws_plus_ordinary_trigger_complete_mixed_human_order_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {

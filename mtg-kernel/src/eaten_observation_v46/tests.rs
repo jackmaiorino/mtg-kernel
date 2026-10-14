@@ -50,7 +50,6 @@ fn registered_predecessor_projection_private_fields_and_ordered_actions_are_exac
 }
 
 #[test]
-#[ignore = "requires serial Eaten Alive registration and native qualification"]
 fn actual_owned_pending_cost_and_unknown_opponent_hand_projection_are_bound_both_seats() {
     use crate::engine::{Action, Decision};
     use crate::mana::ManaColor;

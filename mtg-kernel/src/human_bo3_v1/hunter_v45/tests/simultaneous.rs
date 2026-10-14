@@ -1,7 +1,6 @@
 use super::*;
 
 #[test]
-#[ignore = "unregistered Hunter; parent owns actual registration/native"]
 fn simultaneous_source_death_keeps_two_distinct_human_draw_occurrences_and_original_source_after_restore(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
