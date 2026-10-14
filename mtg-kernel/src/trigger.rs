@@ -6576,13 +6576,10 @@ mod tests {
     ))]
     fn raid_entry_predicate_uses_actual_declarations_and_the_captured_controller() {
         use crate::engine::{self, Action};
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
         use crate::state::Step;
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
-            state.turn = 3;
+            let mut state = ready_state_for(actor);
             let attacker = put(&mut state, actor, "Guttersnipe", Zone::Battlefield);
             let entrant = put(&mut state, actor, "Guttersnipe", Zone::Hand);
             state.step = Step::DeclareAttackers;
@@ -6626,7 +6623,27 @@ mod tests {
             assert_eq!(state.players[actor.index()].hand.len(), before + 1);
             let mut stale: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            stale.turn += 1;
+            let original_turn = stale.turn;
+            let original_attack = stale.attack_declaration_turn_v1;
+            for _ in 0..48 {
+                match engine::advance_until_decision(&mut stale) {
+                    engine::Decision::CastSpellOrPass { .. } => {}
+                    engine::Decision::DeclareBlockers { .. } => {
+                        engine::step(&mut stale, Action::DeclareBlockers(Vec::new())).unwrap();
+                        continue;
+                    }
+                    other => panic!("unexpected real Raid turn transition {other:?}"),
+                }
+                if stale.turn != original_turn {
+                    break;
+                }
+                engine::step(&mut stale, Action::Pass).unwrap();
+            }
+            assert_ne!(stale.turn, original_turn);
+            assert!(stale.attack_declaration_turn_v1.is_none());
+            // Only stale Raid evidence is restored. The genuine life-loss and
+            // turn ledgers must remain valid at this actual new turn.
+            stale.attack_declaration_turn_v1 = original_attack;
             let before = stale.diagnostic_state_hash();
             crate::effect::execute(&skyship_buccaneer_effect(), &ctx, &mut stale);
             assert_eq!(stale.diagnostic_state_hash(), before);
@@ -6637,12 +6654,10 @@ mod tests {
     #[cfg(feature = "limited-fdn-fixtures")]
     fn raid_empty_declaration_cannot_capture_or_resolve_a_draw() {
         use crate::engine::{self, Action};
-        use crate::policy_observation_v6::tests::{put, ready_state};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
         use crate::state::Step;
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state();
-            state.active_player = actor;
-            state.priority_player = actor;
+            let mut state = ready_state_for(actor);
             state.step = Step::DeclareAttackers;
             engine::step(&mut state, Action::DeclareAttackers(vec![])).unwrap();
             let source = put(&mut state, actor, "Guttersnipe", Zone::Hand);
