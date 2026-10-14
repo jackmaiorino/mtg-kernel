@@ -9287,6 +9287,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::fiendish_panda_v1::validate_state(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -9370,6 +9376,12 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::high_society_hunter_custody_v45::validate(state).is_err() {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -18321,6 +18333,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;

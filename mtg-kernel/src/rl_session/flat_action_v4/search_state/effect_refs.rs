@@ -1394,7 +1394,7 @@ pub(super) fn conflicts(
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }
                 | FiendishPandaCaptureCollectedV1 { .. }
-                | FiendishPandaJournalV1 { .. } => true,
+                | FiendishPandaJournalV1 { .. } | ConquerorLossBatchV49 { .. } => true,
         }
     })
 }

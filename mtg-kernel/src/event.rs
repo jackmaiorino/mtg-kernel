@@ -1359,6 +1359,10 @@ pub enum CommittedEvent {
     FiendishPandaJournalV1 {
         journal: Box<crate::fiendish_panda_v1::custody::JournalV1>,
     },
+    /// Private original simultaneous player-loss operation, never a public trigger event.
+    ConquerorLossBatchV49 {
+        batch: Box<crate::bloodthirsty_conqueror_v49::BatchV49>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2567,6 +2571,9 @@ fn commit_with_entry_batch_and_source_color(
     let source_color = frozen_source_color
         .or_else(|| crate::controlled_creature_grants_v1::capture_departure_color(state, &event));
     let (entering_characteristics, defer_raid_entry) = entry_context;
+    let conqueror_single = (!defer_raid_entry)
+        .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
+        .flatten();
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
@@ -3063,6 +3070,9 @@ fn commit_with_entry_batch_and_source_color(
     }
     crate::banishing_light_v1::record_entry(state, entry_history_index);
     crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
+    if let Some(batch) = conqueror_single {
+        batch.finish(state);
+    }
     if committed_death {
         for mut capture in death_captures {
             crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
@@ -3286,6 +3296,7 @@ fn commit_batch_survivors(
             return;
         }
     }
+    let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
         mut arahbo_batch,
@@ -3396,6 +3407,9 @@ fn commit_batch_survivors(
         }
     }
 
+    if let Some(batch) = conqueror_batch {
+        batch.finish(state);
+    }
     for (aura, host) in attachments {
         if state.objects.get(aura.object).zone == Zone::Battlefield {
             let generation = state.objects.get(aura.object).zone_change_count;
