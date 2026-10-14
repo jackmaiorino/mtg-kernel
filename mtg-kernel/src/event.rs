@@ -3238,10 +3238,9 @@ fn commit_with_entry_batch_and_source_color(
                         expected_zone: Zone::Battlefield,
                         expected_zone_change_count: 0,
                     };
-                    let standard = state.standard_v1.get_or_insert_with(Default::default);
-                    standard.reflection_delayed_bindings.push((binding, source));
-                    standard.hasty_copies.push((object, 0));
-                    standard.end_step_sacrifices.push((object, 0, source));
+                    crate::standard_cards_v1::register_reflection_delayed_sacrifice(
+                        state, binding, source,
+                    );
                 }
                 if init.attacking
                     && state.engine.combat.attackers_declared
@@ -4299,8 +4298,6 @@ fn commit_zone_change(
     ),
 ) {
     let (authority_observers, entering_characteristics, counter_input) = entry_context;
-    let season_entry_active = crate::doubling_season_v48::requires_successor(state)
-        || counter_input.is_some_and(|input| !input.seasons.is_empty());
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {

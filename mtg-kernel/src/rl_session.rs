@@ -7418,7 +7418,7 @@ impl FastActorSessionV1 {
         } else {
             crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state)
         }
-        .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, error))?;
+        .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
 
         if !matches!(
             self.flat_action_contract_mode,
@@ -7430,7 +7430,7 @@ impl FastActorSessionV1 {
                     .as_ref()
                     .map_or(self.state.priority_player, |current| current.actor),
             )
-            .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, error))?;
+            .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
         }
 
         if !self.is_common_v40()

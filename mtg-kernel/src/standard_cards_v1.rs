@@ -675,6 +675,21 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
     }
 }
 
+pub(crate) fn register_reflection_delayed_sacrifice(
+    state: &mut GameState,
+    binding: EffectObjectBinding,
+    source: crate::state::AbilitySourceContractV4,
+) {
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    standard.reflection_delayed_bindings.push((binding, source));
+    standard
+        .hasty_copies
+        .push((binding.object, binding.expected_zone_change_count));
+    standard
+        .end_step_sacrifices
+        .push((binding.object, binding.expected_zone_change_count, source));
+}
+
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         StandardOpV1::ZulAshurPermissionV1 => {
@@ -1167,12 +1182,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     expected_zone: Zone::Battlefield,
                     expected_zone_change_count: incarnation.1,
                 };
-                let standard = state.standard_v1.get_or_insert_with(Default::default);
-                standard.reflection_delayed_bindings.push((binding, source));
-                standard.hasty_copies.push(incarnation);
-                standard
-                    .end_step_sacrifices
-                    .push((incarnation.0, incarnation.1, source));
+                register_reflection_delayed_sacrifice(state, binding, source);
             }
         }
         StandardOpV1::SacrificeSourceAtEndStep => {
