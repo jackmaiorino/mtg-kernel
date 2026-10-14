@@ -183,6 +183,17 @@ pub fn pending_source_reference(
     }
     Ok(Some(captured_source(source_at(state, capture)?)))
 }
+/// Project the target that was public when the genuine live death root was published.
+/// Later hidden incarnations never substitute for this original graveyard contract.
+pub fn original_target_reference(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if stack_source_reference(state, item)?.is_none() {
+        return Ok(None);
+    }
+    original_target(&item.v4.target_contracts)
+}
 fn original_target(
     contracts: &[StackTargetContractV4],
 ) -> Result<Option<CardStableRefV1>, RlContractError> {

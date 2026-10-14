@@ -184,6 +184,12 @@ mod printed {
             ));
             let published = capture(&state).unwrap();
             let original_target = published.occurrences[0].original_target.as_ref().unwrap();
+            assert_eq!(
+                original_target_reference(&state, state.stack.last().unwrap())
+                    .unwrap()
+                    .as_ref(),
+                Some(original_target)
+            );
             assert_eq!(original_target.arena_id, target.0);
             assert_eq!(original_target.zone, Zone::Graveyard);
             assert_eq!(original_target.zone_change_count, original_generation);
@@ -209,6 +215,61 @@ mod printed {
             let mut bad = facts;
             bad.occurrences[0].captured_power = Some(4);
             assert!(validate(&restored, &bad).is_err());
+        }
+    }
+    #[test]
+    #[ignore = "Requires genuine Panda printing and current native qualification"]
+    fn original_public_graveyard_target_remains_bound_after_hidden_departure_and_fizzle() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = paid_panda(&mut state, actor);
+            let target = put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            put(&mut state, actor, "Llanowar Elves", Zone::Graveyard);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(
+                &mut state,
+                Action::ChooseTarget(crate::state::Target::Object(target)),
+            )
+            .unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
+            let item = state.stack.last().unwrap().clone();
+            let original = original_target_reference(&state, &item).unwrap().unwrap();
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(target, Zone::Hand),
+            );
+            assert_eq!(
+                original_target_reference(&state, &item).unwrap(),
+                Some(original.clone())
+            );
+            let published = capture(&state).unwrap();
+            assert_eq!(
+                published.occurrences[0].original_target,
+                Some(original.clone())
+            );
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(
+                original_target_reference(&restored, &item).unwrap(),
+                Some(original.clone())
+            );
+            resolve(&mut state);
+            let facts = capture(&state).unwrap();
+            assert_eq!(facts.occurrences[0].phase, PhaseV47::Fizzled);
+            assert_eq!(facts.occurrences[0].original_target, Some(original));
+            assert!(!facts.occurrences[0].operation_attempted);
+            assert!(facts.occurrences[0].returned_incarnation.is_none());
+            assert_eq!(state.objects.get(target).zone, Zone::Hand);
         }
     }
 }
