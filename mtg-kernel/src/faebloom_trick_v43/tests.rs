@@ -134,6 +134,21 @@ mod future_printed {
         }
         panic!("actual reflexive did not complete")
     }
+    fn finalize_reflexive_target(state: &mut GameState, target: crate::ids::ObjectId) {
+        engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        let decision = next(state);
+        assert!(
+            matches!(decision, Decision::CastSpellOrPass { .. }),
+            "actual finalized reflexive priority: {decision:?}"
+        );
+        assert!(
+            state
+                .stack
+                .iter()
+                .any(|item| item.kind == StackItemKind::TriggeredAbility
+                    && selected_item(state, item))
+        );
+    }
     fn refused(state: &GameState) {
         let wire = serde_json::to_vec(state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&wire).unwrap();
@@ -186,7 +201,7 @@ mod future_printed {
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             for branch in [&mut state, &mut restored] {
-                engine::step(branch, Action::ChooseTarget(Target::Object(target))).unwrap();
+                finalize_reflexive_target(branch, target);
             }
             let row = state.stack.last().unwrap().clone();
             assert_eq!(row.kind, StackItemKind::TriggeredAbility);
@@ -233,7 +248,7 @@ mod future_printed {
             );
             cast(&mut state, actor);
             creation(&mut state);
-            engine::step(&mut state, Action::ChooseTarget(Target::Object(target2))).unwrap();
+            finalize_reflexive_target(&mut state, target2);
             let trigger = state.stack.last().unwrap().clone();
             engine::counter_stack_item_by_id(&mut state, trigger.v4.stack_item_id).unwrap();
             validate_state(&state).unwrap();
@@ -304,7 +319,7 @@ mod future_printed {
             let mut erased = state.clone();
             erased.engine.pending_triggers.clear();
             refused(&erased);
-            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            finalize_reflexive_target(&mut state, target);
             let item = state.stack.last().unwrap().clone();
             let mut erased = state.clone();
             erased
@@ -346,7 +361,7 @@ mod future_printed {
             );
             cast(&mut state, actor);
             creation(&mut state);
-            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            finalize_reflexive_target(&mut state, target);
             let row = state.stack.last().unwrap().clone();
             // Labeled physical incarnation primitive at a real response checkpoint.
             crate::event::propose_and_commit(
@@ -402,7 +417,7 @@ mod future_printed {
                 .stack
                 .iter()
                 .any(|item| item.v4.stack_item_id == original.v4.stack_item_id));
-            engine::step(&mut state, Action::ChooseTarget(Target::Object(own))).unwrap();
+            finalize_reflexive_target(&mut state, own);
             let copied_reflexive = state.stack.last().unwrap().clone();
             assert_eq!(copied_reflexive.source, copy_source);
             assert_eq!(copied_reflexive.controller, actor.opponent());
@@ -432,7 +447,7 @@ mod future_printed {
                 );
                 engine::step(&mut state, Action::Pass).unwrap();
             }
-            engine::step(&mut state, Action::ChooseTarget(Target::Object(opposing))).unwrap();
+            finalize_reflexive_target(&mut state, opposing);
             let original_reflexive = state.stack.last().unwrap().clone();
             assert_eq!(original_reflexive.controller, actor);
             assert_ne!(
@@ -557,7 +572,7 @@ mod future_printed {
                 }
                 cast(&mut state, actor);
                 creation(&mut state);
-                engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+                finalize_reflexive_target(&mut state, target);
                 let trigger = state.stack.last().unwrap().clone();
                 let target_binding = crate::effect::EffectObjectBinding {
                     object: target,

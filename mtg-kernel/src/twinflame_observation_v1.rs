@@ -852,10 +852,11 @@ pub(crate) mod tests {
         engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
         engine::step(&mut state, Action::ChooseTarget(target)).unwrap();
         for _ in 0..16 {
+            let d = engine::advance_until_decision(&mut state);
             if crate::effect::crystal_prevention_v1::is_choice(&state) {
+                assert!(matches!(d, Decision::ChooseEffectOption { .. }));
                 break;
             }
-            let d = engine::advance_until_decision(&mut state);
             assert!(matches!(d, Decision::CastSpellOrPass { .. }), "{d:?}");
             engine::step(&mut state, Action::Pass).unwrap();
         }

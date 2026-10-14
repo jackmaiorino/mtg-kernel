@@ -83,18 +83,32 @@ mod future_printed {
     }
     fn finish(state: &mut GameState) {
         for _ in 0..20 {
-            if state.stack.is_empty() && state.engine.pending_cast.is_none() {
-                return;
-            }
+            // Target or equip selection can leave automatic publication work
+            // even while the stack is empty. Finalize before checking closure.
             let decision = engine::advance_until_decision(state);
-            assert!(
-                matches!(decision, Decision::CastSpellOrPass { .. }),
-                "{decision:?}"
-            );
-            if state.stack.is_empty() && state.engine.pending_cast.is_none() {
+            if state.stack.is_empty()
+                && state.engine.pending_cast.is_none()
+                && state.engine.pending_activation.is_none()
+                && state.engine.pending_effect.is_none()
+                && state.engine.pending_triggers.is_empty()
+            {
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "actual finished priority: {decision:?}"
+                );
                 return;
             }
-            engine::step(state, Action::Pass).unwrap();
+            match decision {
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                Decision::ChooseEffectOption {
+                    option_count: 1, ..
+                } if crate::effect::crystal_prevention_v1::is_choice(state) => {
+                    // The real one-option replacement prompt is a forced
+                    // choice, including a sole Twinflame doubling operation.
+                    engine::step(state, Action::ChooseEffectOption(0)).unwrap();
+                }
+                _ => panic!("actual unfinished stack or activation: {decision:?}"),
+            }
         }
         panic!("actual stack did not finish")
     }
