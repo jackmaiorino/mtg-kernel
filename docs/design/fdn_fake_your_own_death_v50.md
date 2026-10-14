@@ -53,6 +53,16 @@ The gained-ability marker remains private and is not yet a collected or publishe
 trigger. This new source is uncompiled/unrun; whole capture-roster validation,
 collection, APNAP, publication and removal/return/entry custody still need work.
 
+Each death now also carries one complete original input roster, constructed on
+the same pre-batch board. Commit binds that roster once and each capture to its
+exact input ordinal. The retained validator requires every original roster
+member contiguously, refuses missing/changed/duplicate captures or input rosters,
+and preserves original installation, departure and graveyard-source relations
+without borrowing a later board. Grant lifetime and pre-cleanup checks invoke
+this validation before interpreting retained grants. This is source preparation
+within the trusted original-input boundary; current compilation/runtime and
+actual Fake collection/publication still remain unqualified.
+
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes

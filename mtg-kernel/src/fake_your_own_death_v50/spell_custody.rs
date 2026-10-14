@@ -120,10 +120,16 @@ pub enum JournalV50 {
         occurrence: u64,
     },
     DeathCaptured {
+        input: u64,
+        ordinal: u32,
         installation: u64,
         lookback: PrimitiveDeathLookbackV50,
         departure: u64,
         graveyard_source: Option<crate::state::AbilitySourceContractV4>,
+    },
+    DeathInput {
+        lookbacks: Vec<(u64, PrimitiveDeathLookbackV50)>,
+        departure: u64,
     },
 }
 
@@ -546,6 +552,7 @@ fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
 /// creature currently has the granted death ability. No trigger admission.
 pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
     installed_grants(state)?;
+    validate_death_captures(state)?;
     for (index, event) in state.engine.event_history.iter().enumerate() {
         match journal(event) {
             Some(JournalV50::CleanupEntered {
@@ -686,7 +693,7 @@ pub(crate) fn capture_death(
     }
     validate_grant_lifetime(state)?;
     let end = state.engine.event_history.len();
-    let mut captures = Vec::new();
+    let mut lookbacks = Vec::new();
     for (installation, grant, ..) in installations_before(state, end) {
         if expired_before(state, installation, end) {
             continue;
@@ -694,15 +701,29 @@ pub(crate) fn capture_death(
         if let Some(lookback) =
             super::grant_primitive::primitive_death_lookback_v50(state, grant, event)?
         {
-            captures.push(CommittedEvent::FakeJournalV50 {
-                journal: Box::new(JournalV50::DeathCaptured {
-                    installation,
-                    lookback,
-                    departure: u64::MAX,
-                    graveyard_source: None,
-                }),
-            });
+            lookbacks.push((installation, lookback));
         }
+    }
+    if lookbacks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut captures = vec![CommittedEvent::FakeJournalV50 {
+        journal: Box::new(JournalV50::DeathInput {
+            lookbacks: lookbacks.clone(),
+            departure: u64::MAX,
+        }),
+    }];
+    for (ordinal, (installation, lookback)) in lookbacks.into_iter().enumerate() {
+        captures.push(CommittedEvent::FakeJournalV50 {
+            journal: Box::new(JournalV50::DeathCaptured {
+                input: u64::MAX,
+                ordinal: u32::try_from(ordinal).map_err(|_| "Fake capture ordinal overflow")?,
+                installation,
+                lookback,
+                departure: u64::MAX,
+                graveyard_source: None,
+            }),
+        });
     }
     Ok(captures)
 }
@@ -717,7 +738,28 @@ pub(crate) fn bind_death_departure(
     let CommittedEvent::FakeJournalV50 { journal: entry } = event else {
         return Ok(());
     };
+    if let JournalV50::DeathInput {
+        lookbacks,
+        departure,
+    } = entry.as_mut()
+    {
+        if *departure != u64::MAX || lookbacks.is_empty() {
+            return Err("Fake death input changed original nonempty roster or was rebound".into());
+        }
+        for (installation, lookback) in lookbacks.iter() {
+            validate_death_installation(state, *installation, lookback, index)?;
+            super::grant_primitive::primitive_bind_committed_death_v50(
+                state,
+                lookback,
+                index as u64,
+            )?;
+        }
+        *departure = index as u64;
+        return Ok(());
+    }
     let JournalV50::DeathCaptured {
+        input,
+        ordinal,
         installation,
         lookback,
         departure,
@@ -726,12 +768,35 @@ pub(crate) fn bind_death_departure(
     else {
         return Ok(());
     };
-    if *departure != u64::MAX
+    if *input != u64::MAX
+        || *departure != u64::MAX
         || graveyard_source.is_some()
         || !matches!(usize::try_from(*installation).ok().and_then(|i|state.engine.event_history.get(i)).and_then(journal),Some(JournalV50::Installed {grant,..}) if *grant==lookback.grant)
         || expired_before(state, *installation, index)
     {
         return Err("Fake death capture changed original installation or was rebound".into());
+    }
+    let (input_index, originals) = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, e)| match journal(e) {
+            Some(JournalV50::DeathInput {
+                lookbacks,
+                departure,
+            }) if *departure == index as u64 => Some((i, lookbacks)),
+            _ => None,
+        })
+        .ok_or("Fake capture lost original complete death input")?;
+    if originals.get(*ordinal as usize) != Some(&(*installation, *lookback))
+        || input_index
+            .checked_add(1)
+            .and_then(|i| i.checked_add(*ordinal as usize))
+            != Some(state.engine.event_history.len())
+    {
+        return Err("Fake capture changed original roster member or order".into());
     }
     let context =
         super::grant_primitive::primitive_bind_committed_death_v50(state, lookback, index as u64)?;
@@ -741,6 +806,115 @@ pub(crate) fn bind_death_departure(
             .ok_or("Fake committed death lost original graveyard source")?,
     );
     *departure = index as u64;
+    *input = input_index as u64;
+    Ok(())
+}
+
+fn validate_death_installation(
+    state: &GameState,
+    installation: u64,
+    lookback: &PrimitiveDeathLookbackV50,
+    departure: usize,
+) -> Result<(), String> {
+    if installation >= departure as u64
+        || !matches!(usize::try_from(installation).ok().and_then(|i|state.engine.event_history.get(i)).and_then(journal),Some(JournalV50::Installed {grant,..}) if *grant==lookback.grant)
+        || expired_before(state, installation, departure)
+        || lookback.battlefield_source.zone != Zone::Battlefield
+        || lookback.battlefield_source.zone_change_count.checked_add(1)
+            != Some(lookback.graveyard_zone_change_count)
+        || !matches!(state.engine.event_history.get(departure),Some(CommittedEvent::ZoneChange {object,from:Zone::Battlefield,to:Zone::Graveyard,controller_before}) if *object==lookback.battlefield_source.source && *controller_before==lookback.battlefield_source.controller)
+    {
+        return Err(
+            "Fake death input changed original installation or exact battlefield death".into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validates every original complete input against the independently committed
+/// contiguous capture roster. Later source movement never supplies a new LKI.
+pub fn validate_death_captures(state: &GameState) -> Result<(), String> {
+    installed_grants(state)?;
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        match journal(event) {
+            Some(JournalV50::DeathInput {
+                lookbacks,
+                departure,
+            }) => {
+                let death = usize::try_from(*departure).map_err(|_| "Fake death index overflow")?;
+                if death >= index || lookbacks.is_empty() {
+                    return Err(
+                        "Fake death input lacks earlier actual death or original roster".into(),
+                    );
+                }
+                if state.engine.event_history.iter().filter(|e|matches!(journal(e),Some(JournalV50::DeathInput {departure:d,..}) if d==departure)).count()!=1 {
+                    return Err("Fake actual death has duplicate original input rosters".into());
+                }
+                for (ordinal, (installation, lookback)) in lookbacks.iter().enumerate() {
+                    validate_death_installation(state, *installation, lookback, death)?;
+                    if lookbacks[..ordinal]
+                        .iter()
+                        .any(|(i, l)| i == installation || l.grant == lookback.grant)
+                    {
+                        return Err("Fake death input repeats an original grant".into());
+                    }
+                    let capture = state
+                        .engine
+                        .event_history
+                        .get(index + 1 + ordinal)
+                        .and_then(journal);
+                    let Some(JournalV50::DeathCaptured {
+                        input,
+                        ordinal: actual,
+                        installation: i,
+                        lookback: l,
+                        departure: d,
+                        graveyard_source: Some(g),
+                    }) = capture
+                    else {
+                        return Err(
+                            "Fake original death input lost its complete committed capture roster"
+                                .into(),
+                        );
+                    };
+                    if *input != index as u64
+                        || *actual as usize != ordinal
+                        || i != installation
+                        || l != lookback
+                        || d != departure
+                        || g.source != lookback.battlefield_source.source
+                        || g.card_def != lookback.battlefield_source.card_def
+                        || g.owner != lookback.battlefield_source.owner
+                        || g.zone != Zone::Graveyard
+                        || g.zone_change_count != lookback.graveyard_zone_change_count
+                    {
+                        return Err("Fake committed capture changed original roster, death or graveyard source".into());
+                    }
+                }
+            }
+            Some(JournalV50::DeathCaptured {
+                input,
+                ordinal,
+                installation,
+                lookback,
+                ..
+            }) => {
+                let input_index =
+                    usize::try_from(*input).map_err(|_| "Fake capture input index overflow")?;
+                if input_index
+                    .checked_add(1)
+                    .and_then(|i| i.checked_add(*ordinal as usize))
+                    != Some(index)
+                    || !matches!(state.engine.event_history.get(input_index).and_then(journal),Some(JournalV50::DeathInput {lookbacks,..}) if lookbacks.get(*ordinal as usize)==Some(&(*installation,*lookback)))
+                {
+                    return Err(
+                        "Fake committed capture lacks its original unique input position".into(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 pub(crate) fn departure_candidate(state: &GameState, source: ObjectId) -> Option<(u64, StackItem)> {
