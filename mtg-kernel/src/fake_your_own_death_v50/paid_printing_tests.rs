@@ -28,6 +28,17 @@ fn paid_on(
     );
     assert!(spell_custody::selected_definition(definition));
     assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+    for root in [
+        crate::rules_meaning_fake_your_own_death_v50::RootV50::InstantSpell,
+        crate::rules_meaning_fake_your_own_death_v50::RootV50::GainedDiesAbility,
+    ] {
+        let meaning =
+            crate::rules_meaning_fake_your_own_death_v50::printed_meaning(definition, root)
+                .unwrap();
+        crate::rules_meaning_fake_your_own_death_v50::validate(&meaning).unwrap();
+        assert_eq!(meaning.capability, crate::card_def::CardCapability::Partial);
+        assert!(!meaning.model_admitted);
+    }
     for _ in 0..2 {
         let swamp = put(&mut state, actor, "Swamp", Zone::Battlefield);
         assert!(

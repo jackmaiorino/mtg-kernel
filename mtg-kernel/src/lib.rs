@@ -74,6 +74,7 @@ pub mod native_search_trajectory_v3;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod planeswalker_v1;
+pub mod rules_meaning_fake_your_own_death_v50;
 pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
