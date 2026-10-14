@@ -4,14 +4,25 @@
 //! publication. Its future caller must bind the context and token fact to
 //! the original recipient's actual death. No consumer admission is implied.
 
-use crate::card_def::{CardType, Keywords, Subtype, CARD_DEFS};
+use crate::card_def::{
+    CardType, Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, Subtype,
+    TargetSpec, CARD_DEFS,
+};
 use crate::effect::{EffectOp, ExecCtx, PlayerRef};
+use crate::mana::ManaColor;
 use crate::state::{GameState, Zone};
 
 fn treasure_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Treasure Token")
         .ok_or("Fake Your Own Death needs the existing Treasure blueprint")?;
     let definition = &CARD_DEFS[usize::from(id)];
+    let colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ];
     if !definition.is_token
         || !definition.is_executable()
         || !definition.has_full_support()
@@ -24,6 +35,33 @@ fn treasure_definition() -> Result<u16, String> {
         || definition.power.is_some()
         || definition.toughness.is_some()
         || definition.keywords != Keywords::NONE
+        || definition.mana_ability_choices != colors
+        || definition.produces_mana != colors
+        || definition.mana_ability_def
+            != Some(ManaAbilityDef {
+                cost: ManaAbilityCostDef::TapAndSacrificeSelf,
+                amount: ManaAbilityAmountDef::Fixed(1),
+                controller_damage: 0,
+                max_activations_per_turn: None,
+            })
+        || (definition.mana_ability)().is_some()
+        || definition.mana_ability_includes_chosen_color
+        || definition.conditional_tap_yield.is_some()
+        || !definition.additional_mana_abilities.is_empty()
+        || !definition.additional_mana_ability_conditions.is_empty()
+        || !definition.restricted_mana_abilities.is_empty()
+        || !definition.activated_abilities.is_empty()
+        || !crate::trigger::triggers_for(id).is_empty()
+        || definition.target_spec != TargetSpec::None
+        || (definition.spell_effect)().is_some()
+        || definition.enters_battlefield_tapped
+        || definition.enters_battlefield_tapped_unless.is_some()
+        || definition.enters_tapped_unless_controller.is_some()
+        || definition.as_enters_choose_color_other_than.is_some()
+        || definition.as_enters_color_choice_v1.is_some()
+        || definition.enters_with_plus_one_counters.is_some()
+        || definition.attachment.is_some()
+        || definition.transform_face.is_some()
     {
         return Err("Fake Your Own Death Treasure blueprint changed".into());
     }
@@ -205,5 +243,78 @@ mod tests {
         )
         .is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+
+    #[test]
+    fn primitive_treasure_pays_actual_tap_and_sacrifice_for_each_color_after_restore_both_seats() {
+        for beneficiary in [PlayerId::P0, PlayerId::P1] {
+            for color in [
+                ManaColor::W,
+                ManaColor::U,
+                ManaColor::B,
+                ManaColor::R,
+                ManaColor::G,
+            ] {
+                let mut state = ready_state_for(beneficiary);
+                let source = put(
+                    &mut state,
+                    beneficiary.opponent(),
+                    "Llanowar Elves",
+                    Zone::Graveyard,
+                );
+                let context = context(&state, source, beneficiary);
+                let program = primitive_death_program_v50(&state, &context, false).unwrap();
+                effect::execute(&program, &context, &mut state);
+                let created = treasures(&state, beneficiary);
+                let [treasure] = created.as_slice() else {
+                    panic!("expected one genuine created Treasure");
+                };
+                let treasure = *treasure;
+                assert!(!state.objects.get(treasure).tapped);
+                let before = serde_json::to_vec(&state).unwrap();
+                // Colorless is not among Treasure's printed choices. Refusal
+                // must occur before either half of the actual combined cost.
+                assert!(crate::engine::step(
+                    &mut state,
+                    crate::engine::Action::ActivateManaAbilityChoice(treasure, ManaColor::C),
+                )
+                .is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+                let mut replay: GameState = serde_json::from_slice(&before).unwrap();
+                let history_start = state.engine.event_history.len();
+                let action = crate::engine::Action::ActivateManaAbilityChoice(treasure, color);
+                crate::engine::step(&mut state, action.clone()).unwrap();
+                crate::engine::step(&mut replay, action).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                assert_eq!(
+                    state.players[beneficiary.index()].mana_pool[color.pool_index()],
+                    1
+                );
+                assert!(treasures(&state, beneficiary).is_empty());
+                let history = &state.engine.event_history[history_start..];
+                let tap = history
+                    .iter()
+                    .position(|event| {
+                        matches!(event,
+                    crate::event::CommittedEvent::Tap { object } if *object == treasure)
+                    })
+                    .unwrap();
+                let sacrifice = history.iter().position(|event| matches!(event,
+                    crate::event::CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to: Zone::Graveyard, .. }
+                        if *object == treasure)).unwrap();
+                let mana = history
+                    .iter()
+                    .position(|event| {
+                        matches!(event,
+                    crate::event::CommittedEvent::ManaAdded { player, colors }
+                        if *player == beneficiary && *colors == [color])
+                    })
+                    .unwrap();
+                assert!(tap < sacrifice && sacrifice < mana);
+            }
+        }
     }
 }
