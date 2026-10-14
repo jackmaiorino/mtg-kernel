@@ -199,6 +199,16 @@ pub(crate) fn begin_counter(
     owner: Option<CounterOwnerV50>,
 ) -> Result<Option<CounterRemovalV50>, String> {
     let Some(owner) = owner else { return Ok(None) };
+    super::spell_custody::validate_retained_grant_history(state)?;
+    let publication = usize::try_from(owner.publication)
+        .map_err(|_| "Fake counter loan publication index overflow")?;
+    if !matches!(state.engine.event_history.get(publication).and_then(journal),
+        Some(JournalV50::DeathPublished { item, .. })
+        if item.as_ref() == &owner.original_stack[owner.position])
+        || !counter_inputs(state, owner.publication).is_empty()
+    {
+        return Err("Fake counter loan changed or closed its original full publication".into());
+    }
     if state.stack != owner.original_stack {
         return Err("Fake counter input changed the complete borrowed original stack".into());
     }
