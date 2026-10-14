@@ -662,6 +662,7 @@ pub mod ajani_full_v42;
 pub mod akroma_early_public_v40;
 pub mod akroma_family_public_v40;
 pub mod akroma_public_v1;
+pub mod conqueror_observation_v49;
 pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
 pub mod doubling_season_v48;

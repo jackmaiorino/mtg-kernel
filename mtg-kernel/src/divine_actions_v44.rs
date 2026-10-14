@@ -26,6 +26,17 @@ pub(crate) fn candidates_panda_scoped_v47(
     accept_hunter: bool,
     accept_panda: bool,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_conqueror_scoped_v49(origin, state, surface, accept_hunter, accept_panda, false)
+}
+
+pub(crate) fn candidates_conqueror_scoped_v49(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
     crate::divine_public_v44::validate_state(state).map_err(RlContractError)?;
     let context = crate::policy_observation_variable_cast_v1::variable_cast_context(state, origin)?;
     let priority_offer = matches!(origin,
@@ -38,12 +49,13 @@ pub(crate) fn candidates_panda_scoped_v47(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = crate::rl_variable_cast_v1::candidates_panda_scoped_v47(
+    let candidates = crate::rl_variable_cast_v1::candidates_conqueror_scoped_v49(
         state,
         surface,
         origin,
         accept_hunter,
         accept_panda,
+        accept_conqueror,
     )?;
     candidates
         .into_iter()

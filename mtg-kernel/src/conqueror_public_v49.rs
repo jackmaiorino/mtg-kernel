@@ -172,8 +172,8 @@ fn journal(state: &GameState, at: u64) -> Result<&JournalV49, RlContractError> {
         )),
     }
 }
-pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
-    conqueror::validate(state).map_err(RlContractError)?;
+/// Metadata derives only from the public catalog, never a hidden battlefield roster.
+pub fn meanings() -> Result<Vec<meaning::MeaningV49>, RlContractError> {
     let mut meanings = Vec::new();
     for (id, _) in crate::card_def::CARD_DEFS.iter().enumerate() {
         let id = u16::try_from(id)
@@ -188,6 +188,11 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
             }
         }
     }
+    Ok(meanings)
+}
+pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
+    conqueror::validate(state).map_err(RlContractError)?;
+    let meanings = meanings()?;
     let batches = state
         .engine
         .event_history
