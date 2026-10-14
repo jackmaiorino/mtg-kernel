@@ -247,6 +247,67 @@ mod tests {
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn primitive_finishes_treasure_before_legend_sba_choice_and_restore_both_seats() {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for keep_returned in [false, true] {
+                let mut state = ready_state_for(owner);
+                let existing = put(
+                    &mut state,
+                    owner,
+                    "Balmor, Battlemage Captain",
+                    Zone::Battlefield,
+                );
+                let returned = put(
+                    &mut state,
+                    owner,
+                    "Balmor, Battlemage Captain",
+                    Zone::Graveyard,
+                );
+                let beneficiary = owner.opponent();
+                let context = context(&state, returned, beneficiary);
+                let program = primitive_death_program_v50(&state, &context, false).unwrap();
+                effect::execute(&program, &context, &mut state);
+                assert_eq!(state.objects.get(returned).zone, Zone::Battlefield);
+                assert!(state.objects.get(returned).tapped);
+                assert_eq!(treasures(&state, beneficiary).len(), 1);
+                assert!(state.pending_legend_rule_v1.is_none());
+
+                // This is the next SBA pass, after both ordered instructions.
+                // The primitive does not publish an actual Fake death trigger.
+                assert!(crate::legend_rule_v1::stage(&mut state, &[]));
+                assert!(matches!(
+                    crate::legend_rule_v1::drain_or_decide(&mut state).unwrap(),
+                    Some(crate::engine::Decision::ChooseLegendPermanent { player, candidates })
+                        if player == owner && candidates.len() == 2
+                            && candidates.contains(&existing) && candidates.contains(&returned)
+                ));
+                let serialized = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&serialized).unwrap();
+                let keep = if keep_returned { returned } else { existing };
+                let discard = if keep_returned { existing } else { returned };
+                for candidate in [&mut state, &mut restored] {
+                    crate::legend_rule_v1::answer(candidate, keep).unwrap();
+                    assert!(crate::legend_rule_v1::drain_or_decide(candidate)
+                        .unwrap()
+                        .is_none());
+                    assert_eq!(candidate.objects.get(keep).zone, Zone::Battlefield);
+                    assert_eq!(candidate.objects.get(discard).zone, Zone::Graveyard);
+                    assert_eq!(treasures(candidate, beneficiary).len(), 1);
+                    assert!(treasures(candidate, owner).is_empty());
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+        }
+    }
+
     #[test]
     fn primitive_treasure_pays_actual_tap_and_sacrifice_for_each_color_after_restore_both_seats() {
         for beneficiary in [PlayerId::P0, PlayerId::P1] {
