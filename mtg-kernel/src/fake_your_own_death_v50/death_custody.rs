@@ -1,12 +1,116 @@
-//! Original gained-ability collection for the still-unregistered printing.
-//! Collection is not publication or permission to execute the private root.
+//! Original gained-ability collection and publication for the unregistered card.
+//! These records are not permission to execute the private root.
 
 use super::spell_custody::{emit, journal, JournalV50};
 use crate::effect::EffectOp;
 use crate::event::CommittedEvent;
 use crate::ids::ObjectId;
-use crate::state::GameState;
+use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackStateV4};
 use crate::trigger::PendingTrigger;
+
+fn binding(item: &StackItem) -> Option<u64> {
+    match item.inline_effect.as_ref()? {
+        EffectOp::FakeDeathFromCaptureV50 { capture } => Some(*capture),
+        _ => None,
+    }
+}
+
+fn source_at(state: &GameState, capture: u64) -> Result<AbilitySourceContractV4, String> {
+    let index = usize::try_from(capture).map_err(|_| "Fake trigger capture index overflow")?;
+    match state.engine.event_history.get(index).and_then(journal) {
+        Some(JournalV50::DeathCaptured { lookback, .. }) => Ok(lookback.battlefield_source),
+        _ => Err("Fake trigger lost its original committed death capture".into()),
+    }
+}
+
+fn canonical_item(item: &StackItem, source: AbilitySourceContractV4, capture: u64) -> StackItem {
+    StackItem {
+        kind: StackItemKind::TriggeredAbility,
+        source: source.source,
+        controller: source.controller,
+        targets: Vec::new(),
+        is_copy: false,
+        inline_effect: Some(EffectOp::FakeDeathFromCaptureV50 { capture }),
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: StackStateV4 {
+            stack_item_id: item.v4.stack_item_id,
+            ability_source_contract: Some(source),
+            ..Default::default()
+        },
+    }
+}
+
+fn collection_at(state: &GameState, capture: u64) -> Result<u64, String> {
+    let mut found = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            matches!(journal(event), Some(JournalV50::DeathCollected { capture: original, .. })
+            if *original == capture)
+            .then_some(index as u64)
+        });
+    let index = found
+        .next()
+        .ok_or("Fake trigger lost its original collection")?;
+    if found.next().is_some() || index <= capture {
+        return Err("Fake trigger collection was repeated or moved before capture".into());
+    }
+    Ok(index)
+}
+
+/// The pending candidate and full published row have the same exact untargeted
+/// gained root. Its creature definition need not print this gained ability.
+pub(crate) fn validate_trigger_identity(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<bool, String> {
+    let Some(capture) = binding(item) else {
+        return Ok(false);
+    };
+    super::spell_custody::validate_grant_lifetime(state)?;
+    let source = source_at(state, capture)?;
+    collection_at(state, capture)?;
+    if *item != canonical_item(item, source, capture) {
+        return Err(
+            "Fake gained trigger changed its original full source or untargeted root".into(),
+        );
+    }
+    Ok(true)
+}
+
+/// Called by the ordinary APNAP publisher after actual unique row insertion.
+/// The original full row is retained before any later counter or removal.
+pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), String> {
+    let Some(capture) = binding(item) else {
+        return Ok(());
+    };
+    validate_trigger_identity(state, item)?;
+    let collection = collection_at(state, capture)?;
+    if item.v4.stack_item_id == Default::default()
+        || state.stack.last() != Some(item)
+        || state.stack.iter().filter(|row| row.v4.stack_item_id == item.v4.stack_item_id).count() != 1
+        || state.engine.event_history.iter().any(|event|
+            matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
+                if *original == capture || row.v4.stack_item_id == item.v4.stack_item_id))
+    {
+        return Err("Fake gained trigger lost its unique actual publication row".into());
+    }
+    emit(
+        state,
+        JournalV50::DeathPublished {
+            capture,
+            collection,
+            item: Box::new(item.clone()),
+        },
+    );
+    Ok(())
+}
 
 fn captures_before(state: &GameState, end: usize) -> Vec<u64> {
     state.engine.event_history.iter().take(end).enumerate().filter_map(|(index, event)| {
@@ -83,6 +187,26 @@ pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
                     != Some(index)
                 {
                     return Err("Fake collection completion changed its original adjacency".into());
+                }
+            }
+            Some(JournalV50::DeathPublished {
+                capture,
+                collection,
+                item,
+            }) => {
+                let source = source_at(state, *capture)?;
+                if *collection >= index as u64
+                    || collection_at(state, *capture)? != *collection
+                    || item.v4.stack_item_id == Default::default()
+                    || **item != canonical_item(item, source, *capture)
+                    || state.engine.event_history.iter().filter(|event|
+                        matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, .. })
+                            if original == capture)).count() != 1
+                    || state.engine.event_history.iter().filter(|event|
+                        matches!(journal(event), Some(JournalV50::DeathPublished { item: row, .. })
+                            if row.v4.stack_item_id == item.v4.stack_item_id)).count() != 1
+                {
+                    return Err("Fake publication changed its original capture, collection or full row".into());
                 }
             }
             _ => {}

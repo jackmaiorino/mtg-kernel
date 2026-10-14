@@ -192,6 +192,66 @@ mod tests {
     }
 
     #[test]
+    fn forged_death_root_and_original_publication_refuse_readonly_both_seats() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::CommittedEvent;
+        use crate::state::{AbilitySourceContractV4, StackItem, StackItemKind, StackStateV4};
+        use spell_custody::JournalV50;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let item = StackItem {
+                kind: StackItemKind::TriggeredAbility,
+                source,
+                controller: actor,
+                targets: Vec::new(),
+                is_copy: false,
+                inline_effect: Some(EffectOp::FakeDeathFromCaptureV50 { capture: 0 }),
+                discarded: Vec::new(),
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: StackStateV4 {
+                    stack_item_id: crate::ids::StackItemId(1),
+                    ability_source_contract: Some(AbilitySourceContractV4::capture(&state, source)),
+                    ..Default::default()
+                },
+            };
+            state.stack.push(item.clone());
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(death_custody::validate_trigger_identity(&state, &item).is_err());
+                assert!(death_custody::publish(&mut state, &item).is_err());
+                assert_eq!(state, before);
+            }
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::FakeJournalV50 {
+                    journal: Box::new(JournalV50::DeathPublished {
+                        capture: 0,
+                        collection: 0,
+                        item: Box::new(item),
+                    }),
+                });
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(engine::step(&mut state, Action::Pass).is_err());
+                assert_eq!(state, before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::Halted { .. }
+                ));
+                state.engine.halted = None;
+                assert_eq!(state, before);
+            }
+        }
+    }
+
+    #[test]
     fn orphan_cleanup_and_empty_death_inputs_refuse_before_engine_work_both_seats() {
         use spell_custody::JournalV50;
         for actor in [PlayerId::P0, PlayerId::P1] {

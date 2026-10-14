@@ -85,6 +85,24 @@ ownership. No printing is registered. One new both-seat restore negative rejects
 a mutable forged death input; ownerless and orphan-collection negatives are
 extended. These nineteen authored component/refusal groups are not native passes.
 
+The separate Native117 diagnostic at `34d257ebeaf1688e0019ae856e2de817341cf96d`
+now passes all nineteen authored component/refusal groups and all three strict
+default/Standard/Limited lint configurations. Its overall result is100 passed,
+13 failed and1 ignored; it is not a whole printing or PR acceptance result.
+Complete terminal outputs are retained in the issue110 C/E evidence stores.
+
+Later source adds gained-root identity and original full publication custody.
+The ordinary APNAP stack publisher records the exact unique row, original death
+capture and unique collection occurrence. Pending identity uses the authenticated
+gained ability instead of requiring its creature definition to print that ability.
+Retained publication checks preserve complete row equality, original source and
+controller, capture/collection order and uniqueness. A both-seat serialized
+negative requires forged roots and orphan publications to refuse without mutation.
+This publication component is uncompiled/unrun. It does not yet check every held
+pending or departed publication owner, execute the private death root, or complete
+removal/counter/return/entry/Treasure and consumer handling. Printing registration
+and genuine paid printing tests remain pending.
+
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes

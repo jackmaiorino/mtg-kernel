@@ -13578,6 +13578,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::fake_your_own_death_v50::death_custody::publish(state, &finalized)?;
     crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
     crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::arahbo_v1::publish(state, &finalized)?;
@@ -13776,6 +13777,9 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::fake_your_own_death_v50::death_custody::validate_trigger_identity(state, item)? {
+        return Ok(None);
+    }
     if matches!(
         inline_effect,
         EffectOp::TapAttachedCreatureAndDamageControllerByPower

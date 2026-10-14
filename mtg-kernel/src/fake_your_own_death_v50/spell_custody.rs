@@ -142,6 +142,11 @@ pub enum JournalV50 {
     CollectionCompleted {
         input: u64,
     },
+    DeathPublished {
+        capture: u64,
+        collection: u64,
+        item: Box<StackItem>,
+    },
 }
 
 pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {
