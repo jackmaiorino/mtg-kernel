@@ -561,7 +561,15 @@ mod printed {
     #[test]
     fn actual_return_and_restoration_keep_an_unrelated_paid_banishing_link_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut state = ready_state_for(actor);
+            let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[forest; 4],
+                &[forest; 4],
+                crate::rl::card_name,
+                60_001,
+                actor,
+            );
+            state.step = crate::state::Step::Main1;
             let source = panda(&mut state, actor);
             let exiled = put(
                 &mut state,

@@ -619,7 +619,7 @@ mod future_printed {
                             original.zone_change_count
                         )
                         .unwrap(),
-                        16
+                        17
                     );
                     validate_color_history(branch).unwrap();
                 }
