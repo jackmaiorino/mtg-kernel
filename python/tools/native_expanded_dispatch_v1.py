@@ -167,6 +167,10 @@ def workload(config, kind, keep_seeds=False, family=None):
         for episode in episodes:
             episode.pop("id")
             episode.pop("seed")
+        # E case ids are replica identifiers like episode ids; the slot positions stay bound.
+        for slots in value.get("e_supported", {}).get("slots", []):
+            for slot in slots:
+                slot.pop("case_id")
         if family == "permuted-units-v1":
             value["initial_source"]["checkpoint"] = inference_shape(value["initial_source"])
             shapes = sorted(json.dumps(item, sort_keys=True, separators=(",", ":"))
@@ -346,6 +350,8 @@ def validate_request(request, qualification):
         require(config.get("update_backend", {"kind": "cpu"}) == {"kind": "cpu"}, "CPU runtime required")
         prep = placement["preparation_workers"]
         require(type(prep) is int and 1 <= prep <= len(cpus), "invalid preparation workers")
+        require("e_supported" not in config or prep == 1,
+                "E supported-choice updates use serial preparation")
         require(config["iterations"] and all(i["episodes"] for i in config["iterations"]),
                 "empty training schedule")
         if qualification:
@@ -473,8 +479,19 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
         # Read the complete parameter and Adam tensors. Only the output-root
         # metadata in trajectory pins differs between serial/parallel trials.
         checkpoint["trajectories"] = trajectories
+        e_packet = None
+        if "e_supported" in update:
+            # The E packet is bound by content; its pin path names the output root.
+            e_packet = read_pinned_json(update["e_supported"]["packet"], resolve, validated_files)
+            packet_pin = checkpoint["e_supported"]["packet"]
+            require(packet_pin["sha256"] == update["e_supported"]["packet"]["sha256"]
+                    and e_packet["scheduled"] == update["e_supported"]["scheduled"],
+                    "E checkpoint does not bind its update's teacher packet")
+            checkpoint["e_supported"]["packet"] = packet_pin["sha256"]
         phase_started = time.monotonic()
         entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
+        if e_packet is not None:
+            entry["e_packet_sha256"] = update["e_supported"]["packet"]["sha256"]
         if timing is not None:
             timing["checkpoint_encode_hash_seconds"] += time.monotonic() - phase_started
         if tolerant:
