@@ -193,7 +193,12 @@ fn apply_counter_transfer(
     let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
-    let loyalty = i32::try_from(snapshot.extras.loyalty).ok()?;
+    let loyalty = snapshot.extras.loyalty;
+    if loyalty > 0
+        && (crate::doubling_season_v48::requires_successor(state) || loyalty > i32::MAX as u32)
+    {
+        crate::planeswalker_v1::quote_loyalty_counters_v48(state, target, loyalty).ok()?;
+    }
     let lifelink = live
         .v4
         .lifelink_keyword_counters
@@ -230,7 +235,7 @@ fn apply_counter_transfer(
     if keyword_timestamp.is_some() {
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
-    crate::planeswalker_v1::add_loyalty_counters(state, target, loyalty);
+    crate::planeswalker_v1::add_loyalty_counters_u32_v48(state, target, loyalty).ok()?;
     Some(())
 }
 
@@ -1001,6 +1006,32 @@ mod doubling_season_transfer_tests_v48 {
         state::Zone,
     };
     #[test]
+    fn genuine_unsigned_loyalty_transfer_preserves_full_width_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let target = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let original = (i32::MAX as u32) + 1;
+            let snapshot = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: original,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, snapshot).unwrap();
+                assert_eq!(
+                    crate::planeswalker_v1::loyalty(branch, target),
+                    Some(original)
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -1058,6 +1089,30 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(crate::planeswalker_v1::loyalty(branch, target), Some(2));
             }
             assert_eq!(state, restored);
+            let original = (i32::MAX as u32) / 2 + 1;
+            let second = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let native = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: original,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            apply_counter_transfer(&mut state, second, actor, native).unwrap();
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(&state, second),
+                Some(original * 2)
+            );
+            let before = state.clone();
+            let overflow = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: u32::MAX,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(apply_counter_transfer(&mut state, second, actor, overflow).is_none());
+            assert_eq!(state, before);
         }
     }
 }

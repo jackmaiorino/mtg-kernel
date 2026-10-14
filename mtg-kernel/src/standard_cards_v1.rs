@@ -2833,6 +2833,20 @@ pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) ->
     (0..doublings).fold(count, |count, _| count.saturating_mul(2))
 }
 
+/// Native-width loyalty placement. The signed helper remains unchanged for
+/// old callers; the V48 transfer adapter must not narrow an unsigned ledger.
+pub(crate) fn scale_loyalty_counters_v48(
+    state: &GameState,
+    player: PlayerId,
+    count: u32,
+) -> Result<u32, String> {
+    (0..controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)).try_fold(count, |amount, _| {
+        amount
+            .checked_mul(2)
+            .ok_or_else(|| "loyalty modifier overflow".into())
+    })
+}
+
 /// Whether `object` has any counters on it.
 fn has_counters(state: &GameState, object: ObjectId) -> bool {
     let live = state.objects.get(object);

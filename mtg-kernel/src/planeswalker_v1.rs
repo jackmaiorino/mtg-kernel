@@ -235,6 +235,59 @@ pub(crate) fn add_loyalty_counters(state: &mut GameState, object: ObjectId, amou
     change_loyalty_effect(state, object, amount);
 }
 
+/// Quote the full native-width effect before the transfer mutates any family.
+pub(crate) fn quote_loyalty_counters_v48(
+    state: &GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<u32, String> {
+    if state.objects.get(object).zone != Zone::Battlefield {
+        return Err("loyalty counter recipient is not a permanent".into());
+    }
+    let controller = state.objects.get(object).controller;
+    let original = crate::standard_cards_v1::scale_loyalty_counters_v48(state, controller, amount)?;
+    let placed = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller)
+        .replaced_loyalty(original)?;
+    loyalty(state, object)
+        .unwrap_or(0)
+        .checked_add(placed)
+        .ok_or_else(|| "loyalty total overflow".into())
+}
+
+pub(crate) fn add_loyalty_counters_u32_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<(), String> {
+    if amount == 0 {
+        return Ok(());
+    }
+    // Keep every old representable, absent-component placement byte-identical.
+    if !crate::doubling_season_v48::requires_successor(state) {
+        if let Ok(signed) = i32::try_from(amount) {
+            add_loyalty_counters(state, object, signed);
+            return Ok(());
+        }
+    }
+    let counters = quote_loyalty_counters_v48(state, object, amount)?;
+    let permanent = ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    };
+    state
+        .planeswalkers_v1
+        .get_or_insert_with(Default::default)
+        .loyalty
+        .insert(
+            object,
+            LoyaltyV1 {
+                permanent,
+                counters,
+            },
+        );
+    Ok(())
+}
+
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.
 /// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
 /// be silently omitted from the public observation.
