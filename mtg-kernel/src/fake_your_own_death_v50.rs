@@ -13,6 +13,7 @@ use crate::mana::ManaColor;
 use crate::state::{GameState, Zone};
 
 pub mod grant_primitive;
+pub mod spell_custody;
 
 fn treasure_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Treasure Token")
@@ -155,6 +156,30 @@ mod tests {
                 object.card_def == blueprint && object.v4.is_token
             })
             .collect()
+    }
+
+    #[test]
+    fn ownerless_install_root_refuses_without_grant_or_gameplay_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let context = ExecCtx::no_targets(source, actor);
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                effect::execute(&EffectOp::FakeInstallGrantV50, &context, &mut state);
+                assert_eq!(
+                    state.engine.halted,
+                    Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source
+                    ))
+                );
+                state.engine.halted = None;
+                assert_eq!(state, before);
+                assert!(spell_custody::installed_grants(&state).unwrap().is_empty());
+            }
+        }
     }
 
     #[test]

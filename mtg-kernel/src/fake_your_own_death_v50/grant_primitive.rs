@@ -29,6 +29,17 @@ pub struct PrimitiveDeathLookbackV50 {
 }
 
 impl PrimitiveGrantV50 {
+    pub(super) fn matches_installation(
+        self,
+        recipient: EffectObjectBinding,
+        timestamp: u64,
+    ) -> bool {
+        self.recipient.object == recipient.object
+            && self.recipient.zone_change_count == recipient.expected_zone_change_count
+            && recipient.expected_zone == Zone::Battlefield
+            && self.timestamp == timestamp
+    }
+
     fn modifier(self) -> UntilEndOfTurnEffect {
         UntilEndOfTurnEffect::ResolvedObjectEffect {
             object_id: self.recipient.object,

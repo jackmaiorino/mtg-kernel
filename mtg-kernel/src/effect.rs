@@ -1704,6 +1704,8 @@ pub enum EffectOp {
     ConquerorGainFromCaptureV49 {
         capture_history_index: u64,
     },
+    /// Requires the genuine finalized spell's private removal loan.
+    FakeInstallGrantV50,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -19434,6 +19436,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::HighSocietyHunterFromCaptureV45 { .. }
         | EffectOp::FaebloomCreateFaeriesV43
+        | EffectOp::FakeInstallGrantV50
         | EffectOp::FaebloomTapFromCaptureV43 { .. }
         | EffectOp::BindArahboCatEntryV1
         | EffectOp::ArahboTokenFromCaptureV1 { .. } => {

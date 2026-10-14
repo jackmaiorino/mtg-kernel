@@ -1446,6 +1446,9 @@ pub enum CommittedEvent {
     ConquerorObserverInputV49 {
         input: Box<crate::bloodthirsty_conqueror_v49::ObserverInputV49>,
     },
+    FakeJournalV50 {
+        journal: Box<crate::fake_your_own_death_v50::spell_custody::JournalV50>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

@@ -3814,6 +3814,9 @@ fn standard_program_for(name: &str) -> Option<Special> {
         "Faebloom Trick" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
             "None", "FaebloomCreateFaeriesV43", "EffectOp::FaebloomCreateFaeriesV43",
         ),
+        "Fake Your Own Death" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
+            "Creature", "FakeInstallGrantV50", "crate::fake_your_own_death_v50::spell_custody::recipe()",
+        ),
         "Eaten Alive" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
             "CreatureOrPlaneswalker", "MoveObject(Target0,Exile)",
             "crate::eaten_alive_v1::program()",

@@ -100,6 +100,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         }
         EffectOp::HighSocietyHunterFromCaptureV45 { .. }
         | EffectOp::FaebloomCreateFaeriesV43
+        | EffectOp::FakeInstallGrantV50
         | EffectOp::FaebloomTapFromCaptureV43 { .. } => {
             out.atoms.push(Atom::Opaque);
         }
@@ -349,6 +350,7 @@ mod standard_completion_tests {
     #[test]
     fn private_limited_roots_keep_exact_programs_opaque_without_dispatch_panics() {
         for op in [
+            EffectOp::FakeInstallGrantV50,
             EffectOp::KrenkoCreateGoblinsV1,
             EffectOp::AjaniLoyaltyV42 { ability_index: 0 },
             EffectOp::AjaniLoyaltyV42 { ability_index: 1 },
