@@ -1894,6 +1894,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     crate::doubling_season_v48::require_legacy_visible(state, acting_player)
         .map_err(RlContractError)?;
 
@@ -5013,7 +5014,10 @@ pub(crate) fn core_policy_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+        state,
+        decision.actor(state),
+    )?;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -5227,7 +5231,10 @@ fn core_surface_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
-    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+        state,
+        PolicyDecisionV5::Surface(decision.clone()).actor(state),
+    )?;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {

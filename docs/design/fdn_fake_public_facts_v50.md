@@ -55,3 +55,11 @@ one return plus two Treasures; and check predecessor API refusal after real
 revelation or paid Fake while unknown-hand variation preserves its extensions.
 Existing separate-owner checks also authenticate the original battlefield source.
 Compilation, runtime and executable V50 backend/Human admission remain pending.
+
+Source review found that V1 observations and actor-less candidate guards could
+still omit known Fake semantics. V1 now checks its observer, and both shared
+candidate builders check the actual decision actor. The privacy group also
+compares V1 observations and candidate semantics across unknown opponent hands.
+A fifteenth fixture supplies two actual Swamp mana activations and proves an
+affordable Fake is in the engine's cast menu before checking predecessor refusal
+without mutation. These repairs have not yet compiled or run.

@@ -1120,29 +1120,107 @@ fn legacy_consumer_refusal_depends_on_known_fake_facts_not_unknown_opponent_hand
             Zone::Hand,
         );
         public_v50::require_legacy_visible(&state, Some(actor)).unwrap();
+        let decision = crate::policy_surface_v5::PolicyDecisionV5::Surface(
+            crate::surface::SurfaceDecision::Decision(engine::advance_until_decision(&mut state)),
+        );
+        assert_eq!(decision.actor(&state), Some(actor));
+        let v1 = serde_json::to_vec(&crate::rl::observe_v1(&state, actor, 0).unwrap()).unwrap();
+        let candidates = crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
+            &decision, &state, false, false, false,
+        )
+        .unwrap();
+        let semantics = serde_json::to_vec(
+            &candidates
+                .iter()
+                .map(|candidate| &candidate.semantic)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
         let original = crate::rl::policy_observation_extensions_panda_v47(&state, actor).unwrap();
         let mut alternate = state.clone();
         alternate.objects.get_mut(hidden).card_def =
             crate::card_def::card_id_by_name("Mountain").unwrap();
         alternate.objects.get_mut(hidden).name = "Mountain".into();
         assert_eq!(
+            v1,
+            serde_json::to_vec(&crate::rl::observe_v1(&alternate, actor, 0).unwrap()).unwrap()
+        );
+        let alternate_candidates = crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
+            &decision, &alternate, false, false, false,
+        )
+        .unwrap();
+        assert_eq!(
+            semantics,
+            serde_json::to_vec(
+                &alternate_candidates
+                    .iter()
+                    .map(|candidate| &candidate.semantic)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
             original,
             crate::rl::policy_observation_extensions_panda_v47(&alternate, actor).unwrap()
         );
         assert!(public_v50::require_legacy_visible(&state, Some(actor.opponent())).is_err());
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::rl::observe_v1(&state, actor.opponent(), 0).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
         state
             .reveal_hand_card(actor, actor.opponent(), hidden)
             .unwrap();
         let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
+        assert!(
+            crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
+                &decision, &state, false, false, false,
+            )
+            .is_err()
+        );
         assert!(crate::rl::policy_observation_extensions_panda_v47(&state, actor).is_err());
         assert!(crate::rl::policy_observation_extensions_conqueror_v49(&state, actor).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
 
         let (paid, _, _) = paid(actor, actor);
         let before = serde_json::to_vec(&paid).unwrap();
+        assert!(crate::rl::observe_v1(&paid, actor, 0).is_err());
         assert!(crate::rl::policy_observation_extensions_panda_v47(&paid, actor).is_err());
         assert!(crate::rl::policy_observation_extensions_conqueror_v49(&paid, actor).is_err());
         assert_eq!(serde_json::to_vec(&paid).unwrap(), before);
         public_facts(&paid);
+    }
+}
+
+#[test]
+fn predecessor_candidate_builders_refuse_actual_affordable_fake_in_decision_actor_hand() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let spell = put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
+        for _ in 0..2 {
+            let swamp = put(&mut state, actor, "Swamp", Zone::Battlefield);
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, mana_abilities, .. }
+                if player == actor && mana_abilities.contains(&swamp)));
+            engine::step(&mut state, Action::ActivateManaAbility(swamp)).unwrap();
+        }
+        let actual = engine::advance_until_decision(&mut state);
+        assert!(
+            matches!(&actual, Decision::CastSpellOrPass { player, castable_spells, .. }
+            if *player == actor && castable_spells.contains(&spell))
+        );
+        let decision = crate::policy_surface_v5::PolicyDecisionV5::Surface(
+            crate::surface::SurfaceDecision::Decision(actual),
+        );
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
+        assert!(
+            crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
+                &decision, &state, false, false, false,
+            )
+            .is_err()
+        );
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }
