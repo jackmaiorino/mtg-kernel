@@ -370,6 +370,23 @@ class HostSlotsTests(unittest.TestCase):
             release.write_text("go")
             first.wait(timeout=60)
 
+    def test_ordinary_admission_bypasses_background_and_preserves_ordinary_fifo(self):
+        claim_id = "a" * 32
+        background = {"id": "b" * 32, "background": True}
+        earlier = {"id": "c" * 32}
+        own = {"id": claim_id}
+        with patch.object(slots, "live_tickets", side_effect=[
+                [background, earlier, own], [background, own]]), \
+                patch.object(slots, "_run_claimed", return_value=0) as launch, \
+                patch.object(slots.time, "sleep") as sleep:
+            result = slots.run("probe", "ordinary", 1, ["unused"], wait=True, claim_id=claim_id)
+        self.assertEqual(result, 0)
+        self.assertEqual(sleep.call_count, 1, "the earlier ordinary request must enter first")
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args[-1], claim_id)
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("claim-*.json")))
+        self.assertFalse(list((self.host / "TESTHOST.slots").glob("queue-*.json")))
+
     def test_claims_suspend_while_timed_work_leaves_no_room(self):
         host = self.host
         tmp_path = self.tmp_path
