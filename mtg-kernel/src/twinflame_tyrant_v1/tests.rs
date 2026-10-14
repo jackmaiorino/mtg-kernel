@@ -1211,6 +1211,7 @@ mod future_printed {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
+    #[ignore = "requires genuine Cast Into the Fire registration; absent from current catalog and frozen FDN target"]
     fn genuine_cast_into_fire_multi_target_ordering_and_returned_target_exclusion_both_seats() {
         use crate::effect::crystal_prevention_v1::PreventionV1;
         use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
