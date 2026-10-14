@@ -361,7 +361,8 @@ def execute(spec, workers, phase, label):
     batch_start = time.monotonic()
     active = {}
     pending = list(range(len(results)))
-    cores = sorted(psutil.Process().cpu_affinity())
+    cores = preferred_native_cores(spec, psutil.Process().cpu_affinity())
+    core_rank = {core: rank for rank, core in enumerate(cores)}
     require(len(cores) == spec["cores_claimed"], "current claimed affinity does not match core allocation")
     group_core = {}
     per_core_limit = math.ceil(workers / len(cores))
@@ -393,7 +394,7 @@ def execute(spec, workers, phase, label):
                     free = [core for core in cores if core_counts[core] < per_core_limit]
                     if not free:
                         continue
-                    core = min(free, key=lambda core: (core_counts[core], core))
+                    core = min(free, key=lambda core: (core_counts[core], core_rank[core]))
                     group_core[group] = core
                 job = spec["jobs"][index]
                 folder = destination / job["id"]
@@ -421,8 +422,10 @@ def execute(spec, workers, phase, label):
                                  "output": output, "started": time.monotonic(), "command": command, "core": core}
                 native = psutil.Process(child.pid)
                 if os.name == "nt":
-                    native.cpu_affinity([core])
-                    require(native.cpu_affinity() == [core], "native affinity verification failed")
+                    # The outer job's affinity overrides SetProcessAffinityMask.
+                    # A nested supported job imposes the one-core subset while
+                    # retaining the claim's descendant containment and priority.
+                    active[index]["native_job"] = contain_windows_native(spec, child, core)
                     active[index]["power"] = active[index]["clock"].qualify_power()
                     nt = ctypes.WinDLL("ntdll")
                     nt.NtResumeProcess.argtypes = [ctypes.c_void_p]
@@ -449,6 +452,9 @@ def execute(spec, workers, phase, label):
                 cpu = item["clock"].read()
                 item["clock"].close()
                 item["stream"].close()
+                if item.get("native_job"):
+                    tree, slots = item["native_job"]
+                    slots._CloseHandle(tree.job)
                 row = {"id": job["id"], "cpu_seconds": cpu, "wall_seconds": elapsed,
                        "exit_code": child.returncode, "command": item["command"], "output": str(item["output"]),
                        "affinity_core": item["core"], "power": item["power"], "group": job["group"]}
@@ -470,12 +476,17 @@ def execute(spec, workers, phase, label):
     except BaseException as caught:
         error = f"{type(caught).__name__}: {caught}"
         for index, item in active.items():
+            if item.get("native_job"):
+                item["native_job"][0].kill()
             item["clock"].stop()
             results[index] = {"id": spec["jobs"][index]["id"], "cpu_seconds": item["clock"].read(),
                               "wall_seconds": time.monotonic() - item["started"], "incomplete": True,
                               "output": str(item["output"]), "command": item["command"]}
             item["clock"].close()
             item["stream"].close()
+            if item.get("native_job"):
+                tree, slots = item["native_job"]
+                slots._CloseHandle(tree.job)
     finally:
         cpu = sum(row["cpu_seconds"] for row in results if row) + time.process_time() - manager_start
         record = {"label": label, "phase": phase, "workers": workers, "cpu_seconds": cpu,
@@ -532,6 +543,40 @@ def slot_environment(spec):
             "unsupported host allocator environment setting")
     env.update(settings)
     return env
+
+
+def contain_windows_native(spec, child, core):
+    """Narrow the existing claimed job with a nested one-core job."""
+    helper = checked(spec["host_slots"])
+    sys.path.insert(0, str(helper.parent))
+    import host_slots_v1 as slots
+    require(Path(slots.__file__).resolve() == helper.resolve(), "native containment helper differs")
+    tree = slots.Tree([core], "below_normal", contain_self=False)
+    try:
+        tree.adopt(child.pid, slots.creation_time(child.pid))
+        require(psutil.Process(child.pid).cpu_affinity() == [core], "nested native affinity verification failed")
+        return tree, slots
+    except BaseException:
+        tree.kill()
+        slots._CloseHandle(tree.job)
+        raise
+
+
+def preferred_native_cores(spec, cores):
+    """Use one logical CPU per physical core before its SMT sibling."""
+    helper = checked(spec["host_slots"])
+    sys.path.insert(0, str(helper.parent))
+    import host_slots_v1 as slots
+    require(Path(slots.__file__).resolve() == helper.resolve(), "affinity topology helper differs")
+    allowed = set(cores)
+    groups = sorted(slots.topology(), key=lambda item: -(item["efficiency_class"] or 0))
+    first, siblings = [], []
+    for group in groups:
+        members = sorted(allowed.intersection(slots.parse_cores(group["cpus"])))
+        if members:
+            first.append(members[0])
+            siblings.extend(members[1:])
+    return first + siblings + sorted(allowed - set(first) - set(siblings))
 
 
 def supervise_run(spec, args):
