@@ -392,6 +392,14 @@ fn finish(end: Result<End, PlayErr>, suffix: Suffix, meter: &Meter, c: &Counters
 }
 
 impl Roles {
+    /// Turns every role's passive scoring-call probe on or off (viewer
+    /// captures only; scores and sampling are unchanged).
+    #[cfg(feature = "viewer-recording-v1")]
+    pub(crate) fn set_inference_probes(&mut self, on: bool) -> Result<(), String> {
+        self.policies_mut()
+            .try_for_each(|p| p.set_inference_probe_v1(on))
+    }
+
     fn policies_mut(&mut self) -> impl Iterator<Item = &mut FrozenPlayPolicyV1> {
         [&mut self.focal, &mut self.scorer, &mut self.inner_focal]
             .into_iter()
@@ -988,7 +996,23 @@ impl Roles {
             };
             #[cfg(feature = "viewer-recording-v1")]
             if let Some(v) = trace.as_deref_mut().and_then(|t| t.viewer.as_mut()) {
-                v.before(&s, d, a);
+                // Passive: which scoring call (if any) chose this move.
+                let (own, other) = if acting(&d) == ctx.focal {
+                    (&mut self.focal, &mut self.opps[ctx.opp])
+                } else {
+                    (&mut self.opps[ctx.opp], &mut self.focal)
+                };
+                let inference = match (own.take_inference_call_v1(), other.take_inference_call_v1())
+                {
+                    (Ok(Some(call)), Ok(None)) => Ok(super::viewer_uct::Inference::Call(call)),
+                    (Ok(None), Ok(None)) if d.legal_action_count < 2 => {
+                        Ok(super::viewer_uct::Inference::Forced)
+                    }
+                    (Ok(None), Ok(None)) => Ok(super::viewer_uct::Inference::Tree),
+                    (Ok(_), Ok(Some(_))) => Err("scoring call by the non-acting policy".into()),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                };
+                v.before(&s, d, a, inference);
             }
             apply(&mut s, &d, a, meter, ctx.focal, Some(suffix), &ctx.defs)?;
             #[cfg(feature = "viewer-recording-v1")]

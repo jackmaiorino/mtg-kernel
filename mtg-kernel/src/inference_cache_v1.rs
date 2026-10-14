@@ -206,7 +206,6 @@ impl InferenceCacheV1 {
         &self.stats
     }
 
-    #[cfg(test)]
     pub(crate) fn bytes(&self) -> usize {
         self.bytes
     }
@@ -307,6 +306,61 @@ impl InferenceCacheV1 {
 pub(crate) struct PolicyCacheV1 {
     pub(crate) cache: SharedV1,
     pub(crate) model: [u8; 32],
+}
+
+/// What one scoring call did, for passive presentation captures only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CallOutcomeV1 {
+    /// No cache attached: the forward ran.
+    Uncached,
+    /// Cache attached, no stored identical input: the forward ran.
+    Miss,
+    /// Cache attached and an identical input's output was returned.
+    Hit,
+}
+
+/// One scoring call seen by an enabled probe. `input` is the SHA-256 of the
+/// exact key bytes; a recorder turns it into a recording-local group ordinal
+/// and never publishes it or the key.
+#[derive(Clone, Debug)]
+#[cfg_attr(
+    not(feature = "viewer-recording-v1"),
+    allow(dead_code, reason = "read by the viewer recorder only")
+)]
+pub(crate) struct CallEventV1 {
+    pub(crate) outcome: CallOutcomeV1,
+    pub(crate) input: [u8; 32],
+    pub(crate) key_bytes: usize,
+    /// Cache bytes after the call (None without a cache).
+    pub(crate) cache_bytes: Option<usize>,
+}
+
+/// Passive per-policy call probe. Off unless a recorder enables it; when on,
+/// the key is built even without a cache so identical inputs can be grouped.
+/// It never changes scores, sampling or cache contents.
+#[derive(Clone, Debug)]
+pub(crate) struct ProbeV1 {
+    pub(crate) model: [u8; 32],
+    pub(crate) calls: u32,
+    pub(crate) last: Option<CallEventV1>,
+}
+
+impl ProbeV1 {
+    pub(crate) fn record(
+        &mut self,
+        outcome: CallOutcomeV1,
+        key: &[u8],
+        cache_bytes: Option<usize>,
+    ) {
+        use sha2::{Digest, Sha256};
+        self.calls += 1;
+        self.last = Some(CallEventV1 {
+            outcome,
+            input: Sha256::digest(key).into(),
+            key_bytes: key.len(),
+            cache_bytes,
+        });
+    }
 }
 
 #[cfg(test)]

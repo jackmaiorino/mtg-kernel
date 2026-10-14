@@ -300,9 +300,13 @@ impl Searches<'_> {
             });
         #[cfg(not(feature = "viewer-recording-v1"))]
         let mut trace = None;
+        #[cfg(feature = "viewer-recording-v1")]
+        self.roles.set_inference_probes(trace.is_some())?;
         let (sel, tree) =
             self.roles
                 .select_e_diagnosed(&ctx, trace.as_mut(), 1, None, None, Some(&mut diag));
+        #[cfg(feature = "viewer-recording-v1")]
+        self.roles.set_inference_probes(false)?;
         self.keys.merge(&diag.keys);
         self.used += sel.transitions;
         let failed = sel.incomplete || !sel.faults.is_empty();

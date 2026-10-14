@@ -1718,6 +1718,12 @@ fn inference_cache_scores_match_and_respect_mode_and_model() {
         )
     };
     let stats = |c: &crate::inference_cache_v1::SharedV1| c.lock().unwrap().json();
+    // Passive probes: the uncached reference and the cached policy see the
+    // same input identity; the probe changes no score.
+    use crate::inference_cache_v1::CallOutcomeV1;
+    assert!(reference.take_inference_call_v1().is_err());
+    reference.set_inference_probe_v1(true).unwrap();
+    cached.set_inference_probe_v1(true).unwrap();
     let mut decisions = 0u64;
     each_decision(1, |s, d| {
         if d.legal_action_count < 2 || decisions >= 12 {
@@ -1725,9 +1731,22 @@ fn inference_cache_scores_match_and_respect_mode_and_model() {
         }
         decisions += 1;
         let expected = bits(&reference.score_fast_session_v1(s).unwrap());
+        let uncached = reference.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(uncached.outcome, CallOutcomeV1::Uncached);
+        assert_eq!(uncached.cache_bytes, None);
         let before = stats(&cache)["hits"].as_u64().unwrap();
         assert_eq!(bits(&cached.score_fast_session_v1(s).unwrap()), expected);
+        let first = cached.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(first.input, uncached.input);
+        assert_eq!(first.key_bytes, uncached.key_bytes);
         assert_eq!(bits(&cached.score_fast_session_v1(s).unwrap()), expected);
+        let second = cached.take_inference_call_v1().unwrap().unwrap();
+        assert_eq!(
+            (second.outcome, second.input),
+            (CallOutcomeV1::Hit, uncached.input)
+        );
+        assert!(second.cache_bytes.is_some_and(|b| b <= 64 << 20));
+        assert!(cached.take_inference_call_v1().unwrap().is_none());
         assert!(stats(&cache)["hits"].as_u64().unwrap() > before);
         // Fast tanh and another model miss, then match their own references.
         let hits = stats(&cache)["hits"].as_u64().unwrap();
@@ -1742,6 +1761,15 @@ fn inference_cache_scores_match_and_respect_mode_and_model() {
         assert_eq!(stats(&cache)["hits"].as_u64().unwrap(), hits);
     });
     assert!(decisions > 0);
+    // Two calls between takes are an error, never a silent merge.
+    each_decision(1, |s, d| {
+        if d.legal_action_count >= 2 && decisions > 0 {
+            decisions = 0;
+            reference.score_fast_session_v1(s).unwrap();
+            reference.score_fast_session_v1(s).unwrap();
+            assert!(reference.take_inference_call_v1().is_err());
+        }
+    });
     // Forks share the worker's cache; replacing parameters detaches it.
     let fork = cached.fork_for_collection_v3().unwrap();
     assert!(std::sync::Arc::ptr_eq(

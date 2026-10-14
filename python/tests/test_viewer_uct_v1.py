@@ -36,7 +36,53 @@ class VisibleExporter:
         p={'life':20,'handCount':0,'libraryCount':34,'mana':[0]*6,'battlefield':[],'graveyard':[],'hand':[]}
         return {'turn':8,'phase':'main1','active':'p0','priority':'p0','players':[copy.deepcopy(p),copy.deepcopy(p)],'exile':[],'stack':[],'combat':[]}
 
+def with_inference(cached=True):
+    raw,f=fixture()
+    call=lambda kind,group:{'kind':kind,'group':group,'cache_bytes':(600 if kind=='hit' or group else 300) if cached else None}
+    events=[[{'kind':'uct'},{'kind':'uct'},call('miss' if cached else 'uncached',0),call('hit' if cached else 'uncached',0)],
+        [{'kind':'uct'}],[{'kind':'uct'},{'kind':'uct'}]]
+    for s,e in zip(raw['simulations'],events):
+        for m,x in zip(s['rollout'],e):m['inference']=x
+    raw['simulations'][1]['rollout'][0]['inference']={'kind':'uct'}
+    raw['simulations'][2]['unapplied']={'kind':'forced'}
+    raw['inference_groups']=[4096]
+    if cached:raw['record']['inference_cache']={'budget_bytes':1000,'requests':2,'hits':1,'misses':1,'forwards':1}
+    return raw,f
+
 class UctTests(unittest.TestCase):
+    def test_inference_events_export_codes_groups_and_reconcile_without_private_keys(self):
+        raw,f=with_inference();result=replay(raw,VisibleExporter(),f)
+        self.assertEqual(result['inference'],{'schema':'mtg-kernel-uct-inference/v1','mode':'cache','budgetBytes':1000,'groups':1,
+            'totals':{'requests':2,'hits':1,'misses':1,'forwards':1,'uct':5,'forced':1}})
+        self.assertEqual(result['simulations'][0]['inference'],{'codes':'uumh','groups':[0,0],'cacheBytes':[300,600],'unapplied':False})
+        self.assertEqual(result['simulations'][2]['inference'],{'codes':'uuf','groups':[],'cacheBytes':[],'unapplied':True})
+        self.assertNotIn('4096',json.dumps(result['inference']))
+        self.assertNotIn('inference',replay(fixture()[0],VisibleExporter(),fixture()[1]))
+
+    def test_inference_events_reject_impossible_or_unreconciled_calls(self):
+        for change in [lambda r:r['simulations'][0]['rollout'][3]['inference'].update(group=1),
+            lambda r:r['simulations'][0]['rollout'][2]['inference'].update(kind='hit'),
+            lambda r:r['simulations'][0]['rollout'][2].update(inference={'kind':'uct'}),
+            lambda r:r['simulations'][0]['rollout'][0].update(inference={'kind':'forced'}),
+            lambda r:r['simulations'][0]['rollout'][3]['inference'].update(cache_bytes=1001),
+            lambda r:r['simulations'][0]['rollout'][3]['inference'].update(kind='uncached'),
+            lambda r:r['record']['inference_cache'].update(hits=2),
+            lambda r:r['simulations'][1].update(unapplied={'kind':'forced'}),
+            lambda r:r.update(inference_groups=[1,2]),
+            lambda r:r['simulations'][1]['rollout'][0].pop('inference')]:
+            raw,f=with_inference();change(raw)
+            with self.assertRaises(ValueError):replay(raw,VisibleExporter(),f)
+
+    def test_matched_cache_off_capture_pairs_by_moves_and_groups(self):
+        raw,f=with_inference();off,_=with_inference(cached=False)
+        result=replay(raw,VisibleExporter(),f,(off,'a'*64))
+        self.assertEqual(result['inference']['paired'],{'mode':'uncached','sourceSha256':'a'*64,'requests':2,'forwards':2,'hits':0})
+        self.assertEqual(replay(off,VisibleExporter(),f)['simulations'][0]['inference']['codes'],'uuxx')
+        for change in [lambda r:r['simulations'][0]['rollout'][3]['inference'].update(group=1),lambda r:r['record'].update(transitions=8)]:
+            other,_=with_inference(cached=False);change(other);other['inference_groups']=[1,2] if other['simulations'][0]['rollout'][3]['inference']['group'] else other['inference_groups']
+            with self.assertRaises(ValueError):replay(raw,VisibleExporter(),f,(other,'a'*64))
+        with self.assertRaises(ValueError):replay(raw,VisibleExporter(),f,(with_inference()[0],'a'*64))
+
     def test_execution_binding_uses_full_key_and_native_support_without_exporting_private_keys(self):
         raw,f=fixture();f['id']='d15';raw['nodes'][0].update(n=[8,0],wins=[8,0],visits=8)
         evidence={'search':0,'chooser':'new_root','lookup':'supported','refreshed':None,'edge_backups':8,'remaining_before':384000,'remaining_after':384000}

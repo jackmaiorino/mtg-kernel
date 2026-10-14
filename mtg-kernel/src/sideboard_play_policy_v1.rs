@@ -223,6 +223,8 @@ pub struct FrozenPlayPolicyV1 {
     /// search driver attaches one; collection forks share it.
     inference_cache: Option<crate::inference_cache_v1::PolicyCacheV1>,
     inference_key: Vec<u8>,
+    /// Passive call probe for viewer captures; never shared by forks.
+    inference_probe: Option<crate::inference_cache_v1::ProbeV1>,
 }
 
 #[derive(Default)]
@@ -475,6 +477,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -521,6 +524,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -602,6 +606,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -665,6 +670,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -728,6 +734,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -803,6 +810,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -983,6 +991,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: false,
             inference_cache: None,
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1054,6 +1063,7 @@ impl FrozenPlayPolicyV1 {
             fast_search_forward: self.fast_search_forward,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
+            inference_probe: None,
             seat_rng: [SplitMix64::seed(0), SplitMix64::seed(0)],
             sampling_initialized: false,
             #[cfg(feature = "gameplay-decision-trace-v1")]
@@ -1206,8 +1216,9 @@ impl FrozenPlayPolicyV1 {
         self.model
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;
-        // A cached prediction belongs to the old parameters.
+        // A cached prediction and a probe namespace belong to the old parameters.
         self.inference_cache = None;
+        self.inference_probe = None;
         // Replacement validates the whole model before committing. Copy the
         // installed table so sideboard inputs cannot retain ancestral rows.
         self.model.visit_parameters_v1(|name, _, values| {
@@ -1623,6 +1634,7 @@ impl FrozenPlayPolicyV1 {
             &mut self.forward_scratch,
             self.inference_cache.as_ref(),
             &mut self.inference_key,
+            self.inference_probe.as_mut(),
             path,
             mode,
             view,
@@ -1643,16 +1655,53 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         cache: &crate::inference_cache_v1::SharedV1,
     ) -> Result<(), String> {
+        self.inference_cache = Some(crate::inference_cache_v1::PolicyCacheV1 {
+            cache: cache.clone(),
+            model: self.inference_model_v1()?,
+        });
+        Ok(())
+    }
+
+    /// The cache's model namespace: the installed parameters' digest.
+    fn inference_model_v1(&self) -> Result<[u8; 32], String> {
         let digest = self.actual_model_identity_v1().weights_sha256;
         let mut model = [0u8; 32];
         for (i, byte) in model.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&digest[2 * i..2 * i + 2], 16).map_err(|e| e.to_string())?;
         }
-        self.inference_cache = Some(crate::inference_cache_v1::PolicyCacheV1 {
-            cache: cache.clone(),
-            model,
-        });
+        Ok(model)
+    }
+
+    /// Turns the passive scoring-call probe on or off (viewer captures).
+    #[cfg(any(test, feature = "viewer-recording-v1"))]
+    pub(crate) fn set_inference_probe_v1(&mut self, on: bool) -> Result<(), String> {
+        self.inference_probe = if on {
+            Some(crate::inference_cache_v1::ProbeV1 {
+                model: self.inference_model_v1()?,
+                calls: 0,
+                last: None,
+            })
+        } else {
+            None
+        };
         Ok(())
+    }
+
+    /// The scoring call made since the last take, if any. More than one call
+    /// in between, or a disabled probe, is an error.
+    #[cfg(any(test, feature = "viewer-recording-v1"))]
+    pub(crate) fn take_inference_call_v1(
+        &mut self,
+    ) -> Result<Option<crate::inference_cache_v1::CallEventV1>, String> {
+        let probe = self
+            .inference_probe
+            .as_mut()
+            .ok_or("inference probe is off")?;
+        let calls = std::mem::take(&mut probe.calls);
+        if calls > 1 {
+            return Err("several scoring calls for one decision".into());
+        }
+        Ok(probe.last.take())
     }
 
     pub(crate) fn inference_cache_v1(&self) -> Option<&crate::inference_cache_v1::SharedV1> {
@@ -1724,24 +1773,35 @@ fn cached_forward_v1(
     scratch: &mut NativePolicyValueForwardScratchV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
+    mut probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
     path: crate::inference_cache_v1::ForwardPathV1,
     mode: ForwardActivationModeV1,
     view: crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>,
 ) -> Result<FrozenPlayDecisionScoresV1, String> {
-    use crate::inference_cache_v1::{hash_v1, write_key_v1, ForwardPathV1};
+    use crate::inference_cache_v1::{hash_v1, write_key_v1, CallOutcomeV1, ForwardPathV1};
     use crate::search_profile_v1::{span, Bucket};
     let hash = cache.map(|c| {
         let _span = span(Bucket::CacheKey);
         write_key_v1(key, &c.model, path, mode, &view);
         hash_v1(key)
     });
+    // A probe without a cache still keys the input, so identical inputs can
+    // be grouped; the forward below is the same either way.
+    if let (None, Some(p)) = (cache, probe.as_deref()) {
+        write_key_v1(key, &p.model, path, mode, &view);
+    }
+    let mut outcome = CallOutcomeV1::Uncached;
     if let (Some(c), Some(hash)) = (cache, hash) {
         let _span = span(Bucket::CacheLookup);
         let mut guard = c.cache.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((logits, value)) = guard.get(hash, key) {
+            if let Some(p) = probe {
+                p.record(CallOutcomeV1::Hit, key, Some(guard.bytes()));
+            }
             return Ok(FrozenPlayDecisionScoresV1 { logits, value });
         }
         guard.count_forward();
+        outcome = CallOutcomeV1::Miss;
     }
     let span_forward = span(Bucket::PolicyForward);
     let output = match path {
@@ -1767,6 +1827,10 @@ fn cached_forward_v1(
                 output.value,
             );
         }
+    }
+    if let Some(p) = probe.as_deref_mut() {
+        let bytes = cache.map(|c| c.cache.lock().unwrap_or_else(|p| p.into_inner()).bytes());
+        p.record(outcome, key, bytes);
     }
     Ok(FrozenPlayDecisionScoresV1 {
         logits: output.logits.to_vec(),

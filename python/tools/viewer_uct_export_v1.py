@@ -10,7 +10,88 @@ SCHEMA = 'mtg-kernel-uct-viewer-capture/v1'
 def public_action(raw):
     return {k: raw[k] for k in ('index', 'label', 'kind', 'refs')}
 
-def replay(raw, exporter, frame):
+CODES = {'uct': 'u', 'forced': 'f', 'uncached': 'x', 'miss': 'm', 'hit': 'h'}
+
+def inference(raw):
+    """Allowlist per-move scoring events: codes, recording-local input groups
+    and cache bytes only. Native input digests and key sizes stay private."""
+    groups = raw.get('inference_groups')
+    marked = [('inference' in m) for s in raw['simulations'] for m in s['rollout']]
+    if groups is None:
+        if any(marked) or any('unapplied' in s for s in raw['simulations']):
+            raise ValueError('UCT inference events lack their group table')
+        return None
+    if not all(marked):
+        raise ValueError('UCT inference events are incomplete')
+    cache = raw['record'].get('inference_cache')
+    mode = 'cache' if cache else 'uncached'
+    seen, per_sim = 0, []
+    totals = dict(requests=0, hits=0, misses=0, forwards=0, uct=0, forced=0)
+    for s in raw['simulations']:
+        tail = s.get('unapplied')
+        if tail is not None and s['reason'] not in ('truncated', 'fault'):
+            raise ValueError('UCT unapplied inference outside a stopped attempt')
+        codes, gs, bs = '', [], []
+        tree = {(c['step'], c['physical'], c['substep']) for c in s['choices']}
+        events = [(m['inference'], (m['step'], m['physical'], m['substep']) in tree) for m in s['rollout']]
+        if tail is not None:
+            events.append((tail, len(s['choices']) > 0 and tail.get('kind') == 'uct'))
+        for e, at_tree in events:
+            k = e.get('kind')
+            if (k == 'uct') != at_tree:
+                raise ValueError('UCT inference code differs from the tree path')
+            if k in ('uct', 'forced'):
+                if set(e) != {'kind'}:
+                    raise ValueError('UCT no-inference event carries call data')
+                totals[k] += 1
+                codes += CODES[k]
+                continue
+            if k not in ('uncached', 'miss', 'hit') or (k == 'uncached') != (mode == 'uncached') or set(e) != {'kind', 'group', 'cache_bytes'}:
+                raise ValueError('UCT inference call differs from the capture mode')
+            g = e['group']
+            if not isinstance(g, int) or not 0 <= g <= seen:
+                raise ValueError('UCT inference groups are not in first-use order')
+            if g == seen:
+                seen += 1
+                if k == 'hit':
+                    raise ValueError('UCT cache hit on a first use')
+            totals['requests'] += 1
+            totals['hits'] += k == 'hit'
+            totals['misses'] += k == 'miss'
+            totals['forwards'] += k != 'hit'
+            codes += CODES[k]
+            gs.append(g)
+            if mode == 'cache':
+                b = e['cache_bytes']
+                if not isinstance(b, int) or not 0 <= b <= cache['budget_bytes']:
+                    raise ValueError('UCT cache bytes exceed the budget')
+                bs.append(b)
+            elif e['cache_bytes'] is not None:
+                raise ValueError('UCT uncached call reports cache bytes')
+        per_sim.append({'codes': codes, 'groups': gs, 'cacheBytes': bs, 'unapplied': tail is not None})
+    if seen != len(groups):
+        raise ValueError('UCT inference group table differs')
+    if mode == 'cache' and any(totals[k] != cache[k] for k in ('requests', 'hits', 'misses', 'forwards')):
+        raise ValueError('UCT inference events do not reconcile the cache counters')
+    block = {'schema': 'mtg-kernel-uct-inference/v1', 'mode': mode,
+             'budgetBytes': cache['budget_bytes'] if cache else None, 'groups': seen, 'totals': totals}
+    return block, per_sim
+
+def pair(own, other, other_sha):
+    """Bind a matched off/on capture of the same search: identical tree, moves,
+    no-inference positions and input groups; only cache outcomes differ."""
+    (block, sims), (other_block, other_sims) = own, other
+    if block['mode'] == other_block['mode'] or len(sims) != len(other_sims) or block['groups'] != other_block['groups']:
+        raise ValueError('UCT paired capture differs')
+    call = lambda codes: codes.replace('m', 'x').replace('h', 'x')
+    for a, b in zip(sims, other_sims):
+        if call(a['codes']) != call(b['codes']) or a['groups'] != b['groups'] or a['unapplied'] != b['unapplied']:
+            raise ValueError('UCT paired capture differs')
+    t = other_block['totals']
+    block['paired'] = {'mode': other_block['mode'], 'sourceSha256': other_sha,
+                       'requests': t['requests'], 'forwards': t['forwards'], 'hits': t['hits']}
+
+def replay(raw, exporter, frame, paired=None):
     if not raw.get('complete') or not raw['nodes'] or not raw['simulations']:
         raise ValueError('Full UCT capture is incomplete')
     record = raw['record']
@@ -116,10 +197,22 @@ def replay(raw, exporter, frame):
     for b in boards:
         players=[dict(p,battlefield=[object_ref(o) for o in p['battlefield']],graveyard=[object_ref(o) for o in p['graveyard']],hand=[]) for p in b['players']]
         pooled_boards.append(dict(b,players=players,exile=[object_ref(o) for o in b['exile']]))
-    return {'schema':'mtg-kernel-uct-search-replay/v1','complete':True,'key':frame['key'],'storage':'object-pool/v1','objects':objects,
+    calls=inference(raw)
+    if calls:
+        for simulation,events in zip(simulations,calls[1]):simulation['inference']=events
+        if paired:
+            other=inference(paired[0])
+            if not other:raise ValueError('UCT paired capture lacks inference events')
+            if paired[0]['record']['tree']!=record['tree'] or paired[0]['record']['transitions']!=record['transitions'] or paired[0]['record']['attempted']!=record['attempted']:
+                raise ValueError('UCT paired capture differs')
+            pair(calls,other,paired[1])
+    elif paired:raise ValueError('UCT paired capture needs inference events')
+    result={'schema':'mtg-kernel-uct-search-replay/v1','complete':True,'key':frame['key'],'storage':'object-pool/v1','objects':objects,
         'treeDigest':record['tree']['hash'],'tableDigest':hashlib.sha256(table).hexdigest(),'boards':pooled_boards,'nodes':nodes,'actions':actions,
         'simulations':simulations,'firstCombo':first_combo,
         'worlds':'Approximate sampled information sets with a uniform public deck prior. Both sampled hands are hidden; only focal non-forced choices become UCT tree nodes.'}
+    if calls:result['inference']=calls[0]
+    return result
 
 def attach_execution(frames, rows, searches, header, binding_path, primary_path):
     """Join native legacy history keys privately, exporting only node identities."""
@@ -180,7 +273,7 @@ def attach_execution(frames, rows, searches, header, binding_path, primary_path)
     if consumed!=set(by_key):raise ValueError('Unused UCT execution binding')
     return {'artifactSha256':hashlib.sha256(binding_bytes).hexdigest(),'primarySha256':bindings['primary_sha256']}
 
-def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bindings=None, primary=None):
+def read_capture(path, exporter):
     header, footer, rows, searches = None, None, [], {}
     with path.open('rb') as stream:
         while line:=stream.readline(8*1024*1024+1):
@@ -196,7 +289,7 @@ def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bin
             elif kind=='search':
                 if row['index'] in searches: raise ValueError('Duplicate UCT search')
                 searches[row['index']]={'record':row['record'],'boards':[],'nodes':[],'simulations':[],'complete':False}
-            elif kind in ('search_snapshot','search_node','search_simulation','search_end'):
+            elif kind in ('search_snapshot','search_node','search_simulation','search_inference','search_end'):
                 r=searches.get(row['search'])
                 if r is None or r['complete']: raise ValueError('Invalid UCT search row order')
                 if kind=='search_snapshot':
@@ -204,8 +297,24 @@ def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bin
                     r['boards'].append(row['board'])
                 elif kind=='search_node':r['nodes'].append(row['node'])
                 elif kind=='search_simulation':r['simulations'].append(row['simulation'])
+                elif kind=='search_inference':
+                    if 'inference_groups' in r:raise ValueError('Duplicate UCT inference table')
+                    r['inference_groups']=row['group_key_bytes']
                 else:r['complete']=row['complete']
             else: raise ValueError('Unknown UCT capture row')
+    return header, footer, rows, searches
+
+def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bindings=None, primary=None, paired_capture=None):
+    header, footer, rows, searches = read_capture(path, exporter)
+    paired = None
+    if paired_capture:
+        names = exporter.names
+        other_header, other_footer, other_rows, other_searches = read_capture(paired_capture, exporter)
+        exporter.names = names
+        if (other_header['focal_checkpoint'], other_header['opponent_checkpoint'], other_header['search_start']) != (header['focal_checkpoint'], header['opponent_checkpoint'], header['search_start']) or \
+                [r['selected'] for r in other_rows] != [r['selected'] for r in rows] or other_footer.get('complete') != footer.get('complete') or set(other_searches) != set(searches):
+            raise ValueError('UCT paired capture differs')
+        paired = (other_searches, hashlib.sha256(paired_capture.read_bytes()).hexdigest())
     if not header or not footer or footer.get('stop_reason') or footer['written']!=len(rows) or not rows:
         raise ValueError('UCT gameplay capture is incomplete')
     complete=bool(footer['complete'] and rows[-1]['terminal'])
@@ -228,7 +337,7 @@ def export_capture(path, exporter, *, allow_incomplete_game=False, execution_bin
         if not f or key(record['decision'])!=f['key']:raise ValueError('UCT root gameplay key differs')
         f['search']=export_root({'record':record,'live_order':raw['nodes'][0]['live_order']},f['executed'],len(f['actions']))
         f['decisionSource']={'kind':'search-root','root':f['id'],'treeDigest':record['tree']['hash'],'artifactSha256':source_hash}
-        f['search']['uctReplay']=replay(raw,exporter,f)
+        f['search']['uctReplay']=replay(raw,exporter,f,(paired[0][index],paired[1]) if paired else None)
     for row,f in zip(rows,frames):
         e=row.get('evidence');raw=searches.get(e.get('search')) if e else None
         if e and e.get('chooser')=='reused' and raw and raw['nodes']:

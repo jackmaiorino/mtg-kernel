@@ -247,7 +247,7 @@ def export_legacy(path: Path, exporter: Exporter) -> tuple[dict, list[dict], boo
             "search":None,"terminal":terminal(nxt) if nxt["kind"] == "terminal" else None})
     return header, frames, bool(frames and frames[-1]["terminal"])
 
-def build_recording(path: Path, identifier: str, title: str, exporter: Exporter, bookmarks: list[dict], *, execution_bindings: Path | None = None, primary: Path | None = None) -> dict:
+def build_recording(path: Path, identifier: str, title: str, exporter: Exporter, bookmarks: list[dict], *, execution_bindings: Path | None = None, primary: Path | None = None, paired_capture: Path | None = None) -> dict:
     if path.stat().st_size > 512 * 1024 * 1024:
         raise ValueError("Input exceeds exporter bound")
     with path.open("rb") as stream:
@@ -257,7 +257,7 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
     uct = first.get('schema') == 'mtg-kernel-uct-viewer-capture/v1'
     if uct:
         from viewer_uct_export_v1 import export_capture as export_uct
-        header, frames, complete = export_uct(path, exporter, execution_bindings=execution_bindings, primary=primary)
+        header, frames, complete = export_uct(path, exporter, execution_bindings=execution_bindings, primary=primary, paired_capture=paired_capture)
     elif reconstructed:
         from viewer_reconstruction_export_v1 import export_reconstruction
         header, frames, complete = export_reconstruction(path, exporter)
@@ -279,6 +279,10 @@ def build_recording(path: Path, identifier: str, title: str, exporter: Exporter,
             "sourceSha256":hashlib.sha256(path.read_bytes()).hexdigest()},
         "seats":[{"name":"r1 / Search guide" if reconstructed or uct else "Kernel / Agent 01","deck":decks[0]},{"name":"T1 / Policy" if reconstructed or uct else "Kernel / Agent 02","deck":decks[1]}],
         "cards":exporter.cards,"frames":frames,"bookmarks":bookmarks}
+    modes = {f['search']['uctReplay']['inference']['mode'] for f in frames if f['search'] and f['search'].get('uctReplay', {}).get('inference')}
+    if modes:
+        recording['description'] += (" This capture labels every simulated move's scoring: exact inference cache hit or miss, uncached forward, UCT tree choice or forced move. Cache on and off produce the same game." if modes == {'cache'} else
+            " This capture labels every simulated move's scoring: uncached forward, UCT tree choice or forced move. It is the cache-off half of a matched pair; cache on and off produce the same game.")
     if header.get('_execution_binding'):
         recording['executionBinding']=header['_execution_binding']
     if reconstructed:
@@ -300,13 +304,14 @@ def main():
     ap.add_argument("--cache", type=Path)
     ap.add_argument("--execution-bindings", type=Path, help="Native offline actual-tree bindings for UCT captures")
     ap.add_argument("--primary", type=Path, help="Original primary output pinned by the execution bindings")
+    ap.add_argument("--paired-capture", type=Path, help="Matched cache-off/on UCT capture of the same game, for inference comparison")
     args = ap.parse_args()
     names = json.loads(args.cards.read_text(encoding="utf-8")) if args.cards else {}
     bookmarks = json.loads(args.bookmarks.read_text(encoding="utf-8")) if args.bookmarks else []
     exporter = Exporter(names, args.perspective, args.cache, args.output.parent / "assets", args.art)
     if bool(args.execution_bindings)!=bool(args.primary) or args.execution_bindings and not args.source.exists():
         ap.error('Execution bindings require their original primary output')
-    recording = build_recording(args.source, args.id, args.title, exporter, bookmarks, execution_bindings=args.execution_bindings, primary=args.primary)
+    recording = build_recording(args.source, args.id, args.title, exporter, bookmarks, execution_bindings=args.execution_bindings, primary=args.primary, paired_capture=args.paired_capture)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(recording, ensure_ascii=False, separators=(",",":")) + "\n", encoding="utf-8")
     print(json.dumps({"frames":len(recording["frames"]),"complete":recording["complete"],"sha256":hashlib.sha256(args.output.read_bytes()).hexdigest()}))
