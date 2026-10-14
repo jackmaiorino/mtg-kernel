@@ -12,7 +12,7 @@ use mtg_kernel::card_def::{CardCapability, TargetSpec, CARD_DEFS};
 // embedded at compile time rather than read at test-run time (no
 // working-directory ambiguity between `cargo test` invocations from the
 // crate root or the repo root).
-const TAG_FILE_JSON: &str = include_str!("../../data/pauper_removal_counterspell_tags_v1.json");
+const TAG_FILE_JSON: &str = include_str!("../../../data/pauper_removal_counterspell_tags_v1.json");
 
 #[derive(serde::Deserialize)]
 struct TagFileV1 {
