@@ -321,6 +321,25 @@ pub(crate) fn counter_amount(
     ReplacementInputV48::capture(state, live.controller).replaced_count(scaled)
 }
 
+pub(crate) fn require_legacy_visible(state: &GameState, actor: PlayerId) -> Result<(), String> {
+    require_legacy_supported(state)?;
+    if state.players[actor.index()].hand.iter().any(|id| {
+        state
+            .objects
+            .try_get(*id)
+            .is_some_and(|object| object.zone == Zone::Hand && owns_definition(object.card_def))
+    }) {
+        return Err("visible Doubling Season printing requires V48".into());
+    }
+    Ok(())
+}
+pub(crate) fn require_legacy_supported(state: &GameState) -> Result<(), String> {
+    if requires_successor(state) {
+        Err("Doubling Season requires its distinct V48 producer".into())
+    } else {
+        Ok(())
+    }
+}
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     state.objects.iter().any(|(_, o)| {
         o.zone == Zone::Battlefield && o.v4.face_down_v1.is_none() && owns_definition(o.card_def)

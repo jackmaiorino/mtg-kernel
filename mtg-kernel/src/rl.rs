@@ -1894,6 +1894,9 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::doubling_season_v48::require_legacy_visible(state, acting_player)
+        .map_err(RlContractError)?;
+
     crate::engine::mandatory_cast_cost_v1::require_legacy_supported(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::fiendish_panda_v1::require_legacy_supported(state, Some(acting_player))
@@ -2107,7 +2110,16 @@ fn build_observation_common_v2_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false, false, false),
+        (
+            accept_akroma,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
     )
 }
 
@@ -2137,7 +2149,7 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<ObservationV2> {
     let (
         accept_akroma,
@@ -2147,7 +2159,14 @@ fn build_observation_common_v2_fishing_v39_ajani_v42(
         accept_hunter,
         accept_eaten,
         accept_panda,
+        accept_season,
     ) = accepted_planes;
+    if accept_season {
+        crate::doubling_season_v48::validate_token_journals(state).map_err(RlContractError)?;
+    } else {
+        crate::doubling_season_v48::require_legacy_visible(state, acting_player)
+            .map_err(RlContractError)?;
+    }
     if accept_panda {
         crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
     } else {
@@ -2645,7 +2664,16 @@ fn build_policy_observation_parts_common_fishing_v39(
         step_index,
         text_mode,
         capabilities,
-        (accept_akroma, false, false, false, false, false, false),
+        (
+            accept_akroma,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ),
     )
 }
 
@@ -2675,7 +2703,7 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
         ),
         bool,
     ),
-    accepted_planes: (bool, bool, bool, bool, bool, bool, bool),
+    accepted_planes: (bool, bool, bool, bool, bool, bool, bool, bool),
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
     let (
         accept_akroma,
@@ -2685,7 +2713,14 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
         accept_hunter,
         accept_eaten,
         accept_panda,
+        accept_season,
     ) = accepted_planes;
+    if accept_season {
+        crate::doubling_season_v48::validate_token_journals(state).map_err(RlContractError)?;
+    } else {
+        crate::doubling_season_v48::require_legacy_visible(state, acting_player)
+            .map_err(RlContractError)?;
+    }
     if accept_panda {
         crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;
     } else {
@@ -2808,6 +2843,7 @@ fn build_policy_observation_parts_common_fishing_v39_ajani_v42(
             accept_hunter,
             accept_eaten,
             accept_panda,
+            accept_season,
         ),
     )?;
     let context = policy_surface_context_v5(
@@ -3453,6 +3489,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     HunterV45,
     EatenV46,
     PandaV47,
+    SeasonV48,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3481,6 +3518,7 @@ pub(crate) fn common_family_observation_storage_scoped(
         }
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
+        CommonProjectionScopeV42::SeasonV48 => crate::season_observation_v48::validate_state(state),
         CommonProjectionScopeV42::HunterV45 => crate::hunter_observation_v45::validate_state(state),
         CommonProjectionScopeV42::ExistingV40 => {
             return Err(RlContractError("unexpected frozen common scope".into()))
@@ -3494,6 +3532,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::HunterV45
             | CommonProjectionScopeV42::EatenV46
             | CommonProjectionScopeV42::PandaV47
+            | CommonProjectionScopeV42::SeasonV48
     );
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
@@ -3517,18 +3556,26 @@ pub(crate) fn common_family_observation_storage_scoped(
                         | CommonProjectionScopeV42::HunterV45
                         | CommonProjectionScopeV42::EatenV46
                         | CommonProjectionScopeV42::PandaV47
+                        | CommonProjectionScopeV42::SeasonV48
                 ),
                 matches!(
                     scope,
                     CommonProjectionScopeV42::HunterV45
                         | CommonProjectionScopeV42::EatenV46
                         | CommonProjectionScopeV42::PandaV47
+                        | CommonProjectionScopeV42::SeasonV48
                 ),
                 matches!(
                     scope,
-                    CommonProjectionScopeV42::EatenV46 | CommonProjectionScopeV42::PandaV47
+                    CommonProjectionScopeV42::EatenV46
+                        | CommonProjectionScopeV42::PandaV47
+                        | CommonProjectionScopeV42::SeasonV48
                 ),
-                scope == CommonProjectionScopeV42::PandaV47,
+                matches!(
+                    scope,
+                    CommonProjectionScopeV42::PandaV47 | CommonProjectionScopeV42::SeasonV48
+                ),
+                scope == CommonProjectionScopeV42::SeasonV48,
             ),
         ),
         true,
@@ -3918,7 +3965,7 @@ fn build_policy_observation_storage_common_fishing_v39(
     build_policy_observation_storage_common_fishing_v39_ajani_v42(
         (
             request.0,
-            (request.1, false, false, false, false, false, false),
+            (request.1, false, false, false, false, false, false, false),
         ),
         accept_life_ward,
         accept_cant_block,
@@ -3932,7 +3979,7 @@ fn build_policy_observation_storage_common_fishing_v39(
 fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
     request: (
         PolicyObservationBuildV5<'_>,
-        (bool, bool, bool, bool, bool, bool, bool),
+        (bool, bool, bool, bool, bool, bool, bool, bool),
     ),
     accept_life_ward: bool,
     accept_cant_block: bool,
@@ -3970,6 +4017,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
             accept_hunter,
             accept_eaten,
             accept_panda,
+            accept_season,
         ),
     ) = request;
     if !accept_akroma {
@@ -4150,6 +4198,7 @@ fn build_policy_observation_storage_common_fishing_v39_ajani_v42(
                 accept_hunter,
                 accept_eaten,
                 accept_panda,
+                accept_season,
             ),
         )?;
     if let Some(search) = &extensions.decision_local_library {

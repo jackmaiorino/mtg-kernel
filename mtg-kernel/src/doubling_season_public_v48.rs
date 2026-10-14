@@ -1,0 +1,181 @@
+//! Public replacement relations, without private replay worlds or executable inputs.
+use crate::doubling_season_v48 as season;
+use crate::event::CommittedEvent;
+use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
+use crate::state::{AbilitySourceContractV4, GameState, Zone};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+pub const SCHEMA: &str = "mtg-kernel/doubling-season/public/v48";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IncarnationV48 {
+    pub object: u32,
+    pub generation: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreationV48 {
+    pub occurrence: usize,
+    pub controller: PlayerSeatV1,
+    /// The creation blueprint is public when these face-up tokens enter.
+    pub token_definition: u16,
+    pub face_index: Option<u8>,
+    pub requested: usize,
+    pub created: Vec<IncarnationV48>,
+    pub replacement_sources: Vec<CardStableRefV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CounterPlacementV48 {
+    pub occurrence: usize,
+    /// Historical recipient incarnation only, never its later hidden printing.
+    pub recipient: IncarnationV48,
+    pub actor: PlayerSeatV1,
+    pub recipient_controller: PlayerSeatV1,
+    pub original: i32,
+    pub placed: i32,
+    pub replacement_sources: Vec<CardStableRefV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactsV48 {
+    pub schema: String,
+    pub producer_sha256: String,
+    pub card_db_hash: u64,
+    pub meanings: Vec<crate::rules_meaning_doubling_season_v48::MeaningV48>,
+    pub active_sources: Vec<CardStableRefV1>,
+    pub creations: Vec<CreationV48>,
+    pub counter_placements: Vec<CounterPlacementV48>,
+}
+fn original_source(source: AbilitySourceContractV4) -> CardStableRefV1 {
+    CardStableRefV1 {
+        arena_id: source.source.0,
+        card_db_id: source.card_def,
+        owner: source.owner.into(),
+        controller: source.controller.into(),
+        zone: Zone::Battlefield,
+        zone_change_count: source.zone_change_count,
+    }
+}
+pub fn producer_sha256() -> String {
+    let mut h = Sha256::new();
+    for source in [
+        SCHEMA,
+        include_str!("doubling_season_public_v48.rs"),
+        include_str!("doubling_season_v48.rs"),
+        include_str!("event.rs"),
+        include_str!("state.rs"),
+        include_str!("engine.rs"),
+        include_str!("continuous_characteristics_v1.rs"),
+        include_str!("standard_creatures_v1.rs"),
+        include_str!("standard_cards_v1.rs"),
+        include_str!("planeswalker_v1.rs"),
+        include_str!("rules_meaning_doubling_season_v48.rs"),
+        include_str!("card_def.rs"),
+    ] {
+        h.update((source.len() as u64).to_le_bytes());
+        h.update(source.as_bytes());
+    }
+    h.update(crate::rules_meaning_doubling_season_v48::producer_sha256().as_bytes());
+    h.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+pub fn meanings(
+) -> Result<Vec<crate::rules_meaning_doubling_season_v48::MeaningV48>, RlContractError> {
+    use crate::rules_meaning_doubling_season_v48::{self as meaning, RootV48};
+    let Some(id) = crate::card_def::card_id_by_name("Doubling Season") else {
+        return Ok(Vec::new());
+    };
+    [
+        RootV48::EnchantmentSpell,
+        RootV48::EffectTokenCreation,
+        RootV48::EffectCounterPlacement,
+    ]
+    .into_iter()
+    .map(|root| meaning::printed_meaning(id, root).map_err(RlContractError))
+    .collect()
+}
+pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
+    season::validate_token_journals(state).map_err(RlContractError)?;
+    let active_sources = [crate::ids::PlayerId::P0, crate::ids::PlayerId::P1]
+        .into_iter()
+        .flat_map(|player| season::sources(state, player))
+        .map(original_source)
+        .collect();
+    let mut creations = Vec::new();
+    let mut counter_placements = Vec::new();
+    for event in &state.engine.event_history {
+        match event {
+            CommittedEvent::TokenCreationReplacementV48 { creation } => {
+                let mut cursor = 0;
+                for request in &creation.original {
+                    let count = request
+                        .replacement
+                        .replaced_token_count(1)
+                        .map_err(RlContractError)?;
+                    let created = creation.created[cursor..cursor + count]
+                        .iter()
+                        .map(|at| match &state.engine.event_history[*at as usize] {
+                            CommittedEvent::CreateToken { object, .. } => IncarnationV48 {
+                                object: object.0,
+                                generation: 0,
+                            },
+                            _ => unreachable!("validated actual token creation"),
+                        })
+                        .collect();
+                    creations.push(CreationV48 {
+                        occurrence: creations.len(),
+                        controller: request.template.controller.into(),
+                        token_definition: request.template.definition,
+                        face_index: request.template.face,
+                        requested: 1,
+                        created,
+                        replacement_sources: request
+                            .replacement
+                            .seasons
+                            .iter()
+                            .copied()
+                            .map(original_source)
+                            .collect(),
+                    });
+                    cursor += count;
+                }
+            }
+            CommittedEvent::PlusCounterReplacementV48 { placement } => {
+                counter_placements.push(CounterPlacementV48 {
+                    occurrence: counter_placements.len(),
+                    recipient: IncarnationV48 {
+                        object: placement.recipient.object.0,
+                        generation: placement.recipient.zone_change_count,
+                    },
+                    actor: placement.actor.into(),
+                    recipient_controller: placement.replacement.controller.into(),
+                    original: placement.original,
+                    placed: placement
+                        .after
+                        .checked_sub(placement.before)
+                        .ok_or_else(|| RlContractError("counter difference overflow".into()))?,
+                    replacement_sources: placement
+                        .replacement
+                        .seasons
+                        .iter()
+                        .copied()
+                        .map(original_source)
+                        .collect(),
+                })
+            }
+            _ => {}
+        }
+    }
+    Ok(FactsV48 {
+        schema: SCHEMA.into(),
+        producer_sha256: producer_sha256(),
+        card_db_hash: crate::card_def::KERNEL_CARDDB_HASH,
+        meanings: meanings()?,
+        active_sources,
+        creations,
+        counter_placements,
+    })
+}

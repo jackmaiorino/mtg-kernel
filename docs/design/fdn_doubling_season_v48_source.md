@@ -213,3 +213,32 @@ also selects the genuine neutral blueprint for a face-down original before
 creation; its hidden underlying printing is not placed in the creation request,
 token definition or any public template relation. Actual definition/source
 transport qualification remains pending, including delayed Standard paths.
+
+
+## Distinct mixed V48 producer checkpoint
+
+Current root1fd8's reviewed predecessor/source fixes and PandaV47 are merged
+without conflicts. V48 is a separate observation/backend/fixed-seat owning Human
+mode, inheriting all preceding mixed families and their complete fields, ordered
+raw candidates, genuine engine origin and whole-observation private binding.
+Seven existing scoped acceptance values retain their order and values; only the
+appended eighth value selects Season. All15 previous static values are unchanged.
+The mode appends after the entire current Panda prefix. Existing modes refuse
+active/retained Season state and acting-seat visible Season printings before
+automatic work or public projection. Opponent unknown hands are not scanned.
+
+New facts contain public original source references, original token blueprints,
+actual complete created incarnation rosters and original/actual +1 counter amounts.
+Private original worlds, history indices and executable loans are excluded. Safe
+Human counters/tokens use canonical incarnation roles rather than hidden later
+printing lookups or raw object IDs. Source masks/handles join the same canonical
+map as all prior families. Restore authenticates the original snapshot/header
+before checked revision rebasing and private rebuild; owning Arc/generation and
+retry boundaries are retained. These are prepared APIs, not model/scorer/search
+or production admission.
+
+Registered actual menu/ordered-binding/hidden substitution/foreign owner/retry/
+three-restore groups and ignored genuine printed4G/pay/resolve/token-roster Human
+integration groups are prepared. All remain uncompiled/unrun. Comprehensive
+special-tail choice and remaining-kind qualification is still active; source
+format checks do not establish Rust typing or gameplay success.

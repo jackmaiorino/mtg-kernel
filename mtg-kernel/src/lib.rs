@@ -677,3 +677,6 @@ pub mod faebloom_observation_v43;
 
 pub mod eaten_alive_v1;
 pub mod rules_meaning_eaten_alive_v1;
+
+pub mod doubling_season_public_v48;
+pub mod season_observation_v48;
