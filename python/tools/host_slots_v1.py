@@ -568,7 +568,8 @@ def live_tickets() -> list[dict]:
     return _live("queue-*.json")
 
 
-def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True) -> list[int]:
+def available(config: dict, timed: dict, claims: list[dict], *, background: bool = True,
+              core_pool: list[int] | None = None) -> list[int]:
     """Cores a new claim may take now, in preference order."""
     if timed["held"] and timed["cores"] is None:
         return []
@@ -577,7 +578,8 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
     used = {core for claim in claims if background or not claim.get("background", False)
             for core in claim["cores"]}
     room = len(allowed) - config["keep_free"] - len(used & set(allowed))
-    free = [core for core in allowed if core not in blocked and core not in used]
+    free = [core for core in allowed if core not in blocked and core not in used
+            and (core_pool is None or core in core_pool)]
     return free[:max(0, room)]
 
 
@@ -792,11 +794,15 @@ class Tree:
 
 def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait: bool = False,
         wait_timeout: float | None = None, priority: str | None = None, claim_id: str | None = None,
-        cwd: str | None = None, on_claim=None, background: bool = False, adopted: dict | None = None) -> int:
+        cwd: str | None = None, on_claim=None, background: bool = False, adopted: dict | None = None,
+        core_pool: list[int] | None = None) -> int:
     """Claim cores (queueing with wait), run command pinned to them, free them when its tree ends."""
     if not (lane and work_id and command):
         raise ValueError("lane, work_id and a command are required")
     config = load_config()
+    if core_pool is not None:
+        if not core_pool or not set(core_pool) <= set(config["cores"]) or len(set(core_pool)) < cores_wanted:
+            raise ValueError("core pool must contain enough configured usable CPUs")
     priority = priority or config["priority"]
     if priority not in PRIORITIES:
         raise ValueError(f"priority must be one of {PRIORITIES}")
@@ -809,7 +815,13 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
     pid, creation = self_identity()
     base = {"schema": SCHEMA, "id": claim_id, "lane": lane, "work_id": work_id, "pid": pid,
             "creation_time": creation, "background": background}
-    ticket = slots_dir() / f"queue-{time.time_ns():020d}-{claim_id}.json"
+    if core_pool is not None:
+        base["core_pool"] = sorted(set(core_pool))
+    # Legacy launchers use filename FIFO without reading the background flag.
+    # Sort background filenames after ordinary ones so both generations agree
+    # on who may enter. Otherwise each can wait for the other's first ticket.
+    queue_class = "z-" if background else ""
+    ticket = slots_dir() / f"queue-{queue_class}{time.time_ns():020d}-{claim_id}.json"
     claim = slots_dir() / f"claim-{claim_id}.json"
     deadline = None if wait_timeout is None else time.monotonic() + wait_timeout
     with Mutex():
@@ -820,7 +832,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                 tickets = live_tickets()
                 tickets.sort(key=lambda ticket: bool(ticket.get("background", False)))
                 if tickets and tickets[0]["id"] == claim_id:
-                    room = available(config, timed_state(), live_claims(), background=background)
+                    room = available(config, timed_state(), live_claims(), background=background, core_pool=core_pool)
                     if len(room) >= cores_wanted:
                         cores = sorted(room[:cores_wanted])
                         write_json(claim, {**base, "cores": cores, "priority": priority, "state": "running",
@@ -1087,6 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--lane", required=True)
         p.add_argument("--work-id", required=True)
         p.add_argument("--cores", type=int, required=True)
+        p.add_argument("--core-pool", help="restrict this request to a configured CPU set, without changing host policy")
         p.add_argument("--priority", choices=PRIORITIES)
         p.add_argument("--wait-timeout", type=float)
         p.add_argument("--cwd")
@@ -1113,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"claimed": claimed["id"], "cores": format_cores(claimed["cores"])}), flush=True)
             code = run(args.lane, args.work_id, args.cores, command, wait=args.wait, wait_timeout=args.wait_timeout,
                        priority=args.priority, claim_id=args.id, cwd=args.cwd, on_claim=announce,
-                       background=args.background)
+                       background=args.background, core_pool=parse_cores(args.core_pool) if args.core_pool else None)
             print(json.dumps({"exit_code": code}), flush=True)
             return code
         if args.op == "submit":
@@ -1121,7 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.background:
                 options.append("--background")
             for flag, value in (("--priority", args.priority), ("--wait-timeout", args.wait_timeout),
-                                ("--cwd", args.cwd)):
+                                ("--cwd", args.cwd), ("--core-pool", args.core_pool)):
                 if value is not None:
                     options += [flag, str(value)]
             print(json.dumps(submit(options, command, args.log)))
@@ -1137,7 +1150,7 @@ def main(argv: list[str] | None = None) -> int:
             worker["ready"] = args.ready
             return run(args.lane, args.work_id, args.cores, ["adopt"], wait=True,
                        wait_timeout=args.wait_timeout, priority=args.priority, background=args.background,
-                       adopted=worker)
+                       adopted=worker, core_pool=parse_cores(args.core_pool) if args.core_pool else None)
         if args.op == "timed":
             return timed(parse_cores(args.cores), command, cwd=args.cwd)
         if args.op == "status":

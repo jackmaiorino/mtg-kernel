@@ -40,6 +40,15 @@ pub(super) fn profile_case(
     mode: KeyMode,
     binding: &str,
 ) -> Result<Vec<Value>, String> {
+    match std::env::var("PROFILE_EXPERIMENT").as_deref() {
+        Ok("1") => {
+            return super::allocation_experiment::profile_case(
+                sh, policy, src, positions, budget, mode, binding,
+            )
+        }
+        Ok("0") | Err(_) => {}
+        _ => return Err("PROFILE_EXPERIMENT must be 0 or 1".into()),
+    }
     let focal = PlayerId(src.seat);
     let opp = sh
         .labels
