@@ -34,3 +34,18 @@ is copied from the qualified focused-source branch; the complete260-target/both-
 session and all restore/result assertions remain unchanged. Native123 stays at
 immutable711 until its original completion/release/output retention. Current
 performance and whole-session qualification are not inferred from this source.
+
+Native125 at exactbfb reports approximately2200 ms for input,2207 ms for bound
+validation and4490 ms for Step at P0 selections79 through82 of260. These are
+actual stage intervals, not attribution of their internal cost. The session is
+still running at its original source and1800-second bound.
+
+Thirty-five specific rules-meaning producers on the mixed family path still hash
+immutable compiled schema/source inputs each time a selector or rooted meaning
+is reconstructed. Their zero-argument digests now use the same process-local
+cache wrapper. Initializer bodies, source order, separators and hex formatting
+are preserved, including the existing pure byte-formatting helpers. No selector,
+root descriptor, model vector, state, menu or validation result is cached.
+The frozen generic meaning files and unregistered Season/Conqueror producers are
+unchanged. New included-source identities require current replay qualification.
+No measured speedup, current native pass or old raw-identity parity is claimed.

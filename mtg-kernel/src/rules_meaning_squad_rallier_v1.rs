@@ -51,36 +51,40 @@ pub struct MeaningV1 {
     pub continuation_authority_is_never_public: bool,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for (path, source) in [
-        (
-            "rules_meaning_squad_rallier_v1.rs",
-            include_str!("rules_meaning_squad_rallier_v1.rs"),
-        ),
-        (
-            "effect/squad_rallier_resolution_v1.rs",
-            include_str!("effect/squad_rallier_resolution_v1.rs"),
-        ),
-        ("effect.rs", include_str!("effect.rs")),
-        ("engine.rs", include_str!("engine.rs")),
-        (
-            "standard_statics_v1.rs",
-            include_str!("standard_statics_v1.rs"),
-        ),
-        (
-            "creature_stats_lki_v1.rs",
-            include_str!("creature_stats_lki_v1.rs"),
-        ),
-        ("state.rs", include_str!("state.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("build.rs", include_str!("../build.rs")),
-    ] {
-        h.update(path.as_bytes());
-        h.update([0]);
-        h.update(source.as_bytes());
-        h.update([0]);
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for (path, source) in [
+            (
+                "rules_meaning_squad_rallier_v1.rs",
+                include_str!("rules_meaning_squad_rallier_v1.rs"),
+            ),
+            (
+                "effect/squad_rallier_resolution_v1.rs",
+                include_str!("effect/squad_rallier_resolution_v1.rs"),
+            ),
+            ("effect.rs", include_str!("effect.rs")),
+            ("engine.rs", include_str!("engine.rs")),
+            (
+                "standard_statics_v1.rs",
+                include_str!("standard_statics_v1.rs"),
+            ),
+            (
+                "creature_stats_lki_v1.rs",
+                include_str!("creature_stats_lki_v1.rs"),
+            ),
+            ("state.rs", include_str!("state.rs")),
+            ("card_def.rs", include_str!("card_def.rs")),
+            ("build.rs", include_str!("../build.rs")),
+        ] {
+            h.update(path.as_bytes());
+            h.update([0]);
+            h.update(source.as_bytes());
+            h.update([0]);
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(

@@ -48,28 +48,32 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_eaten_alive_v1.rs"),
-        include_str!("eaten_alive_v1.rs"),
-        include_str!("engine/mandatory_cast_cost_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("spell_costs_v1.rs"),
-        include_str!("mana.rs"),
-        include_str!("event.rs"),
-        include_str!("effect.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update((source.len() as u64).to_le_bytes());
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_eaten_alive_v1.rs"),
+            include_str!("eaten_alive_v1.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("spell_costs_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("event.rs"),
+            include_str!("effect.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("../build.rs"),
+        ] {
+            hash.update((source.len() as u64).to_le_bytes());
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn selector() -> SelectorV1 {
     SelectorV1 {

@@ -52,27 +52,31 @@ pub enum ErrorV1 {
     IdentityMismatch,
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_juggernaut_v1.rs"),
-        include_str!("combat_static_rules_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_juggernaut_v1.rs"),
+            include_str!("combat_static_rules_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_keywords_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("policy_surface_v5.rs"),
+            include_str!("rl_session/flat_action_v3.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(
