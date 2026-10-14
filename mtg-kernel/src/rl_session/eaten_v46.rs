@@ -774,7 +774,6 @@ mod tests {
         state
     }
     #[test]
-    #[ignore = "requires serial Eaten Alive registration and native qualification"]
     fn actual_pending_branch_and_paid_history_rederive_refuses_coherent_public_recommit_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {

@@ -304,7 +304,6 @@ fn actual_large_order_still_refuses_exact_probe_and_commits_one_full_permutation
 }
 
 #[test]
-#[ignore = "genuine Panda printing required; parent owns registration/native"]
 fn real_paid_angel_then_panda_life_counter_publication_restore_and_erased_owner_refusal_both_seats()
 {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -370,7 +369,6 @@ fn real_paid_angel_then_panda_life_counter_publication_restore_and_erased_owner_
     }
 }
 #[test]
-#[ignore = "genuine Panda printing required; parent owns registration/native"]
 fn genuine_published_death_target_retains_original_public_identity_after_hidden_departure_and_private_forgery_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -458,7 +456,6 @@ fn genuine_published_death_target_retains_original_public_identity_after_hidden_
     }
 }
 #[test]
-#[ignore = "genuine Panda and Eaten printing required; parent owns registration/native"]
 fn real_eaten_cost_sacrifices_paid_panda_then_mandatory_return_and_exile_coexist_after_restore_both_seats(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {

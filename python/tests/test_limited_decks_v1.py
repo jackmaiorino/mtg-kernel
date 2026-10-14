@@ -47,10 +47,30 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(len(limited.resolve_mainboard(deck, self.registry)), 40)
         self.assertEqual(self.registry["Ajani, Caller of the Pride"].card_id, 215)
 
+    def test_hunter_eaten_panda_candidate_preserves_prior_registry_and_resolves_real_decks(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        prefix = json.dumps(records[:247], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "106363f2efffdc1206de1a1f3e95b539297bd355ad078cba5a92f6f2c13a9e9e")
+        candidates = [("High-Society Hunter", 439, "hunter"),
+                      ("Eaten Alive", 440, "eaten_alive"),
+                      ("Fiendish Panda", 441, "panda")]
+        self.assertEqual([row["name"] for row in records[247:]],
+                         [name for name, _, _ in candidates])
+        for name, card_id, slug in candidates:
+            with self.subTest(name=name):
+                self.assertEqual(self.registry[name].card_id, card_id)
+                deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text())
+                ids = limited.resolve_mainboard(deck, self.registry)
+                self.assertEqual(len(ids), 40)
+                self.assertEqual(ids.count(card_id), 4)
+                self.assertNotIn(437, ids)
+
     def test_full_ajani_candidate_preserves_prior_prefix_and_distinct_token_dependency(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(self.registry), 439)
-        self.assertEqual(len(records), 247)
+        self.assertEqual(len(self.registry), 442)
+        self.assertEqual(len(records), 250)
         original = json.loads(json.dumps(records[:245]))
         ajani = original[215 - 192]
         self.assertEqual(ajani["name"], "Ajani, Caller of the Pride")
@@ -98,8 +118,8 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_faebloom_candidate_appends_exact_printing_and_reuses_existing_faerie(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(records), 247)
-        self.assertEqual(len(self.registry), 439)
+        self.assertEqual(len(records), 250)
+        self.assertEqual(len(self.registry), 442)
         prefix = json.dumps(records[:246], sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
@@ -579,7 +599,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 233)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 236)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

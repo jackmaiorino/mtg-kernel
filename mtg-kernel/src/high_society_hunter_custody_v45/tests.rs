@@ -96,7 +96,6 @@ fn readonly_refusal(state: &GameState, action: Action) {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn genuine_capture_waiting_publication_menu_answer_and_cost_draw_completion_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay in [false, true] {
@@ -154,7 +153,6 @@ fn genuine_capture_waiting_publication_menu_answer_and_cost_draw_completion_rest
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn original_journals_preserved_fresh_published_suspended_and_answer_erasure_refuse_readonly() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (fresh, _, _) = attack_state(actor);
@@ -197,7 +195,6 @@ fn original_journals_preserved_fresh_published_suspended_and_answer_erasure_refu
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn genuine_counter_retains_full_removal_input_and_manufactured_marker_only_closure_refuses() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, _, _) = attack_state(actor);
@@ -234,7 +231,6 @@ fn genuine_counter_retains_full_removal_input_and_manufactured_marker_only_closu
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn completed_actual_payment_and_draw_inputs_cannot_omit_real_outputs_or_fake_source_absence() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, hunter, other) = attack_state(actor);
@@ -315,7 +311,6 @@ fn completed_actual_payment_and_draw_inputs_cannot_omit_real_outputs_or_fake_sou
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn genuine_sacrifice_of_typed_copied_banishing_source_keeps_linked_attachment_owner_until_completion(
 ) {
     use crate::effect::ExecCtx;
@@ -445,7 +440,6 @@ fn genuine_sacrifice_of_typed_copied_banishing_source_keeps_linked_attachment_ow
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "unregistered actual Hunter; parent owns registration and native"]
 fn public_original_source_and_ordered_sacrifice_menu_refuse_forgery_without_private_draw_rosters() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, hunter, _) = attack_state(actor);

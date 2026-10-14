@@ -7341,6 +7341,101 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FaebloomTrick.java",
       "is_token": false
+    },
+    {
+      "name": "High-Society Hunter",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Noble"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_hunter.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "hunter_attack_sacrifice_counter",
+        "other_nontoken_creature_death_draw"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HighSocietyHunter.java",
+      "is_token": false
+    },
+    {
+      "name": "Eaten Alive",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_eaten_alive.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mandatory_sacrifice_or_additional_mana",
+        "exile_creature_or_planeswalker"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/EatenAlive.java",
+      "is_token": false
+    },
+    {
+      "name": "Fiendish Panda",
+      "engine_capability": "full",
+      "mana_cost": "{2}{W}{B}",
+      "mana_value": 4,
+      "colors": [
+        "W",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Bear",
+        "Demon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_panda.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controller_life_gain_counter",
+        "death_signed_power_non_bear_return"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FiendishPanda.java",
+      "is_token": false
     }
   ]
 }

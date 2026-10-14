@@ -132,7 +132,6 @@ mod printed {
         assert_eq!(serde_json::to_vec(&rejected).unwrap(), bytes);
     }
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
     fn actual_fresh_held_and_full_publication_owners_survive_restore_and_refuse_erasure_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -184,7 +183,6 @@ mod printed {
     }
 
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
     fn actual_counter_output_and_context_cannot_be_erased_changed_or_replayed_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -266,7 +264,6 @@ mod printed {
         validate_state(state).unwrap();
     }
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
     fn actual_target_return_counter_fizzle_and_unavailable_have_distinct_closures_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for outcome in 0..3 {
@@ -387,7 +384,6 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
     fn legal_death_target_cannot_be_replaced_by_fabricated_unavailable_or_fizzle_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -468,7 +464,6 @@ mod printed {
     }
 
     #[test]
-    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
     fn actual_gain_preserves_seraph_cat_first_gain_and_each_panda_gain_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             // Select the genuine first-gain consumer at construction so its
@@ -500,7 +495,6 @@ mod printed {
     }
 
     #[test]
-    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
     fn actual_counter_and_return_resolve_in_tyrant_and_crystal_prevention_environments_both_seats()
     {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -565,7 +559,6 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda registration and current native qualification"]
     fn actual_return_and_restoration_keep_an_unrelated_paid_banishing_link_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -670,7 +663,6 @@ mod printed {
         panic!("genuine paid Panda creature spell did not resolve");
     }
     #[test]
-    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
     fn actual_paid_panda_captures_each_gain_event_once_regardless_of_amount_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -698,7 +690,6 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires parent-owned genuine Fiendish Panda registration; no source-validation bypass"]
     fn actual_paid_panda_death_freezes_power_before_simultaneous_batch_removes_anthem_both_orders_and_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
