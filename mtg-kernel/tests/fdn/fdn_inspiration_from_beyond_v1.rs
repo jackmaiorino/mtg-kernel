@@ -159,7 +159,7 @@ fn printed_costs_and_no_target_recipe_require_actual_admission() {
     assert_eq!(def.cost.generic, 2);
     assert_eq!(def.cost.pips, &[Pip::Colored(ManaColor::U)]);
     assert!(
-        matches!(def.flashback.unwrap().cost, [CostComponent::Mana(cost)]
+        matches!(def.flashback.as_ref().unwrap().cost, [CostComponent::Mana(cost)]
         if cost.generic == 5 && cost.pips == [Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)])
     );
 }

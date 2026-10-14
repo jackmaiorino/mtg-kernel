@@ -191,9 +191,15 @@ fn printed_cast_metadata_tap_sickness_natural_untap_and_repeat_resolution_both_s
             serde_json::to_vec(&replay).unwrap()
         );
         assert_eq!(tokens(&state, actor), 1);
-        // Genuine untap event is a physical accepted primitive, not another
-        // turn or an invented once-per-turn exception.
-        event::propose_and_commit(&mut state, ProposedEvent::untap(source));
+        // The ordinary untap effect uses the same restriction-aware primitive
+        // as a resolving spell, without advancing the turn.
+        mtg_kernel::effect::execute(
+            &mtg_kernel::effect::EffectOp::UntapObject {
+                object: mtg_kernel::effect::ObjectRef::ThisSource,
+            },
+            &mtg_kernel::effect::ExecCtx::no_targets(source, actor),
+            &mut state,
+        );
         activate(&mut state, actor, source);
         finish(&mut state);
         assert_eq!(tokens(&state, actor), 3);
