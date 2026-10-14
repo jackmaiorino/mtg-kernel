@@ -13,10 +13,13 @@ pub(crate) fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
     e
 }
 pub(crate) fn choose(session: &mut FastActorSessionV1, want: impl Fn(&ActionSemanticV1) -> bool) {
+    let profile = std::env::var_os("MTG_FDN_PROFILE_PANDA_SESSION").is_some();
+    let start = std::time::Instant::now();
     let e = expected(session);
     let (_, actions, binding) = session
         .panda_current_decision_input_v47(e, e.acting_player)
         .unwrap();
+    let input = start.elapsed();
     let index = actions
         .iter()
         .position(want)
@@ -24,7 +27,18 @@ pub(crate) fn choose(session: &mut FastActorSessionV1, want: impl Fn(&ActionSema
     session
         .panda_validate_bound_decision_v47(e, e.acting_player, &binding)
         .unwrap();
+    let validated = start.elapsed();
     session.step(e.episode_id, e.step, index as u32).unwrap();
+    if profile {
+        eprintln!(
+            "PANDA_SESSION_PHASE actor={:?} action={:?} input_ms={} bound_ms={} step_ms={}",
+            e.acting_player,
+            actions[index],
+            input.as_millis(),
+            (validated - input).as_millis(),
+            (start.elapsed() - validated).as_millis()
+        );
+    }
 }
 pub(crate) fn drain(session: &mut FastActorSessionV1) {
     for _ in 0..80 {
@@ -182,6 +196,13 @@ fn actual_predecessor_fields_ordered_binding_and_owning_restore_refuse_forgeries
 fn real_divine_priority_kicker_finite_targets_and_exact_probe_remain_usable_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for (kicked, count) in [(false, 1usize), (true, 0), (true, 3), (true, 260)] {
+            let profile = std::env::var_os("MTG_FDN_PROFILE_PANDA_SESSION").is_some();
+            let start = std::time::Instant::now();
+            if profile {
+                eprintln!(
+                    "PANDA_SESSION_ROSTER actor={actor:?} kicked={kicked} count={count} start"
+                );
+            }
             let mut state = ordinary(actor);
             let source = put(&mut state, actor, "Divine Resilience", Zone::Hand);
             let targets = (0..count)
@@ -210,6 +231,9 @@ fn real_divine_priority_kicker_finite_targets_and_exact_probe_remain_usable_both
                 let (public, actions, _) = session
                     .panda_current_decision_input_v47(e, actor.into())
                     .unwrap();
+                if profile {
+                    eprintln!("PANDA_SESSION_TARGET actor={actor:?} count={count} selected={index} elapsed_ms={}", start.elapsed().as_millis());
+                }
                 assert_eq!(
                     public.divine.pending.as_ref().unwrap().selected.len(),
                     index
@@ -243,6 +267,9 @@ fn real_divine_priority_kicker_finite_targets_and_exact_probe_remain_usable_both
                     target,
                     Keywords::INDESTRUCTIBLE
                 ));
+            }
+            if profile {
+                eprintln!("PANDA_SESSION_ROSTER actor={actor:?} kicked={kicked} count={count} complete elapsed_ms={}", start.elapsed().as_millis());
             }
         }
     }
