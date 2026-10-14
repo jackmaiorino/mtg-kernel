@@ -246,6 +246,7 @@ mod future_printed {
                 engine::step(&mut state, Action::CastSpell(spell)).unwrap();
                 engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
                 for _ in 0..12 {
+                    let decision = engine::advance_until_decision(&mut state);
                     if state.engine.pending_effect.as_ref().is_some_and(|p| {
                         matches!(
                             p.choice,
@@ -255,12 +256,10 @@ mod future_printed {
                             })
                         )
                     }) {
+                        assert!(matches!(decision, Decision::ChooseEffectOption { .. }));
                         break;
                     }
-                    assert!(matches!(
-                        engine::advance_until_decision(&mut state),
-                        Decision::CastSpellOrPass { .. }
-                    ));
+                    assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
                     engine::step(&mut state, Action::Pass).unwrap();
                 }
                 let bytes = serde_json::to_vec(&state).unwrap();
@@ -404,6 +403,7 @@ mod future_printed {
                         .unwrap();
                 }
                 for _ in 0..12 {
+                    let decision = engine::advance_until_decision(&mut state);
                     if state.engine.pending_effect.as_ref().is_some_and(|p| {
                         matches!(
                             p.choice,
@@ -413,12 +413,10 @@ mod future_printed {
                             })
                         )
                     }) {
+                        assert!(matches!(decision, Decision::ChooseEffectOption { .. }));
                         break;
                     }
-                    assert!(matches!(
-                        engine::advance_until_decision(&mut state),
-                        Decision::CastSpellOrPass { .. }
-                    ));
+                    assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
                     engine::step(&mut state, Action::Pass).unwrap();
                 }
                 let lives = state.players.each_ref().map(|p| p.life);
