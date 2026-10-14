@@ -2696,13 +2696,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 437 (Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 441 (Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                438
+                442
             } else {
                 192
             }
@@ -3141,8 +3141,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the explicitly partial reference planeswalker is excluded"
+            CARD_DEFS.len(),
+            "the Limited Ajani reference now uses its full loyalty owner"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[
