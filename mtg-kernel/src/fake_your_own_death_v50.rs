@@ -60,6 +60,19 @@ pub fn primitive_death_program_v50(
                 && live.owner == source.owner
                 && !live.v4.is_token
                 && live.spell_copy_origin.is_none()
+                && CARD_DEFS
+                    .get(usize::from(live.card_def))
+                    .is_some_and(|definition| {
+                        [
+                            CardType::Artifact,
+                            CardType::Creature,
+                            CardType::Enchantment,
+                            CardType::Land,
+                            CardType::Planeswalker,
+                        ]
+                        .into_iter()
+                        .any(|kind| definition.has_type(kind))
+                    })
                 && state.players[source.owner.index()]
                     .graveyard
                     .contains(&source.source)
@@ -155,6 +168,24 @@ mod tests {
             let original = context(&state, source, actor);
             let generation = state.objects.get(source).zone_change_count;
             let program = primitive_death_program_v50(&state, &original, true).unwrap();
+            effect::execute(&program, &original, &mut state);
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(source).zone_change_count, generation);
+            assert_eq!(treasures(&state, actor).len(), 1);
+        }
+    }
+
+    #[test]
+    fn primitive_manifested_instant_cannot_return_but_still_creates_treasure_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            // The primitive's graveyard operand is the actual front face.
+            // Authentic prior manifest/grant/death custody belongs to the
+            // future printing path; this does not manufacture that history.
+            let source = put(&mut state, actor, "Lightning Bolt", Zone::Graveyard);
+            let original = context(&state, source, actor);
+            let generation = state.objects.get(source).zone_change_count;
+            let program = primitive_death_program_v50(&state, &original, false).unwrap();
             effect::execute(&program, &original, &mut state);
             assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
             assert_eq!(state.objects.get(source).zone_change_count, generation);
