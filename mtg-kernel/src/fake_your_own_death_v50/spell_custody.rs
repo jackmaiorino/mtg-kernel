@@ -131,15 +131,26 @@ pub enum JournalV50 {
         lookbacks: Vec<(u64, PrimitiveDeathLookbackV50)>,
         departure: u64,
     },
+    CollectionInput {
+        captures: Vec<u64>,
+    },
+    DeathCollected {
+        input: u64,
+        ordinal: u32,
+        capture: u64,
+    },
+    CollectionCompleted {
+        input: u64,
+    },
 }
 
-fn journal(event: &CommittedEvent) -> Option<&JournalV50> {
+pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {
     match event {
         CommittedEvent::FakeJournalV50 { journal } => Some(journal),
         _ => None,
     }
 }
-fn emit(state: &mut GameState, value: JournalV50) -> u64 {
+pub(super) fn emit(state: &mut GameState, value: JournalV50) -> u64 {
     let index = state.engine.event_history.len() as u64;
     state
         .engine
@@ -565,8 +576,8 @@ pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), S
 /// Validates retained installation lifetime independently from whether its
 /// creature currently has the granted death ability. No trigger admission.
 pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
-    installed_grants(state)?;
     validate_death_captures(state)?;
+    super::death_custody::validate_collection(state)?;
     for (index, event) in state.engine.event_history.iter().enumerate() {
         match journal(event) {
             Some(JournalV50::CleanupEntered {

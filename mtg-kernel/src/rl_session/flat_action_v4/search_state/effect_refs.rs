@@ -179,6 +179,7 @@ impl Scan<'_> {
             | HighSocietyHunterFromCaptureV45 { .. }
             | FaebloomCreateFaeriesV43 | FaebloomTapFromCaptureV43 { .. }
             | FakeInstallGrantV50
+            | FakeDeathFromCaptureV50 { .. }
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | ExileTopChooseOneUntilNextTurn { .. }

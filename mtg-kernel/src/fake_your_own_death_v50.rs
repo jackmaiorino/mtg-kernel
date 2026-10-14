@@ -12,6 +12,7 @@ use crate::effect::{EffectOp, ExecCtx, PlayerRef};
 use crate::mana::ManaColor;
 use crate::state::{GameState, Zone};
 
+pub mod death_custody;
 pub mod grant_primitive;
 pub mod spell_custody;
 
@@ -164,10 +165,18 @@ mod tests {
             let mut state = ready_state_for(actor);
             let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             let context = ExecCtx::no_targets(source, actor);
-            for _ in 0..3 {
+            for (round, op) in [
+                EffectOp::FakeInstallGrantV50,
+                EffectOp::FakeDeathFromCaptureV50 { capture: u64::MAX },
+            ]
+            .into_iter()
+            .cycle()
+            .take(6)
+            .enumerate()
+            {
                 state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                 let before = state.clone();
-                effect::execute(&EffectOp::FakeInstallGrantV50, &context, &mut state);
+                effect::execute(&op, &context, &mut state);
                 assert_eq!(
                     state.engine.halted,
                     Some((
@@ -176,7 +185,7 @@ mod tests {
                     ))
                 );
                 state.engine.halted = None;
-                assert_eq!(state, before);
+                assert_eq!(state, before, "ownerless {op:?} restore {round}");
                 assert!(spell_custody::installed_grants(&state).unwrap().is_empty());
             }
         }
@@ -194,6 +203,13 @@ mod tests {
                     lookbacks: Vec::new(),
                     departure: 0,
                 },
+                JournalV50::DeathCollected {
+                    input: u64::MAX,
+                    ordinal: 0,
+                    capture: 0,
+                },
+                JournalV50::CollectionCompleted { input: u64::MAX },
+                JournalV50::CollectionInput { captures: vec![0] },
             ] {
                 let mut state = ready_state_for(actor);
                 state
@@ -217,6 +233,25 @@ mod tests {
                     state.engine.halted = None;
                     assert_eq!(state, before);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn forged_mutable_death_input_cannot_supply_collection_authority_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let events = vec![crate::event::CommittedEvent::FakeJournalV50 {
+                journal: Box::new(spell_custody::JournalV50::DeathInput {
+                    lookbacks: Vec::new(),
+                    departure: u64::MAX,
+                }),
+            }];
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(death_custody::collect(&mut state, &events).is_err());
+                assert_eq!(state, before);
             }
         }
     }

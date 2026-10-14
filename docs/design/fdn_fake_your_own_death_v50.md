@@ -69,6 +69,22 @@ both-seat restore negative injects an orphan expiry and an empty death input and
 requires refusal with no gameplay mutation. This is authored source, not a passed
 fixture or a complete printing-state/consumer validator.
 
+Mandatory collection now matches all original unconsumed capture/input markers
+against the current mutable event log before changing Fake history. Missing,
+duplicate, forged or replayed markers refuse. Each pending ability keeps the
+original battlefield controller/source and its capture index, with no target.
+The original CollectionInput records the complete roster independently of the
+contiguous per-capture consumption and final completion. Later collection cannot
+reuse a consumed capture or erase one consumption while retaining that input.
+The actual trigger collector feeds these pending roots to ordinary APNAP staging;
+their private appended effect refuses generic execution and unmigrated sampling,
+and frozen rules-vector meaning remains opaque. This is source preparation:
+pending/ordering/publication custody, private removal and resumable ordered
+return/Treasure completion, precise meaning and all V50 consumers still need
+ownership. No printing is registered. One new both-seat restore negative rejects
+a mutable forged death input; ownerless and orphan-collection negatives are
+extended. These nineteen authored component/refusal groups are not native passes.
+
 Seventeen authored groups cover ordered return/Treasure behavior, actual Treasure activation for five colors, distinct grants/current control, stale incarnations, real cleanup, actual copied-token death, paid Witness Protection ability-removal ordering, return of a duplicate legend and ownerless-root refusal. They preserve both seats and restore/replay. The Witness and Balmor legend groups need pure Limited; the new death-binding and simultaneous-roster groups use retained base cards. They exercise ordinary instructions and explicit primitive operands, not a genuine cast of this absent printing. Full pinned formatting and a diff check are current source verification; the added groups, modified copied-token/Witness groups and all genuine Fake printing/custody/consumer cases remain unqualified.
 
 Prior d43 CI38542038812 default-workspace job115779334632 actually executes
