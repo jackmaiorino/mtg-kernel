@@ -4391,8 +4391,39 @@ pub(crate) fn add_lore_counters(
     source: ObjectId,
     amount: i16,
 ) -> Result<(), String> {
+    add_lore_counters_with_origin(
+        state,
+        source,
+        amount,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    )
+}
+pub(crate) fn add_lore_counters_rule(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+) -> Result<(), String> {
+    add_lore_counters_with_origin(
+        state,
+        source,
+        amount,
+        crate::doubling_season_v48::CounterOriginV48::Rule,
+    )
+}
+fn add_lore_counters_with_origin(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+    origin: crate::doubling_season_v48::CounterOriginV48,
+) -> Result<(), String> {
     let live = state.objects.get(source);
-    let count = crate::standard_cards_v1::scale_counters(state, live.controller, i32::from(amount));
+    let count = crate::doubling_season_v48::counter_amount(
+        state,
+        source,
+        live.controller,
+        origin,
+        i32::from(amount),
+    )?;
     let before = live.counters.lore;
     let after = before
         .checked_add(i16::try_from(count).map_err(|_| "lore count overflow")?)

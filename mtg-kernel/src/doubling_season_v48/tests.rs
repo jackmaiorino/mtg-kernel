@@ -387,3 +387,33 @@ fn actual_printed_source_recipient_controller_multiple_sources_cost_and_restore(
         assert_eq!(bytes(&state), before);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_effect_lore_and_rule_lore_are_distinct_counter_placements() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let recipient = put(&mut state, actor, "Forest", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(recipient, Zone::Battlefield),
+        );
+        event::add_lore_counters(&mut state, recipient, 1).unwrap();
+        assert_eq!(state.objects.get(recipient).counters.lore, 2);
+        let mut restored = restore(&state);
+        for branch in [&mut state, &mut restored] {
+            event::add_lore_counters_rule(branch, recipient, 1).unwrap();
+            assert_eq!(branch.objects.get(recipient).counters.lore, 3);
+        }
+        assert_eq!(state, restored);
+    }
+}

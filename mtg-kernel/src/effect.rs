@@ -16674,12 +16674,35 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
+            let placed = if !crate::doubling_season_v48::requires_successor(state) {
+                1
+            } else {
+                match crate::doubling_season_v48::counter_amount(
+                    state,
+                    object_id,
+                    ctx.controller,
+                    crate::doubling_season_v48::CounterOriginV48::Effect,
+                    1,
+                )
+                .ok()
+                .and_then(|count| i16::try_from(count).ok())
+                {
+                    Some(count) => count,
+                    None => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            ctx.source,
+                        ));
+                        return;
+                    }
+                }
+            };
             let Some(next) = state
                 .objects
                 .get(object_id)
                 .counters
                 .minus1_minus1
-                .checked_add(1)
+                .checked_add(placed)
             else {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -17651,15 +17674,30 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             {
                 return;
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let placed = i16::try_from(crate::standard_cards_v1::scale_counters(
+            let placed = match crate::doubling_season_v48::counter_amount(
                 state,
+                object.object,
                 ctx.controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
                 1,
-            ))
-            .unwrap_or(i16::MAX);
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            let placed = 1;
+            )
+            .ok()
+            .and_then(|count| {
+                if crate::doubling_season_v48::requires_successor(state) {
+                    i16::try_from(count).ok()
+                } else {
+                    Some(i16::try_from(count).unwrap_or(i16::MAX))
+                }
+            }) {
+                Some(count) => count,
+                None => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
             let oil = &mut state.objects.get_mut(object.object).counters.oil;
             match oil.checked_add(placed) {
                 Some(next) => *oil = next,

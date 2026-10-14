@@ -169,20 +169,16 @@ fn apply_counter_transfer(
     // Work on a caller-owned projection so every family commits atomically.
     let counters = snapshot.counters;
     let scale = |amount: i32| {
-        #[cfg(feature = "standard-magezero-fixtures")]
-        {
-            crate::standard_cards_v1::scale_counters(
-                state,
-                state.objects.get(target).controller,
-                amount,
-            )
-        }
-        #[cfg(not(feature = "standard-magezero-fixtures"))]
-        {
-            amount
-        }
+        crate::doubling_season_v48::counter_amount(
+            state,
+            target,
+            player,
+            crate::doubling_season_v48::CounterOriginV48::Effect,
+            amount,
+        )
+        .ok()
     };
-    let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))).ok();
+    let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))?).ok();
     let live = state.objects.get(target);
     let minus_one = live
         .counters
@@ -195,8 +191,8 @@ fn apply_counter_transfer(
     let stun = live.counters.stun.checked_add(placed_i16(counters.stun)?)?;
     let lore = live.counters.lore.checked_add(placed_i16(counters.lore)?)?;
     let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
-    let charge = live.counters.charge.checked_add(scale(counters.charge))?;
-    let net = live.counters.net.checked_add(scale(counters.net))?;
+    let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
+    let net = live.counters.net.checked_add(scale(counters.net)?)?;
     let loyalty = i32::try_from(snapshot.extras.loyalty).ok()?;
     let lifelink = live
         .v4
@@ -205,13 +201,13 @@ fn apply_counter_transfer(
     let time = live
         .v4
         .time_counters_v1
-        .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))).ok()?)?;
+        .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))?).ok()?)?;
     let finality = live
         .v4
         .creature_upgrade
         .as_ref()
         .map_or(0, |u| u.finality)
-        .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))).ok()?)?;
+        .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))?).ok()?)?;
     crate::event::add_plus_one_counters(state, target, player, counters.plus1_plus1).ok()?;
     let keyword_timestamp =
         (snapshot.extras.lifelink > 0).then(|| crate::engine::next_timestamp(state));
@@ -964,6 +960,81 @@ mod fdn_kellan_subtype_boundary_tests {
                 crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
             );
             assert!(creature_types(&restored, source).is_none());
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod doubling_season_transfer_tests_v48 {
+    use super::*;
+    use crate::{
+        event::{self, ProposedEvent},
+        ids::PlayerId,
+        policy_observation_v6::tests::{put, ready_state_for},
+        state::Zone,
+    };
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn actual_shared_multikind_transfer_doubles_each_kind_and_restores() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let target = put(&mut state, actor, "Forest", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+            // Typed counter-transfer primitive, not a fabricated printed ability.
+            let snapshot = CounterTransferV1 {
+                counters: crate::state::Counters {
+                    plus1_plus1: 1,
+                    minus1_minus1: 1,
+                    minus0_minus1: 1,
+                    stun: 1,
+                    lore: 1,
+                    oil: 1,
+                    charge: 1,
+                    net: 1,
+                    ..Default::default()
+                },
+                extras: CounterExtrasV1 {
+                    loyalty: 1,
+                    lifelink: 1,
+                    time: 1,
+                    finality: 1,
+                },
+            };
+            let mut restored: crate::state::GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, snapshot).unwrap();
+                let o = branch.objects.get(target);
+                assert_eq!(o.counters.plus1_plus1, 2);
+                assert_eq!(o.counters.minus1_minus1, 2);
+                assert_eq!(o.counters.minus0_minus1, 2);
+                assert_eq!(o.counters.stun, 2);
+                assert_eq!(o.counters.lore, 2);
+                assert_eq!(o.counters.oil, 2);
+                assert_eq!(o.counters.charge, 2);
+                assert_eq!(o.counters.net, 2);
+                assert_eq!(o.v4.lifelink_keyword_counters, 2);
+                assert_eq!(o.v4.time_counters_v1, 2);
+                assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);
+                assert_eq!(crate::planeswalker_v1::loyalty(branch, target), Some(2));
+            }
+            assert_eq!(state, restored);
         }
     }
 }

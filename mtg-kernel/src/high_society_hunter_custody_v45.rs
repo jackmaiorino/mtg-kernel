@@ -997,7 +997,7 @@ fn validate_operation(
                     if counted <= *input
                         || counted >= operation
                         || !matches!(state.engine.event_history.get(counted as usize),
-                        Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count})if *object==source.source && *zone_change_count==source.zone_change_count && *player==source.controller && *count==1)
+                        Some(CommittedEvent::PlusOneCountersAdded{object,zone_change_count,player,count})if *object==source.source && *zone_change_count==source.zone_change_count && *player==source.controller && crate::doubling_season_v48::expected_plus_at(state,counted,*object,*player,1).ok()==Some(*count))
                     {
                         return Err(
                             "Hunter actual counter changed source/controller/incarnation/amount"

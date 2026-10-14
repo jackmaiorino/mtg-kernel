@@ -106,3 +106,22 @@ Still unfinished: checked pre-entry overflow before any moves, rule-origin lore
 and played-land distinction, all non-entry counter kinds/transfer inputs, Hunter
 and Fishing original counter operation adapters, and special token tails. These
 requirements remain explicit and no Full executor/consumer qualification is made.
+
+
+## Further counter routing checkpoint
+
+Hunter's genuine source-counter operation now checks the original replacement
+input rather than a hardcoded final1. Shared counter transfer scales every existing
+kind through recipient-controlled Season and actor-controlled other modifiers;
+its actual printed caller rechecks ControlledCreature, preserving the ordinary
+actor/recipient relation. Scalar oil/minus-counter leaves also use checked Season
+amounts, preserving their former behavior when the new component is absent.
+Lore effect placement and the real precombat-main turn-based rule call now have
+distinct origins. Genuine shared multikind and effect-versus-rule lore primitive
+fixtures cover both seats and serialization; they do not fabricate printed grants.
+
+Still required before complete source delivery: Fishing's independent bait
+counter input/proof and extra-Fish roster, remaining returned-stun/finality/time
+initialization, the pre-entry overflow transaction, played-land rule tagging,
+special token initialization/attachments/attacking/copies/haste, expanded token
+original-world proof completeness, and distinct safe V48/mixed transport.

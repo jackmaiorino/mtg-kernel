@@ -16205,7 +16205,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
                     continue;
                 }
-                event::add_lore_counters(state, saga, 1).expect("supported Saga counters fit");
+                event::add_lore_counters_rule(state, saga, 1).expect("supported Saga counters fit");
             }
             collect_and_queue_triggers(state);
         }
