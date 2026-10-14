@@ -1376,6 +1376,9 @@ pub enum CommittedEvent {
     PlusCounterReplacementV48 {
         placement: Box<crate::doubling_season_v48::PlusCounterPlacementV48>,
     },
+    TokenCreationInputV48 {
+        input: Box<crate::doubling_season_v48::TokenInputV48>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3302,7 +3305,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             return;
         }
     };
-    let token_history_start = state.engine.event_history.len();
+    let token_input = crate::doubling_season_v48::TokenInputV48::capture(state, &token_requests);
     // Validate the entire replacement roster before any shield or packet mutates.
     if let Some(source) = events.iter().find_map(|event| match event {
         ProposedEvent::Damage(damage)
@@ -3356,24 +3359,10 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             arahbo_batch,
             attachments,
             raid_history_start,
+            token_input,
+            token_requests,
         },
     );
-    if state.engine.halted.is_none()
-        && state.engine.event_history[token_history_start..]
-            .iter()
-            .any(|event| matches!(event, CommittedEvent::CreateToken { .. }))
-        && crate::doubling_season_v48::record_token_creation(
-            state,
-            token_history_start,
-            token_requests,
-        )
-        .is_err()
-    {
-        state.engine.halted = Some((
-            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-            ObjectId(0),
-        ));
-    }
 }
 /// The private owning driver has already finished every replacement choice.
 /// It cannot submit a foreign root, owner, source or recipient packet.
@@ -3396,6 +3385,8 @@ pub(crate) fn commit_crystal_prepared_batch(
         arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
         attachments: Vec::new(),
         raid_history_start: state.engine.event_history.len(),
+        token_input: None,
+        token_requests: Vec::new(),
     };
     commit_batch_survivors(state, survivors, authority_batch, context);
 }
@@ -3413,6 +3404,8 @@ pub(crate) fn commit_twinflame_prepared_combat(
         arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
         attachments: Vec::new(),
         raid_history_start: state.engine.event_history.len(),
+        token_input: None,
+        token_requests: Vec::new(),
     };
     commit_batch_survivors(state, survivors, authority, context);
     if state.engine.halted.is_some() {
@@ -3428,6 +3421,8 @@ struct EntryBatchCommitContextV1 {
         crate::effect::EffectObjectBinding,
     )>,
     raid_history_start: usize,
+    token_input: Option<crate::doubling_season_v48::TokenInputV48>,
+    token_requests: Vec<crate::doubling_season_v48::TokenRequestV48>,
 }
 fn commit_batch_survivors(
     state: &mut GameState,
@@ -3458,7 +3453,12 @@ fn commit_batch_survivors(
         mut arahbo_batch,
         attachments,
         raid_history_start,
+        token_input,
+        token_requests,
     } = context;
+    let token_input_index =
+        token_input.map(|input| crate::doubling_season_v48::record_token_input(state, input));
+    let token_history_start = state.engine.event_history.len();
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {
@@ -3607,6 +3607,24 @@ fn commit_batch_survivors(
     }
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
+    }
+    if state.engine.halted.is_none() {
+        if let Some(input) = token_input_index {
+            if crate::doubling_season_v48::record_token_creation(
+                state,
+                token_history_start,
+                input,
+                token_requests,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }

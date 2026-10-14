@@ -524,3 +524,97 @@ fn actual_doubled_haste_tokens_and_copied_nontoken_all_initialize_before_observe
         assert_eq!(restore(&state), state);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn actual_original_world_rejects_rewritten_replacement_roster_after_source_departure() {
+    use crate::engine::{self, Action};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let token = crate::card_def::card_id_by_name("Goblin Token").unwrap();
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![ProposedEvent::create_token(token, actor)],
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(season, Zone::Graveyard),
+        );
+        validate_token_journals(&restore(&state)).unwrap();
+        let original = state.engine.event_history.clone();
+        for erase_input in [false, true] {
+            let mut forged = restore(&state);
+            if erase_input {
+                let input = forged
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find(|event| {
+                        matches!(event, event::CommittedEvent::TokenCreationInputV48 { .. })
+                    })
+                    .unwrap();
+                *input = event::CommittedEvent::Tap { object: season };
+            } else {
+                let creation = forged
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        event::CommittedEvent::TokenCreationReplacementV48 { creation } => {
+                            Some(creation)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                creation.original[0].replacement.seasons.clear();
+                creation.created.truncate(1);
+            }
+            for _ in 0..3 {
+                let mut branch = restore(&forged);
+                let before = bytes(&branch);
+                assert!(engine::step(&mut branch, Action::Pass).is_err());
+                assert_eq!(bytes(&branch), before);
+            }
+        }
+        assert_eq!(state.engine.event_history, original);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn unrelated_entry_does_not_quote_unrequested_three_counters() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for _ in 0..30 {
+            let source = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(state.engine.halted.is_none());
+        }
+        assert_eq!(sources(&state, actor).len(), 30);
+        let forest = put(&mut state, actor, "Forest", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(forest, Zone::Battlefield),
+        );
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(forest).counters, Default::default());
+        assert_eq!(restore(&state), state);
+    }
+}

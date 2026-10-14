@@ -100,7 +100,7 @@ mod printed_entry_predicate_tests {
                     // This exercises the production entry-characteristic predicate
                     // directly; the preattached Aura is a primitive fixture,
                     // not a claim of a naturally cast pre-entry attachment.
-                    apply_entry_counters(current, source);
+                    apply_entry_counters(current, source, None);
                     assert_eq!(current.objects.get(source).counters.plus1_plus1, 0);
                     current.engine.event_log.push(CommittedEvent::ZoneChange {
                         object: source,

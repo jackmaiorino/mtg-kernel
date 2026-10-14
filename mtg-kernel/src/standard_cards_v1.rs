@@ -4346,7 +4346,7 @@ pub(crate) fn initialize_entry_counters(
 ) {
     let live = state.objects.get(object);
     let name = CARD_DEFS[live.card_def as usize].name;
-    if live.v4.face_index != 0 {
+    if live.v4.face_index != 0 || !matches!(name, "Braided Net" | "Reckoner Bankbuster") {
         return;
     }
     let count = match crate::doubling_season_v48::entry_amount(state, input, live.controller, 3) {

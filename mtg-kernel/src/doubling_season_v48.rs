@@ -230,6 +230,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             event,
             crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
                 | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
         )
     }) || state.stack.iter().any(|item| {
         item.v4
@@ -273,8 +274,58 @@ pub struct TokenRequestV48 {
 #[serde(deny_unknown_fields)]
 pub struct TokenCreationV48 {
     pub index: u64,
+    pub input: u64,
     pub original: Vec<TokenRequestV48>,
     pub created: Vec<u64>,
+}
+
+/// Independent original replacement world. Only the board needed to evaluate
+/// continuous source abilities is retained; prior event logs are excluded so
+/// each input does not recursively embed every older input. This is private.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenInputV48 {
+    pub index: u64,
+    pub world: Box<GameState>,
+    pub requests: Vec<TokenTemplateV48>,
+}
+impl TokenInputV48 {
+    pub(crate) fn capture(state: &GameState, requests: &[TokenRequestV48]) -> Option<Self> {
+        if requests.is_empty() {
+            return None;
+        }
+        let mut world = state.clone();
+        world.engine.event_history.clear();
+        world.engine.event_log.clear();
+        Some(Self {
+            index: 0,
+            world: Box::new(world),
+            requests: requests
+                .iter()
+                .map(|request| request.template.clone())
+                .collect(),
+        })
+    }
+    fn original_requests(&self) -> Vec<TokenRequestV48> {
+        self.requests
+            .iter()
+            .map(|template| TokenRequestV48 {
+                replacement: ReplacementInputV48::capture(&self.world, template.controller),
+                template: template.clone(),
+            })
+            .collect()
+    }
+}
+pub(crate) fn record_token_input(state: &mut GameState, mut input: TokenInputV48) -> u64 {
+    input.index = state.engine.event_history.len() as u64;
+    let index = input.index;
+    state
+        .engine
+        .event_history
+        .push(crate::event::CommittedEvent::TokenCreationInputV48 {
+            input: Box::new(input),
+        });
+    index
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -425,6 +476,7 @@ pub(crate) fn expand_tokens(
 pub(crate) fn record_token_creation(
     state: &mut GameState,
     start: usize,
+    input: u64,
     original: Vec<TokenRequestV48>,
 ) -> Result<(), String> {
     if original.is_empty() {
@@ -445,6 +497,7 @@ pub(crate) fn record_token_creation(
         .push(crate::event::CommittedEvent::TokenCreationReplacementV48 {
             creation: Box::new(TokenCreationV48 {
                 index,
+                input,
                 original,
                 created,
             }),
@@ -459,9 +512,25 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             event,
             CommittedEvent::TokenCreationReplacementV48 { .. }
                 | CommittedEvent::PlusCounterReplacementV48 { .. }
+                | CommittedEvent::TokenCreationInputV48 { .. }
         )
     }) {
         return Err("private replacement replayed as trigger input".into());
+    }
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::TokenCreationInputV48 { input } = event else {
+            continue;
+        };
+        let closures = state.engine.event_history.iter().filter(|event| matches!(event,
+            CommittedEvent::TokenCreationReplacementV48 {creation} if creation.input == index as u64)).count();
+        if input.index != index as u64
+            || input.requests.is_empty()
+            || !input.world.engine.event_history.is_empty()
+            || !input.world.engine.event_log.is_empty()
+            || closures != 1
+        {
+            return Err("token creation lost unique original-world input/completion".into());
+        }
     }
     let mut counter_events = Vec::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
@@ -499,6 +568,18 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             || c.original.iter().all(|r| r.replacement.seasons.is_empty())
         {
             return Err("token replacement original roster changed".into());
+        }
+        let Some(CommittedEvent::TokenCreationInputV48 { input }) =
+            state.engine.event_history.get(c.input as usize)
+        else {
+            return Err("token creation original replacement world absent".into());
+        };
+        if input.index != c.input
+            || c.input >= c.index
+            || input.original_requests() != c.original
+            || c.created.first().is_none_or(|first| *first <= c.input)
+        {
+            return Err("token creation source/roster changed from original world".into());
         }
         let mut cursor = 0;
         for request in &c.original {

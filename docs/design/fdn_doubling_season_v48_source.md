@@ -151,3 +151,26 @@ are prepared and unrun. Complete delayed sacrifice-copy tails, source-to-new-tok
 attachment choice, exhaustive entry overflow, other counter kinds, independent
 original-world proof and the V48 mixed consumer are still active assigned work.
 No new registration, ID, profile, native, gameplay or Full claim is made.
+
+
+## Independent token input checkpoint
+
+Each replaced creation batch now commits a separate private original input before
+any members enter. It retains the requested templates and the actual original
+replacement world, including effective source suppression/control/attachments.
+Only prior trigger/event logs are excluded from that replacement-query snapshot,
+so inputs do not recursively retain prior token inputs. Completion must preserve
+that exact original requested roster and rederive the complete replacement source
+multiset from this independent world; later Season departure is irrelevant. Every
+original input requires exactly one completion, and private inputs cannot be
+injected into trigger logs. The expanded roster is completed before immediate
+linked returns can create a separate nested batch, avoiding mixed attribution.
+This remains trusted original engine-input provenance, not authentication against
+wholesale replacement of input/world/history together.
+
+The stale Raid child-test signature now passes the actual absent source input.
+Standard entry initialization returns before quoting counters for any printing
+other than genuine Net/Bankbuster. A real thirty-Season/unrelated Forest entry
+fixture preserves requested zero counters; a separate original-world restore
+negative rewrites only completion sources/membership or erases the independent
+input, preserving actual creation/departure journals. These groups are unrun.
