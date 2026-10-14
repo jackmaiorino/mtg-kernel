@@ -2833,6 +2833,10 @@ pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) ->
     (0..doublings).fold(count, |count, _| count.saturating_mul(2))
 }
 
+pub(crate) fn counter_modifier_doublings_v48(state: &GameState, player: PlayerId) -> u32 {
+    controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)
+}
+
 /// Checked signed placement for the explicitly selected replacement component.
 /// Old callers retain their historical scalar arithmetic.
 pub(crate) fn scale_counters_checked_v48(

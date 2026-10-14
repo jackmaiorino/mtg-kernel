@@ -35,7 +35,9 @@ pub struct MeaningV48 {
     pub counter_placing_actor_may_be_opponent: bool,
     pub counters_of_each_kind_doubled: bool,
     pub entry_counters_included: bool,
+    /// Direct unmodified loyalty cost, before another replacement applies.
     pub loyalty_activation_cost_excluded: bool,
+    pub other_replacement_can_make_cost_or_rule_counter_event_eligible: bool,
     pub independent_sources_each_apply_once: bool,
     pub original_count_multiplied_without_arbitrary_cap: bool,
     pub safe_consumer_admitted: bool,
@@ -121,6 +123,7 @@ pub fn printed_meaning(card_id: u16, root: RootV48) -> Result<MeaningV48, String
         counters_of_each_kind_doubled: counter,
         entry_counters_included: counter,
         loyalty_activation_cost_excluded: counter,
+        other_replacement_can_make_cost_or_rule_counter_event_eligible: counter,
         independent_sources_each_apply_once: token || counter,
         original_count_multiplied_without_arbitrary_cap: token || counter,
         safe_consumer_admitted: false,
@@ -158,6 +161,10 @@ mod tests {
         ] {
             let original = printed_meaning(id, root).unwrap();
             validate(&original).unwrap();
+            let mut forged = original.clone();
+            forged.other_replacement_can_make_cost_or_rule_counter_event_eligible =
+                !forged.other_replacement_can_make_cost_or_rule_counter_event_eligible;
+            assert!(validate(&forged).is_err());
             let mut forged = original.clone();
             forged.loyalty_activation_cost_excluded = !forged.loyalty_activation_cost_excluded;
             assert!(validate(&forged).is_err());
