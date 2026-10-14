@@ -419,13 +419,8 @@ pub(crate) fn resolve_owned(
     if state.engine.halted.is_some() {
         return Err("Panda actual operation halted".into());
     }
-    let operation = append(
-        state,
-        JournalV1::Operation {
-            input,
-            after: state.objects.try_get(object).cloned().map(Box::new),
-        },
-    )?;
+    let after = state.objects.try_get(object).cloned().map(Box::new);
+    let operation = append(state, JournalV1::Operation { input, after })?;
     append(
         state,
         JournalV1::Closed {
