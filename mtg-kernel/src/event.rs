@@ -2878,6 +2878,9 @@ fn commit_with_entry_batch_and_source_color(
                 attachments: Vec::new(),
                 v4: {
                     let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
+                    // Creation itself makes this object a token, including
+                    // copies whose printed definition is an ordinary card.
+                    v4.is_token = true;
                     v4.entered_battlefield_turn = Some(state.turn_key_v1());
                     v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
                     v4
