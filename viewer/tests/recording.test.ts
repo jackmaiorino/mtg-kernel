@@ -7,6 +7,8 @@ import retained from './fixtures/retained-search.json';
 import uctFixture from './fixtures/uct-search.json';
 import pooledUct from './fixtures/uct-pooled.json';
 import lifecycle from './fixtures/uct-lifecycle.json';
+import inferenceFixture from './fixtures/uct-inference.json';
+import { inferenceIndex, moveInference, tallyAt } from '../src/uct-inference';
 import { actualTreePath, uctEvents, uctGraphAt } from '../src/uct-playback';
 import { attemptSummaries, comboProgress, shortLabel } from '../src/uct-console';
 import rootChoicesFixture from './fixtures/root-choices.json';
@@ -17,6 +19,29 @@ import { comparePolicyMasses, policyFavorite, parseRecording, verifySearchDigest
 import { initialPlayback, playbackReducer } from '../src/playback';
 
 const copy = () => structuredClone(fixture);
+describe('UCT scoring-call labels',()=>{
+  it('counts only the viewed prefix and links each input group to its first use',()=>{
+    const u=parseRecording(inferenceFixture).frames[0].search!.uctReplay!,index=inferenceIndex(u)!,events=uctEvents(u);
+    expect(tallyAt(index,u,events[0])).toEqual({requests:0,hits:0,misses:0,forwards:0,uct:0,forced:0,bytes:null});
+    expect(tallyAt(index,u,{simulation:0,phase:'rollout',choice:1,move:2,after:true})).toEqual({requests:1,hits:0,misses:1,forwards:1,uct:2,forced:0,bytes:300});
+    expect(tallyAt(index,u,events.at(-1)!)).toEqual({requests:2,hits:1,misses:1,forwards:1,uct:5,forced:1,bytes:300});
+    expect(moveInference(index,u,0,3)).toEqual({code:'h',label:'Cache hit',call:2,group:1,use:2,first:{simulation:0,move:2},bytes:300});
+    expect(moveInference(index,u,0,2)?.label).toBe('Cache miss');
+    expect(moveInference(index,u,0,0)?.label).toBe('UCT: no inference');
+    expect(moveInference(index,u,2,2)?.label).toBe('Forced: no inference');
+    expect(inferenceIndex(parseRecording(pooledUct).frames[0].search!.uctReplay!)).toBeNull();
+  });
+  it('rejects impossible, unreconciled or unpaired scoring calls',()=>{
+    type R=typeof inferenceFixture;const sims=(r:R)=>r.frames[0].search.uctReplay.simulations;
+    const mutate=[(r:R)=>{sims(r)[0].inference.codes='uuhm';},(r:R)=>{sims(r)[0].inference.codes='mumh';},
+      (r:R)=>{sims(r)[0].inference.cacheBytes=[300,1001];},(r:R)=>{r.frames[0].search.uctReplay.inference.totals.hits=2;},
+      (r:R)=>{sims(r)[0].inference.groups=[1,1];},(r:R)=>{sims(r)[0].inference.codes='uuxx';},
+      (r:R)=>{r.frames[0].search.uctReplay.inference.paired.requests=3;},(r:R)=>{delete (r.frames[0].search.uctReplay as {inference?:unknown}).inference;},
+      (r:R)=>{sims(r)[0].inference.unapplied=true;},(r:R)=>{delete (sims(r)[1] as {inference?:unknown}).inference;}];
+    for(const change of mutate){const r=structuredClone(inferenceFixture);change(r);expect(()=>parseRecording(r)).toThrow(/UCT/);}
+  });
+});
+
 describe('full UCT discovery traces',()=>{
   it('binds initial search, recorded refresh reason and an actual continuation to the source tree',async()=>{
     const r=parseRecording(lifecycle);await verifySearchDigests(r);

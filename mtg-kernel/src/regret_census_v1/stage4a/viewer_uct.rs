@@ -175,10 +175,24 @@ fn action(v: &Value, board: &Value, index: usize) -> Value {
     json!({"index":index,"kind":kind,"label":label,"refs":ids.iter().map(|id|format!("o{id}")).collect::<Vec<_>>()})
 }
 
+/// How one simulated move was chosen, as far as inference is concerned.
+pub(crate) enum Inference {
+    /// A UCT tree choice: no policy scoring.
+    Tree,
+    /// Fewer than two legal actions: no policy scoring.
+    Forced,
+    /// One policy scoring call (uncached forward, cache miss or cache hit).
+    Call(crate::inference_cache_v1::CallEventV1),
+}
+
 #[derive(Default)]
 pub(crate) struct SearchCapture {
     pub(crate) scores: Vec<Option<f64>>,
     pub(crate) error: Option<String>,
+    /// Recording-local input groups: exact-input digest to first-use ordinal.
+    /// Only ordinals and key sizes are written; digests and keys stay here.
+    groups: HashMap<[u8; 32], u32>,
+    group_bytes: Vec<usize>,
     ids: HashMap<Key, u32>,
     snapshots: Vec<Value>,
     snapshot_ids: HashMap<[u8; 32], usize>,
@@ -263,13 +277,42 @@ impl SearchCapture {
         });
         }
     }
-    pub(crate) fn before(&mut self, s: &FastActorSessionV1, d: FastActorDecisionV1, a: u32) {
+    fn inference(&mut self, inference: Inference) -> Result<Value, String> {
+        use crate::inference_cache_v1::CallOutcomeV1;
+        Ok(match inference {
+            Inference::Tree => json!({"kind":"uct"}),
+            Inference::Forced => json!({"kind":"forced"}),
+            Inference::Call(call) => {
+                let next = u32::try_from(self.group_bytes.len()).map_err(|e| e.to_string())?;
+                let group = *self.groups.entry(call.input).or_insert(next);
+                if group == next {
+                    self.group_bytes.push(call.key_bytes);
+                } else if self.group_bytes[group as usize] != call.key_bytes {
+                    return Err("UCT inference group size differs".into());
+                }
+                let kind = match call.outcome {
+                    CallOutcomeV1::Uncached => "uncached",
+                    CallOutcomeV1::Miss => "miss",
+                    CallOutcomeV1::Hit => "hit",
+                };
+                json!({"kind":kind,"group":group,"cache_bytes":call.cache_bytes})
+            }
+        })
+    }
+    pub(crate) fn before(
+        &mut self,
+        s: &FastActorSessionV1,
+        d: FastActorDecisionV1,
+        a: u32,
+        inference: Result<Inference, String>,
+    ) {
         self.attempt(|this| {
+            let inference = this.inference(inference?)?;
             let board=visible(s)?;
             let (_,sem)=s.gameplay_trace_visible_v1(d,true).map_err(|e|format!("{e:?}"))?;
             let selected=sem.get(a as usize).ok_or("UCT selected action missing")?;
             let flags=super::diag::bits(selected,s,PlayerId::P0,&labels::spy_defs());
-            let mut v=json!({"actor":d.acting_player,"step":d.step,"physical":d.physical_decision_id,"substep":d.substep_index,"action":action(&serde_json::to_value(selected).map_err(|e|e.to_string())?,&board,a as usize),"flags":flags});
+            let mut v=json!({"actor":d.acting_player,"step":d.step,"physical":d.physical_decision_id,"substep":d.substep_index,"action":action(&serde_json::to_value(selected).map_err(|e|e.to_string())?,&board,a as usize),"flags":flags,"inference":inference});
             if flags!=0 { v["before"]=json!(this.snapshot(s)?); }
             this.pending=Some(v);Ok(())
         });
@@ -301,8 +344,13 @@ impl SearchCapture {
         });
     }
     pub(crate) fn end(&mut self, reason: &str) {
-        self.pending = None;
+        // A decision whose move was never applied (the transition budget ran
+        // out) still spent its inference; keep that call beside the rollout.
+        let unapplied = self.pending.take().map(|p| p["inference"].clone());
         self.attempt(|this| {
+            if let Some(inference) = unapplied {
+                this.current["unapplied"] = inference;
+            }
             if this.simulations.len() >= 4096 {
                 return Err("UCT attempt bound".into());
             }
@@ -446,6 +494,9 @@ impl Recorder {
             for sim in c.simulations {
                 self.write(json!({"kind":"search_simulation","search":index,"simulation":sim}));
             }
+            self.write(
+                json!({"kind":"search_inference","search":index,"group_key_bytes":c.group_bytes}),
+            );
             self.write(json!({"kind":"search_end","search":index,"complete":true}));
         }
     }

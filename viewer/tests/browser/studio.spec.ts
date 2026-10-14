@@ -8,6 +8,7 @@ import retained from '../fixtures/retained-search.json' with {type:'json'};
 import uct from '../fixtures/uct-search.json' with {type:'json'};
 import pooledUct from '../fixtures/uct-pooled.json' with {type:'json'};
 import lifecycle from '../fixtures/uct-lifecycle.json' with {type:'json'};
+import inference from '../fixtures/uct-inference.json' with {type:'json'};
 import { createHash } from 'node:crypto';
 
 async function openFixture(page: import('@playwright/test').Page) {
@@ -60,9 +61,29 @@ test('full UCT tree exposes discovery, rollout moves and discarded attempts',asy
   await page.getByRole('button',{name:'See complete graph'}).click();await expect(page.locator('[data-node]')).toHaveCount(3);await expect(page.locator('.search-caption')).toContainText('without a backup');
   await page.getByText('Inspect every simulated move', {exact:false}).click();await page.getByLabel('Inspect rollout move').selectOption('1');
   await expect(page.locator('.search-caption')).toContainText('step 16');
+  await expect(page.locator('.uct-inference')).toContainText('Not recorded for this search.');
   await page.setViewportSize({width:320,height:900});await page.emulateMedia({reducedMotion:'reduce'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
   await page.screenshot({path:'test-results/uct-search-320.png',fullPage:true});
+});
+
+test('UCT scoring labels count the viewed prefix and link identical inputs',async({page})=>{
+  await openFixture(page);await page.locator('input[type=file]').setInputFiles({name:'inference.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(inference))});
+  await page.getByRole('button',{name:'Watch this search unfold'}).click();
+  const panel=page.getByLabel('Policy scoring so far');
+  await expect(panel).toContainText('SCORING SO FAR · EXACT CACHE 1.0 KiB');await expect(panel.locator('dd').first()).toHaveText('0');
+  await expect(page.locator('.search-caption')).toContainText('UCT: no inference');
+  await page.getByText('Inspect every simulated move', {exact:false}).click();await page.getByLabel('Inspect rollout move').selectOption('3');
+  await expect(page.locator('.search-caption')).toContainText('Cache hit');
+  await expect(panel).toContainText('call 2 · input group 1, use 2');
+  await page.getByRole('button',{name:'First use: attempt 1, move 3'}).click();
+  await expect(page.locator('.search-caption')).toContainText('Cache miss');
+  await page.getByRole('button',{name:'See complete graph'}).click();
+  await expect(panel.locator('dd.hit')).toHaveText('1 (50.0%)');
+  await expect(panel).toContainText('matched cache-off run of this search produced the same game and ran all 2 forwards');
+  await page.setViewportSize({width:320,height:900});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({path:'test-results/uct-inference-320.png',fullPage:true});
 });
 
 test('the UCT console keeps the tree, timeline and attempt panel on one screen',async({page})=>{

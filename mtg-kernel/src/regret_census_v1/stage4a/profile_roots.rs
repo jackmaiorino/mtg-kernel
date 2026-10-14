@@ -124,7 +124,7 @@ pub(super) fn profile_case(
             "game_actions":actions.len(),"budget":budget,"key_mode":mode.label(),
             "bank_binding_sha256":binding,"selection":sel.json(),
             "keying_seconds":diag.keys.seconds,"primary_sha256":primary_sha256,
-            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"digest_memo":digest_memo,"profile":profile}),
+            "wall":wall,"teacher":teacher,"key_memo":diag.key_memo,"inference_cache":diag.inference_cache,"digest_memo":digest_memo,"profile":profile}),
         );
     }
     Ok(rows)
