@@ -57,3 +57,16 @@ and unrun. No Rust build/test/check/clippy, native, network, GPU, push or PR was
 launched. The source adds explicit future CI selection without claiming a run.
 No Full, profile, catalog-export, runtime, model, sampler or search claim is made.
 Root owns serial integration, compiler repair if needed and native qualification.
+
+Review repairs: schema5 counter quantities now require zero through their original
+native integer maximum; signed power/toughness and temporary boosts stay signed.
+The affected client suite passed 18 tests and 80 subtests, including negative
+fresh-reply process closure. V57 trigger ordering authenticates the entire actual
+controller group, source vector/permutation and staged context/prefix. Distinct
+current-roster occurrence numbers retain identical native occurrences; labels use
+the actual public trigger kind and safe source, including genuine mixed groups.
+Frozen fallback labels are unchanged. New both-seat paid Spinner/death-batch
+Human/wire fixtures cover both whole two-occurrence orders, mixed Hunter rows,
+eight-occurrence staged selection, original index mapping, forgery and restore.
+Victims/Hunter are primitive support; the simultaneous-death producer is real.
+These Rust additions remain uncompiled and unrun.

@@ -849,3 +849,140 @@ fn v5_paid_hatcher_independent_unknown_hand_and_library_preserve_actor_dto_both_
         safe(&a.last);
     }
 }
+
+fn paid_spinner_wire_death_group(actor: PlayerId, count: usize, hunter: bool) -> GameState {
+    let mut raw = raw(actor, 20);
+    put(&mut raw, actor, "Spinner of Souls", Zone::Hand);
+    let mut paid = Wire::fixture(raw);
+    cast(&mut paid, actor, "Spinner of Souls", None);
+    paid.drain();
+    let mut raw = paid.state().clone();
+    // Same genuine simultaneous-death producer as the owning core fixture;
+    // the victims and optional earlier-family Hunter are primitive support.
+    if hunter {
+        put(&mut raw, actor, "High-Society Hunter", Zone::Battlefield);
+    }
+    let victims = (0..count)
+        .map(|_| put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield))
+        .collect::<Vec<_>>();
+    crate::event::propose_and_commit_batch(
+        &mut raw,
+        victims
+            .into_iter()
+            .map(|object| crate::event::ProposedEvent::zone_change(object, Zone::Graveyard))
+            .collect(),
+    );
+    raw
+}
+#[test]
+fn v5_paid_spinner_identical_and_mixed_whole_order_choices_keep_native_indices_restore_both_seats()
+{
+    use crate::rl::ActionSemanticV1;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for hunter in [false, true] {
+            let mut wire = Wire::fixture(paid_spinner_wire_death_group(actor, 2, hunter));
+            let count = if hunter { 4 } else { 2 };
+            let saved = wire.snapshot();
+            for order in [
+                (0..count).collect::<Vec<_>>(),
+                (0..count).rev().collect::<Vec<_>>(),
+            ] {
+                wire.restore(saved);
+                let native = wire
+                    .server
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .decision_v57()
+                    .unwrap();
+                let native_index=native.actions().iter().position(|action|matches!(action,ActionSemanticV1::OrderTriggers{order:actual,..} if *actual==order)).unwrap() as u32;
+                let visible_index = wire
+                    .server
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .indexes
+                    .iter()
+                    .position(|index| *index == native_index)
+                    .unwrap();
+                let label = wire.menu()["actions"][visible_index]["label"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                assert!(
+                    label.starts_with("Put trigger occurrences on the stack from bottom to top")
+                );
+                for occurrence in 1..=count {
+                    assert_eq!(
+                        label
+                            .matches(&format!("occurrence #{occurrence} from "))
+                            .count(),
+                        1
+                    );
+                }
+                if hunter {
+                    assert!(label.contains("High-Society Hunter"));
+                } else {
+                    assert_eq!(wire.menu()["actions"].as_array().unwrap().len(), 2);
+                }
+                let request = wire.request(|actual| actual == label);
+                wire.server.pending.as_mut().unwrap().indexes.reverse();
+                wire.reject_unchanged(request, "changed_safe_prompt");
+                let stale = wire.request(|actual| actual == label);
+                wire.step(|actual| actual == label);
+                assert_eq!(wire.state().stack.len(), count);
+                safe(&wire.last);
+                let bytes = wire.bytes();
+                let public = wire.menu()["state"].clone();
+                wire.restore(saved);
+                wire.reject_unchanged(stale, "stale_decision");
+                wire.step(|actual| actual == label);
+                assert_eq!(wire.bytes(), bytes);
+                assert_eq!(wire.menu()["state"], public);
+            }
+        }
+    }
+}
+#[test]
+fn v5_paid_spinner_eight_identical_staged_occurrences_bind_real_prefix_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut wire = Wire::fixture(paid_spinner_wire_death_group(actor, 8, false));
+        let saved = wire.snapshot();
+        let play = |wire: &mut Wire| {
+            for (placed, index) in (0..8).rev().enumerate() {
+                assert_eq!(wire.menu()["actions"].as_array().unwrap().len(), 8 - placed);
+                let prefix = format!("Place Triggered ability occurrence #{} from ", index + 1);
+                let label = wire.menu()["actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find_map(|row| {
+                        row["label"]
+                            .as_str()
+                            .filter(|label| label.starts_with(&prefix))
+                    })
+                    .unwrap()
+                    .to_owned();
+                if placed == 0 {
+                    assert!(label.contains("already ordered: none"));
+                } else {
+                    assert!(label.contains("already ordered: #8"));
+                }
+                wire.step(|actual| actual == label);
+                if placed < 7 {
+                    assert!(wire.state().stack.is_empty());
+                }
+            }
+        };
+        play(&mut wire);
+        assert_eq!(wire.state().stack.len(), 8);
+        safe(&wire.last);
+        let bytes = wire.bytes();
+        let public = wire.menu()["state"].clone();
+        wire.restore(saved);
+        play(&mut wire);
+        assert_eq!(wire.bytes(), bytes);
+        assert_eq!(wire.menu()["state"], public);
+    }
+}

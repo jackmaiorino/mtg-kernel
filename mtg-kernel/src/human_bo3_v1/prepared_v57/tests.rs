@@ -934,3 +934,173 @@ fn genuine_human_paid_all_prepared_current_families_share_complete_handles_both_
         assert_eq!(gameplay(&session), original);
     }
 }
+
+fn paid_spinner_death_group(actor: PlayerId, count: usize, hunter: bool) -> GameState {
+    let mut raw = raw(actor, 20);
+    put(&mut raw, actor, "Spinner of Souls", Zone::Hand);
+    let mut paid = own(raw, actor);
+    let mut projector = HumanPreparedProjectorV57::new(actor.into());
+    cast(&mut paid, &mut projector, "Spinner of Souls", None);
+    drain_to(&mut paid, &mut projector, 0);
+    let mut raw = paid.inner.fixture_state_v57().clone();
+    // The same real simultaneous-death producer as the core fixture. Victims
+    // and optional earlier-family Hunter are primitive supporting permanents.
+    if hunter {
+        put(&mut raw, actor, "High-Society Hunter", Zone::Battlefield);
+    }
+    let victims = (0..count)
+        .map(|_| put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield))
+        .collect::<Vec<_>>();
+    crate::event::propose_and_commit_batch(
+        &mut raw,
+        victims
+            .into_iter()
+            .map(|object| crate::event::ProposedEvent::zone_change(object, Zone::Graveyard))
+            .collect(),
+    );
+    raw
+}
+#[test]
+fn genuine_human_paid_spinner_identical_and_mixed_whole_orders_keep_every_native_choice_both_seats()
+{
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for hunter in [false, true] {
+            let raw = paid_spinner_death_group(actor, 2, hunter);
+            let mut session = own(raw.clone(), actor);
+            let mut foreign = own(raw, actor);
+            let mut projector = HumanPreparedProjectorV57::new(actor.into());
+            let count = if hunter { 4 } else { 2 };
+            let saved = session.snapshot_v57();
+            for order in [
+                (0..count).collect::<Vec<_>>(),
+                (0..count).rev().collect::<Vec<_>>(),
+            ] {
+                session.restore_v57(&saved).unwrap();
+                let public = menu(&session, &mut projector);
+                safe(&public);
+                assert_eq!(public.state.prepared.spinner.held.len(), 2);
+                let native = session.inner.decision_v57().unwrap();
+                let index=native.actions().iter().position(|a|matches!(a,ActionSemanticV1::OrderTriggers{order:actual,..} if *actual==order)).unwrap() as u32;
+                let visible_index = projector
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .indexes
+                    .iter()
+                    .position(|actual| *actual == index)
+                    .unwrap();
+                let label = &public.actions[visible_index].label;
+                assert!(
+                    label.starts_with("Put trigger occurrences on the stack from bottom to top")
+                );
+                assert!(label.contains(&format!(
+                    "Triggered ability occurrence #{} from ",
+                    order[0] + 1
+                )));
+                for occurrence in 1..=count {
+                    assert_eq!(
+                        label
+                            .matches(&format!("occurrence #{occurrence} from "))
+                            .count(),
+                        1
+                    );
+                }
+                if hunter {
+                    assert!(label.contains("High-Society Hunter"));
+                }
+                assert_eq!(
+                    public
+                        .actions
+                        .iter()
+                        .map(|r| &r.label)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    public.actions.len()
+                );
+                if !hunter {
+                    assert_eq!(public.actions.len(), 2);
+                }
+                let request = HumanActionRequestV1 {
+                    prompt_seq: public.prompt_seq,
+                    action_index: visible_index as u32,
+                };
+                let unchanged = gameplay(&session);
+                let foreign_unchanged = gameplay(&foreign);
+                assert!(projector.submit(&mut foreign, request.clone()).is_err());
+                assert_eq!(gameplay(&foreign), foreign_unchanged);
+                projector.pending.as_mut().unwrap().visible.actions[visible_index]
+                    .label
+                    .push_str(" forged");
+                assert!(projector.submit(&mut session, request.clone()).is_err());
+                assert_eq!(gameplay(&session), unchanged);
+                projector.pending.as_mut().unwrap().visible = public;
+                projector.submit(&mut session, request.clone()).unwrap();
+                assert_eq!(session.inner.fixture_state_v57().stack.len(), count);
+                let result = gameplay(&session);
+                session.restore_v57(&saved).unwrap();
+                assert!(projector.submit(&mut session, request).is_err());
+                let public = menu(&session, &mut projector);
+                let native = session.inner.decision_v57().unwrap();
+                let index=native.actions().iter().position(|a|matches!(a,ActionSemanticV1::OrderTriggers{order:actual,..} if *actual==order)).unwrap() as u32;
+                let visible_index = projector
+                    .pending
+                    .as_ref()
+                    .unwrap()
+                    .indexes
+                    .iter()
+                    .position(|actual| *actual == index)
+                    .unwrap();
+                projector
+                    .submit(
+                        &mut session,
+                        HumanActionRequestV1 {
+                            prompt_seq: public.prompt_seq,
+                            action_index: visible_index as u32,
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(gameplay(&session), result);
+            }
+        }
+    }
+}
+#[test]
+fn human_paid_spinner_eight_identical_occurrences_keep_real_staged_prefix_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut session = own(paid_spinner_death_group(actor, 8, false), actor);
+        let mut projector = HumanPreparedProjectorV57::new(actor.into());
+        let saved = session.snapshot_v57();
+        let before = gameplay(&session).0;
+        let select = |session: &mut HumanPreparedSessionV57,
+                      projector: &mut HumanPreparedProjectorV57| {
+            for (placed, index) in (0..8).rev().enumerate() {
+                let public = menu(session, projector);
+                safe(&public);
+                assert_eq!(public.actions.len(), 8 - placed);
+                assert_eq!(
+                    public
+                        .actions
+                        .iter()
+                        .map(|r| &r.label)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    8 - placed
+                );
+                let prefix = format!("Place Triggered ability occurrence #{} from ", index + 1);
+                let native = session.inner.decision_v57().unwrap();
+                assert!(native.actions().iter().all(|a|matches!(a,ActionSemanticV1::ChooseTriggerOrderNext{ordered_prefix,pending_count:8,..} if ordered_prefix==&(index+1..8).rev().collect::<Vec<_>>())));
+                submit(session, projector, |label| label.starts_with(&prefix));
+                if placed < 7 {
+                    assert!(session.inner.fixture_state_v57().stack.is_empty());
+                }
+            }
+        };
+        select(&mut session, &mut projector);
+        assert_eq!(session.inner.fixture_state_v57().stack.len(), 8);
+        let result = gameplay(&session);
+        session.restore_v57(&saved).unwrap();
+        assert_eq!(gameplay(&session).0, before);
+        select(&mut session, &mut projector);
+        assert_eq!(gameplay(&session), result);
+    }
+}

@@ -755,11 +755,151 @@ pub(super) fn activation_label(
         Ok(format!("Activate {} [{}]: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",m.source.name,m.source.handle,m.count,m.before,m.after))
     }).transpose()
 }
+fn trigger_group(
+    obs: &observation::PreparedObservationV57,
+    actor: PlayerSeatV1,
+) -> Result<&[crate::rl::PendingTriggerSemanticV2], Error> {
+    let context = &obs.common.common.projection.surface.engine_context;
+    if obs.common.common.acting_player != actor
+        || context.current_stage != crate::rl::EngineDecisionStageV2::PendingTriggers
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    // This is the complete current APNAP controller group, including genuine
+    // earlier-family rows. Do not deduplicate identical source incarnations.
+    let count = context
+        .pending_triggers
+        .iter()
+        .take_while(|row| row.controller == actor)
+        .count();
+    if count < 2
+        || context.pending_triggers[..count]
+            .iter()
+            .any(|row| row.source.is_none())
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    Ok(&context.pending_triggers[..count])
+}
+fn trigger_occurrence(
+    group: &[crate::rl::PendingTriggerSemanticV2],
+    index: usize,
+    handles: &Handles,
+) -> Result<String, Error> {
+    let row = group.get(index).ok_or(Error::InvalidVisibleReference)?;
+    let source = row.source.as_ref().ok_or(Error::InvalidVisibleReference)?;
+    // Kind is the authenticated native row's public kind, never a printed
+    // program inferred from its host name. Granted roots may share a host.
+    let kind = match row.trigger_kind {
+        crate::rl::PendingTriggerKindV2::TriggeredAbility => "Triggered ability",
+        crate::rl::PendingTriggerKindV2::MadnessOffer => "Madness cast offer",
+    };
+    Ok(format!(
+        "{kind} occurrence #{} from {}",
+        index + 1,
+        handles.name(source)?
+    ))
+}
+fn order_label(
+    obs: &observation::PreparedObservationV57,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    if let ActionSemanticV1::OrderTriggers {
+        actor,
+        pending_sources,
+        order,
+    } = action
+    {
+        let group = trigger_group(obs, *actor)?;
+        if pending_sources.len() != group.len()
+            || order.len() != group.len()
+            || pending_sources
+                .iter()
+                .zip(group)
+                .any(|(source, row)| row.source.as_ref() != Some(source))
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+        let mut permutation = order.clone();
+        permutation.sort_unstable();
+        if permutation != (0..group.len()).collect::<Vec<_>>() {
+            return Err(Error::InvalidVisibleReference);
+        }
+        let labels = order
+            .iter()
+            .map(|index| trigger_occurrence(group, *index, handles))
+            .collect::<Result<Vec<_>, Error>>()?;
+        return Ok(Some(format!(
+            "Put trigger occurrences on the stack from bottom to top (last resolves first): {}",
+            labels.join("; then ")
+        )));
+    }
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let ActionSemanticV1::ChooseTriggerOrderNext {
+        actor,
+        source,
+        trigger_index,
+        ordered_prefix,
+        pending_count,
+    } = action
+    {
+        let group = trigger_group(obs, *actor)?;
+        let stage = obs
+            .common
+            .common
+            .trigger_order
+            .as_ref()
+            .ok_or(Error::InvalidVisibleReference)?;
+        let mut selected = vec![false; group.len()];
+        for index in ordered_prefix {
+            let taken = selected
+                .get_mut(*index)
+                .ok_or(Error::InvalidVisibleReference)?;
+            if *taken {
+                return Err(Error::InvalidVisibleReference);
+            }
+            *taken = true;
+        }
+        if stage.controller != *actor
+            || stage.pending_count != group.len()
+            || *pending_count != group.len()
+            || stage.ordered_prefix != *ordered_prefix
+            || ordered_prefix.len() >= group.len()
+            || selected.get(*trigger_index) != Some(&false)
+            || group
+                .get(*trigger_index)
+                .and_then(|row| row.source.as_ref())
+                != Some(source)
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+        let prefix = ordered_prefix
+            .iter()
+            .map(|index| format!("#{}", index + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let prefix = if prefix.is_empty() {
+            "none".into()
+        } else {
+            prefix
+        };
+        return Ok(Some(format!(
+            "Place {} next on the stack (already ordered: {prefix}; last placed resolves first)",
+            trigger_occurrence(group, *trigger_index, handles)?
+        )));
+    }
+    Ok(None)
+}
+
 pub(super) fn choice_label(
     obs: &observation::PreparedObservationV57,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
+    if let Some(label) = order_label(obs, action, handles)? {
+        return Ok(Some(label));
+    }
     for row in &obs.spinner.stack {
         if row.stage != crate::spinner_public_v54::StageV54::AwaitingReveal {
             continue;
