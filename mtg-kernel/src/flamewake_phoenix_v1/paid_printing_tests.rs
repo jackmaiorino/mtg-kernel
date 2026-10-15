@@ -556,7 +556,7 @@ fn guarded_payment_rejects_changed_cost_consequence_or_branch_without_mutation_b
             match change {
                 0 => path.clear(),
                 1 => *generic = 1,
-                2 => *then = Box::new(EffectOp::Sequence(vec![])),
+                2 => **then = EffectOp::Sequence(vec![]),
                 _ => *player = actor.opponent(),
             }
             let before = serde_json::to_vec(&forged).unwrap();
@@ -580,7 +580,7 @@ fn guarded_payment_rejects_changed_cost_consequence_or_branch_without_mutation_b
                 match change {
                     0 => path.clear(),
                     1 => *generic = 1,
-                    _ => *then = Box::new(EffectOp::Sequence(vec![])),
+                    _ => **then = EffectOp::Sequence(vec![]),
                 }
             };
             change_frame(pending.frames.last_mut().unwrap());

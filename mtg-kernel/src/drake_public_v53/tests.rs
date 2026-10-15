@@ -122,7 +122,7 @@ fn checked(state: &GameState) -> FactsV53 {
     fields(&serde_json::to_value(&facts).unwrap());
     facts
 }
-fn card<'a>(facts: &'a FactsV53, id: ObjectId) -> &'a CardV53 {
+fn card(facts: &FactsV53, id: ObjectId) -> &CardV53 {
     facts
         .battlefield
         .iter()
@@ -735,7 +735,7 @@ fn actual_combat_zero_prevention_block_suppression_and_strike_waves_both_seats()
             }
             assert!(ended);
             let facts = checked(&state);
-            let expected = if matches!(mode, 1 | 2 | 3) {
+            let expected = if matches!(mode, 1..=3) {
                 0
             } else if mode == 5 {
                 2
