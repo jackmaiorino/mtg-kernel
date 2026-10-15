@@ -633,6 +633,14 @@ pub(super) fn label_parts_v59(
             && stable.controller == public.controller
             && stable.zone == public.zone
     };
+    let stable_refs_match = |left: &CardStableRefV1, right: &CardStableRefV1| {
+        left.arena_id == right.arena_id
+            && left.card_db_id == right.card_db_id
+            && left.owner == right.owner
+            && left.controller == right.controller
+            && left.zone == right.zone
+            && left.zone_change_count == right.zone_change_count
+    };
     let source_authorized = |source: &CardStableRefV1, family: FamilyV59| {
         facts
             .authorized
@@ -738,15 +746,12 @@ pub(super) fn label_parts_v59(
             if !copy.untargeted
                 || copy.chooser != human
                 || !root_matches(source, &copy.source)
-                || usize::from(*selected_count) != copy.chosen_hosts.len()
+                || *selected_count != 0
                 || *min_targets != 1
                 || *max_targets != 1
+                || copy.remaining_count == 0
                 || copy.accepted_host_awaiting_advance.is_some()
                 || !copy.candidate_hosts.iter().any(|host| match target {
-                    TargetRefV1::Object { object } => ref_matches(object, host),
-                    _ => false,
-                })
-                || copy.chosen_hosts.iter().any(|host| match target {
                     TargetRefV1::Object { object } => ref_matches(object, host),
                     _ => false,
                 })
@@ -816,7 +821,7 @@ pub(super) fn label_parts_v59(
             });
             if stage.chooser != human
                 || !quote_matches
-                || !ref_matches(source, &stage.source)
+                || !stable_refs_match(source, &stage.source)
                 || usize::from(*option_count) != facts.goblin_ordering_options.len()
                 || *option_count == 0
             {
@@ -892,15 +897,11 @@ pub(super) fn label_parts_v59(
                 let name = handles.name(source)?;
                 let description = match row.family {
                     FamilyV59::Replication => {
-                        let target = match row.targets.as_slice() {
-                            [] => String::new(),
-                            [TargetV59::Object(target)] => {
-                                format!(" (current target: {})", public_name(target)?)
-                            }
-                            _ => return Err(Error::UnsupportedPrompt),
-                        };
+                        if !row.targets.is_empty() {
+                            return Err(Error::UnsupportedPrompt);
+                        }
                         format!(
-                            "{name} trigger: if legal when it resolves, create an Aura token copy of another nonland permanent you control and attach it to a legal host{target}"
+                            "{name} trigger: create a token copy of a nonland permanent you control"
                         )
                     }
                     FamilyV59::Infernal => {
@@ -2336,43 +2337,93 @@ mod next_five_native_label_tests {
         crate::state::GameState,
         crate::ids::ObjectId,
         crate::ids::ObjectId,
+        crate::ids::ObjectId,
+        crate::ids::ObjectId,
     ) {
         use crate::{
             engine::{self, Action, Decision},
-            state::Step,
+            state::{Step, Target},
         };
+
+        fn cast_native_fixture_spell(
+            state: &mut crate::state::GameState,
+            actor: PlayerId,
+            spell: crate::ids::ObjectId,
+            target: Option<crate::ids::ObjectId>,
+        ) {
+            let before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            let definition =
+                &crate::card_def::CARD_DEFS[usize::from(state.objects.get(spell).card_def)];
+            let (mana_value, spell_name) = (definition.mana_value, definition.name.to_string());
+            assert!(matches!(
+                engine::advance_until_decision(state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == actor && castable_spells.contains(&spell)
+            ));
+            engine::step(state, Action::CastSpell(spell)).unwrap();
+            if let Some(target) = target {
+                assert!(matches!(
+                    engine::advance_until_decision(state),
+                    Decision::ChooseTargets { spell: source, legal_targets, .. }
+                        if source == spell && legal_targets.contains(&Target::Object(target))
+                ));
+                engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            }
+            assert!(matches!(
+                engine::advance_until_decision(state),
+                Decision::CastSpellOrPass { player, .. } if player == actor
+            ));
+            assert!(state.engine.pending_cast.is_none());
+            assert_eq!(state.objects.get(spell).zone, Zone::Stack);
+
+            for _ in 0..48 {
+                let decision = engine::advance_until_decision(state);
+                if state.objects.get(spell).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && state.engine.pending_effect.is_none()
+                    && state.engine.pending_triggers.is_empty()
+                    && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                {
+                    let after = state.players[actor.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|id| state.objects.get(**id).tapped)
+                        .count();
+                    assert_eq!(after - before, usize::from(mana_value));
+                    return;
+                }
+                quiet_actual_step(state, decision);
+            }
+            panic!("paid fixture spell did not resolve: {spell_name}");
+        }
+
         let mut state = ready(actor);
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
-        for _ in 0..2 {
+        for _ in 0..3 {
             put(&mut state, actor, "Island", Zone::Battlefield);
         }
-        for _ in 0..4 {
+        for _ in 0..10 {
             put(&mut state, actor, "Forest", Zone::Battlefield);
         }
-        put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-        put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
-        let target = put(&mut state, actor, "Bind the Monster", Zone::Battlefield);
+        let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let other_host = put(&mut state, actor, "Axgard Cavalry", Zone::Battlefield);
+        let aura = put(&mut state, actor, "Bind the Monster", Zone::Hand);
+        cast_native_fixture_spell(&mut state, actor, aura, Some(host));
+        assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(aura).v4.attached_to.unwrap().object, host);
+        assert!(state.objects.get(host).attachments.contains(&aura));
+
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        cast_native_fixture_spell(&mut state, actor, season, None);
+
+        let target = aura;
         let source = put(&mut state, actor, "Extravagant Replication", Zone::Hand);
-        assert!(matches!(
-            engine::advance_until_decision(&mut state),
-            Decision::CastSpellOrPass { player, castable_spells, .. }
-                if player == actor && castable_spells.contains(&source)
-        ));
-        engine::step(&mut state, Action::CastSpell(source)).unwrap();
-        let mut paid = false;
-        for _ in 0..32 {
-            let decision = engine::advance_until_decision(&mut state);
-            if state.objects.get(source).zone == Zone::Battlefield
-                && state.stack.is_empty()
-                && state.engine.pending_cast.is_none()
-                && matches!(decision, Decision::CastSpellOrPass { .. })
-            {
-                paid = true;
-                break;
-            }
-            quiet_actual_step(&mut state, decision);
-        }
-        assert!(paid, "Replication did not resolve from its paid cast");
+        cast_native_fixture_spell(&mut state, actor, source, None);
 
         let mut found_upkeep_target = false;
         for _ in 0..256 {
@@ -2390,7 +2441,7 @@ mod next_five_native_label_tests {
             found_upkeep_target,
             "paid Replication upkeep target did not appear"
         );
-        (state, source, target)
+        (state, source, target, host, other_host)
     }
 
     fn paid_infernal_pair(actor: PlayerId) -> (crate::state::GameState, [crate::ids::ObjectId; 2]) {
@@ -2679,7 +2730,8 @@ mod next_five_native_label_tests {
     #[test]
     fn replication_target_and_aura_host_label_actual_paid_upkeep_rows_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, source, copy_target) = paid_replication_at_own_upkeep(actor);
+            let (state, source, copy_target, host, other_host) =
+                paid_replication_at_own_upkeep(actor);
             let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
             let (target_observation, target_decision, target_actions) = fake_rows(&session);
             let target_facts =
@@ -2704,6 +2756,7 @@ mod next_five_native_label_tests {
                 target_label.contains("another nonland permanent"),
                 "{target_label}"
             );
+            assert!(target_label.contains("Bind the Monster"), "{target_label}");
 
             let saved_target = session.snapshot_v1();
             session
@@ -2744,65 +2797,131 @@ mod next_five_native_label_tests {
                 )
                 .unwrap();
 
-            let mut host_label = None;
-            for _ in 0..16 {
-                let (observation, decision, actions) = fake_rows(&session);
-                let facts =
-                    crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
-                if let Some((index, action)) = actions.iter().enumerate().find(|(_, action)| {
-                    matches!(action,
-                        A::ChooseEffectTarget { actor: owner, source: actual_source, target: TargetRefV1::Object { .. }, .. }
-                        if *owner == decision.acting_player && actual_source.arena_id == source.0
-                    )
-                }) {
-                    let label = human_label_v59(
-                        &observation,
-                        action,
-                        decision.acting_player,
-                        &facts,
-                    )
-                    .unwrap();
-                    assert!(label.contains("Aura host"), "{label}");
-                    let saved = session.snapshot_v1();
-                    session
-                        .step(decision.episode_id, decision.step, index as u32)
-                        .unwrap();
-                    session.restore_v1(&saved);
-                    let (restored_observation, restored_decision, restored_actions) =
-                        fake_rows(&session);
-                    let restored_facts = crate::next_five_public_v59::capture(
-                        session.game_state(),
-                        actor,
-                    )
-                    .unwrap();
-                    let restored_index = restored_actions
-                        .iter()
-                        .position(|candidate| candidate == action)
-                        .expect("restored native Aura-host row");
-                    assert_eq!(
-                        human_label_v59(
-                            &restored_observation,
-                            &restored_actions[restored_index],
-                            restored_decision.acting_player,
-                            &restored_facts,
+            for host_prompt in 0usize..2 {
+                let mut found_host = false;
+                for _ in 0..16 {
+                    let (observation, decision, actions) = fake_rows(&session);
+                    let facts =
+                        crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                    if let Some((index, action)) = actions.iter().enumerate().find(|(_, action)| {
+                        matches!(action,
+                            A::ChooseEffectTarget {
+                                actor: owner,
+                                source: actual_source,
+                                target: TargetRefV1::Object { object },
+                                ..
+                            }
+                            if *owner == decision.acting_player
+                                && actual_source.arena_id == source.0
+                                && object.arena_id == host.0
                         )
-                        .unwrap(),
-                        label
-                    );
-                    host_label = Some(label);
-                    break;
+                    }) {
+                        let copy = facts.aura_copy.as_ref().expect("public Aura-copy stage");
+                        assert_eq!(copy.expanded_count, 2);
+                        assert_eq!(copy.chosen_hosts.len(), host_prompt);
+                        assert_eq!(copy.remaining_count, 2 - host_prompt as u64);
+                        assert_eq!(copy.chooser, actor.into());
+                        assert!(copy
+                            .candidate_hosts
+                            .iter()
+                            .any(|candidate| candidate.object == other_host.0));
+                        let other_host_index = actions
+                            .iter()
+                            .position(|candidate| {
+                                matches!(candidate,
+                                    A::ChooseEffectTarget {
+                                        source: actual_source,
+                                        target: TargetRefV1::Object { object },
+                                        ..
+                                    }
+                                    if actual_source.arena_id == source.0
+                                        && object.arena_id == other_host.0
+                                )
+                            })
+                            .expect("other legal Aura-host row remains available");
+                        assert!(human_label_v59(
+                            &observation,
+                            &actions[other_host_index],
+                            decision.acting_player,
+                            &facts,
+                        )
+                        .unwrap()
+                        .contains("Axgard Cavalry"));
+                        if host_prompt == 1 {
+                            assert!(copy
+                                .chosen_hosts
+                                .iter()
+                                .any(|chosen| chosen.object == host.0));
+                        }
+                        let label =
+                            human_label_v59(&observation, action, decision.acting_player, &facts)
+                                .unwrap();
+                        assert!(label.contains("Aura host"), "{label}");
+
+                        let saved = session.snapshot_v1();
+                        session
+                            .step(decision.episode_id, decision.step, index as u32)
+                            .unwrap();
+                        if host_prompt == 1 {
+                            session.restore_v1(&saved);
+                            let (restored_observation, restored_decision, restored_actions) =
+                                fake_rows(&session);
+                            let restored_facts =
+                                crate::next_five_public_v59::capture(session.game_state(), actor)
+                                    .unwrap();
+                            let restored_index = restored_actions
+                                .iter()
+                                .position(|candidate| candidate == action)
+                                .expect("restored second native Aura-host row");
+                            assert_eq!(
+                                human_label_v59(
+                                    &restored_observation,
+                                    &restored_actions[restored_index],
+                                    restored_decision.acting_player,
+                                    &restored_facts,
+                                )
+                                .unwrap(),
+                                label
+                            );
+                            session
+                                .step(
+                                    restored_decision.episode_id,
+                                    restored_decision.step,
+                                    restored_index as u32,
+                                )
+                                .unwrap();
+                        }
+                        found_host = true;
+                        break;
+                    }
+                    let pass_index = actions
+                        .iter()
+                        .position(|action| matches!(action, A::Pass { actor } if *actor == decision.acting_player))
+                        .expect("priority pass before Replication resolves");
+                    session
+                        .step(decision.episode_id, decision.step, pass_index as u32)
+                        .unwrap();
                 }
-                let pass_index = actions
-                    .iter()
-                    .position(|action| matches!(action, A::Pass { actor } if *actor == decision.acting_player))
-                    .expect("priority pass before Replication resolves");
-                session
-                    .step(decision.episode_id, decision.step, pass_index as u32)
-                    .unwrap();
+                assert!(found_host, "native Replication Aura-host choice absent");
             }
-            assert!(
-                host_label.is_some(),
-                "native Replication Aura-host choice absent"
+            let copied_aura = crate::card_def::card_id_by_name("Bind the Monster").unwrap();
+            let copies = session
+                .game_state()
+                .objects
+                .iter()
+                .filter(|(_, object)| {
+                    object.zone == Zone::Battlefield
+                        && object.v4.is_token
+                        && object.card_def == copied_aura
+                        && object
+                            .v4
+                            .attached_to
+                            .is_some_and(|link| link.object == host)
+                })
+                .count();
+            assert_eq!(
+                copies, 2,
+                "both Season-expanded Aura copies use the chosen host"
             );
         }
     }
