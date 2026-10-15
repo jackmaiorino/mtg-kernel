@@ -13,6 +13,8 @@ pub(super) mod early_activation_printing;
 pub(super) mod eaten_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
+#[path = "kellan_printing.rs"]
+pub(super) mod kellan_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
 #[path = "rallier_bloom_printing.rs"]
@@ -306,6 +308,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if d.name == "Kellan, Planar Trailblazer" {
+        return kellan_printing::baseline(id, d);
+    }
     if d.name == "Eaten Alive" {
         return eaten_printing::baseline(id, d);
     }
@@ -666,6 +671,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Kellan, Planar Trailblazer" => return kellan_printing::printing(id, d),
         "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter" => {
             return enchantment_hunter_printing::printing(id, d)
         }

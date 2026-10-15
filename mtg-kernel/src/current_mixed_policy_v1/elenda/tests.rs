@@ -1182,3 +1182,8 @@ fn enchantment_hunter_paid_cast_trigger_restore_privacy_elendasession_both_seats
 fn eaten_paid_additional_branches_exile_restore_privacy_elendasession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<ElendaSession>();
 }
+
+#[test]
+fn kellan_paid_upgrades_combat_impulse_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<ElendaSession>();
+}
