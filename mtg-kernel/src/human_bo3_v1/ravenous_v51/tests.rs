@@ -585,3 +585,125 @@ fn actual_paid_human_sacrifice_facts_omit_underlying_face_down_printing_both_sea
         assert_eq!(drain(&mut session, &mut projector).state, finished.state);
     }
 }
+
+#[test]
+fn paid_pole_and_longbow_grants_on_paid_animated_amulet_keep_their_own_labels_and_costs_both_seats()
+{
+    use crate::effect::ExecCtx;
+    use crate::engine::{self, Action, Decision};
+    use crate::event::ravenous_amulet_paid_future_tests::{cast_amulet, finish};
+    use crate::state::Target;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, amulet) = cast_amulet(actor);
+        advance_to_next_main_for(&mut state, actor);
+        // A captured animation is a primitive operand. The Amulet, Equipment
+        // casts, equip payments and granted activation use actual engine paths.
+        let animator = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let mut context = ExecCtx::no_targets(animator, actor);
+        context.ability_source_contract = Some(crate::state::AbilitySourceContractV4::capture(
+            &state, animator,
+        ));
+        context.targets.push(Target::Object(amulet));
+        context
+            .target_contracts
+            .push(crate::state::StackTargetContractV4::capture(
+                &state,
+                Target::Object(amulet),
+            ));
+        crate::standard_creatures_v1::execute(
+            crate::standard_creatures_v1::CreatureEffectV1::ToughCookieAnimate,
+            &context,
+            &mut state,
+        );
+        assert!(engine::object_has_type(
+            &state,
+            amulet,
+            crate::card_def::CardType::Creature
+        ));
+        let mut poles = Vec::new();
+        for (name, equip_cost) in [("Fishing Pole", 2), ("Viridian Longbow", 3)] {
+            let equipment = put(&mut state, actor, name, Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(equipment)).unwrap();
+            finish(&mut state);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = equip_cost;
+            engine::step(&mut state, Action::ActivateAbility(equipment, 0)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(amulet))).unwrap();
+            finish(&mut state);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            assert_eq!(
+                state.objects.get(equipment).v4.attached_to.unwrap().object,
+                amulet
+            );
+            poles.push(equipment);
+        }
+        let pole = poles[0];
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        let mut session = from_state(state, actor);
+        let mut projector = HumanRavenousProjectorV51::new(actor.into());
+        let view = menu(&session, &mut projector);
+        assert!(view.actions.iter().any(|row| row
+            .label
+            .starts_with("Activate Fishing Pole-granted ability")));
+        assert!(view
+            .actions
+            .iter()
+            .any(|row| row.label.starts_with("Activate granted ability")
+                && row.label.contains("1 damage")));
+        submit(&mut session, &mut projector, |label| {
+            label.starts_with("Activate Fishing Pole-granted ability")
+        });
+        let cost = menu(&session, &mut projector);
+        assert!(cost
+            .actions
+            .iter()
+            .any(|row| row.label.starts_with("Tap Fishing Pole")));
+        assert!(!cost
+            .actions
+            .iter()
+            .any(|row| row.label.contains("activation cost: sacrifice")));
+        let snapshot = session.snapshot_v51();
+        submit(&mut session, &mut projector, |label| {
+            label.starts_with("Tap Fishing Pole")
+        });
+        let public = drain(&mut session, &mut projector);
+        assert!(
+            session
+                .inner
+                .ravenous_fixture_state()
+                .objects
+                .get(pole)
+                .tapped
+        );
+        assert_eq!(
+            session
+                .inner
+                .ravenous_fixture_state()
+                .objects
+                .get(pole)
+                .counters
+                .bait,
+            1
+        );
+        assert!(public.state.extensions.ravenous.activations.is_empty());
+        assert_safe(&public);
+        let first = gameplay(&session);
+        session.restore_v51(&snapshot).unwrap();
+        submit(&mut session, &mut projector, |label| {
+            label.starts_with("Tap Fishing Pole")
+        });
+        assert_eq!(drain(&mut session, &mut projector).state, public.state);
+        assert_eq!(gameplay(&session), first);
+    }
+}

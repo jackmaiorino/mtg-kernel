@@ -159,6 +159,7 @@ pub(super) fn label(
             granted_ability,
             ..
         } if crate::ravenous_amulet_v1::definition(source.card_db_id)
+            && matches!(ability_index, 0 | 1)
             && granted_ability.is_none() =>
         {
             if *actor != human {
@@ -186,8 +187,23 @@ pub(super) fn label(
             actor,
             source,
             candidate,
+            cost_kind: crate::engine::CostKind::SacrificeCreatures,
+            remaining: 1,
             ..
-        } if crate::ravenous_amulet_v1::definition(source.card_db_id) => {
+        } if crate::ravenous_amulet_v1::definition(source.card_db_id)
+            && observation
+                .projection
+                .surface
+                .engine_context
+                .pending_activation
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending.source.as_ref() == Some(source)
+                        && pending.controller == *actor
+                        && pending.ability_index == 0
+                        && pending.granted_ability.is_none()
+                }) =>
+        {
             if *actor != human {
                 return Err(Error::NotHumanTurn);
             }
