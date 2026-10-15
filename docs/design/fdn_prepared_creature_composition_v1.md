@@ -2,7 +2,7 @@
 
 This isolated source contains Ravenous through `883639db716137146b788064beafd60ac2cfcedf`,
 Elenda public/observation/backend/Human V52, schema-4 transport from `15faddf602`,
-the mixed numeric V52 prerequisite from `058b4e81ec`, and the five printing
+the mixed numeric V52 prerequisite from `058b4e81ec`, and the seven printing
 implementations below. Native155 owns a separate immutable Ravenous
 source/target. This composition establishes no Rust compilation, runtime,
 Full promotion, model, search or default-branch acceptance.
@@ -15,10 +15,12 @@ Full promotion, model, search or default-branch acceptance.
 | Painful Quandary | `ac01fd839d789d5b9529009b510b4f61db1f5c1e`, provisional444 | 447 | Partial |
 | Drake Hatcher | `f3ffec09fba4d4059bab530f95b3411f0682b613`, provisional444 | 448 | Partial |
 | Drake Token | same genuine frozen dependency, provisional445 | 449 | Full |
+| Bloodthirsty Conqueror | `2faa09e76f55c0e146e1c1772cfb81e090d8a7b6` | 450 | Partial |
+| Doubling Season | same genuine printing registration | 451 | Partial |
 
-The registry has 450 definitions / 258 FDN rows. All 256 predecessor rows retain
+The registry has 452 definitions / 260 FDN rows. All 258 predecessor rows retain
 their exact parsed values and order. The frozen 286-printing inventory is
-prospectively 236 Full, 7 Partial and 43 Missing. Fake442 and Ravenous443 remain
+prospectively 236 Full, 9 Partial and 41 Missing. Fake442 and Ravenous443 remain
 Partial. The external Drake token does not increase that printing Full count.
 The 24 dependency records, original UG/WG inputs and frozen profiles remain fixed.
 The separate dual-Full candidate is not composed here.
@@ -33,8 +35,8 @@ from `7ac6e3b484` are composed. No observation/backend/Human/V3 successor for
 Drake is claimed.
 
 The Elenda reference is a genuine 40-card correctness input using its original
-20 spells and 20 basics. All five candidate decks refuse Full-only resolution.
-Observed: 101 Python tests pass across deck/pool, schema-4 and predecessor V3;
+20 spells and 20 basics. All seven candidate decks refuse Full-only resolution.
+Observed: 102 Python tests pass across deck/pool, schema-4 and predecessor V3;
 pinned formatting, diff and static prefix checks pass. Separate scoped source
 reviews of the new transport and V52 model are clear. Every added Rust fixture
 is uncompiled and unrun. No catalog
@@ -46,11 +48,17 @@ Phoenix also appends to the current creature-type choices and changeling
 materialization after every previous choice. Ordinary generic trigger authority
 does not need another whole-world journal.
 
-The named Drake composition review found a predecessor actor-visible own/known
-hand path without its successor refusal; a narrow source repair is in progress.
-Spinner/Quandary review found their ordinary engine paths already validate
-choices, but direct public resume can bypass those validators; its source repair
-is also in progress. Remaining consumer work includes Phoenix/Spinner/Quandary
+The Drake predecessor actor-visible own/known-hand refusal repair `42f8cb7db3`
+and Spinner/Quandary direct public resume repair `935e310b93` are composed.
+Their genuine paid/restore/privacy fixtures remain unrun. Conqueror and Season
+reuse their existing exact V48/V49 mechanisms with complete 72-field selectors.
+Their registration enables 53 prior genuine test groups. Conqueror's absent
+source path no longer globally selects a successor or records empty automatic
+operations. Retained independent inputs still dictate complete loss batches,
+observers, captures and ownership; arbitrary erasure of an entire original input
+and all dependent records is outside that existing trusted-input boundary.
+
+Remaining consumer work includes Phoenix/Spinner/Quandary
 projections and all successor model/search qualification. Drake's
 effective power/toughness projection refuses its explicit checked-overflow
 boundary; the engine's later unchecked modifiers still need a concrete repair
