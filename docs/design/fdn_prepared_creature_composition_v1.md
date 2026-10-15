@@ -25,7 +25,8 @@ inherit the separate dual-Full source candidate `2d448e0f984c7d84401e27dd271e964
 The external Drake token does not increase that printing Full count.
 The 24 dependency records, original UG/WG inputs and frozen profiles remain fixed.
 This local composition does not qualify or accept either candidate. Native157
-continues to own its separate unchanged dual-Full source/target.
+has completed its separate unchanged dual-Full predecessor, with all actual
+outputs retained after original ownership release.
 
 Composition preserves the old subtype/cost/effect/trigger/event prefixes and
 CardDef/Counters/EngineState fields. Phoenix then Drake append to the subtype
@@ -86,10 +87,11 @@ supplements. Wildwood source `d2f22e0f3f` adds the actual variable-cost route,
 native X choice and captured stack mana value while retaining its existing
 single entry operation. Their genuine Rust fixtures remain uncompiled and
 unrun. Broader covered-ID completeness and all successor
-model/search qualification remain open. Drake's
-effective power/toughness projection refuses its explicit checked-overflow
-boundary; the engine's later unchecked modifiers still need a concrete repair
-before relying on extreme arithmetic cases. Original source notes retain their
+model/search qualification remain open. The shared checked native P/T query,
+boost/SBA refusal and Fake pre-pop repair through `9f0f1835fb` are composed.
+Their scoped source reviews are clear; the new Rust fixtures remain unrun.
+The direct legacy getter and other P/T-writer limits remain explicit in
+`fdn_checked_pt_source.md`. Original source notes retain their
 provisional IDs; the table above supplies the composed mapping.
 
 The merge preserves both public Full reference-reset families and all seven
@@ -100,5 +102,17 @@ registry has 260 rows. The v87 444-definition identity and live canaries are
 predecessor evidence, not an identity for this 452-definition source. A later
 actual export must establish the successor before profile/runtime publication.
 Pinned formatting/diff and all 131 affected Python tests pass after this
-composition. Native157 still owns the separate unchanged 444-definition source
-and target; its result cannot qualify this 452-definition composition.
+composition. Native157 passed199 tests/all3strict/freshV3/paired natural games
+at the separate 444-definition predecessor. Its original collector omitted the
+separately retained focused stream; reconciliation against all9 unchanged C/E
+outputs establishes that bounded result without rerunning native work. The
+original collector receipt remains preserved. That run does not cover the new
+Fake boundary repair, which is published in draft PR279 at `cca50c1ec4`, or
+qualify this 452-definition composition.
+
+Thin-root repair `ebff8641cf` is composed with a scoped source-clear review.
+It decodes the five actual inherited producer shapes and authenticates their
+canonical selector/digest before expanding meaning. The previous all-catalog
+refusal and authored paid/restore/negative fixtures remain runtime-unqualified.
+The separate Full repair is an ancestor of this composition, permitting the
+next supported remote fast-forward after its original job and output custody.
