@@ -507,10 +507,12 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     } = def;
 
     assert!(
-        starting_life_self_bonuses_v1.is_empty()
-            && source_type_hexproof_v1.is_none()
-            && other_controlled_nontoken_death_v1.is_none(),
-        "starting-life, source-type hexproof and controlled-death statics require typed successors"
+        starting_life_self_bonuses_v1.is_empty() && source_type_hexproof_v1.is_none(),
+        "starting-life and source-type hexproof statics require their typed meaning successor"
+    );
+    assert!(
+        other_controlled_nontoken_death_v1.is_none(),
+        "controlled-other-nontoken death reveal requires its precise successor"
     );
 
     assert!(

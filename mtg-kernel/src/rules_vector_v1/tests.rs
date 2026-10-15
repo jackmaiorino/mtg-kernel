@@ -68,6 +68,8 @@ fn supported_v1_card_ids() -> Vec<u16> {
                 || def.game_outcome_protection_v1.is_some()
                 || def.as_enters_color_choice_v1.is_some()
                 || def.chosen_color_creature_boost_v1.is_some()
+                || !def.starting_life_self_bonuses_v1.is_empty()
+                || def.source_type_hexproof_v1.is_some()
                 || def.other_controlled_nontoken_death_v1.is_some()
         })
         .map(|(id, _)| id as u16)
@@ -83,6 +85,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
         )) {
+            expected.push(card_id("Elenda, Saint of Dusk"));
             expected.push(card_id("Spinner of Souls"));
         }
         assert_eq!(excluded, expected);
@@ -187,6 +190,18 @@ fn registered_banner_still_refuses_frozen_v1_publication() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
+#[should_panic(
+    expected = "starting-life and source-type hexproof statics require their typed meaning successor"
+)]
+fn registered_elenda_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Elenda, Saint of Dusk"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 #[should_panic(expected = "controlled-other-nontoken death reveal requires its precise successor")]
 fn registered_spinner_still_refuses_frozen_v1_extraction() {
     card_rules(card_id("Spinner of Souls"));
@@ -197,12 +212,21 @@ fn registered_spinner_still_refuses_frozen_v1_extraction() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-fn spinner_is_excluded_only_from_test_audit_and_complete_public_table_still_refuses() {
+fn elenda_and_spinner_are_excluded_only_from_test_audit_and_public_table_still_refuses() {
+    let elenda = card_id("Elenda, Saint of Dusk");
     let spinner = card_id("Spinner of Souls");
+    assert!(!CARD_DEFS[usize::from(elenda)]
+        .starting_life_self_bonuses_v1
+        .is_empty());
+    assert!(CARD_DEFS[usize::from(elenda)]
+        .source_type_hexproof_v1
+        .is_some());
     assert!(CARD_DEFS[usize::from(spinner)]
         .other_controlled_nontoken_death_v1
         .is_some());
-    assert!(!supported_v1_card_ids().contains(&spinner));
+    let supported = supported_v1_card_ids();
+    assert!(!supported.contains(&elenda));
+    assert!(!supported.contains(&spinner));
     // The production table still visits all definitions and refuses at its
     // first unsupported predecessor. The test-only subset cannot publish it.
     assert!(std::panic::catch_unwind(build_table).is_err());
