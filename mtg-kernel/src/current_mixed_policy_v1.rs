@@ -1,6 +1,7 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
 mod elenda;
+mod kellan_public_operands;
 mod network;
 mod normalize;
 mod numeric;
@@ -83,6 +84,8 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/legendary_printing.rs"),
             include_str!("current_mixed_policy_v1/early_activation_printing.rs"),
             include_str!("current_mixed_policy_v1/rallier_bloom_printing.rs"),
+            include_str!("current_mixed_policy_v1/kellan_printing.rs"),
+            include_str!("current_mixed_policy_v1/kellan_public_operands.rs"),
             include_str!("arahbo_v1.rs"),
             include_str!("zul_ashur_v1.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),
@@ -170,6 +173,12 @@ pub fn feature_identity() -> String {
             include_str!("policy_surface_v5.rs"),
             include_str!("ravenous_public_v51.rs"),
             include_str!("fake_your_own_death_v50/public_v50.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("state.rs"),
+            include_str!("event.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

@@ -12,6 +12,7 @@ mod eaten;
 mod enchantment_hunter;
 mod entry_attack;
 mod faebloom;
+mod kellan;
 mod memorial_panda;
 mod rallier_bloom;
 mod tyrant_herald;
@@ -551,4 +552,17 @@ fn faebloom_paid_instant_reflexive_season_restore_privacy_fake_both_seats() {
 #[test]
 fn faebloom_paid_instant_reflexive_season_restore_privacy_ravenous_both_seats() {
     paid_faebloom::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_kellan<O: Owner>() {
+    kellan::paid::<O>();
+    kellan::privacy::<O>();
+}
+#[test]
+fn kellan_paid_upgrades_combat_impulse_restore_privacy_fake_both_seats() {
+    paid_kellan::<FakeSession>();
+}
+#[test]
+fn kellan_paid_upgrades_combat_impulse_restore_privacy_ravenous_both_seats() {
+    paid_kellan::<RavenousSession>();
 }

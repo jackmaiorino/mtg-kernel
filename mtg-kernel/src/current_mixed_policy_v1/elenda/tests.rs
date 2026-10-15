@@ -1187,3 +1187,8 @@ fn eaten_paid_additional_branches_exile_restore_privacy_elendasession_both_seats
 fn faebloom_paid_instant_reflexive_season_restore_privacy_elendasession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_faebloom::<ElendaSession>();
 }
+
+#[test]
+fn kellan_paid_upgrades_combat_impulse_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<ElendaSession>();
+}
