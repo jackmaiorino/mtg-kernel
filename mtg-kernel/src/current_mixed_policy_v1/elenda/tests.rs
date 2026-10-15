@@ -401,3 +401,223 @@ fn genuine_paid_conqueror_and_season_inherit_mandatory_printing_roots_in_v52_bot
         }
     }
 }
+
+fn ordinary_printing_count(packet: &Packet) -> usize {
+    let field = "registered_permanent_printing";
+    let rows = packet.state().rows();
+    rows.iter()
+        .enumerate()
+        .filter(|(at, row)| {
+            row[0] == 9
+                && rows.get(at + 1..at + 1 + field.len()).is_some_and(|bytes| {
+                    bytes
+                        .iter()
+                        .zip(field.bytes())
+                        .all(|(r, b)| r[0] == 8 && r[1] == u16::from(b))
+                })
+        })
+        .count()
+}
+#[test]
+fn genuine_paid_frenzied_banner_inherit_printing_cast_color_mana_and_owned_restore_v52_both_seats()
+{
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = state(actor, "Lightning Bolt", 30);
+        let goblin = put(&mut raw, actor, "Frenzied Goblin", Zone::Hand);
+        let next_goblin = put(&mut raw, actor, "Frenzied Goblin", Zone::Hand);
+        let banner = put(&mut raw, actor, "Heraldic Banner", Zone::Hand);
+        let mountain = put(&mut raw, actor, "Mountain", Zone::Battlefield);
+        let forests = (0..3)
+            .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+            .collect::<Vec<_>>();
+        let mut session = own(raw);
+        let original = session.encode(expected(&session)).unwrap();
+        assert_eq!(ordinary_printing_count(original.packet()), 2);
+        let current = session.inner.decision_v52().unwrap();
+        assert!(current.observation().common.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Frenzied(v)if v.roots.len()==1)));
+        assert!(current.observation().common.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Banner(v)if v.roots.len()==4)));
+        mana(&mut session, mountain);
+        cast(&mut session, goblin);
+        assert_eq!(
+            session.inner.fixture_state_v52().players[actor.index()].mana_pool,
+            [0; 6]
+        );
+        assert!(
+            session
+                .inner
+                .fixture_state_v52()
+                .objects
+                .get(mountain)
+                .tapped
+        );
+        assert_eq!(
+            session.inner.fixture_state_v52().objects.get(goblin).zone,
+            Zone::Stack
+        );
+        drain(&mut session);
+        assert_eq!(
+            session.inner.fixture_state_v52().objects.get(goblin).zone,
+            Zone::Battlefield
+        );
+        for id in &forests {
+            mana(&mut session, *id);
+        }
+        let current = session.inner.decision_v52().unwrap();
+        let index = current
+            .actions()
+            .iter()
+            .position(
+                |a| matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==banner.0),
+            )
+            .unwrap();
+        let decision = session.encode(current.expected()).unwrap();
+        assert_eq!(ordinary_printing_count(decision.packet()), 2);
+        let mut erased = decision.clone();
+        erased.packet.state = super::super::NumericTree::encode(&json!({})).unwrap();
+        let before = gameplay(&session);
+        assert!(matches!(
+            session.apply(&erased, index as u32),
+            Err(Error::StaleBinding)
+        ));
+        assert_eq!(gameplay(&session), before);
+        session.apply(&decision, index as u32).unwrap();
+        assert_eq!(
+            session.inner.fixture_state_v52().players[actor.index()].mana_pool,
+            [0; 6]
+        );
+        assert!(forests
+            .iter()
+            .all(|id| session.inner.fixture_state_v52().objects.get(*id).tapped));
+        assert_eq!(
+            session.inner.fixture_state_v52().objects.get(banner).zone,
+            Zone::Stack
+        );
+        let paid = session.snapshot();
+        let old = session.encode(expected(&session)).unwrap();
+        let mut outcome = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                session.restore(&paid).unwrap();
+                let before = gameplay(&session);
+                assert!(matches!(session.apply(&old, 0), Err(Error::StaleBinding)));
+                assert_eq!(gameplay(&session), before);
+                assert_eq!(
+                    session.encode(expected(&session)).unwrap().packet(),
+                    old.packet()
+                );
+            }
+            let mut chosen = 0;
+            for _ in 0..32 {
+                let world = session.inner.fixture_state_v52();
+                if world.stack.is_empty()
+                    && world.engine.pending_effect.is_none()
+                    && !crate::linked_aura_operation_v1::has_banner_pending(world)
+                {
+                    break;
+                }
+                let current = session.inner.decision_v52().unwrap();
+                if current
+                    .actions()
+                    .iter()
+                    .any(|a| matches!(a, ActionSemanticV1::ChooseEntryColorV36 { .. }))
+                {
+                    assert_eq!(world.objects.get(banner).zone, Zone::Stack);
+                    act(&mut session, |a| {
+                        matches!(
+                            a,
+                            ActionSemanticV1::ChooseEntryColorV36 {
+                                color: crate::mana::ManaColor::R,
+                                ..
+                            }
+                        )
+                    });
+                    chosen += 1;
+                } else {
+                    act(&mut session, |a| matches!(a, ActionSemanticV1::Pass { .. }));
+                }
+            }
+            assert_eq!(chosen, 1);
+            assert_eq!(
+                session.inner.fixture_state_v52().objects.get(banner).zone,
+                Zone::Battlefield
+            );
+            assert_eq!(
+                session
+                    .inner
+                    .fixture_state_v52()
+                    .objects
+                    .get(banner)
+                    .controller,
+                actor
+            );
+            assert_eq!(
+                session
+                    .inner
+                    .fixture_state_v52()
+                    .objects
+                    .get(banner)
+                    .v4
+                    .chosen_color,
+                Some(crate::mana::ManaColor::R)
+            );
+            assert_eq!(
+                crate::engine::effective_power(session.inner.fixture_state_v52(), goblin),
+                2
+            );
+            let stack = session.inner.fixture_state_v52().stack.clone();
+            mana(&mut session, banner);
+            assert_eq!(session.inner.fixture_state_v52().stack, stack);
+            assert!(session.inner.fixture_state_v52().objects.get(banner).tapped);
+            assert_eq!(
+                session.inner.fixture_state_v52().players[actor.index()].mana_pool
+                    [crate::mana::ManaColor::R.pool_index()],
+                1
+            );
+            cast(&mut session, next_goblin);
+            assert_eq!(
+                session.inner.fixture_state_v52().players[actor.index()].mana_pool,
+                [0; 6]
+            );
+            drain(&mut session);
+            assert_eq!(
+                session
+                    .inner
+                    .fixture_state_v52()
+                    .objects
+                    .get(next_goblin)
+                    .zone,
+                Zone::Battlefield
+            );
+            let complete = gameplay(&session);
+            if let Some(previous) = &outcome {
+                assert_eq!(&complete, previous);
+            } else {
+                outcome = Some(complete);
+            }
+        }
+    }
+}
+#[test]
+fn frenzied_banner_printing_supplements_do_not_disclose_independent_hidden_hands_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for known in [false, true] {
+            let make = |hidden| {
+                let mut raw = state(actor, hidden, 30);
+                if known {
+                    put(&mut raw, actor, "Frenzied Goblin", Zone::Hand);
+                    put(&mut raw, actor, "Heraldic Banner", Zone::Hand);
+                }
+                own(raw)
+            };
+            let a = make("Frenzied Goblin");
+            let b = make("Heraldic Banner");
+            let pa = a.encode(expected(&a)).unwrap();
+            let pb = b.encode(expected(&b)).unwrap();
+            assert_eq!(pa.packet(), pb.packet());
+            assert_eq!(
+                ordinary_printing_count(pa.packet()),
+                if known { 2 } else { 0 }
+            );
+        }
+    }
+}

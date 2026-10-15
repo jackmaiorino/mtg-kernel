@@ -1150,4 +1150,394 @@ mod paid {
         run!(FakeSession, from_fake_v50_fixture_state);
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
+
+    // A complete local CardDef fixture. Non-Copy optional programs are absent
+    // in both admitted recipes; no live catalog entry is mutated.
+    fn ordinary_recipe(id: u16) -> crate::card_def::CardDef {
+        let d = &crate::card_def::CARD_DEFS[usize::from(id)];
+        crate::card_def::CardDef {
+            name: d.name,
+            capability: d.capability,
+            cost: d.cost,
+            generic_cost_reduction: None,
+            ward_cost: None,
+            spell_cannot_be_countered: d.spell_cannot_be_countered,
+            records_mana_spent: d.records_mana_spent,
+            equipment: None,
+            types: d.types,
+            subtypes: d.subtypes,
+            supertypes: d.supertypes,
+            power: d.power,
+            toughness: d.toughness,
+            starting_loyalty: None,
+            enters_with_plus_one_counters: None,
+            controlled_counter_keyword: None,
+            game_outcome_protection_v1: None,
+            controlled_creature_grant: None,
+            is_land: d.is_land,
+            produces_mana: d.produces_mana,
+            colors: d.colors,
+            target_spec: d.target_spec,
+            keywords: d.keywords,
+            spell_effect: d.spell_effect,
+            mana_ability: d.mana_ability,
+            alt_cost: None,
+            kicker_cost: None,
+            additional_cost: None,
+            flashback: None,
+            activated_abilities: d.activated_abilities,
+            plot_cost: None,
+            madness_cost: None,
+            mode2: None,
+            mode3: None,
+            additional_modes: d.additional_modes,
+            kicked_target_spec: None,
+            is_token: d.is_token,
+            escape: None,
+            mana_ability_choices: d.mana_ability_choices,
+            enters_battlefield_tapped: d.enters_battlefield_tapped,
+            mana_ability_def: None,
+            minimum_blockers: d.minimum_blockers,
+            omen: None,
+            mana_value: d.mana_value,
+            mana_ability_includes_chosen_color: d.mana_ability_includes_chosen_color,
+            as_enters_choose_color_other_than: None,
+            additional_mana_abilities: d.additional_mana_abilities,
+            object_name: d.object_name,
+            enters_battlefield_tapped_unless: None,
+            attachment: None,
+            transform_face: None,
+            saga: None,
+            optional_additional_cost: None,
+            changeling: d.changeling,
+            bestow: None,
+            delve: d.delve,
+            adventure: None,
+            cant_be_blocked_by_monarchs_creatures: d.cant_be_blocked_by_monarchs_creatures,
+            conditional_tap_yield: None,
+            enters_tapped_unless_controller: None,
+            additional_mana_ability_conditions: d.additional_mana_ability_conditions,
+            restricted_mana_abilities: d.restricted_mana_abilities,
+            animation: None,
+            activated_ability_generic_reductions: d.activated_ability_generic_reductions,
+            combat_static_rules: d.combat_static_rules,
+            as_enters_color_choice_v1: d.as_enters_color_choice_v1,
+            chosen_color_creature_boost_v1: d.chosen_color_creature_boost_v1,
+            damage_replacement_v1: None,
+            token_counter_replacement_v48: None,
+            starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
+            source_type_hexproof_v1: None,
+            other_controlled_nontoken_death_v1: None,
+        }
+    }
+
+    #[test]
+    fn frenzied_banner_closed_printings_supply_exact_cast_entry_and_mana_operands() {
+        use crate::mana::ManaColor;
+        for (name, cost, kind, power, subtypes) in [
+            (
+                "Frenzied Goblin",
+                json!({"generic":0,"pips":[{"Colored":"R"}],"x_count":0}),
+                "Creature",
+                Some(1),
+                json!(["Goblin", "Berserker"]),
+            ),
+            (
+                "Heraldic Banner",
+                json!({"generic":3,"pips":[],"x_count":0}),
+                "Artifact",
+                None,
+                json!([]),
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let actual = roots::registered_permanent_printing(id).unwrap().unwrap();
+            assert_eq!(
+                roots::attack_or_banner_printing(id, &ordinary_recipe(id)).unwrap(),
+                Some(actual.clone())
+            );
+            let printing = &actual["registered_permanent_printing"];
+            let card = &printing["characteristics"];
+            assert_eq!(card["types"], json!([kind]));
+            assert_eq!(card["subtypes"], subtypes);
+            assert_eq!(
+                card["colors"],
+                if name == "Frenzied Goblin" {
+                    json!(["R"])
+                } else {
+                    json!([])
+                }
+            );
+            assert_eq!(card["supertypes"], json!([]));
+            assert_eq!(card["power"], json!(power));
+            assert_eq!(card["toughness"], json!(power));
+            assert_eq!(card["ordered_keywords"], json!([]));
+            assert_eq!(
+                card["mana_value"],
+                if name == "Frenzied Goblin" { 1 } else { 3 }
+            );
+            assert_eq!(card["minimum_blockers"], 1);
+            for key in ["token", "land", "enters_tapped"] {
+                assert_eq!(card[key], false);
+            }
+            assert_eq!(card["printed_activated_abilities"], 0);
+            let cast = &printing["ordered_cast_roots"][0];
+            assert_eq!(printing["ordered_cast_roots"].as_array().unwrap().len(), 1);
+            assert_eq!(cast["ordered_costs"], json!([{"PrintedMana":cost}]));
+            assert_eq!(cast["method"], "normal");
+            assert_eq!(cast["ordinary_route"], "Hand");
+            assert_eq!(cast["ordinary_origin"], json!(Zone::Hand));
+            assert_eq!(cast["targets"], "None");
+            assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+            assert_eq!(
+                cast["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            assert_eq!(
+                cast["physical_departure"],
+                "BattlefieldOnResolutionOtherwiseGraveyard"
+            );
+            assert_eq!(cast["zone_replacements_still_apply"], true);
+            if name == "Heraldic Banner" {
+                assert_eq!(card["printed_mana_abilities"], 1);
+                let entry = &printing["ordered_entry_replacements"][0];
+                assert_eq!(
+                    entry["choices"],
+                    json!([
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G
+                    ])
+                );
+                assert_eq!(entry["chooser"], "ProposedBattlefieldController");
+                assert_eq!(entry["before_original_battlefield_move"], true);
+                assert_eq!(entry["all_batch_choices_before_any_entry"], true);
+                assert_eq!(entry["fresh_choice_each_entering_incarnation"], true);
+                let mana = &printing["ordered_mana_roots"][0];
+                assert_eq!(mana["source_zone"], json!(Zone::Battlefield));
+                assert_eq!(mana["ordered_costs"], json!(["TapOriginalSource"]));
+                assert_eq!(mana["recipient"], "CurrentSourceController");
+                assert_eq!(mana["output"], "CurrentIncarnationChosenWubrgColor");
+                assert_eq!(mana["spending_restriction"], "Unrestricted");
+                assert_eq!(mana["amount"], 1);
+                assert_eq!(mana["uses_stack"], false);
+            } else {
+                assert_eq!(card["printed_mana_abilities"], 0);
+                assert_eq!(printing["ordered_entry_replacements"], json!([]));
+                assert_eq!(printing["ordered_mana_roots"], json!([]));
+            }
+            macro_rules! reject {
+                ($field:ident,$value:expr)=>{{
+                    let mut changed=ordinary_recipe(id); changed.$field=$value;
+                    assert!(matches!(roots::attack_or_banner_printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));
+                }};
+            }
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(subtypes, &[crate::card_def::Subtype::Human]);
+            reject!(supertypes, &[crate::card_def::Supertype::Legendary]);
+            reject!(colors, &[ManaColor::G]);
+            reject!(power, Some(7));
+            reject!(toughness, Some(8));
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+
+            reject!(target_spec, crate::card_def::TargetSpec::Creature);
+            reject!(
+                alt_cost,
+                Some(crate::card_def::AltCostDef {
+                    components: &[],
+                    condition: crate::card_def::AltCostCondition::Always
+                })
+            );
+            reject!(
+                mode2,
+                Some(crate::card_def::ModeDef {
+                    target_spec: crate::card_def::TargetSpec::None,
+                    effect: || crate::effect::EffectOp::Sequence(vec![])
+                })
+            );
+            reject!(spell_effect, || None);
+            reject!(
+                activated_abilities,
+                crate::card_def::CARD_DEFS
+                    [usize::from(crate::card_def::card_id_by_name("Masked Meower").unwrap())]
+                .activated_abilities
+            );
+            reject!(
+                combat_static_rules,
+                crate::card_def::CombatStaticRulesDef {
+                    must_attack_each_combat: true,
+                    cant_be_blocked_by_subtype: None
+                }
+            );
+            reject!(
+                source_type_hexproof_v1,
+                Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+            );
+            reject!(other_controlled_nontoken_death_v1,Some(crate::card_def::OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom));
+            reject!(produces_mana, &[ManaColor::G]);
+            reject!(
+                mana_ability_includes_chosen_color,
+                name != "Heraldic Banner"
+            );
+            reject!(
+                as_enters_color_choice_v1,
+                if name == "Heraldic Banner" {
+                    None
+                } else {
+                    Some(crate::card_def::AsEntersColorChoiceDefV1::AnyWubrg)
+                }
+            );
+        }
+        // Independent family bodies are still complete ordered meanings.
+        let f = crate::rules_meaning_frenzied_goblin_v1::meaning(
+            &crate::rules_meaning_frenzied_goblin_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Frenzied Goblin").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(f.payment_optional_at_resolution && f.target_mandatory_at_placement_before_payment);
+        assert_eq!(f.payment_colored, vec![ManaColor::R]);
+        use crate::rules_meaning_heraldic_banner_v1 as b;
+        for root in [
+            b::RootV1::PermanentSpell,
+            b::RootV1::AsEntersColor,
+            b::RootV1::ChosenColorAnthem,
+            b::RootV1::ChosenColorMana,
+        ] {
+            let m = b::meaning(
+                &b::live_selector().unwrap(),
+                crate::card_def::card_id_by_name("Heraldic Banner").unwrap(),
+                root,
+            )
+            .unwrap();
+            assert_eq!((m.rule.power_delta, m.rule.toughness_delta), (1, 0));
+            assert!(
+                m.rule.choice_before_entry
+                    && m.rule.mana_cost_is_tap_self
+                    && m.rule.resolves_without_stack
+            );
+        }
+    }
+
+    #[test]
+    fn genuine_paid_frenzied_banner_covered_roots_pay_enter_choose_mana_and_restore_v50_v51_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident)=>{
+                for actor in [PlayerId::P0,PlayerId::P1] {
+                    let mut raw=state(actor);
+                    let goblin=put(&mut raw,actor,"Frenzied Goblin",Zone::Hand);
+                    let next_goblin=put(&mut raw,actor,"Frenzied Goblin",Zone::Hand);
+                    let banner=put(&mut raw,actor,"Heraldic Banner",Zone::Hand);
+                    let mountain=put(&mut raw,actor,"Mountain",Zone::Battlefield);
+                    let forests=(0..3).map(|_|put(&mut raw,actor,"Forest",Zone::Battlefield)).collect::<Vec<_>>();
+                    let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                    let e=expected(&session.inner);
+                    let (public,_,_)=session.inner.$input(e,e.acting_player).unwrap();
+                    assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Frenzied(v)if v.roots.len()==1)));
+                    assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Banner(v)if v.roots.len()==4)));
+                    assert_eq!(numeric_field_count(session.encode(e).unwrap().packet.state(),"registered_permanent_printing"),2);
+                    act!(session,$input,|a|mana(a,mountain));
+                    act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==goblin.0));
+                    assert_eq!(session.inner.$world().players[actor.index()].mana_pool,[0;6]);
+                    assert!(session.inner.$world().objects.get(mountain).tapped);
+                    for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                    assert_eq!(session.inner.$world().objects.get(goblin).zone,Zone::Battlefield);
+                    for id in &forests {act!(session,$input,|a|mana(a,*id));}
+                    let e=expected(&session.inner);let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                    let index=actions.iter().position(|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==banner.0)).unwrap();
+                    let decision=session.encode(e).unwrap();
+                    assert_eq!(numeric_field_count(decision.packet.state(),"registered_permanent_printing"),2);
+                    let mut erased=decision.clone();erased.packet.state=NumericTree::encode(&json!({})).unwrap();
+                    let before=session.inner.privileged_core_environment_hash();
+                    assert!(matches!(session.apply(&erased,index as u32),Err(Error::StaleBinding)));
+                    assert_eq!(session.inner.privileged_core_environment_hash(),before);
+                    let mut reference=session.inner.clone();let r=reference.step(e.episode_id,e.step,index as u32).unwrap();
+                    assert_eq!(session.apply(&decision,index as u32).unwrap(),r);assert_eq!(session.inner.$world(),reference.$world());
+                    assert_eq!(session.inner.$world().objects.get(banner).zone,Zone::Stack);
+                    assert_eq!(session.inner.$world().players[actor.index()].mana_pool,[0;6]);
+                    assert!(forests.iter().all(|id|session.inner.$world().objects.get(*id).tapped));
+                    let paid=session.snapshot();let original=session.encode(expected(&session.inner)).unwrap();let mut outcome=None;
+                    for replay in 0..2 {
+                        if replay!=0 {session.restore(&paid).unwrap();let unchanged=session.inner.privileged_core_environment_hash();assert!(matches!(session.apply(&original,0),Err(Error::StaleBinding)));assert_eq!(session.inner.privileged_core_environment_hash(),unchanged);assert_eq!(session.encode(expected(&session.inner)).unwrap().packet,original.packet);}
+                        let mut chosen=0;
+                        for _ in 0..32 {
+                            let world=session.inner.$world();
+                            if world.stack.is_empty() && world.engine.pending_effect.is_none() && !crate::linked_aura_operation_v1::has_banner_pending(world){break;}
+                            let e=expected(&session.inner);let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                            if actions.iter().any(|a|matches!(a,ActionSemanticV1::ChooseEntryColorV36{..})) {
+                                assert_eq!(world.objects.get(banner).zone,Zone::Stack);
+                                act!(session,$input,|a|matches!(a,ActionSemanticV1::ChooseEntryColorV36{color:crate::mana::ManaColor::R,..}));chosen+=1;
+                            }else{act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                        }
+                        assert_eq!(chosen,1);
+                        assert_eq!(session.inner.$world().objects.get(banner).zone,Zone::Battlefield);
+                        assert_eq!(session.inner.$world().objects.get(banner).controller,actor);
+                        assert_eq!(session.inner.$world().objects.get(banner).v4.chosen_color,Some(crate::mana::ManaColor::R));
+                        assert_eq!(crate::engine::effective_power(session.inner.$world(),goblin),2);
+                        let stack=session.inner.$world().stack.clone();
+                        act!(session,$input,|a|mana(a,banner));
+                        assert_eq!(session.inner.$world().stack,stack);
+                        assert!(session.inner.$world().objects.get(banner).tapped);
+                        assert_eq!(session.inner.$world().players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()],1);
+                        act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==next_goblin.0));
+                        assert_eq!(session.inner.$world().players[actor.index()].mana_pool,[0;6]);
+                        for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                        assert_eq!(session.inner.$world().objects.get(next_goblin).zone,Zone::Battlefield);
+                        let complete=(session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                        if let Some(previous)=&outcome {assert_eq!(&complete,previous);}else{outcome=Some(complete);}
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+    }
+
+    #[test]
+    fn frenzied_banner_supplements_follow_actor_knowledge_and_ignore_independent_hidden_hands_v50_v51_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    for known in [false, true] {
+                        let mut raw = state(actor);
+                        if known {
+                            put(&mut raw, actor, "Frenzied Goblin", Zone::Hand);
+                            put(&mut raw, actor, "Heraldic Banner", Zone::Hand);
+                        }
+                        let hidden = put(&mut raw, actor.opponent(), "Frenzied Goblin", Zone::Hand);
+                        let mut other = raw.clone();
+                        other.objects.get_mut(hidden).card_def =
+                            crate::card_def::card_id_by_name("Heraldic Banner").unwrap();
+                        other.objects.get_mut(hidden).name = "Heraldic Banner".into();
+                        let a = $session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        let b = $session::from_session(FastActorSessionV1::$from(other)).unwrap();
+                        let pa = a.encode(expected(&a.inner)).unwrap();
+                        let pb = b.encode(expected(&b.inner)).unwrap();
+                        assert_eq!(pa.packet, pb.packet);
+                        assert_eq!(
+                            numeric_field_count(pa.packet.state(), "registered_permanent_printing"),
+                            if known { 2 } else { 0 }
+                        );
+                    }
+                }
+            };
+        }
+        run!(FakeSession, from_fake_v50_fixture_state);
+        run!(RavenousSession, from_ravenous_v51_fixture_state);
+    }
 }

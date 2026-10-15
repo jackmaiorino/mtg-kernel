@@ -608,6 +608,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Bloodthirsty Conqueror" => {
             if !crate::bloodthirsty_conqueror_v49::owns_definition(id) {
                 return Err(Error::UnsupportedPrintedRoot(id));
@@ -665,6 +666,270 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
             other_cast_permissions_require_current_candidate_authority:true,
             zone_replacements_still_apply:true,
         }]
+    }})))
+}
+
+/// These two older family meanings describe the attack/entry rules, not the
+/// immutable ordinary printing. This supplement is mandatory even for covered
+/// IDs, and admits exactly the closed native recipes below.
+#[derive(serde::Serialize)]
+struct BannerEntryReplacement {
+    choices: [crate::mana::ManaColor; 5],
+    chooser: EntryChooser,
+    before_original_battlefield_move: bool,
+    all_batch_choices_before_any_entry: bool,
+    fresh_choice_each_entering_incarnation: bool,
+}
+#[derive(serde::Serialize)]
+enum EntryChooser {
+    ProposedBattlefieldController,
+}
+#[derive(serde::Serialize)]
+struct BannerManaRoot {
+    source_zone: Zone,
+    ordered_costs: [PrintedManaAbilityCost; 1],
+    recipient: PrintedManaRecipient,
+    output: PrintedManaOutput,
+    amount: u8,
+    chosen_color_requires_authenticated_current_incarnation: bool,
+    requires_active_effective_printed_ability: bool,
+    creature_tap_timing_uses_current_effective_form_and_haste: bool,
+    availability_requires_current_engine_mana_window: bool,
+    spending_restriction: PrintedManaRestriction,
+    uses_stack: bool,
+}
+#[derive(serde::Serialize)]
+enum PrintedManaAbilityCost {
+    TapOriginalSource,
+}
+#[derive(serde::Serialize)]
+enum PrintedManaRecipient {
+    CurrentSourceController,
+}
+#[derive(serde::Serialize)]
+enum PrintedManaOutput {
+    CurrentIncarnationChosenWubrgColor,
+}
+#[derive(serde::Serialize)]
+enum PrintedManaRestriction {
+    Unrestricted,
+}
+pub(super) fn attack_or_banner_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{
+        AsEntersColorChoiceDefV1, ChosenColorCreatureBoostDefV1, Keywords, Subtype,
+    };
+    use crate::mana::{Cost, ManaColor, Pip};
+    let banner = match d.name {
+        "Frenzied Goblin" => false,
+        "Heraldic Banner" => true,
+        _ => return Ok(None),
+    };
+    let cost = if banner {
+        Cost {
+            generic: 3,
+            pips: &[],
+            x_count: 0,
+        }
+    } else {
+        Cost {
+            generic: 0,
+            pips: &[Pip::Colored(ManaColor::R)],
+            x_count: 0,
+        }
+    };
+    // Every one of the current72 CardDef fields is admitted exactly or refused.
+    // Name only chooses a recipe; it never authenticates a different program.
+    if d.object_name != d.name
+        || d.capability != CardCapability::Full
+        || d.cost != cost
+        || d.mana_value != if banner { 3 } else { 1 }
+        || d.types
+            != if banner {
+                &[CardType::Artifact][..]
+            } else {
+                &[CardType::Creature][..]
+            }
+        || d.subtypes
+            != if banner {
+                &[][..]
+            } else {
+                &[Subtype::Goblin, Subtype::Berserker][..]
+            }
+        || d.colors != if banner { &[][..] } else { &[ManaColor::R][..] }
+        || !d.supertypes.is_empty()
+        || d.power != if banner { None } else { Some(1) }
+        || d.toughness != if banner { None } else { Some(1) }
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.minimum_blockers != 1
+        || d.target_spec != TargetSpec::None
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || !d.activated_abilities.is_empty()
+        || d.generic_cost_reduction.is_some()
+        || d.ward_cost.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.equipment.is_some()
+        || d.attachment.is_some()
+        || d.starting_loyalty.is_some()
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
+        || d.game_outcome_protection_v1.is_some()
+        || d.alt_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.flashback.is_some()
+        || d.plot_cost.is_some()
+        || d.madness_cost.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.kicked_target_spec.is_some()
+        || d.escape.is_some()
+        || d.enters_battlefield_tapped
+        || d.mana_ability_def.is_some()
+        || d.omen.is_some()
+        || d.mana_ability_includes_chosen_color != banner
+        || d.as_enters_choose_color_other_than.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.transform_face.is_some()
+        || d.saga.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.changeling
+        || d.bestow.is_some()
+        || d.delve
+        || d.adventure.is_some()
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.conditional_tap_yield.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || !d.additional_mana_ability_conditions.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || d.animation.is_some()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
+        || d.as_enters_color_choice_v1
+            != if banner {
+                Some(AsEntersColorChoiceDefV1::AnyWubrg)
+            } else {
+                None
+            }
+        || d.chosen_color_creature_boost_v1
+            != if banner {
+                Some(ChosenColorCreatureBoostDefV1 {
+                    power: 1,
+                    toughness: 0,
+                })
+            } else {
+                None
+            }
+        || d.damage_replacement_v1.is_some()
+        || d.token_counter_replacement_v48.is_some()
+        || !d.starting_life_self_bonuses_v1.is_empty()
+        || d.source_type_hexproof_v1.is_some()
+        || d.other_controlled_nontoken_death_v1.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if banner {
+        use crate::rules_meaning_heraldic_banner_v1 as meaning;
+        let selector = meaning::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+        for root in [
+            meaning::RootV1::PermanentSpell,
+            meaning::RootV1::AsEntersColor,
+            meaning::RootV1::ChosenColorAnthem,
+            meaning::RootV1::ChosenColorMana,
+        ] {
+            meaning::meaning(&selector, id, root).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+        }
+        // Evaluate every supported choice through the actual native definition,
+        // including its dynamically selected primary mana program.
+        for color in crate::heraldic_banner_v1::COLORS {
+            if d.primary_mana_ability_choices(Some(color)) != [color]
+                || d.mana_ability_program_for(color, Some(color))
+                    != Some(EffectOp::Sequence(vec![
+                        EffectOp::TapObject {
+                            object: ObjectRef::ThisSource,
+                        },
+                        EffectOp::AddMana {
+                            player: PlayerRef::Controller,
+                            colors: vec![color],
+                        },
+                    ]))
+            {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+        }
+    } else {
+        use crate::rules_meaning_frenzied_goblin_v1 as meaning;
+        let selector = meaning::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+        meaning::meaning(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    }
+    let characteristics = PermanentCharacteristics {
+        types: d.types.to_vec(),
+        subtypes: d.subtypes.to_vec(),
+        supertypes: Vec::new(),
+        colors: d.colors.to_vec(),
+        mana_value: d.mana_value,
+        power: d.power,
+        toughness: d.toughness,
+        ordered_keywords: Vec::new(),
+        minimum_blockers: d.minimum_blockers,
+        token: false,
+        land: false,
+        enters_tapped: false,
+        printed_mana_abilities: u8::from(banner),
+        printed_activated_abilities: 0,
+    };
+    let entries = if banner {
+        vec![BannerEntryReplacement {
+            choices: crate::heraldic_banner_v1::COLORS,
+            chooser: EntryChooser::ProposedBattlefieldController,
+            before_original_battlefield_move: true,
+            all_batch_choices_before_any_entry: true,
+            fresh_choice_each_entering_incarnation: true,
+        }]
+    } else {
+        Vec::new()
+    };
+    let mana = if banner {
+        vec![BannerManaRoot {
+            source_zone: Zone::Battlefield,
+            ordered_costs: [PrintedManaAbilityCost::TapOriginalSource],
+            recipient: PrintedManaRecipient::CurrentSourceController,
+            output: PrintedManaOutput::CurrentIncarnationChosenWubrgColor,
+            amount: 1,
+            chosen_color_requires_authenticated_current_incarnation: true,
+            requires_active_effective_printed_ability: true,
+            creature_tap_timing_uses_current_effective_form_and_haste: true,
+            availability_requires_current_engine_mana_window: true,
+            spending_restriction: PrintedManaRestriction::Unrestricted,
+            uses_stack: false,
+        }]
+    } else {
+        Vec::new()
+    };
+    Ok(Some(json!({"card_id":id,"registered_permanent_printing":{
+        "characteristics":characteristics,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,zone_replacements_still_apply:true,
+        }],
+        "ordered_entry_replacements":entries,"ordered_mana_roots":mana,
     }})))
 }
 
