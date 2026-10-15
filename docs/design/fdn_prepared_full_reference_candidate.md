@@ -1,9 +1,14 @@
 # Unqualified seven-printing Full reference candidate
 
-Local preparation only, based on checked-PT `0b6224fb5` and its attributed
-`a3b93d035` and `9f0f1835f` follow-ups. Do not publish or accept this candidate
-until genuine gameplay qualification covers every printing and required branch.
-All changed Rust and the new reference fixture remain uncompiled and unrun.
+Local preparation only. This current composition starts at `4ac320fa8`, retaining
+the checked-PT/Fake fixes and actual thin-root repair, then attributes ordinary
+Ashroot/Stromkirk source `47e2bf3d7` and the seven-Full/reference changes
+`a2c62d0b8` / `cd061161f`. The original reference source retains its separate
+checked-PT ancestry. Do not publish or accept this candidate until genuine
+gameplay qualification covers every printing and required branch. All changed
+Rust and the new reference fixture remain uncompiled and unrun. Native160/161
+retain their separate exact Partial snapshot `4ac320fa8`; this composition does
+not replace that source or its pending qualification.
 
 Exactly seven registry fields change: Elenda 444, Phoenix 445, Spinner 446,
 Quandary 447, Hatcher 448, Conqueror 450 and Season 451 become `full`.
@@ -32,8 +37,11 @@ this reference path does not replace their rules coverage or establish Full.
 
 Python deck tests preserve historical hash literals by restoring only the old
 capability fields in historical copies. They verify current Full resolution
-and historical Partial refusal. Observed: 66 deck tests and seven Limited
-session tests pass. Pinned Rust formatting and static/diff checks only.
+and historical Partial refusal. Observed on this composition: 131 affected
+Python deck, booster-pool, V2/V3, Elenda schema-4 and Prepared schema-5 tests pass.
+Pinned Rust formatting and diff checks pass. The Ashroot/Stromkirk supplements
+have a separate scoped source-clear review; their paid/restore model fixtures
+remain unrun. Broader ordinary-model completeness remains open.
 
 No generated catalog hash or successor profile is guessed. Existing v87
 `fdn_dual_full_batch_frozen_literal_matches_the_live_build_constant` and
