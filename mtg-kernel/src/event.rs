@@ -6137,8 +6137,51 @@ mod ravenous_amulet_paid_future_tests {
     use crate::policy_observation_v6::tests::{advance_to_next_main_for, put, ready_state_for};
     use crate::state::AbilitySourceContractV4;
 
+    fn public_facts(state: &GameState) -> crate::ravenous_public_v51::FactsV51 {
+        let facts = crate::ravenous_public_v51::capture(state).unwrap();
+        crate::ravenous_public_v51::validate(state, &facts).unwrap();
+        let bytes = serde_json::to_vec(&facts).unwrap();
+        let restored = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(facts, restored);
+        crate::ravenous_public_v51::validate(state, &restored).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        for forbidden in [
+            "paid_cost_refs",
+            "payment_history_start",
+            "input_history_index",
+            "inline_effect",
+            "stack_item_id",
+            "original_world",
+            "event_history",
+        ] {
+            assert!(!text.contains(forbidden), "private field {forbidden}");
+        }
+        let mut private_variant = state.clone();
+        let hidden = private_variant.players[0].library.last().copied().unwrap();
+        private_variant.objects.get_mut(hidden).card_def =
+            crate::card_def::card_id_by_name("Lightning Bolt").unwrap();
+        // Projection-only private-content perturbation. This is not sampler
+        // admission for a retained original-world history.
+        assert_eq!(
+            crate::ravenous_public_v51::capture(&private_variant).unwrap(),
+            facts
+        );
+        let mut changed = facts.clone();
+        changed.card_db_hash ^= 1;
+        let before = state.clone();
+        assert!(crate::ravenous_public_v51::validate(state, &changed).is_err());
+        assert_eq!(state, &before);
+        facts
+    }
+
     fn completed_refusals(state: &GameState, id: crate::ids::StackItemId) {
         crate::doubling_season_v48::validate_token_journals(state).unwrap();
+        let facts = public_facts(state);
+        assert!(facts
+            .activations
+            .iter()
+            .any(|activation| activation.outcome
+                != crate::ravenous_public_v51::OutcomeV51::Published));
         for case in 0..7 {
             let mut branch: GameState =
                 serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
@@ -6211,6 +6254,11 @@ mod ravenous_amulet_paid_future_tests {
 
     fn payment_receipt_refusals(state: &GameState) {
         crate::ravenous_amulet_v1::validate_state(state).unwrap();
+        let facts = public_facts(state);
+        assert_eq!(
+            facts.activations.last().unwrap().outcome,
+            crate::ravenous_public_v51::OutcomeV51::Published
+        );
         for case in 0..10 {
             let mut branch: GameState =
                 serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();

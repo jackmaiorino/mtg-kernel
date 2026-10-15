@@ -65,8 +65,18 @@ paid Fake, restores before its gained return, then checks one tapped return,
 one Treasure, one draw and one soul counter with both journals valid. All new
 Rust remains uncompiled/unrun.
 
+V51 public facts now project nonzero public battlefield soul counts and paid
+activation ordinals with published/countered/draw/loss outcomes. Draw results
+expose success without the private card identity. Source references preserve
+the original generation; a returned incarnation is not substituted. Sacrifice
+references omit the creature's underlying printing, and private worlds,
+payment records and executable indices remain internal. Paid fixtures check
+JSON restore, changed-facts refusal and hidden-library-content noninterference.
+This is a standalone public projection, with observation/backend/Human and
+model admission still pending. It has not been compiled or executed.
+
 Remaining: native qualification and cross-family original-world validation of
-the new lifecycle and public/observation/consumer support; actual paid
+the new lifecycle and observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
 training claim follows from this prerequisite.
 

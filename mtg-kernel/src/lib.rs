@@ -671,6 +671,7 @@ pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
 pub mod doubling_season_v48;
 pub mod ravenous_amulet_v1;
+pub mod ravenous_public_v51;
 pub mod rules_meaning_akroma_v1;
 pub mod rules_meaning_doubling_season_v48;
 pub mod rules_meaning_ravenous_amulet_v51;
