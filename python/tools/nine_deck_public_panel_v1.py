@@ -143,8 +143,11 @@ def guard_binding(guard):
     if guard is None:
         return None
     import host_slots_v1 as slots
+    import archive_distillation_dispatch_v1 as bounded
     return {"host": slots.host(), "cpu_affinity": guard.plan["cpu_affinity"],
-            "evaluator": guard.plan["evaluator"], "launcher_sha256": pin(__file__)["sha256"]}
+            "evaluator": guard.plan["evaluator"], "launcher_sha256": pin(__file__)["sha256"],
+            "archive_guard_sha256": pin(bounded.__file__)["sha256"],
+            "reservation_policy": "pause" if guard.pause_on_reservation else "fail"}
 
 
 def case_match(case: dict, decks: list[dict]) -> dict:
@@ -778,7 +781,7 @@ def with_guard(guard_plan: Path, root: Path, qualifying: bool, operation):
             "disjoint storage roots on one volume required")
     for path in plan["stop_files"]:
         bounded.absolute(path)
-    guard = bounded.Guard(plan, root, qualifying)
+    guard = bounded.Guard(plan, root, qualifying, pause_on_reservation=True)
     result = {"schema": "nine-deck-public-panel-guard-result/v1", "complete": False,
               "guard_plan": pin(guard_plan), "qualification": qualifying}
     failure = None
@@ -795,6 +798,7 @@ def with_guard(guard_plan: Path, root: Path, qualifying: bool, operation):
                 result.update(complete=False, error=str(failure))
             result["guard"] = guard.terminate_and_drain()
             result["qualifications"] = getattr(guard, "public_qualifications", [])
+            result["pause_transitions"] = list(guard.pause_transitions)
             result_path = guard.root / "guard-result.json"
             write_json(result_path, result, exclusive=True)
             if failure is None:

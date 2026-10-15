@@ -246,6 +246,8 @@ class Guarded(Fixture):
 
     def test_complete_representative_scaling_and_production_route_through_real_job(self):
         receipt=self.qualify()
+        self.assertEqual(receipt['guard_binding']['reservation_policy'],'pause')
+        self.assertEqual(receipt['guard_binding']['archive_guard_sha256'],panel.pin(bounded.__file__)['sha256'])
         self.assertEqual([t['matches'] for t in receipt['trials']],[18,18])
         self.assertTrue(all(t['parity'] for t in receipt['trials']))
         self.assertTrue(all(t['seconds'] >= t['execution_seconds'] > 0 for t in receipt['trials']))
@@ -264,6 +266,7 @@ class Guarded(Fixture):
         final=json.loads((self.root/'panel/native/guard-result.json').read_text())
         self.assertTrue(final['complete']); self.assertEqual(final['guard']['active_processes'],0)
         self.assertGreater(final['guard']['cpu_seconds'],0)
+        self.assertIsInstance(final['pause_transitions'],list)
 
     def test_internally_consistent_wrong_case_outputs_cannot_qualify(self):
         self.script.write_text(FAKE.replace("'match':match,", "'match':dict(match,config=dict(match['config'],seed=7)),"))
@@ -286,6 +289,12 @@ class Guarded(Fixture):
 
     def test_missing_guard_evidence_and_changed_measurement_refuse_before_production(self):
         receipt=self.qualify()
+        for field, value in [('reservation_policy','fail'),('archive_guard_sha256','0'*64)]:
+            bad=copy.deepcopy(receipt); bad['guard_binding'][field]=value
+            path=Path(self.save('wrong-'+field+'.json',bad)['path'])
+            with self.assertRaisesRegex(ValueError,'guarded evidence'):
+                self.guarded(self.root/('wrong-'+field),False,lambda guard:panel.run(
+                    self.root/'panel/plan.json',path,sys.executable,guard))
         bad=copy.deepcopy(receipt); bad.pop('guard_binding')
         path=Path(self.save('uncovered.json',bad)['path'])
         with self.assertRaisesRegex(ValueError,'guarded evidence'):

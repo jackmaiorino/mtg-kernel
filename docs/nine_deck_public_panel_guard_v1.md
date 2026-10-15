@@ -57,6 +57,12 @@ exited descendants, wall/STOP/storage/reserve checks and drain verification.
 It also checks its fresh root's STOP file. Every evaluator launch checks the
 evaluator pin, command source pins and output containment. The guard stays
 active through recovery and final publication. Failed attempts remain.
+The public wrapper opts into reservation pause/resume under a live
+BelowNormal host_slots claim. It pauses only its contained tree while a
+reservation conflicts, retaining CPU, wall, storage and STOP checks. Wall
+time includes pauses. Qualification binds the pause policy and exact archive
+Guard bytes; final guard records include observed pause transitions. Existing
+archive training dispatch keeps its default immediate conflict behavior.
 
 `with_guard(guard_plan, root, qualifying, operation)` exposes the same scope
 to Python callers. `operation(guard)` may qualify or run several panels; the
