@@ -1,6 +1,6 @@
 # Current-family Limited JSONL V2
 
-Prepared against PR266 source `dd42a69c5210187a9f0c5585c7b46d0a6c937877` for
+Prepared against PR266 source `422b6c5e2c28fc41e9cf1f65644de12f893beef3` for
 issue110. This is a distinct schema2 server, `kernel_limited_common_env_v2`,
 with a matching Python client. The V1 server, executable, client, requests and
 safe decision shape remain unchanged. No registration, catalog/profile,
@@ -39,6 +39,9 @@ natural terminal/code consistency and actual stale-after-restore refusal.
 The current PR266 fixes merge without conflicts. The V2 server, projector,
 client and tests retain their original source; the parent fixes include genuine
 Equipment/Fishing grant lookup and the empty Lagrella return correction.
+The later printed-equip description and granted-ability wrapper correction
+also merge without conflict. V2 still uses the complete owning V47 path;
+this parent refresh adds no separate transport or gameplay qualification.
 Source review is clear. Pinned formatting and diff checks pass; all 75 Python
 tests pass after this refresh, including 11 V2 transport tests and 64 pool/deck
 tests. Written Rust cases cover
