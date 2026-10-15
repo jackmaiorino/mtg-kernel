@@ -2,7 +2,7 @@
 //! support are fixture inputs; original private journals are never rewritten.
 use super::*;
 use crate::{
-    ids::{ObjectId, PlayerId},
+    ids::PlayerId,
     policy_observation_v6::tests::put,
     rl::TargetRefV1,
     state::{GameState, Zone},

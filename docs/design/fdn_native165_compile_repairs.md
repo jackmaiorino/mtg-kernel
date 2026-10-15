@@ -1,0 +1,9 @@
+# Native165 observed compile repairs
+
+Parent: `7657bb71fcce5191026d6d9a9a034106bf7f6b8e`. Native165 returned101 in all three strict configurations; these source edits address the nine actual diagnostic sites, not a build or runtime pass.
+
+The walk-diff cost match now explicitly classifies `RemoveSourceCountersV1` with its existing typed unsupported-cost diagnostic. No Mage-pinned renderer or full FDN walk-diff support is claimed, and the old Draw-a-card renderer contract is unchanged. Two unused Human test imports are removed. Quandary's two privacy assertions read the actual `engine_context.pending_effect`. Two negative recipe costs use static-promotable zero-cost literals instead of borrowing a runtime temporary.
+
+The two Prepared model differential helpers construct an independently owned native Prepared-mode session from the complete current fixture world. They require exact pre-world, ordered menu, actor/kind/substeps/count and episode equality, use the reference's own current header and the original selected index, then compare the complete post-world and response. Only independent stream counter origins are rebased, with policy/physical deltas separately checked. No sealed backend Clone, ownership change or cross-owner decision transfer is introduced. Surface-only Hunter prefixes are outside GameState; reconstruction mismatch must fail these assertions, not weaken them. A persistent native reference is the fallback if later qualification demonstrates such a case.
+
+All selected test names/cfgs and the original 260-target/both-seat/restore-after-255 body are preserved. Pinned formatting, diff and static scope/API checks only; no Rust build/test/check/clippy, native or remote activity. Catalog, decks, frozen prefixes and production ownership are unchanged. All repaired Rust remains uncompiled and unrun.

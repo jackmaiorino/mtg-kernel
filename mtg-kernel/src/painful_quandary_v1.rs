@@ -288,15 +288,24 @@ fn opponent_projection_redacts_unpaid_private_hand_candidates() {
         let view = crate::rl::observe_v2(&state, &surface, actor, 0).unwrap();
         let bytes = serde_json::to_string(&view).unwrap();
         assert!(!bytes.contains("Lightning Bolt"));
-        let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-            view.projection.pending_effect.unwrap().choice
+        let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = view
+            .projection
+            .engine_context
+            .pending_effect
+            .unwrap()
+            .choice
         else {
             panic!("payment projection missing")
         };
         assert!(legal_targets.is_empty());
         let payer_view = crate::rl::observe_v2(&state, &surface, payer, 0).unwrap();
         let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-            payer_view.projection.pending_effect.unwrap().choice
+            payer_view
+                .projection
+                .engine_context
+                .pending_effect
+                .unwrap()
+                .choice
         else {
             panic!("payer payment projection missing")
         };
