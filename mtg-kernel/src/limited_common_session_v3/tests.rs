@@ -193,9 +193,14 @@ fn actual_v3_wire_paid_cast_draw_soul_loss_restore_stale_and_hidden_values_both_
         safe(&wire.last);
         draw_cost(&mut wire);
         let cost = wire.snapshot();
-        let answer =
-            wire.request(|label| label.contains("activation cost: sacrifice Llanowar Elves"));
-        wire.step(|label| label.contains("activation cost: sacrifice Llanowar Elves"));
+        let answer = wire.request(|label| {
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
+        });
+        wire.step(|label| {
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
+        });
         let paid = wire.snapshot();
         assert_eq!(
             wire.menu()["state"]["extensions"]["ravenous"]["activations"][0]["outcome"],
@@ -221,11 +226,16 @@ fn actual_v3_wire_paid_cast_draw_soul_loss_restore_stale_and_hidden_values_both_
         assert_eq!(wire.bytes(), bytes);
         wire.restore(cost);
         wire.reject_unchanged(answer, "stale_decision");
-        let mut wrong_actor =
-            wire.request(|label| label.contains("activation cost: sacrifice Llanowar Elves"));
+        let mut wrong_actor = wire.request(|label| {
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
+        });
         wrong_actor["actor"] = json!(PlayerSeatV1::from(actor.opponent()));
         wire.reject_unchanged(wrong_actor, "stale_decision");
-        wire.step(|label| label.contains("activation cost: sacrifice Llanowar Elves"));
+        wire.step(|label| {
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
+        });
         wire.drain();
         assert_eq!(wire.menu()["state"], finished);
         assert_eq!(wire.bytes(), bytes);
@@ -337,7 +347,8 @@ fn v3_wire_keeps_paid_fake_return_and_panda_facts_both_seats() {
             .unwrap()
             .to_owned();
         wire.step(|label| {
-            label.contains("activation cost: sacrifice Llanowar Elves")
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
                 && label.contains(&format!("[{target}]"))
         });
         let saved = wire.snapshot();
