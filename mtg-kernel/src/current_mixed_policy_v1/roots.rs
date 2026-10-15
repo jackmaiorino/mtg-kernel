@@ -1317,6 +1317,31 @@ pub(super) fn expand_thin(record: &serde_json::Map<String, Value>) -> Result<Val
             serde_json::to_value(meaning).map_err(|e| Error::Projection(e.to_string()))
         }};
     }
+    // These producers publish closed records with at most an index, not a serialized
+    // rules Root enum. Decode their actual transport and map only its emitted
+    // selectors. The digest authenticates the canonical meaning after that
+    // mapping; it never selects or supplies a missing root.
+    macro_rules! indexed {
+        ($transport:ty,$module:ident,$selector:ident,$function:ident,$row:ident,$argument:expr) => {{
+            let $row: $transport = serde_json::from_value(Value::Object(record.clone()))
+                .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            // In particular, Option::None must be the producer's explicit
+            // null, not an erased selector silently defaulted by serde.
+            if serde_json::to_value(&$row).map_err(|e| Error::Projection(e.to_string()))?
+                != Value::Object(record.clone())
+            {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+            let selector =
+                crate::$module::$selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            let meaning = crate::$module::$function(&selector, id, $argument)
+                .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            if $row.card_id != id || $row.root_sha256 != meaning.root_sha256 {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+            serde_json::to_value(meaning).map_err(|e| Error::Projection(e.to_string()))
+        }};
+    }
     match CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?
@@ -1351,26 +1376,37 @@ pub(super) fn expand_thin(record: &serde_json::Map<String, Value>) -> Result<Val
                 .and_then(|v| u16::try_from(v).ok())
                 .ok_or(Error::UnsupportedPrintedRoot(id))?
         ),
-        "Authority of the Consuls" => typed!(
+        "Authority of the Consuls" => indexed!(
+            crate::authority_public_v1::RootV1,
             rules_meaning_authority_v1,
             live_selector_v1,
             meaning_v1,
-            serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
-                .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+            row,
+            match row.ability_index {
+                None => crate::rules_meaning_authority_v1::RootV1::OpponentCreatureEntryTappedReplacement,
+                Some(0) => crate::rules_meaning_authority_v1::RootV1::OpponentCreatureEntryGainLifeTrigger,
+                _ => return Err(Error::UnsupportedPrintedRoot(id)),
+            }
         ),
-        "Involuntary Employment" => typed!(
+        "Involuntary Employment" => indexed!(
+            crate::employment_public_v1::RootV1,
             rules_meaning_employment_v1,
             live_selector,
             meaning,
-            serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
-                .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+            row,
+            crate::rules_meaning_employment_v1::RootV1::PrintedSpell
         ),
-        "Slumbering Cerberus" => typed!(
+        "Slumbering Cerberus" => indexed!(
+            crate::cerberus_public_v1::RootV1,
             rules_meaning_cerberus_v1,
             live_selector,
             meaning,
-            serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
-                .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+            row,
+            match row.ability_index {
+                0 => crate::rules_meaning_cerberus_v1::RootV1::ControllerUntapStepRestriction,
+                1 => crate::rules_meaning_cerberus_v1::RootV1::PrintedEndStepTrigger { trigger_index: 0 },
+                _ => return Err(Error::UnsupportedPrintedRoot(id)),
+            }
         ),
         "Mild-Mannered Librarian" => typed!(
             rules_meaning_librarian_v1,
@@ -1379,19 +1415,28 @@ pub(super) fn expand_thin(record: &serde_json::Map<String, Value>) -> Result<Val
             serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
                 .map_err(|_| Error::UnsupportedPrintedRoot(id))?
         ),
-        "Temporal Manipulation" => typed!(
+        "Temporal Manipulation" => indexed!(
+            crate::extra_turn_public_v1::RootV1,
             rules_meaning_extra_turn_v1,
             live_selector,
             meaning,
-            serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
-                .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+            row,
+            match row.ability_index {
+                0 => crate::rules_meaning_extra_turn_v1::RootV1::PrintedSpell,
+                _ => return Err(Error::UnsupportedPrintedRoot(id)),
+            }
         ),
-        "Juggernaut" => typed!(
+        "Juggernaut" => indexed!(
+            crate::juggernaut_public_v1::RootV1,
             rules_meaning_juggernaut_v1,
             live_selector,
             meaning,
-            serde_json::from_value(root.cloned().ok_or(Error::UnsupportedPrintedRoot(id))?)
-                .map_err(|_| Error::UnsupportedPrintedRoot(id))?
+            row,
+            match row.ability_index {
+                0 => crate::rules_meaning_juggernaut_v1::RootV1::MustAttackEachCombat,
+                1 => crate::rules_meaning_juggernaut_v1::RootV1::CannotBeBlockedByWalls,
+                _ => return Err(Error::UnsupportedPrintedRoot(id)),
+            }
         ),
         "Ashroot Animist" => typed!(
             rules_meaning_ashroot_v1,

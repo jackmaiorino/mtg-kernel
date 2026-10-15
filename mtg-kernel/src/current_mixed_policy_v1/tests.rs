@@ -2047,3 +2047,348 @@ mod paid {
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod thin_producer_transport {
+    use super::*;
+    use crate::{
+        ids::PlayerId,
+        policy_observation_v6::tests::put,
+        rl::{ActionSemanticV1, TargetRefV1},
+        state::{GameState, Zone},
+    };
+    use serde_json::Value;
+
+    const FAMILIES: [&str; 5] = [
+        "Authority of the Consuls",
+        "Involuntary Employment",
+        "Slumbering Cerberus",
+        "Temporal Manipulation",
+        "Juggernaut",
+    ];
+    fn ready(actor: PlayerId) -> GameState {
+        let mut world = crate::extra_turn_v1::tests::ready(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut world, player, "Forest", Zone::Hand);
+            for _ in 0..12 {
+                put(&mut world, player, "Forest", Zone::Library);
+            }
+        }
+        world
+    }
+    fn expected(session: &FastActorSessionV1) -> FastActorDecisionV1 {
+        let FastActorResponseV1::Decision(value) = session.current_response() else {
+            panic!("real decision absent")
+        };
+        value
+    }
+    fn rows(value: &Value, output: &mut Vec<serde_json::Map<String, Value>>) {
+        match value {
+            Value::Object(record) => {
+                if record.contains_key("root_sha256") {
+                    if let Some(id) = record.get("card_id").and_then(Value::as_u64) {
+                        if crate::card_def::CARD_DEFS
+                            .get(id as usize)
+                            .is_some_and(|d| FAMILIES.contains(&d.name))
+                        {
+                            output.push(record.clone());
+                        }
+                    }
+                }
+                for child in record.values() {
+                    rows(child, output);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    rows(child, output);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn verify_actual_catalog(value: &Value) {
+        let mut actual = Vec::new();
+        rows(value, &mut actual);
+        // These are unconditional catalog records, even in the land-only case.
+        // No test fabricates a missing producer root field.
+        assert_eq!(actual.len(), 8);
+        for record in actual {
+            let original = record.clone();
+            let expanded = roots::expand_thin(&record).unwrap();
+            let id = record["card_id"].as_u64().unwrap() as u16;
+            assert_eq!(expanded["root_sha256"], record["root_sha256"]);
+            let expected_root = match crate::card_def::CARD_DEFS[usize::from(id)].name {
+                "Authority of the Consuls" => {
+                    let root = if record["ability_index"].is_null() {
+                        crate::rules_meaning_authority_v1::RootV1::OpponentCreatureEntryTappedReplacement
+                    } else {
+                        assert_eq!(record["ability_index"], 0);
+                        crate::rules_meaning_authority_v1::RootV1::OpponentCreatureEntryGainLifeTrigger
+                    };
+                    serde_json::to_value(root).unwrap()
+                }
+                "Slumbering Cerberus" => {
+                    serde_json::to_value(match record["ability_index"].as_u64().unwrap() {
+                        0 => {
+                            crate::rules_meaning_cerberus_v1::RootV1::ControllerUntapStepRestriction
+                        }
+                        1 => crate::rules_meaning_cerberus_v1::RootV1::PrintedEndStepTrigger {
+                            trigger_index: 0,
+                        },
+                        _ => panic!("foreign producer ordinal"),
+                    })
+                    .unwrap()
+                }
+                "Juggernaut" => {
+                    serde_json::to_value(match record["ability_index"].as_u64().unwrap() {
+                        0 => crate::rules_meaning_juggernaut_v1::RootV1::MustAttackEachCombat,
+                        1 => crate::rules_meaning_juggernaut_v1::RootV1::CannotBeBlockedByWalls,
+                        _ => panic!("foreign producer ordinal"),
+                    })
+                    .unwrap()
+                }
+                "Temporal Manipulation" => {
+                    assert_eq!(record["ability_index"], 0);
+                    serde_json::to_value(crate::rules_meaning_extra_turn_v1::RootV1::PrintedSpell)
+                        .unwrap()
+                }
+                "Involuntary Employment" => {
+                    assert!(!record.contains_key("ability_index"));
+                    serde_json::to_value(crate::rules_meaning_employment_v1::RootV1::PrintedSpell)
+                        .unwrap()
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(expanded["root"], expected_root);
+            macro_rules! canonical {
+                ($module:ident,$selector:ident,$meaning:ident) => {
+                    serde_json::to_value(
+                        crate::$module::$meaning(
+                            &crate::$module::$selector().unwrap(),
+                            id,
+                            serde_json::from_value(expected_root.clone()).unwrap(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap()
+                };
+            }
+            let canonical = match crate::card_def::CARD_DEFS[usize::from(id)].name {
+                "Authority of the Consuls" => {
+                    canonical!(rules_meaning_authority_v1, live_selector_v1, meaning_v1)
+                }
+                "Involuntary Employment" => {
+                    canonical!(rules_meaning_employment_v1, live_selector, meaning)
+                }
+                "Slumbering Cerberus" => {
+                    canonical!(rules_meaning_cerberus_v1, live_selector, meaning)
+                }
+                "Temporal Manipulation" => {
+                    canonical!(rules_meaning_extra_turn_v1, live_selector, meaning)
+                }
+                "Juggernaut" => canonical!(rules_meaning_juggernaut_v1, live_selector, meaning),
+                _ => unreachable!(),
+            };
+            assert_eq!(expanded, canonical);
+            for (key, value) in [
+                ("ability_index", json!(2)),
+                ("root_sha256", json!("0".repeat(64))),
+                ("root", json!("PrintedSpell")),
+                ("foreign_operand", json!(1)),
+            ] {
+                let mut forged = record.clone();
+                forged.insert(key.into(), value);
+                assert!(
+                    matches!(roots::expand_thin(&forged), Err(Error::UnsupportedPrintedRoot(card)) if card == id)
+                );
+            }
+            if record.contains_key("ability_index") {
+                let mut erased = record.clone();
+                erased.remove("ability_index");
+                assert!(roots::expand_thin(&erased).is_err());
+                let mut changed = record.clone();
+                changed.insert(
+                    "ability_index".into(),
+                    if record["ability_index"].is_null() {
+                        json!(0)
+                    } else {
+                        Value::Null
+                    },
+                );
+                assert!(roots::expand_thin(&changed).is_err());
+                let mut shifted = record.clone();
+                let other = if record["ability_index"] == 0 { 1 } else { 0 };
+                shifted.insert("ability_index".into(), json!(other));
+                assert!(roots::expand_thin(&shifted).is_err());
+            }
+            assert_eq!(record, original);
+        }
+    }
+    fn same_response(mut actual: FastActorResponseV1, expected: &FastActorResponseV1) {
+        // Restore deliberately rebinds the owning environment revision.
+        if let (FastActorResponseV1::Decision(actual), FastActorResponseV1::Decision(expected)) =
+            (&mut actual, expected)
+        {
+            actual.environment_revision = expected.environment_revision;
+        }
+        assert_eq!(&actual, expected);
+    }
+    // Every step encodes through the real model owner, applies the original
+    // menu index, restores that owner and repeats the paid operation. The raw
+    // actor owner is an independent reference for the resulting response.
+    macro_rules! apply {
+        ($raw:ident,$model:ident,$input:ident,$choose:expr) => {{
+            let e = expected(&$raw);
+            let (observation, actions, _) = $raw.$input(e, e.acting_player).unwrap();
+            let before = $raw.privileged_core_environment_hash();
+            verify_actual_catalog(&serde_json::to_value(&observation).unwrap());
+            assert_eq!($raw.privileged_core_environment_hash(), before);
+            let index = actions
+                .iter()
+                .position($choose)
+                .unwrap_or_else(|| panic!("real action absent:{actions:?}"));
+            let mut owner = $model::from_session($raw.clone()).unwrap();
+            let d = owner.encode(e).unwrap();
+            assert_eq!(d.packet().actions().len(), actions.len());
+            let scores = NativeModel::deterministic_fixture()
+                .unwrap()
+                .forward(d.packet())
+                .unwrap();
+            assert_eq!(scores.len(), actions.len());
+            assert!(scores.iter().all(|v| v.is_finite()));
+            let snapshot = owner.snapshot();
+            let reference = $raw.step(e.episode_id, e.step, index as u32).unwrap();
+            assert_eq!(owner.apply(&d, index as u32).unwrap(), reference);
+            owner.restore(&snapshot).unwrap();
+            let unchanged = owner.current_response();
+            assert!(owner.apply(&d, index as u32).is_err());
+            assert_eq!(owner.current_response(), unchanged);
+            let FastActorResponseV1::Decision(restored) = owner.current_response() else {
+                panic!("restored decision absent")
+            };
+            let rebound = owner.encode(restored).unwrap();
+            assert_eq!(rebound.packet(), d.packet());
+            same_response(owner.apply(&rebound, index as u32).unwrap(), &reference);
+            same_response(owner.current_response(), &$raw.current_response());
+        }};
+    }
+    #[test]
+    fn actual_unconditional_catalog_rows_encode_and_authenticate_in_all_four_owners_both_seats() {
+        macro_rules! run {
+            ($model:ident,$from:ident,$input:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    let raw = FastActorSessionV1::$from(ready(actor));
+                    let e = expected(&raw);
+                    let (observation, actions, _) = raw.$input(e, e.acting_player).unwrap();
+                    let before = raw.privileged_core_environment_hash();
+                    verify_actual_catalog(&serde_json::to_value(&observation).unwrap());
+                    let model = $model::from_session(raw.clone()).unwrap();
+                    assert_eq!(
+                        model.encode(e).unwrap().packet().actions().len(),
+                        actions.len()
+                    );
+                    assert_eq!(raw.privileged_core_environment_hash(), before);
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51
+        );
+        run!(
+            ElendaSession,
+            from_elenda_v52_fixture_state,
+            elenda_current_decision_input_v52
+        );
+        run!(
+            PreparedSession,
+            from_prepared_v57_fixture_state,
+            prepared_current_decision_input_v57
+        );
+    }
+    #[test]
+    fn actual_five_family_casts_pay_restore_and_encode_in_all_four_owners_both_seats() {
+        macro_rules! run {
+            ($model:ident,$from:ident,$input:ident,$world:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    for name in FAMILIES {
+                        let mut world = ready(actor);
+                        let spell = put(&mut world, actor, name, Zone::Hand);
+                        let target = if name == "Involuntary Employment" {
+                            Some(put(&mut world, actor.opponent(), "Llanowar Elves", Zone::Battlefield))
+                        } else { None };
+                        let land_names: &[&str] = match name {
+                            "Authority of the Consuls" => &["Plains"],
+                            "Slumbering Cerberus" => &["Forest", "Mountain"],
+                            "Juggernaut" => &["Forest", "Forest", "Forest", "Forest"],
+                            "Involuntary Employment" => &["Forest", "Forest", "Forest", "Mountain"],
+                            "Temporal Manipulation" => &["Forest", "Forest", "Forest", "Island", "Island"],
+                            _ => unreachable!(),
+                        };
+                        let lands = land_names.iter().map(|name| put(&mut world, actor, name, Zone::Battlefield)).collect::<Vec<_>>();
+                        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&world).unwrap()).unwrap();
+                        assert_eq!(restored, world);
+                        let mut raw = FastActorSessionV1::$from(restored);
+                        for land in &lands {
+                            apply!(raw,$model,$input,|action| matches!(action,ActionSemanticV1::ActivateManaAbility{source,..} if source.arena_id == land.0));
+                        }
+                        apply!(raw,$model,$input,|action| matches!(action,ActionSemanticV1::CastSpell{source,..} if source.arena_id == spell.0));
+                        if let Some(target) = target {
+                            apply!(raw,$model,$input,|action| matches!(action,ActionSemanticV1::ChooseTarget{target:TargetRefV1::Object{object},..} if object.arena_id == target.0));
+                        }
+                        assert_eq!(raw.$world().players[actor.index()].mana_pool, [0; 6]);
+                        assert!(lands.iter().all(|id| raw.$world().objects.get(*id).tapped));
+                        assert_eq!(raw.$world().objects.get(spell).zone, Zone::Stack);
+                        for _ in 0..64 {
+                            let world = raw.$world();
+                            if world.stack.is_empty() && world.engine.pending_cast.is_none() && world.engine.pending_effect.is_none() && world.engine.pending_triggers.is_empty() { break; }
+                            apply!(raw,$model,$input,|action| matches!(action,ActionSemanticV1::Pass{..}));
+                        }
+                        assert!(raw.$world().stack.is_empty());
+                        assert_eq!(raw.$world().objects.get(spell).zone,
+                            if matches!(name,"Involuntary Employment"|"Temporal Manipulation") { Zone::Graveyard } else { Zone::Battlefield });
+                        if let Some(target) = target { assert_eq!(raw.$world().objects.get(target).controller, actor); }
+                        let e = expected(&raw);
+                        let (observation,_,_) = raw.$input(e,e.acting_player).unwrap();
+                        verify_actual_catalog(&serde_json::to_value(&observation).unwrap());
+                        assert!($model::from_session(raw).unwrap().encode(e).is_ok());
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+        run!(
+            ElendaSession,
+            from_elenda_v52_fixture_state,
+            elenda_current_decision_input_v52,
+            elenda_fixture_state
+        );
+        run!(
+            PreparedSession,
+            from_prepared_v57_fixture_state,
+            prepared_current_decision_input_v57,
+            prepared_fixture_state
+        );
+    }
+}
