@@ -43,6 +43,18 @@ Pinned Rust formatting and diff checks pass. The Ashroot/Stromkirk supplements
 have a separate scoped source-clear review; their paid/restore model fixtures
 remain unrun. Broader ordinary-model completeness remains open.
 
+Additional attributed ordinary-printing supplements are `632aae4fe` for
+Strongbox/Gourmand, `60cae5dde` for Arahbo/Zul and `4392d4232` for Memorial/Panda.
+They retain mandatory per-referenced-ID validation independently of family
+coverage, close every current CardDef field and use canonical typed family
+roots. The shared validator preserves the four earlier triggered-creature
+recipes while adding the artifact and Panda shapes; the separate legendary
+validator preserves their activation and static operands. Paid, restore and
+privacy fixture source spans all four model owners at both seats. Panda's
+life-gain input is explicitly a committed-event primitive in a genuinely paid
+world; paid Bolt supplies the death. All added Rust remains uncompiled and
+unrun, and no complete-model or runtime acceptance follows from composition.
+
 Attributed fixture source `85655f37a` adds actual paid Season/Hatcher combat
 incubation and Season/Ravenous soul-counter coexistence, including replacement
 amounts, paid activation costs, countered rows and both-seat serde replay.
