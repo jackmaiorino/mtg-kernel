@@ -60,7 +60,9 @@ active through recovery and final publication. Failed attempts remain.
 
 `with_guard(guard_plan, root, qualifying, operation)` exposes the same scope
 to Python callers. `operation(guard)` may qualify or run several panels; the
-budget is not reset per panel. Qualification receipt pins are recorded in the
+budget is not reset per panel. Batches run sequentially within that callback,
+and every batch verifies descendant drain before the next worker trial or
+panel begins. Qualification receipt pins are recorded in the
 successful drained `guard-result.json`. Caps across separate host attempts
 must be allocated from the campaign's remaining budget by its existing
 manifest and placement decision; this helper does not allocate other hosts.
@@ -76,12 +78,15 @@ Sources remain seat-routed through the plan's candidate and opponent, so
 T1/H and each lineage need their corresponding plans. The worker list must
 start at one and include a larger count within the claimed cores. The
 qualifier compares exact ordered native match hashes at every worker count
-and selects the fastest complete batch.
+and selects the fastest complete batch. Guarded timing includes request
+publication, native startup/execution/output publication, and output hash/pin
+verification; the native execution portion is also reported separately.
 
 Run admission checks evaluator, mode, schedule, opponent and model layout,
 plus host, affinity and launcher bytes. It verifies the measured request and
 completion pins, actual native output hashes, timing arithmetic, case/source
-coverage, and successful drained guard publication before any production
+coverage (including each saved native match against its requested case and
+game-one result shape), and successful drained guard publication before any production
 spawn. Layout reuse permits new candidate weights; it is throughput evidence,
 not a claim that different weights have identical outputs. Pin the actual
 runtime containing the required model loader and game-one implementation.

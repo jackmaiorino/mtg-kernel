@@ -36,7 +36,8 @@ for i, match in enumerate(request['matches']):
         'match':match, 'games':[{'start':{'starting_player':match['config']['game_one_chooser']}, 'winner':winner}],
         'sideboard_decisions':[], 'affinity':mask.value}
     hashes.append(save(f'match-{i:06}.json', record))
-save('completion.json', {'game_one_only':True, 'match_sha256':hashes, 'matches':len(hashes), 'natural_games':len(hashes)})
+save('completion.json', {'schema':'public-input-evaluation-completion/v1', 'game_one_only':True,
+    'match_sha256':hashes, 'matches':len(hashes), 'natural_games':len(hashes)})
 '''
 
 
@@ -167,6 +168,7 @@ class Guarded(Fixture):
         receipt=self.qualify()
         self.assertEqual([t['matches'] for t in receipt['trials']],[18,18])
         self.assertTrue(all(t['parity'] for t in receipt['trials']))
+        self.assertTrue(all(t['seconds'] >= t['execution_seconds'] > 0 for t in receipt['trials']))
         self.assertEqual({c['seat'] for c in receipt['case_order']},{0,1})
         self.assertEqual({c['own'] for c in receipt['case_order']},set(range(9)))
         for trial in receipt['trials']:
@@ -182,6 +184,25 @@ class Guarded(Fixture):
         final=json.loads((self.root/'panel/native/guard-result.json').read_text())
         self.assertTrue(final['complete']); self.assertEqual(final['guard']['active_processes'],0)
         self.assertGreater(final['guard']['cpu_seconds'],0)
+
+    def test_internally_consistent_wrong_case_outputs_cannot_qualify(self):
+        self.script.write_text(FAKE.replace("'match':match,", "'match':dict(match,config=dict(match['config'],seed=7)),"))
+        with self.assertRaisesRegex(ValueError,'native case differs'):
+            self.qualify()
+        self.assertFalse((self.root/'qualification/receipt.json').exists())
+        final=json.loads((self.root/'qualification/guard-result.json').read_text())
+        self.assertFalse(final['complete'])
+        self.assertEqual(final['guard']['active_processes'],0)
+
+    def test_lingering_children_cannot_overlap_qualification_trials(self):
+        self.script.write_text(FAKE+'\nimport subprocess\nsubprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"])\n')
+        with self.assertRaisesRegex(ValueError,'descendants remain'):
+            self.qualify()
+        self.assertFalse((self.root/'qualification/w2').exists())
+        self.assertFalse((self.root/'qualification/receipt.json').exists())
+        final=json.loads((self.root/'qualification/guard-result.json').read_text())
+        self.assertFalse(final['complete'])
+        self.assertEqual(final['guard']['active_processes'],0)
 
     def test_missing_guard_evidence_and_changed_measurement_refuse_before_production(self):
         receipt=self.qualify()

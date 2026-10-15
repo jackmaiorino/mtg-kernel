@@ -353,6 +353,8 @@ def run_requests(executable: str, requests: list[Path], workers: int, tolerate: 
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(one, requests))
+    if guard is not None:
+        guard.quiet()
     return time.monotonic() - started
 
 
@@ -416,7 +418,7 @@ def recover(executable: str, request_path: Path, guard=None) -> dict:
                       {"request": pin(request_path), "segments": segments, "errors": errors}, exclusive=guard is not None)
 
 
-def match_hashes(request: Path) -> list[str]:
+def match_hashes(request: Path, *, validate_cases: bool = False) -> list[str]:
     config = json.loads(Path(request).read_text(encoding="utf-8"))
     output = Path(config["output_directory"])
     completion = completion_for_request(config)
@@ -424,6 +426,23 @@ def match_hashes(request: Path) -> list[str]:
     hashes = [sha256_bytes(path.read_bytes()) for path in files]
     if hashes != completion["match_sha256"]:
         raise ValueError(f"match files differ from completion record in {output}")
+    if validate_cases:
+        require(completion["schema"] == "public-input-evaluation-completion/v1"
+                and len(files) == len(config["matches"]) == completion["matches"],
+                "qualification native case count differs")
+        for path, expected in zip(files, config["matches"]):
+            result = json.loads(path.read_text(encoding="utf-8"))
+            require(result["match"] == expected, "qualification native case differs from request")
+            if config.get("game_one_only", False):
+                require(result.get("schema") == "public-input-evaluation-game-one/v1"
+                        and result.get("game_one_only") is True and len(result["games"]) == 1
+                        and "outcome" not in result and result.get("sideboard_decisions") == [],
+                        "qualification game-one result shape differs")
+                require(completion["natural_games"] == len(files), "qualification natural-game count differs")
+            else:
+                require(result.get("schema") == "public-input-evaluation-match/v1"
+                        and not result.get("game_one_only", False) and "outcome" in result,
+                        "qualification BO3 result shape differs")
     return hashes
 
 
@@ -459,6 +478,7 @@ def qualify(plan_path: Path, sample: int | None, workers: list[int], root: Path,
     trials = []
     golden = None
     for k in workers:
+        phase_started = time.monotonic() if guard is not None else None
         if representative is None and sample % k:
             raise ValueError("sample must split evenly across workers")
         paths, keyed = [], []
@@ -480,17 +500,21 @@ def qualify(plan_path: Path, sample: int | None, workers: list[int], root: Path,
                 write_json(path, request, exclusive=guard is not None)
                 paths.append(path)
                 keyed.extend(part)
-        seconds = run_requests(executable, paths, k, guard=guard)
-        hashes = [h for path in paths for h in match_hashes(path)]
+        execution_seconds = run_requests(executable, paths, k, guard=guard)
+        hashes = [h for path in paths for h in
+                  (match_hashes(path, validate_cases=True) if guard is not None else match_hashes(path))]
         require(len(hashes) == len(keyed) and (representative is None or len(hashes) == sample),
                 "qualification output omits scheduled cases")
         golden = golden or hashes
-        trials.append({"workers": k, "seconds": seconds, "matches": len(hashes), "matches_per_second": len(hashes) / seconds,
-                       "parity": hashes == golden})
+        trial = {"workers": k, "matches": len(hashes), "parity": hashes == golden}
         if guard is not None:
-            trials[-1]["requests"] = [pin(path) for path in paths]
-            trials[-1]["completions"] = [pin(Path(json.loads(path.read_text())["output_directory"]) / "completion.json")
-                                         for path in paths]
+            trial["requests"] = [pin(path) for path in paths]
+            trial["completions"] = [pin(Path(json.loads(path.read_text())["output_directory"]) / "completion.json")
+                                    for path in paths]
+            trial["execution_seconds"] = execution_seconds
+        seconds = time.monotonic() - phase_started if guard is not None else execution_seconds
+        trial.update(seconds=seconds, matches_per_second=len(hashes) / seconds)
+        trials.append(trial)
     receipt = {"schema": RECEIPT, "evaluator_sha256": sha256_bytes(Path(executable).read_bytes()),
                "schedule_sha256": plan["schedule_sha256"], "opponent": plan["opponent"],
                "candidate_layout": candidate_layout(plan["candidate"]), "sample": sample, "trials": trials,
@@ -568,7 +592,7 @@ def run(plan_path: Path, receipt_path: Path, executable: str, guard=None) -> dic
                     sources.reverse()
                 require(measured["sources"] == sources or "cases_input" not in plan and measured["sources"] == sources[::-1],
                         "qualification sources changed")
-                hashes.extend(match_hashes(request_path))
+                hashes.extend(match_hashes(request_path, validate_cases=True))
                 actual_matches.extend(measured["matches"])
             require(hashes == receipt["golden_match_sha256"] and len(hashes) == trial["matches"],
                     "qualification outputs changed")
