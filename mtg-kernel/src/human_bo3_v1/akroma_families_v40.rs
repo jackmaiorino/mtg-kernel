@@ -513,5 +513,8 @@ pub(super) fn label(
             return Ok(selected);
         }
     }
-    Ok(None)
+    // Every later owning Human projection uses this union dispatcher. Keep
+    // ordinary printed equip available after the specialized family labels,
+    // rather than repairing only the V40 wrapper's final fallback.
+    super::labels::label_printed_equip_v40(action, handles, human)
 }

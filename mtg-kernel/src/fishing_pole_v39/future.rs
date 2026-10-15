@@ -1092,6 +1092,13 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
             panic!("actual mixed Human: {:?}", human.current_response());
         };
         let prompt = projector.project_current(&human, expected).unwrap();
+        // Pool mana plus the genuine available Forest/Elf mana sources also
+        // make Longbow's printed equip legal in this same complete menu.
+        assert!(prompt.actions.iter().any(|action| action
+            .label
+            .starts_with("Activate Viridian Longbow")
+            && action.label.contains("target creature you control")
+            && action.label.contains("only as a sorcery")));
         assert!(prompt
             .actions
             .iter()
@@ -1188,6 +1195,67 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
             }
         }
         assert!(done);
+    }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn actual_mixed_equip_and_both_grants_project_in_all_current_human_successors_both_seats() {
+    use crate::human_bo3_v1::*;
+    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, _, _) = mixed_memorial(actor);
+        macro_rules! check {
+            ($session:ident, $projector:ident) => {{
+                let human = $session::from_session(
+                    FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state.clone()),
+                    actor.into(),
+                )
+                .unwrap();
+                let FastActorResponseV1::Decision(expected) = human.current_response() else {
+                    panic!("actual mixed {} priority", stringify!($session));
+                };
+                let prompt = $projector::new(actor.into())
+                    .project_current(&human, expected)
+                    .unwrap();
+                assert!(
+                    prompt
+                        .actions
+                        .iter()
+                        .any(|a| a.label.starts_with("Activate Viridian Longbow")
+                            && a.label.contains("target creature you control")
+                            && a.label.contains("only as a sorcery")),
+                    "{}",
+                    stringify!($session)
+                );
+                assert!(
+                    prompt
+                        .actions
+                        .iter()
+                        .any(|a| a.label.starts_with("Activate Fishing Pole-granted ability")),
+                    "{}",
+                    stringify!($session)
+                );
+                assert!(
+                    prompt
+                        .actions
+                        .iter()
+                        .any(|a| a.label.starts_with("Activate granted ability")
+                            && a.label.contains("1 damage")),
+                    "{}",
+                    stringify!($session)
+                );
+            }};
+        }
+        check!(HumanAjaniSessionV42, HumanAjaniProjectorV42);
+        check!(HumanFaebloomSessionV43, HumanFaebloomProjectorV43);
+        check!(HumanDivineSessionV44, HumanDivineProjectorV44);
+        check!(HumanHunterSessionV45, HumanHunterProjectorV45);
+        check!(HumanEatenSessionV46, HumanEatenProjectorV46);
+        check!(HumanPandaSessionV47, HumanPandaProjectorV47);
     }
 }
 #[test]
