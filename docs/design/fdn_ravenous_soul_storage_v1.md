@@ -72,8 +72,9 @@ the original generation; a returned incarnation is not substituted. Sacrifice
 references omit the creature's underlying printing, and private worlds,
 payment records and executable indices remain internal. Paid fixtures check
 JSON restore, changed-facts refusal and hidden-library-content noninterference.
-This is a standalone public projection, with observation/backend/Human and
-model admission still pending. It has not been compiled or executed.
+This public projection now feeds the distinct V51 observation and session
+source described below. Human and model admission remain pending. It has not
+been compiled or executed.
 
 The V51 battlefield card wrapper preserves the existing public card fields
 with mandatory exact soul, wide +1/+1 and marked-damage values. Existing V1/V2
@@ -81,7 +82,8 @@ observation entry points retain their soul refusal; only the new wrapper uses
 the shared non-soul field projector. Its roster checks reject absent, duplicate
 or miscontrolled objects. Paid fixtures check complete card-view restore,
 changed soul refusal, absent roster refusal and private-content noninterference.
-No new executable session or model consumes this wrapper yet.
+The V51 observation and session source now consume this wrapper. No model is
+admitted, and native compilation and execution remain pending.
 
 The live-row owner now captures a canonical complete original operation world
 before removal. Removal verifies the whole post-pop state and retains that
@@ -107,9 +109,39 @@ link across live-row restore and complete resolution. Banishing's initial
 permanent entry is the existing fixture operand, not a paid Banishing cast.
 These new Rust paths and cases are uncompiled and unrun.
 
-Remaining: actual native cross-family qualification and observation/consumer
-support. No Full, model, sampler, fair-search or training claim follows from
-this prerequisite.
+The distinct Ravenous V51 observation preserves every V50 family and adds a
+mandatory exact card roster for both public battlefields, including zero soul,
+wide counters and marked damage. Only a private V51 projection mode permits
+its internal common rows to omit soul, paired with that exact roster. Actual
+current validation rebuilds the whole observation and validates all inherited
+journals. Older observation entry points keep their previous shapes and refuse
+visible Ravenous, authorized known-library identities and retained paid history.
+Authorized resolution-time search candidates receive the same refusal without
+examining unrelated hidden cards. Source review found and repaired a missing
+known-library check and an older-mode conversion path.
+
+The appended V51 session mode binds the complete current candidate vector,
+observation and predecessor family projections. Typed and generic restore
+authenticate the original owner and menu before rebinding the revision; stale
+bindings and foreign modes cannot be imported. Older sessions refuse before
+advancement and again with the actual resulting actor before publication, so
+a real draw cannot expose a newly visible Ravenous through an older menu.
+Public deck reset continues to reject the Partial printing.
+
+Five backend test bodies cover both seats: actual mana production and paid
+Amulet cast, creature-sacrifice draw/soul and self-sacrifice loss; restore at
+cost, published draw and loss; exact-width and candidate tampering; stale and
+foreign restore ownership; zero-soul downgrade and predecessor refusal;
+known-library perspective; a real upkeep-to-draw publication; and a paid Grim
+Tutor search containing the genuine Amulet, followed by choice/restore parity.
+Observation tests also cover paid Fake coexistence. All these Rust paths and
+tests remain uncompiled and unrun. Pinned formatting and diff checks are the
+only executed Rust tooling checks.
+
+Remaining: actual native cross-family qualification, Human support and further
+consumers. No Full, model, sampler, fair-search or training claim follows from
+this prerequisite. Accepted Fake parent integration precedes the next Ravenous
+delivery qualification; no catalog hash is guessed from the source preparation.
 
 The distinct `ravenous_observation_v51` source prerequisite now retains every
 V50 mixed-family field and producer, adds Ravenous paid facts and ordered

@@ -37,6 +37,63 @@ pub(crate) fn definition(id: u16) -> bool {
         && crate::trigger::triggers_for(id).is_empty()
 }
 
+/// Older session modes cannot represent the paid ownership or exact counters.
+/// Hidden printings alone do not change their visible contract.
+pub(crate) fn require_legacy_consumer(
+    state: &GameState,
+    actor: Option<crate::ids::PlayerId>,
+) -> Result<(), String> {
+    if crate::soul_counters_v1::has_history(state)
+        || state
+            .objects
+            .iter()
+            .any(|(_, object)| object.zone == Zone::Battlefield && object.counters.soul != 0)
+    {
+        return Err("Ravenous ownership and soul counters require V51".into());
+    }
+    let known = state.objects.iter().any(|(id, object)| {
+        let hand_known = object.zone == Zone::Hand
+            && actor.is_some_and(|actor| {
+                actor == object.owner
+                    || state
+                        .known_hand_cards(actor, object.owner)
+                        .iter()
+                        .any(|entry| {
+                            entry.object == id
+                                && entry.zone_change_count == object.zone_change_count
+                        })
+            });
+        let library_known = object.zone == Zone::Library
+            && actor.is_some_and(|actor| {
+                state
+                    .known_library_cards(actor, object.owner)
+                    .iter()
+                    .any(|entry| {
+                        entry.object == id && entry.zone_change_count == object.zone_change_count
+                    })
+            });
+        let visible = hand_known
+            || library_known
+            || matches!(
+                object.zone,
+                Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command
+            );
+        let definition_known = object.v4.face_down_v1.is_none()
+            || actor.is_some_and(|actor| {
+                object
+                    .v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << actor.index()) != 0)
+            });
+        visible && definition_known && definition(object.card_def)
+    });
+    if known {
+        Err("Ravenous Amulet printing requires V51".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn owns_definition(d: &crate::card_def::CardDef) -> bool {
     let [draw, loss] = d.activated_abilities else {
         return false;

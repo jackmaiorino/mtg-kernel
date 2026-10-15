@@ -65,6 +65,7 @@ pub fn producer_sha256() -> String {
             SCHEMA,
             include_str!("ravenous_observation_v51.rs"),
             include_str!("ravenous_amulet_v1.rs"),
+            include_str!("rl_session/ravenous_v51.rs"),
             include_str!("soul_counters_v1.rs"),
             include_str!("state.rs"),
             include_str!("linked_aura_operation_v1.rs"),

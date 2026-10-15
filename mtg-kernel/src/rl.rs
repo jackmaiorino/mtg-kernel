@@ -1894,6 +1894,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     crate::doubling_season_v48::require_legacy_visible(state, acting_player)
         .map_err(RlContractError)?;
@@ -2167,6 +2169,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
 ) -> Result<ObservationV2> {
+    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+        crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -4624,6 +4630,10 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
+    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+        crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -4886,6 +4896,13 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                             ));
                         }
                         if seen.insert(id) {
+                            if text_mode != ObservationTextModeV2::RavenousV51Artifact
+                                && crate::ravenous_amulet_v1::definition(object.card_def)
+                            {
+                                return Err(RlContractError(
+                                    "known Ravenous search candidate requires V51".into(),
+                                ));
+                            }
                             cards.push(private_card(state, id, text_mode)?);
                         }
                     }
