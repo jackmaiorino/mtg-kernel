@@ -29,6 +29,7 @@ fn exact_soulstone_land_play_mana_and_persistent_animation_recipe() {
     assert_eq!(printed["characteristics"]["printed_mana_abilities"], 1);
     assert_eq!(printed["characteristics"]["printed_activated_abilities"], 1);
     assert_eq!(printed["ordinary_land_play"]["origin"], json!("Hand"));
+    assert_eq!(printed["ordinary_land_play"]["requires_empty_stack"], true);
     assert_eq!(
         printed["ordinary_land_play"]["is_a_spell_or_stack_object"],
         false

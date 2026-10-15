@@ -219,6 +219,7 @@ enum LandEntry {
 struct OrdinaryLandPlay {
     origin: Zone,
     timing: LandPlayTiming,
+    requires_empty_stack: bool,
     consumes_current_land_play_permission: bool,
     is_a_spell_or_stack_object: bool,
     land_playing_player_becomes_controller: bool,
@@ -310,6 +311,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let land_play = OrdinaryLandPlay {
         origin: Zone::Hand,
         timing: LandPlayTiming::ActivePlayerMainPhaseWithPriority,
+        requires_empty_stack: true,
         consumes_current_land_play_permission: true,
         is_a_spell_or_stack_object: false,
         land_playing_player_becomes_controller: true,

@@ -21,6 +21,30 @@ enum Owner {
     Elenda(ElendaSession),
     Prepared(PreparedSession),
 }
+impl Owner {
+    fn state(&self) -> &GameState {
+        match self {
+            Self::Fake(s) => s.inner.fake_fixture_state(),
+            Self::Ravenous(s) => s.inner.ravenous_fixture_state(),
+            Self::Elenda(s) => s.fixture_state(),
+            Self::Prepared(s) => s.fixture_state(),
+        }
+    }
+    fn counts(&self) -> (u64, u64) {
+        match self {
+            Self::Fake(s) => (
+                s.inner.policy_step_count(),
+                s.inner.physical_decision_count(),
+            ),
+            Self::Ravenous(s) => (
+                s.inner.policy_step_count(),
+                s.inner.physical_decision_count(),
+            ),
+            Self::Elenda(s) => s.fixture_counts(),
+            Self::Prepared(s) => s.fixture_counts(),
+        }
+    }
+}
 enum Choice {
     Fake(Box<FakeDecision>),
     Ravenous(Box<RavenousDecision>),
@@ -130,12 +154,7 @@ impl Harness {
         }
     }
     fn state(&self) -> &GameState {
-        match self.source {
-            Source::FakeV50 => self.native.fake_fixture_state(),
-            Source::RavenousV51 => self.native.ravenous_fixture_state(),
-            Source::ElendaV52 => self.native.elenda_fixture_state(),
-            Source::PreparedV57 => self.native.prepared_fixture_state(),
-        }
+        self.owner.state()
     }
     fn expected(&self) -> FastActorDecisionV1 {
         let response = self.owner.current();
@@ -200,6 +219,7 @@ impl Harness {
             self.owner.apply(&decision, index as u32).unwrap(),
             reference
         );
+        self.assert_owner_matches_native();
         self.packet();
     }
     fn save(&self) -> Saved {
@@ -214,6 +234,7 @@ impl Harness {
         let old = self.expected();
         self.owner.restore(&saved.owner).unwrap();
         self.native.restore_v1(&saved.native);
+        self.assert_owner_matches_native();
         assert!(self.expected().environment_revision > old.environment_revision);
         assert!(matches!(
             self.owner.apply(&stale, 0),
@@ -223,10 +244,26 @@ impl Harness {
     }
     fn gameplay(&self) -> (Vec<u8>, u64, u64) {
         (
-            serde_json::to_vec(self.state()).unwrap(),
+            serde_json::to_vec(self.owner.state()).unwrap(),
+            self.owner.counts().0,
+            self.owner.counts().1,
+        )
+    }
+    fn native_gameplay(&self) -> (Vec<u8>, u64, u64) {
+        let state = match self.source {
+            Source::FakeV50 => self.native.fake_fixture_state(),
+            Source::RavenousV51 => self.native.ravenous_fixture_state(),
+            Source::ElendaV52 => self.native.elenda_fixture_state(),
+            Source::PreparedV57 => self.native.prepared_fixture_state(),
+        };
+        (
+            serde_json::to_vec(state).unwrap(),
             self.native.policy_step_count(),
             self.native.physical_decision_count(),
         )
+    }
+    fn assert_owner_matches_native(&self) {
+        assert_eq!(self.gameplay(), self.native_gameplay());
     }
     fn drain(&mut self, keep: Option<ObjectId>) {
         for _ in 0..64 {

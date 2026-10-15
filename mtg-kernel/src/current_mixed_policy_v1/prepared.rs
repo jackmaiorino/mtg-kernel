@@ -49,6 +49,22 @@ impl PreparedSession {
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_state(&self) -> &crate::state::GameState {
+        self.inner.fixture_state_v57()
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_counts(&self) -> (u64, u64) {
+        self.inner.fixture_counts_v57()
+    }
     pub fn snapshot(&self) -> PreparedSnapshot {
         PreparedSnapshot {
             inner: self.inner.snapshot_v57(),
