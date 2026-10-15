@@ -576,6 +576,11 @@ fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_prepared_both_seat
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<PreparedSession>();
 }
 #[test]
+fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_entry_attack::<PreparedSession>(
+    );
+}
+#[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_prepared_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<PreparedSession>();
 }

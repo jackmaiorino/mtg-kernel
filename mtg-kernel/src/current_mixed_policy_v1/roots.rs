@@ -613,8 +613,8 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Sower of Chaos" => return sower_printing(id, d),
         "Wildwood Scourge" => return wildwood_printing(id, d),
-        "Ashroot Animist" | "Stromkirk Bloodthief" => {
-            validate_attack_or_endstep_recipe(id, d)?;
+        "Ashroot Animist" | "Stromkirk Bloodthief" | "Strongbox Raider" | "Vampire Gourmand" => {
+            validate_triggered_creature_recipe(id, d)?;
             if d.name == "Ashroot Animist" {
                 vec![PermanentKeyword::Trample]
             } else {
@@ -685,28 +685,69 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
 /// ordinary recipe is independently required for every authorized reference.
 /// Keep the exhaustive field pattern so a newly added CardDef field cannot
 /// silently acquire an unauthenticated default in this closed supplement.
-pub(super) fn validate_attack_or_endstep_recipe(id: u16, d: &CardDef) -> Result<()> {
+pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result<()> {
     use crate::card_def::{Keywords, Subtype};
     use crate::mana::{Cost, ManaColor, Pip};
-    let ashroot = match d.name {
-        "Ashroot Animist" => true,
-        "Stromkirk Bloodthief" => false,
-        _ => return Err(Error::UnsupportedPrintedRoot(id)),
-    };
     if CARD_DEFS
         .get(usize::from(id))
         .is_none_or(|actual| actual.name != d.name)
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    let cost = Cost {
-        generic: 2,
-        pips: if ashroot {
-            &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)]
-        } else {
-            &[Pip::Colored(ManaColor::B)]
-        },
-        x_count: 0,
+    let (cost, mana_value, subtypes, colors, power, toughness, keywords) = match d.name {
+        "Ashroot Animist" => (
+            Cost {
+                generic: 2,
+                pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)],
+                x_count: 0,
+            },
+            4,
+            &[Subtype::Lizard, Subtype::Druid][..],
+            &[ManaColor::R, ManaColor::G][..],
+            4,
+            4,
+            Keywords::TRAMPLE,
+        ),
+        "Stromkirk Bloodthief" => (
+            Cost {
+                generic: 2,
+                pips: &[Pip::Colored(ManaColor::B)],
+                x_count: 0,
+            },
+            3,
+            &[Subtype::Vampire, Subtype::Rogue][..],
+            &[ManaColor::B][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
+        "Strongbox Raider" => (
+            Cost {
+                generic: 2,
+                pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
+                x_count: 0,
+            },
+            4,
+            &[Subtype::Orc, Subtype::Pirate][..],
+            &[ManaColor::R][..],
+            5,
+            2,
+            Keywords::NONE,
+        ),
+        "Vampire Gourmand" => (
+            Cost {
+                generic: 1,
+                pips: &[Pip::Colored(ManaColor::B)],
+                x_count: 0,
+            },
+            2,
+            &[Subtype::Vampire][..],
+            &[ManaColor::B][..],
+            2,
+            2,
+            Keywords::NONE,
+        ),
+        _ => return Err(Error::UnsupportedPrintedRoot(id)),
     };
     let crate::card_def::CardDef {
         name: _,
@@ -785,29 +826,14 @@ pub(super) fn validate_attack_or_endstep_recipe(id: u16, d: &CardDef) -> Result<
     if d.object_name != d.name
         || d.capability != CardCapability::Full
         || d.cost != cost
-        || d.mana_value != if ashroot { 4 } else { 3 }
+        || d.mana_value != mana_value
         || d.types != [CardType::Creature]
-        || d.subtypes
-            != if ashroot {
-                &[Subtype::Lizard, Subtype::Druid][..]
-            } else {
-                &[Subtype::Vampire, Subtype::Rogue][..]
-            }
-        || d.colors
-            != if ashroot {
-                &[ManaColor::R, ManaColor::G][..]
-            } else {
-                &[ManaColor::B][..]
-            }
+        || d.subtypes != subtypes
+        || d.colors != colors
         || !d.supertypes.is_empty()
-        || d.power != Some(if ashroot { 4 } else { 2 })
-        || d.toughness != Some(if ashroot { 4 } else { 2 })
-        || d.keywords
-            != if ashroot {
-                Keywords::TRAMPLE
-            } else {
-                Keywords::NONE
-            }
+        || d.power != Some(power)
+        || d.toughness != Some(toughness)
+        || d.keywords != keywords
         || d.is_land
         || d.is_token
         || d.minimum_blockers != 1
@@ -878,16 +904,21 @@ pub(super) fn validate_attack_or_endstep_recipe(id: u16, d: &CardDef) -> Result<
 
     // Recompute the complete original typed trigger meaning from the actual
     // catalog/program, never from an observed name or supplied root digest.
-    if ashroot {
-        use crate::rules_meaning_ashroot_v1 as family;
-        let selector = family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-        family::meaning(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-        Ok(())
-    } else {
-        use crate::rules_meaning_stromkirk_v1 as family;
-        let selector = family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-        family::meaning(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
-        Ok(())
+    macro_rules! family {
+        ($module:ident) => {{
+            use crate::$module as family;
+            let selector =
+                family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            family::meaning(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            Ok(())
+        }};
+    }
+    match d.name {
+        "Ashroot Animist" => family!(rules_meaning_ashroot_v1),
+        "Stromkirk Bloodthief" => family!(rules_meaning_stromkirk_v1),
+        "Strongbox Raider" => family!(rules_meaning_strongbox_v1),
+        "Vampire Gourmand" => family!(rules_meaning_gourmand_v1),
+        _ => Err(Error::UnsupportedPrintedRoot(id)),
     }
 }
 

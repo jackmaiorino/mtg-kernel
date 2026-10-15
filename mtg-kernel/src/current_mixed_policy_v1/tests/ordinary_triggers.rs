@@ -6,6 +6,11 @@ use crate::{
     rl::{ActionSemanticV1, TargetRefV1},
     state::{GameState, Zone},
 };
+mod entry_attack;
+
+pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
+    entry_attack::paid::<O>();
+}
 
 pub(in crate::current_mixed_policy_v1) trait Owner:
     Sized
@@ -255,7 +260,12 @@ pub(in crate::current_mixed_policy_v1) fn paid<O: Owner>() {
 }
 pub(in crate::current_mixed_policy_v1) fn privacy<O: Owner>() {
     for actor in [PlayerId::P0, PlayerId::P1] {
-        for name in ["Ashroot Animist", "Stromkirk Bloodthief"] {
+        for name in [
+            "Ashroot Animist",
+            "Stromkirk Bloodthief",
+            "Strongbox Raider",
+            "Vampire Gourmand",
+        ] {
             for known in [false, true] {
                 let mut a = crate::extra_turn_v1::tests::ready(actor);
                 if known {
@@ -345,6 +355,10 @@ fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_fake_both_seats() 
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<FakeSession>();
 }
 #[test]
+fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_fake_both_seats() {
+    paid_entry_attack::<FakeSession>();
+}
+#[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_fake_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<FakeSession>();
 }
@@ -412,6 +426,10 @@ impl Owner for RavenousSession {
 #[test]
 fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_ravenous_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<RavenousSession>();
+}
+#[test]
+fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_ravenous_both_seats() {
+    paid_entry_attack::<RavenousSession>();
 }
 #[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_ravenous_both_seats() {

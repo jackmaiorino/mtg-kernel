@@ -1689,27 +1689,57 @@ mod paid {
     }
 
     #[test]
-    fn ashroot_stromkirk_closed_supplements_preserve_native_printing_and_reject_foreign_fields() {
+    fn four_triggered_creature_supplements_preserve_native_printing_and_reject_foreign_fields() {
         use crate::mana::ManaColor;
-        for (name, subtypes, power, keywords, pips) in [
+        for (name, subtypes, power, toughness, keywords, generic, pips, colors, mana_value) in [
             (
                 "Ashroot Animist",
                 json!(["Lizard", "Druid"]),
                 4,
+                4,
                 json!(["Trample"]),
+                2,
                 json!([{"Colored":"R"},{"Colored":"G"}]),
+                json!(["R", "G"]),
+                4,
             ),
             (
                 "Stromkirk Bloodthief",
                 json!(["Vampire", "Rogue"]),
                 2,
+                2,
                 json!([]),
+                2,
                 json!([{"Colored":"B"}]),
+                json!(["B"]),
+                3,
+            ),
+            (
+                "Strongbox Raider",
+                json!(["Orc", "Pirate"]),
+                5,
+                2,
+                json!([]),
+                2,
+                json!([{"Colored":"R"},{"Colored":"R"}]),
+                json!(["R"]),
+                4,
+            ),
+            (
+                "Vampire Gourmand",
+                json!(["Vampire"]),
+                2,
+                2,
+                json!([]),
+                1,
+                json!([{"Colored":"B"}]),
+                json!(["B"]),
+                2,
             ),
         ] {
             let id = crate::card_def::card_id_by_name(name).unwrap();
             let d = ordinary_recipe(id);
-            roots::validate_attack_or_endstep_recipe(id, &d).unwrap();
+            roots::validate_triggered_creature_recipe(id, &d).unwrap();
             let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
             let p = &descriptor["registered_permanent_printing"];
             let c = &p["characteristics"];
@@ -1717,23 +1747,16 @@ mod paid {
             assert_eq!(c["subtypes"], subtypes);
             assert_eq!(c["supertypes"], json!([]));
             assert_eq!(c["power"], power);
-            assert_eq!(c["toughness"], power);
+            assert_eq!(c["toughness"], toughness);
             assert_eq!(c["ordered_keywords"], keywords);
             assert_eq!(c["printed_mana_abilities"], 0);
             assert_eq!(c["printed_activated_abilities"], 0);
-            assert_eq!(
-                c["colors"],
-                if power == 4 {
-                    json!(["R", "G"])
-                } else {
-                    json!(["B"])
-                }
-            );
-            assert_eq!(c["mana_value"], if power == 4 { 4 } else { 3 });
+            assert_eq!(c["colors"], colors);
+            assert_eq!(c["mana_value"], mana_value);
             let cast = &p["ordered_cast_roots"][0];
             assert_eq!(
                 cast["ordered_costs"][0]["PrintedMana"],
-                json!({"generic":2,"pips":pips,"x_count":0})
+                json!({"generic":generic,"pips":pips,"x_count":0})
             );
             assert_eq!(cast["ordinary_origin"], "Hand");
             assert_eq!(cast["ordinary_route"], "Hand");
@@ -1753,7 +1776,7 @@ mod paid {
             );
             assert_eq!(cast["zone_replacements_still_apply"], true);
             macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
-                assert!(matches!(roots::validate_attack_or_endstep_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+                assert!(matches!(roots::validate_triggered_creature_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
             reject!(cost, crate::mana::Cost::zero());
             reject!(mana_value, 0);
             reject!(object_name, "different");
@@ -1830,6 +1853,30 @@ mod paid {
             blood.rule.actual_opponent_loss_before_trigger
                 && blood.rule.intervening_condition_rechecked_at_resolution
                 && blood.rule.mandatory_controlled_vampire_permanent_target
+        );
+        let strongbox = crate::rules_meaning_strongbox_v1::meaning(
+            &crate::rules_meaning_strongbox_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Strongbox Raider").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            strongbox.raid_at_capture_and_resolution
+                && strongbox.choose_exactly_one_surviving_exile
+                && strongbox.ordinary_timing_costs_land_quota
+                && !strongbox.source_survival_required
+        );
+        let gourmand = crate::rules_meaning_gourmand_v1::meaning(
+            &crate::rules_meaning_gourmand_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Vampire Gourmand").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            gourmand.rule.optional_resolution_cost
+                && gourmand.rule.sacrifice_is_not_targeting
+                && gourmand.rule.unblockable_binds_original_source_incarnation
+                && gourmand.rule.draw_count_after_payment == 1
         );
     }
 
