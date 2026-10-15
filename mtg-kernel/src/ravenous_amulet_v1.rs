@@ -27,6 +27,12 @@ pub fn loss_program() -> EffectOp {
 }
 
 fn definition(id: u16) -> bool {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return false;
+    }
     let Some(d) = CARD_DEFS.get(usize::from(id)) else {
         return false;
     };
@@ -85,7 +91,7 @@ pub(crate) struct PaymentOwnerV1 {
     source: AbilitySourceContractV4,
     sacrifice: AbilitySourceContractV4,
     ability_index: u8,
-    original_soul_count: i32,
+    original_soul_count: Option<i32>,
     history_start: usize,
 }
 
@@ -93,6 +99,12 @@ pub(crate) fn capture_payment(
     state: &GameState,
     pending: &PendingActivation,
 ) -> Result<Option<PaymentOwnerV1>, String> {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return Ok(None);
+    }
     let live = state
         .objects
         .try_get(pending.source)
@@ -145,7 +157,7 @@ pub(crate) fn capture_payment(
         source: AbilitySourceContractV4::capture(state, pending.source),
         sacrifice,
         ability_index: pending.ability_index,
-        original_soul_count: live.counters.soul,
+        original_soul_count: (pending.ability_index == 1).then_some(live.counters.soul),
         history_start: state.engine.event_history.len(),
     }))
 }
@@ -156,12 +168,360 @@ pub struct PaidV1 {
     pub index: u64,
     pub original_source: AbilitySourceContractV4,
     pub original_sacrifice: AbilitySourceContractV4,
-    pub original_soul_count: i32,
+    /// Only the self-sacrifice ability reads this value. Draw/placement uses
+    /// the current resolution world, which may have changed in response.
+    pub original_soul_count: Option<i32>,
     pub payment_history_start: u64,
     pub tap_history_index: u64,
     pub sacrificed_history_index: u64,
     pub sacrifice_history_index: u64,
     pub item: Box<StackItem>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RemovalKindV1 {
+    Resolving,
+    Countered,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovedV1 {
+    pub index: u64,
+    pub paid: u64,
+    pub item: Box<StackItem>,
+    pub kind: RemovalKindV1,
+    pub source_present: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum OperationV1 {
+    Countered,
+    Draw { draw: u64, soul: Option<(u64, u64)> },
+    Loss { event: u64 },
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompletedV1 {
+    pub index: u64,
+    pub removed: u64,
+    pub operation: OperationV1,
+}
+/// Exact live-row loan acquired before the engine removes the actual row.
+/// No public/snapshot constructor can supply this one-use capability.
+pub(crate) struct OwnerV1 {
+    paid: u64,
+    item: StackItem,
+}
+
+fn paid_for(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
+    let mut rows = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            CommittedEvent::RavenousPaymentV1 { paid } if paid.item.v4.stack_item_id == id => {
+                Some(paid.as_ref())
+            }
+            _ => None,
+        });
+    let paid = rows.next().ok_or("Amulet actual payment absent")?;
+    if rows.next().is_some() {
+        return Err("Amulet actual payment duplicated".into());
+    }
+    validate_paid(state, paid)?;
+    Ok(paid)
+}
+fn tracked(state: &GameState, item: &StackItem) -> bool {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return false;
+    }
+    printed_item(item) || item.inline_effect == Some(draw_program()) || item.inline_effect == Some(loss_program())
+        || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { paid } if paid.item.v4.stack_item_id == item.v4.stack_item_id))
+}
+pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
+    if !tracked(state, item) {
+        return Ok(());
+    }
+    let paid = paid_for(state, item.v4.stack_item_id)?;
+    if paid.item.as_ref() != item || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index)) {
+        return Err("Amulet current row changed or replayed completion".into());
+    }
+    Ok(())
+}
+pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<OwnerV1>, String> {
+    if !tracked(state, item) {
+        return Ok(None);
+    }
+    validate_item(state, item)?;
+    let live = state
+        .stack
+        .iter()
+        .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>();
+    if live.as_slice() != [item] {
+        return Err("Amulet removal lost exact unique live row".into());
+    }
+    Ok(Some(OwnerV1 {
+        paid: paid_for(state, item.v4.stack_item_id)?.index,
+        item: item.clone(),
+    }))
+}
+fn remove_owned(
+    state: &mut GameState,
+    owner: &OwnerV1,
+    kind: RemovalKindV1,
+) -> Result<u64, String> {
+    validate_item(state, &owner.item)?;
+    if state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == owner.item.v4.stack_item_id)
+        || paid_for(state, owner.item.v4.stack_item_id)?.index != owner.paid
+    {
+        return Err("Amulet operation lacks genuine removed-row loan".into());
+    }
+    let source = owner
+        .item
+        .v4
+        .ability_source_contract
+        .ok_or("Amulet original source absent")?;
+    let source_present = state.objects.try_get(source.source).is_some_and(|live| {
+        live.zone == source.zone && live.zone_change_count == source.zone_change_count
+    });
+    let index = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::RavenousRemovedV1 {
+            removed: Box::new(RemovedV1 {
+                index,
+                paid: owner.paid,
+                item: Box::new(owner.item.clone()),
+                kind,
+                source_present,
+            }),
+        });
+    Ok(index)
+}
+fn complete(state: &mut GameState, removed: u64, operation: OperationV1) -> Result<(), String> {
+    let index = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::RavenousCompletedV1 {
+            completed: Box::new(CompletedV1 {
+                index,
+                removed,
+                operation,
+            }),
+        });
+    crate::soul_counters_v1::validate(state)
+}
+pub(crate) fn countered(state: &mut GameState, owner: Option<OwnerV1>) -> Result<(), String> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    let removed = remove_owned(state, &owner, RemovalKindV1::Countered)?;
+    complete(state, removed, OperationV1::Countered)
+}
+pub(crate) fn resolve(
+    state: &mut GameState,
+    owner: OwnerV1,
+    ctx: &crate::effect::ExecCtx,
+) -> Result<(), String> {
+    let mut expected = crate::effect::ExecCtx::no_targets(owner.item.source, owner.item.controller);
+    expected.stack_item_id = Some(owner.item.v4.stack_item_id);
+    expected.paid_cost_refs = owner.item.v4.paid_cost_refs.clone();
+    expected.ability_source_contract = owner.item.v4.ability_source_contract;
+    if ctx != &expected {
+        return Err("Amulet resolving context changed its whole paid input".into());
+    }
+    let removed = remove_owned(state, &owner, RemovalKindV1::Resolving)?;
+    let start = state.engine.event_history.len();
+    crate::effect::execute(
+        owner
+            .item
+            .inline_effect
+            .as_ref()
+            .ok_or("Amulet program absent")?,
+        ctx,
+        state,
+    );
+    if state.engine.halted.is_some() || state.engine.pending_effect.is_some() {
+        return Err("Amulet atomic program halted or suspended".into());
+    }
+    let operation = if owner.item.v4.activated_ability_index == Some(0) {
+        let draws = state.engine.event_history[start..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, event)| {
+                matches!(event, CommittedEvent::Draw { player, .. } if *player == ctx.controller)
+                    .then_some((start + offset) as u64)
+            })
+            .collect::<Vec<_>>();
+        let [draw] = draws.as_slice() else {
+            return Err("Amulet did not commit its one draw attempt".into());
+        };
+        let souls = state.engine.event_history[start..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, event)| match event {
+                CommittedEvent::SoulCounterAddedV1 {
+                    input_history_index,
+                    source,
+                    ..
+                } if Some(*source) == ctx.ability_source_contract => {
+                    Some((*input_history_index, (start + offset) as u64))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let soul = match souls.as_slice() {
+            [] => None,
+            [pair] => Some(*pair),
+            _ => return Err("Amulet duplicated soul placement".into()),
+        };
+        OperationV1::Draw { draw: *draw, soul }
+    } else {
+        let losses = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset,event)| matches!(event, CommittedEvent::LifeLoss { player, .. } if *player == ctx.controller.opponent()).then_some((start+offset) as u64)).collect::<Vec<_>>();
+        let [event] = losses.as_slice() else {
+            return Err("Amulet did not commit one untargeted loss".into());
+        };
+        OperationV1::Loss { event: *event }
+    };
+    complete(state, removed, operation)
+}
+
+fn validate_completion(
+    state: &GameState,
+    paid: &PaidV1,
+    removed: &RemovedV1,
+    completed: &CompletedV1,
+) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    let at = |index| usize::try_from(index).ok().and_then(|i| history.get(i));
+    if removed.paid != paid.index
+        || removed.item != paid.item
+        || removed.index <= paid.index
+        || completed.removed != removed.index
+        || completed.index <= removed.index
+        || !matches!(at(removed.index), Some(CommittedEvent::RavenousRemovedV1 { removed: original }) if original.as_ref() == removed)
+        || !matches!(at(completed.index), Some(CommittedEvent::RavenousCompletedV1 { completed: original }) if original.as_ref() == completed)
+    {
+        return Err("Amulet completion lost its original paid removal".into());
+    }
+    let start = usize::try_from(removed.index)
+        .ok()
+        .and_then(|i| i.checked_add(1))
+        .ok_or("Amulet removal index overflow")?;
+    let end = usize::try_from(completed.index).map_err(|_| "Amulet completion index overflow")?;
+    let rows = history
+        .get(start..end)
+        .ok_or("Amulet operation history range absent")?;
+    let draws = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(event, CommittedEvent::Draw { .. }).then_some((start + offset) as u64)
+        })
+        .collect::<Vec<_>>();
+    let souls = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| match event {
+            CommittedEvent::SoulCounterAddedV1 {
+                input_history_index,
+                ..
+            } => Some((*input_history_index, (start + offset) as u64)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let inputs = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(event, CommittedEvent::SoulCounterInputV1 { .. })
+                .then_some((start + offset) as u64)
+        })
+        .collect::<Vec<_>>();
+    let losses = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(event, CommittedEvent::LifeLoss { .. }).then_some((start + offset) as u64)
+        })
+        .collect::<Vec<_>>();
+    match &completed.operation {
+        OperationV1::Countered => {
+            if removed.kind != RemovalKindV1::Countered || !rows.is_empty() {
+                return Err("countered Amulet invented an effect".into());
+            }
+        }
+        OperationV1::Draw { draw, soul } => {
+            if removed.kind != RemovalKindV1::Resolving
+                || paid.item.v4.activated_ability_index != Some(0)
+                || draws.as_slice() != [*draw]
+                || !losses.is_empty()
+                || !matches!(at(*draw), Some(CommittedEvent::Draw { player, .. }) if *player == paid.original_source.controller)
+            {
+                return Err("Amulet draw changed its actual actor/attempt".into());
+            }
+            match soul {
+                None if !removed.source_present && souls.is_empty() && inputs.is_empty() => {}
+                Some((input_at, added_at))
+                    if removed.source_present
+                        && *draw < *input_at
+                        && input_at.checked_add(1) == Some(*added_at)
+                        && souls.as_slice() == [(*input_at, *added_at)]
+                        && inputs.as_slice() == [*input_at] =>
+                {
+                    let Some(CommittedEvent::SoulCounterInputV1 { input }) = at(*input_at) else {
+                        return Err("Amulet soul original world absent".into());
+                    };
+                    let Some(CommittedEvent::SoulCounterAddedV1 {
+                        source,
+                        player,
+                        input_history_index,
+                        ..
+                    }) = at(*added_at)
+                    else {
+                        return Err("Amulet soul placement absent".into());
+                    };
+                    if Some(*source) != paid.item.v4.ability_source_contract
+                        || input.source != *source
+                        || input.actor != paid.item.controller
+                        || *player != paid.item.controller
+                        || *input_history_index != *input_at
+                    {
+                        return Err("Amulet soul input redirected its paid source/actor".into());
+                    }
+                }
+                _ => {
+                    return Err(
+                        "Amulet soul completion changed the original source-presence input".into(),
+                    )
+                }
+            }
+        }
+        OperationV1::Loss { event } => {
+            if removed.kind != RemovalKindV1::Resolving
+                || paid.item.v4.activated_ability_index != Some(1)
+                || !draws.is_empty()
+                || !souls.is_empty()
+                || !inputs.is_empty()
+                || losses.as_slice() != [*event]
+                || !matches!(at(*event), Some(CommittedEvent::LifeLoss { player, amount }) if *player == paid.item.controller.opponent() && Some(*amount) == paid.original_soul_count)
+            {
+                return Err(
+                    "Amulet loss changed original controller/count or gained targets".into(),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn printed_item(item: &StackItem) -> bool {
@@ -224,7 +584,11 @@ fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
         || source.zone != Zone::Battlefield
         || sacrifice.zone != Zone::Battlefield
         || sacrifice.controller != source.controller
-        || paid.original_soul_count < 0
+        || if role == 1 {
+            paid.original_soul_count.is_none_or(|count| count < 0)
+        } else {
+            paid.original_soul_count.is_some()
+        }
         || (role == 1 && sacrifice != source)
         || (sacrifice.source == source.source && sacrifice != source)
         || cost.object != sacrifice.source
@@ -252,10 +616,11 @@ fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
     }
     // A self-sacrificed original generation has stable LKI even after return.
     // Other-creature payments may later gain more soul counters legitimately.
-    if source.source == sacrifice.source
-        && state.soul_count_for_ability_source_v1(source)? != paid.original_soul_count
-    {
-        return Err("Amulet self-sacrifice rewrote its original soul count".into());
+    match paid.original_soul_count {
+        Some(count) if state.soul_count_for_ability_source_v1(source)? != count => {
+            return Err("Amulet self-sacrifice rewrote its original soul count".into());
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -263,6 +628,28 @@ fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let mut ids = Vec::new();
     for (index, event) in state.engine.event_history.iter().enumerate() {
+        match event {
+            CommittedEvent::RavenousRemovedV1 { removed } => {
+                if removed.index != index as u64
+                    || !matches!(usize::try_from(removed.paid).ok().and_then(|at| state.engine.event_history.get(at)), Some(CommittedEvent::RavenousPaymentV1 { paid }) if paid.item == removed.item)
+                {
+                    return Err("Amulet removal lost its actual original payment position".into());
+                }
+            }
+            CommittedEvent::RavenousCompletedV1 { completed } => {
+                if completed.index != index as u64
+                    || !matches!(
+                        usize::try_from(completed.removed)
+                            .ok()
+                            .and_then(|at| state.engine.event_history.get(at)),
+                        Some(CommittedEvent::RavenousRemovedV1 { .. })
+                    )
+                {
+                    return Err("Amulet completion lost its original removal position".into());
+                }
+            }
+            _ => {}
+        }
         let CommittedEvent::RavenousPaymentV1 { paid } = event else {
             continue;
         };
@@ -276,21 +663,54 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|item| item.v4.stack_item_id == paid.item.v4.stack_item_id)
             .collect::<Vec<_>>();
-        if !live.is_empty() && live.as_slice() != [paid.item.as_ref()] {
-            return Err("Amulet current activation changed its whole paid row".into());
+        let removals = state
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index => {
+                    Some(removed.as_ref())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        match (live.as_slice(), removals.as_slice()) {
+            ([item], []) if *item == paid.item.as_ref() => {}
+            ([], [removed]) => {
+                let completions = state
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::RavenousCompletedV1 { completed }
+                            if completed.removed == removed.index =>
+                        {
+                            Some(completed.as_ref())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let [completed] = completions.as_slice() else {
+                    return Err("Amulet removed row lost unique completion".into());
+                };
+                validate_completion(state, paid, removed, completed)?;
+            }
+            _ => {
+                return Err("Amulet paid row was lost, duplicated or replayed after removal".into())
+            }
         }
     }
     for item in &state.stack {
-        if printed_item(item) && !ids.contains(&item.v4.stack_item_id) {
-            return Err("Amulet current activation lost its actual payment receipt".into());
-        }
+        validate_item(state, item)?;
     }
-    if state
-        .engine
-        .event_log
-        .iter()
-        .any(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { .. }))
-    {
+    if state.engine.event_log.iter().any(|event| {
+        matches!(
+            event,
+            CommittedEvent::RavenousPaymentV1 { .. }
+                | CommittedEvent::RavenousRemovedV1 { .. }
+                | CommittedEvent::RavenousCompletedV1 { .. }
+        )
+    }) {
         return Err("private Amulet payment entered trigger log".into());
     }
     Ok(())
@@ -347,7 +767,9 @@ pub(crate) fn record_paid(
         || cost.owner != owner.sacrifice.owner
         || owner.sacrifice.zone_change_count.checked_add(1) != Some(cost.zone_change_count)
         || cost.zone == Zone::Battlefield
-        || state.soul_count_for_ability_source_v1(owner.source)? != owner.original_soul_count
+        || owner.original_soul_count.is_some_and(|count| {
+            state.soul_count_for_ability_source_v1(owner.source).ok() != Some(count)
+        })
     {
         return Err("Amulet finalized publication changed its private payment".into());
     }

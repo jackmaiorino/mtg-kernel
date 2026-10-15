@@ -45,6 +45,8 @@ pub(crate) fn has_history(state: &GameState) -> bool {
             CommittedEvent::SoulCounterInputV1 { .. }
                 | CommittedEvent::SoulCounterAddedV1 { .. }
                 | CommittedEvent::RavenousPaymentV1 { .. }
+                | CommittedEvent::RavenousRemovedV1 { .. }
+                | CommittedEvent::RavenousCompletedV1 { .. }
         )
     })
 }
@@ -117,7 +119,9 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     for event in &state.engine.event_log {
         match event {
             CommittedEvent::SoulCounterInputV1 { .. }
-            | CommittedEvent::RavenousPaymentV1 { .. } => {
+            | CommittedEvent::RavenousPaymentV1 { .. }
+            | CommittedEvent::RavenousRemovedV1 { .. }
+            | CommittedEvent::RavenousCompletedV1 { .. } => {
                 return Err("private soul input replayed as trigger event".into());
             }
             CommittedEvent::SoulCounterAddedV1 {

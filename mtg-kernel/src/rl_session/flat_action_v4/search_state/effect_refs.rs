@@ -1415,7 +1415,7 @@ pub(super) fn conflicts(
                 | FiendishPandaJournalV1 { .. }
                 | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
                 | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. }
-                | SoulCounterInputV1 { .. } | RavenousPaymentV1 { .. } => true,
+                | SoulCounterInputV1 { .. } | RavenousPaymentV1 { .. } | RavenousRemovedV1 { .. } | RavenousCompletedV1 { .. } => true,
         }
     })
 }

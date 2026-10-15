@@ -14117,6 +14117,7 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::ravenous_amulet_v1::validate_item(state, item)?;
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
@@ -14728,6 +14729,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ajani_counter_owner = crate::ajani_full_v42::lifecycle::acquire(state, &item)?;
     let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
+    let ravenous_counter_owner = crate::ravenous_amulet_v1::acquire(state, &item)?;
     let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
@@ -14749,6 +14751,7 @@ pub(crate) fn counter_stack_item_by_id(
         krenko_counter_owner.as_ref(),
         crate::krenko_v1::RemovalV1::Countered,
     )?;
+    crate::ravenous_amulet_v1::countered(state, ravenous_counter_owner)?;
     if let Some(owner) = arahbo_counter_owner {
         crate::arahbo_v1::record_counter_input(state, &owner)?;
         crate::arahbo_v1::counter_removed(state, owner)?;
@@ -15349,6 +15352,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -15463,6 +15476,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = ravenous_owner {
+        if crate::ravenous_amulet_v1::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = conqueror_owner.as_ref() {
         if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
             state,

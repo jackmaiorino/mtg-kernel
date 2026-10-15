@@ -1465,6 +1465,12 @@ pub enum CommittedEvent {
     RavenousPaymentV1 {
         paid: Box<crate::ravenous_amulet_v1::PaidV1>,
     },
+    RavenousRemovedV1 {
+        removed: Box<crate::ravenous_amulet_v1::RemovedV1>,
+    },
+    RavenousCompletedV1 {
+        completed: Box<crate::ravenous_amulet_v1::CompletedV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -6073,6 +6079,78 @@ mod ravenous_amulet_paid_future_tests {
     use crate::policy_observation_v6::tests::{advance_to_next_main_for, put, ready_state_for};
     use crate::state::AbilitySourceContractV4;
 
+    fn completed_refusals(state: &GameState, id: crate::ids::StackItemId) {
+        crate::doubling_season_v48::validate_token_journals(state).unwrap();
+        for case in 0..7 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let (paid_index, item) = branch
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid }
+                        if paid.item.v4.stack_item_id == id =>
+                    {
+                        Some((paid.index, paid.item.as_ref().clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let removed_at = branch.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid_index)).unwrap();
+            let completed_at = branch.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::RavenousCompletedV1 { completed } if completed.removed == removed_at as u64)).unwrap();
+            match case {
+                0 => branch.stack.push(item),
+                1 => branch
+                    .engine
+                    .event_history
+                    .push(branch.engine.event_history[completed_at].clone()),
+                2 => {
+                    branch.engine.event_history.remove(completed_at);
+                }
+                3 => {
+                    let CommittedEvent::RavenousRemovedV1 { removed } =
+                        &mut branch.engine.event_history[removed_at]
+                    else {
+                        unreachable!()
+                    };
+                    removed.kind = match removed.kind {
+                        crate::ravenous_amulet_v1::RemovalKindV1::Resolving => {
+                            crate::ravenous_amulet_v1::RemovalKindV1::Countered
+                        }
+                        crate::ravenous_amulet_v1::RemovalKindV1::Countered => {
+                            crate::ravenous_amulet_v1::RemovalKindV1::Resolving
+                        }
+                    };
+                }
+                4 => branch
+                    .engine
+                    .event_log
+                    .push(branch.engine.event_history[removed_at].clone()),
+                5 | 6 => {
+                    let CommittedEvent::RavenousCompletedV1 { completed } =
+                        &mut branch.engine.event_history[completed_at]
+                    else {
+                        unreachable!()
+                    };
+                    if case == 5 {
+                        completed.operation =
+                            crate::ravenous_amulet_v1::OperationV1::Loss { event: paid_index };
+                    } else {
+                        completed.removed = paid_index;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let before = branch.clone();
+            assert!(
+                crate::doubling_season_v48::validate_token_journals(&branch).is_err(),
+                "completion case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
     fn payment_receipt_refusals(state: &GameState) {
         crate::ravenous_amulet_v1::validate_state(state).unwrap();
         for case in 0..10 {
@@ -6136,12 +6214,7 @@ mod ravenous_amulet_paid_future_tests {
                     4 => paid.item.is_copy = true,
                     5 => paid.item.v4.paid_cost_refs.clear(),
                     9 => {
-                        paid.original_soul_count =
-                            if paid.original_source.source == paid.original_sacrifice.source {
-                                paid.original_soul_count + 1
-                            } else {
-                                -1
-                            };
+                        paid.original_soul_count = Some(paid.original_soul_count.unwrap_or(0) + 1);
                     }
                     _ => unreachable!(),
                 }
@@ -6229,16 +6302,49 @@ mod ravenous_amulet_paid_future_tests {
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(payments.len(), 1);
-                assert_eq!(payments[0].original_soul_count, 0);
+                assert_eq!(payments[0].original_soul_count, None);
                 assert_eq!(payments[0].original_sacrifice.source, chosen);
                 assert_eq!(payments[0].item.v4.activated_ability_index, Some(0));
                 payment_receipt_refusals(branch);
+                let id = branch.stack.last().unwrap().v4.stack_item_id;
+                // Actual engine counter removal of the genuinely paid row;
+                // no printed counterspell producer is claimed by this boundary.
+                let mut countered = branch.clone();
+                assert!(engine::counter_stack_item_by_id(&mut countered, id)
+                    .unwrap()
+                    .is_some());
+                assert_eq!(countered.players[actor.index()].hand.len(), hand);
+                assert_eq!(countered.objects.get(amulet).counters.soul, 0);
+                assert_eq!(countered.objects.get(chosen).zone, Zone::Graveyard);
+                assert!(countered.objects.get(amulet).tapped);
+                completed_refusals(&countered, id);
                 finish(branch);
                 assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                completed_refusals(branch, id);
             }
             assert_eq!(state, restored);
 
+            advance_to_next_main_for(&mut state, actor);
+            // Another accepted soul-placement primitive responds while the
+            // second genuinely paid draw activation is pending. This does not
+            // claim a registered Zimone producer; it checks the resolution
+            // boundary that its printed counter-doubling ability will require.
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            engine::step(&mut state, Action::ChooseCostTarget(spare)).unwrap();
+            paid_priority(&mut state, actor);
+            let response_source = AbilitySourceContractV4::capture(&state, amulet);
+            let mut response = crate::effect::ExecCtx::no_targets(amulet, actor);
+            response.ability_source_contract = Some(response_source);
+            crate::effect::execute(
+                &crate::effect::EffectOp::AddSoulCounterToAbilitySourceV1,
+                &response,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(amulet).counters.soul, 2);
+            finish(&mut state);
+            assert_eq!(state.objects.get(amulet).counters.soul, 3);
             advance_to_next_main_for(&mut state, actor);
             assert!(!state.objects.get(amulet).tapped);
             state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
@@ -6252,7 +6358,7 @@ mod ravenous_amulet_paid_future_tests {
             );
             assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
             assert_eq!(state.objects.get(amulet).counters.soul, 0);
-            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(1));
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(3));
             let payments = state
                 .engine
                 .event_history
@@ -6262,12 +6368,14 @@ mod ravenous_amulet_paid_future_tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(payments.len(), 2);
-            assert_eq!(payments[1].original_source, original);
-            assert_eq!(payments[1].original_sacrifice, original);
-            assert_eq!(payments[1].original_soul_count, 1);
-            assert_eq!(payments[1].item.v4.activated_ability_index, Some(1));
+            assert_eq!(payments.len(), 3);
+            assert_eq!(payments[1].original_soul_count, None);
+            assert_eq!(payments[2].original_source, original);
+            assert_eq!(payments[2].original_sacrifice, original);
+            assert_eq!(payments[2].original_soul_count, Some(3));
+            assert_eq!(payments[2].item.v4.activated_ability_index, Some(1));
             payment_receipt_refusals(&state);
+            let loss_id = state.stack.last().unwrap().v4.stack_item_id;
             // Explicit zone-transition boundary after genuine paid self-sacrifice.
             // This is not a claim of a printed artifact-return producer.
             propose_and_commit(
@@ -6285,10 +6393,11 @@ mod ravenous_amulet_paid_future_tests {
                 assert_eq!(branch.players[actor.index()].life, life[actor.index()]);
                 assert_eq!(
                     branch.players[actor.opponent().index()].life,
-                    life[actor.opponent().index()] - 1
+                    life[actor.opponent().index()] - 3
                 );
                 assert_eq!(branch.objects.get(amulet).zone, Zone::Battlefield);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+                completed_refusals(branch, loss_id);
             }
             assert_eq!(state, restored);
         }
@@ -6337,7 +6446,7 @@ mod ravenous_amulet_paid_future_tests {
                 .collect::<Vec<_>>();
             assert_eq!(payments.len(), 1);
             assert_eq!(payments[0].original_source, original);
-            assert_eq!(payments[0].original_soul_count, 0);
+            assert_eq!(payments[0].original_soul_count, Some(0));
             assert_eq!(payments[0].item.v4.activated_ability_index, Some(1));
             finish(&mut state);
             assert_eq!(state.players.each_ref().map(|p| p.life), life);

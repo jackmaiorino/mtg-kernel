@@ -18,12 +18,12 @@ Sixteen focused Rust tests are written for storage/refusal/transfer, ordered dra
 
 The genuine cost branches now acquire a private nonserialized Amulet payment
 token before paying. It captures the original source, chosen creature or self,
-ability index and soul count. Only successful generic full payment consumes it
+ability index and, for the self-sacrifice ability only, its soul count. Only successful generic full payment consumes it
 at finalized publication. The appended private payment receipt binds the whole
 stack row, original-generation count and unique ordered tap, sacrifice-marker
 and departure occurrences. Both generator recipes share the checked program
-factories. The existing ignored paid-printing cases now check zero/one soul
-payment receipts; their ignore remains. Hidden-world sampling refuses payment
+factories. The existing ignored paid-printing cases check absent draw-count
+captures and zero/nonzero self-sacrifice counts; their ignore remains. Hidden-world sampling refuses payment
 history even before a soul placement, and the counter-journal boundary rejects
 private receipts in the trigger log. This new payment custody is uncompiled and
 unrun. The shared journal validation boundary now checks indexed receipt
@@ -31,14 +31,32 @@ structure, full printed stack shape, source/controller/cost relations, actual
 tap/sacrifice/departure links, unique receipt identities and exact live rows.
 Self-sacrifice counts are checked against the original generation's stable LKI,
 including after reentry. The existing ignored paid case exercises ten restored
-forgeries at both payment stages and read-only refusal. Other-creature payment
-counts still need the later draw/placement input anchor; replayed completed
-rows still need one-time resolving or counter-removal ownership. These checks
-are not a complete original-input or operation-completion proof.
+forgeries at both payment stages and read-only refusal.
 
-Remaining: complete original-input authentication through restore,
-resolution/counter-removal and anchoring the primitive's original inputs;
-active registration; public/meaning/observation/consumer support; actual paid
+The draw ability uses its actual resolution world, not a frozen pre-payment
+count. Zimone can change an artifact's counters in response. Only the second
+ability reads the self-sacrificed original generation's count, so its receipt
+contains the optional count. The ignored paid test now resolves another genuine
+draw activation after an accepted soul-placement response boundary and checks
+two then three counters, followed by loss of three after self-sacrifice/reentry.
+This is not qualification of a printed Zimone producer.
+
+Resolution and counter removal now acquire a private one-use exact-live-row
+owner before the real engine pop. The appended removed/completed journals bind
+the actual paid row, removal kind, original source presence and committed effect
+indices. Resolution executes the unchanged atomic program, checking draw before
+paired soul input/placement or exact original-controller untargeted loss. A
+countered ability keeps its paid costs and produces no effect. Restore validation
+requires either the exact live paid row or its unique complete removal; an old
+completed row cannot be installed again. Seven additional restored-record/replay
+forgeries are exercised inside the ignored paid case, after both real resolution
+and the actual engine counter primitive. No named counterspell producer is
+claimed. These changes remain uncompiled and unrun. The printed ownership path
+is limited to the pure FDN feature set; the generic soul instruction retains its
+separate Standard modifier behavior.
+
+Remaining: native qualification and cross-family original-world validation of
+the new lifecycle, active registration, public/meaning/observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
 training claim follows from this prerequisite.
 
@@ -47,3 +65,5 @@ Primary source receipts:
 - `Mage.Sets/src/mage/cards/r/RavenousAmulet.java`: blob `0d010bb77fcf85f9168ade1060b9430782571e0f`, SHA-256 `e89ec45785f01de0ef55d485fdcfbc34fb6f8deb71601511b214d43043b39d74`.
 
 - `Mage/src/main/java/mage/abilities/dynamicvalue/common/CountersSourceCount.java`: blob `574ee108e69e7710de3d7c46b95a47e6eb15f132`, SHA-256 `00add2937bf1f70a9877114d432b9f87f6e65d18e106d7366319e2fcc80233d4`.
+
+- `Mage.Sets/src/mage/cards/z/ZimoneParadoxSculptor.java` at the same pinned commit: blob `2f5c267e6061c487471e2170953286d96fe91aac`, confirming instant-speed doubling of each counter kind on controlled artifacts/creatures.
