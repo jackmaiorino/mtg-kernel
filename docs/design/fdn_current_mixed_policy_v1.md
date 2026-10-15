@@ -25,6 +25,12 @@ Thin public root references are expanded through their existing typed meaning
 producers. Full inherited meaning/fact records retain their ordered structure.
 Exact baseline descriptors cover intrinsic land mana, ordinary vanilla/keyword
 creatures, Llanowar mana, ordinary Bolt and Treasure's atomic mana ability.
+Think Twice has two ordered typed cast roots: normal Hand `{1}{U}` and own
+Graveyard flashback alternative `{2}{U}`, each Draw1 for the controller, with
+flashback's exile replacement on every physical stack departure. Its exact
+immutable costs/program and all unrelated CardDef fields are authenticated.
+These printing descriptors grant no permission or executable payment plan;
+the original typed candidate and backend cast state authenticate the route.
 Every current CardDef field is either represented or excluded by that selector.
 No raw executable EffectOp, private world or full static catalog enters tensors.
 
@@ -38,7 +44,7 @@ Deterministic fixture parameters demonstrate arithmetic only, not useful play.
 Coverage remains intentionally incomplete: cards without a complete currently
 available typed printing descriptor refuse `UnsupportedPrintedRoot(id)`.
 Homunculus Horde's genuine nine-trigger menu is a named refusal regression,
-not claimed model support. Ordinary nonbaseline spells such as Think Twice,
+not claimed model support. Ordinary nonbaseline spells such as Counterspell,
 unexpanded root forms and unknown reference shapes likewise refuse. This
 prerequisite therefore does **not** claim complete current-catalog scoring.
 Closing those concrete root/shape gaps is subsequent implementation work.
@@ -47,7 +53,11 @@ Frozen model identities and retained-world sampler/search refusals remain.
 Authored tests include both-seat paid Fake/Bolt death-return-Treasure and Amulet, private-hand invariance,
 whole binding/owner/restore refusal, exact native selected-action parity, wide
 noncreature V51 operands, a genuine 260-target Divine cast with restore at255,
-and the genuine large-menu missing-root refusal. All Rust tests are **uncompiled
+the genuine large-menu missing-root refusal, and both owning entries' actual
+paid Think Twice cast followed by flashback of that same graveyard incarnation,
+with original ordered candidates, paid-row restore/replay, Draw1 and exile,
+distinct cast packets and independent initial hidden-hand invariance.
+All Rust tests are **uncompiled
 and unrun**. Allowed verification is pinned formatting, source/API inventory,
 small static Python checks and diff inspection. Parent owns qualification;
 there is no research, training, evaluation, GPU or paid execution authorization.

@@ -5,10 +5,105 @@ use crate::effect::{EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+/// A printing-owned route, not a cast permission or a quoted payment plan.
+/// The current typed candidate/source zone and cast state select the route;
+/// the owning backend still authenticates and pays it before execution.
+#[derive(serde::Serialize)]
+struct ThinkTwiceCastRoot {
+    method: crate::state::CastMethodV4,
+    route: crate::state::SpellCastRouteV4,
+    origin: Zone,
+    origin_owner_must_be_caster: bool,
+    timing: BaselineTiming,
+    ordered_costs: [BaselineManaCost; 1],
+    ordered_resolution: [BaselineDraw; 1],
+    physical_stack_departure: BaselineDeparture,
+}
+#[derive(serde::Serialize)]
+enum BaselineTiming {
+    InstantWithPriority,
+}
+#[derive(serde::Serialize)]
+enum BaselineManaCost {
+    PrintedMana(crate::mana::Cost),
+    FlashbackAlternativeMana(crate::mana::Cost),
+}
+#[derive(serde::Serialize)]
+enum BaselineDraw {
+    DrawController(u32),
+}
+#[derive(serde::Serialize)]
+enum BaselineDeparture {
+    GraveyardAfterResolutionOrCounter,
+    ExileInsteadOfAnyOtherDeparture,
+}
+const THINK_TWICE_NORMAL: crate::mana::Cost = crate::mana::Cost {
+    pips: &[crate::mana::Pip::Colored(crate::mana::ManaColor::U)],
+    generic: 1,
+    x_count: 0,
+};
+const THINK_TWICE_FLASHBACK: crate::mana::Cost = crate::mana::Cost {
+    generic: 2,
+    ..THINK_TWICE_NORMAL
+};
+fn think_twice_cast_roots() -> [ThinkTwiceCastRoot; 2] {
+    use crate::state::{CastMethodV4, SpellCastRouteV4};
+    [
+        ThinkTwiceCastRoot {
+            method: CastMethodV4::Normal,
+            route: SpellCastRouteV4::Hand,
+            origin: Zone::Hand,
+            origin_owner_must_be_caster: true,
+            timing: BaselineTiming::InstantWithPriority,
+            ordered_costs: [BaselineManaCost::PrintedMana(THINK_TWICE_NORMAL)],
+            ordered_resolution: [BaselineDraw::DrawController(1)],
+            physical_stack_departure: BaselineDeparture::GraveyardAfterResolutionOrCounter,
+        },
+        ThinkTwiceCastRoot {
+            method: CastMethodV4::Flashback,
+            route: SpellCastRouteV4::GraveyardFlashback,
+            origin: Zone::Graveyard,
+            origin_owner_must_be_caster: true,
+            timing: BaselineTiming::InstantWithPriority,
+            ordered_costs: [BaselineManaCost::FlashbackAlternativeMana(
+                THINK_TWICE_FLASHBACK,
+            )],
+            ordered_resolution: [BaselineDraw::DrawController(1)],
+            physical_stack_departure: BaselineDeparture::ExileInsteadOfAnyOtherDeparture,
+        },
+    ]
+}
+
 pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    // Every other field is checked by the common exclusion guard below. A
+    // familiar name alone never admits a different cost, program or cast form.
+    let think_twice = d.name == "Think Twice"
+        && !d.is_token
+        && !d.is_land
+        && d.types == [CardType::Instant]
+        && d.subtypes.is_empty()
+        && d.supertypes.is_empty()
+        && d.colors == [crate::mana::ManaColor::U]
+        && d.cost == THINK_TWICE_NORMAL
+        && d.mana_value == 2
+        && d.power.is_none()
+        && d.toughness.is_none()
+        && d.keywords == crate::card_def::Keywords::NONE
+        && d.target_spec == TargetSpec::None
+        && d.produces_mana.is_empty()
+        && d.mana_ability_choices.is_empty()
+        && (d.mana_ability)().is_none()
+        && d.flashback.as_ref().is_some_and(|flashback| {
+            flashback.cost == [crate::card_def::CostComponent::Mana(THINK_TWICE_FLASHBACK)]
+        })
+        && (d.spell_effect)()
+            == Some(EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            });
     let treasure = d.name == "Treasure Token"
         && d.is_token
         && d.types == [CardType::Artifact]
@@ -48,7 +143,7 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.mode2.is_none()
         && d.mode3.is_none()
         && d.additional_modes.is_empty()
-        && d.flashback.is_none()
+        && (d.flashback.is_none() || think_twice)
         && d.kicker_cost.is_none()
         && d.additional_cost.is_none()
         && d.optional_additional_cost.is_none()
@@ -95,6 +190,16 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && crate::trigger::triggers_for(id).is_empty())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    if think_twice {
+        return Ok(json!({"card_id":id,"primitive_printing":{
+            "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
+            "subtypes":[],"supertypes":[],"colors":d.colors,"power":d.power,
+            "toughness":d.toughness,"keywords":d.keywords.0,"mana_value":d.mana_value,
+            "token":false,"ordered_cast_roots":think_twice_cast_roots(),
+            "virtual_spell_copy_departure":"CeaseWithoutEnteringCardZone",
+            "flashback_cost_is_alternative_not_additional":true
+        }}));
     }
     if treasure {
         return Ok(

@@ -40,7 +40,7 @@ fn numeric_tree_has_no_scalar_width_loss_and_keeps_every_ordered_member() {
 
 #[test]
 fn unknown_printed_program_refuses_instead_of_using_name_or_digest() {
-    let id = crate::card_def::card_id_by_name("Think Twice").unwrap();
+    let id = crate::card_def::card_id_by_name("Counterspell").unwrap();
     assert!(matches!(roots::baseline(id),Err(Error::UnsupportedPrintedRoot(actual))if actual==id));
 }
 
@@ -91,6 +91,155 @@ mod paid {
     }
     fn mana(action: &ActionSemanticV1, id: ObjectId) -> bool {
         matches!(action,ActionSemanticV1::ActivateManaAbility{source,..}if source.arena_id==id.0)
+    }
+    #[test]
+    fn think_twice_roots_keep_exact_ordered_cost_route_draw_and_departure() {
+        let id = crate::card_def::card_id_by_name("Think Twice").unwrap();
+        let descriptor = roots::baseline(id).unwrap();
+        let roots = &descriptor["primitive_printing"]["ordered_cast_roots"];
+        assert_eq!(roots.as_array().unwrap().len(), 2);
+        assert_eq!(roots[0]["origin"], json!(Zone::Hand));
+        assert_eq!(roots[1]["origin"], json!(Zone::Graveyard));
+        assert_eq!(roots[0]["method"], "normal");
+        assert_eq!(roots[1]["method"], "flashback");
+        assert_eq!(roots[0]["route"], "Hand");
+        assert_eq!(roots[1]["route"], "GraveyardFlashback");
+        assert_eq!(roots[0]["ordered_costs"][0]["PrintedMana"]["generic"], 1);
+        assert_eq!(
+            roots[1]["ordered_costs"][0]["FlashbackAlternativeMana"]["generic"],
+            2
+        );
+        for (root, kind) in [(0, "PrintedMana"), (1, "FlashbackAlternativeMana")] {
+            assert_eq!(
+                roots[root]["ordered_costs"][0][kind]["pips"],
+                json!([{"Colored":"U"}])
+            );
+            assert_eq!(roots[root]["ordered_costs"][0][kind]["x_count"], 0);
+            assert_eq!(
+                roots[root]["ordered_resolution"],
+                json!([{"DrawController":1}])
+            );
+        }
+        assert_eq!(
+            roots[0]["physical_stack_departure"],
+            "GraveyardAfterResolutionOrCounter"
+        );
+        assert_eq!(
+            roots[1]["physical_stack_departure"],
+            "ExileInsteadOfAnyOtherDeparture"
+        );
+        assert_ne!(
+            NumericTree::encode(&roots[0]).unwrap(),
+            NumericTree::encode(&roots[1]).unwrap()
+        );
+    }
+
+    #[test]
+    fn genuine_paid_think_twice_then_actual_flashback_keep_both_entry_bindings_and_restore_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    let mut raw = state(actor);
+                    let spell = put(&mut raw, actor, "Think Twice", Zone::Hand);
+                    let islands: [ObjectId; 5] = std::array::from_fn(|_| put(&mut raw, actor, "Island", Zone::Battlefield));
+                    let mut session = $session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                    let mut cast_packets = Vec::new();
+                    let mut cast_actions = Vec::new();
+                    for (flashback, lands) in [(false, &islands[..2]), (true, &islands[2..])] {
+                        for id in lands {
+                            act!(session, $input, |a| mana(a, *id));
+                        }
+                        let e = expected(&session.inner);
+                        assert_eq!(e.acting_player, actor.into());
+                        let (_, actions, _) = session.inner.$input(e, e.acting_player).unwrap();
+                        let cast = actions.iter().position(|a| matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==spell.0)).unwrap();
+                        let pass = actions.iter().position(|a| matches!(a,ActionSemanticV1::Pass{..})).unwrap();
+                        let decision = session.encode(e).unwrap();
+                        assert_eq!(decision.packet.actions.len(), actions.len());
+                        assert_ne!(decision.packet.actions[cast], decision.packet.actions[pass]);
+                        cast_packets.push(decision.packet.clone());
+                        cast_actions.push(decision.packet.actions[cast].clone());
+                        let origin = if flashback { Zone::Graveyard } else { Zone::Hand };
+                        let generation = session.inner.$world().objects.get(spell).zone_change_count;
+                        assert_eq!(session.inner.$world().objects.get(spell).zone, origin);
+                        session.apply(&decision, cast as u32).unwrap();
+                        let raw = session.inner.$world();
+                        assert!(raw.engine.pending_cast.is_none());
+                        assert_eq!(raw.players[actor.index()].mana_pool, [0;6]);
+                        assert!(lands.iter().all(|id| raw.objects.get(*id).tapped));
+                        let row = raw.stack.last().unwrap();
+                        assert_eq!(raw.stack.len(), 1);
+                        assert_eq!(row.source, spell);
+                        assert_eq!(row.controller, actor);
+                        assert_eq!(row.is_flashback, flashback);
+                        assert_eq!(row.v4.target_spec, Some(crate::card_def::TargetSpec::None));
+                        assert!(row.targets.is_empty());
+                        let contract = row.v4.source_contract.unwrap();
+                        assert_eq!(contract.zone_change_count, generation + 1);
+                        let provenance = contract.spell_cast_origin.unwrap();
+                        assert_eq!(provenance.origin_zone, origin);
+                        assert_eq!(provenance.origin_zone_change_count, generation);
+                        assert_eq!(provenance.route, if flashback { crate::state::SpellCastRouteV4::GraveyardFlashback } else { crate::state::SpellCastRouteV4::Hand });
+                        assert_eq!(row.v4.cast_method, Some(if flashback {crate::state::CastMethodV4::Flashback} else {crate::state::CastMethodV4::Normal}));
+                        let before_hand = raw.players[actor.index()].hand.len();
+                        let before_library = raw.players[actor.index()].library.len();
+                        let before_draws = raw.engine.event_history.iter().filter(|event| matches!(event,crate::event::CommittedEvent::Draw{player,object:Some(_)}if *player==actor)).count();
+                        let e = expected(&session.inner);
+                        let paid = session.encode(e).unwrap();
+                        let saved = session.snapshot();
+                        let mut complete = None;
+                        for replay in 0..2 {
+                            if replay != 0 {
+                                session.restore(&saved).unwrap();
+                                assert!(expected(&session.inner).environment_revision > e.environment_revision);
+                                assert!(matches!(session.apply(&paid, 0), Err(Error::StaleBinding)));
+                                assert_eq!(session.encode(expected(&session.inner)).unwrap().packet, paid.packet);
+                            }
+                            for _ in 0..12 {
+                                if session.inner.$world().stack.is_empty() { break; }
+                                act!(session, $input, |a| matches!(a,ActionSemanticV1::Pass{..}));
+                            }
+                            let raw = session.inner.$world();
+                            assert!(raw.stack.is_empty());
+                            assert_eq!(raw.objects.get(spell).zone, if flashback {Zone::Exile} else {Zone::Graveyard});
+                            assert_eq!(raw.objects.get(spell).zone_change_count, generation + 2);
+                            assert_eq!(raw.players[actor.index()].hand.len(), before_hand + 1);
+                            assert_eq!(raw.players[actor.index()].library.len(), before_library - 1);
+                            assert_eq!(raw.engine.event_history.iter().filter(|event| matches!(event,crate::event::CommittedEvent::Draw{player,object:Some(_)}if *player==actor)).count(), before_draws + 1);
+                            let outcome = (serde_json::to_vec(raw).unwrap(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                            if let Some(prior) = &complete { assert_eq!(&outcome, prior); } else { complete = Some(outcome); }
+                        }
+                    }
+                    // The same physical card's original ordered cast candidate is
+                    // encoded separately for Hand normal and Graveyard flashback.
+                    assert_ne!(cast_packets[0], cast_packets[1]);
+                    assert_ne!(cast_actions[0], cast_actions[1]);
+                    let mut initial = state(actor);
+                    put(&mut initial, actor, "Think Twice", Zone::Hand);
+                    let hidden = put(&mut initial, actor.opponent(), "Think Twice", Zone::Hand);
+                    let mut alternative = initial.clone();
+                    alternative.objects.get_mut(hidden).card_def = crate::card_def::card_id_by_name("Counterspell").unwrap();
+                    alternative.objects.get_mut(hidden).name = "Counterspell".into();
+                    // Independent initial information sets, never edited retained history.
+                    let a = $session::from_session(FastActorSessionV1::$from(initial)).unwrap();
+                    let b = $session::from_session(FastActorSessionV1::$from(alternative)).unwrap();
+                    assert_eq!(a.encode(expected(&a.inner)).unwrap().packet,b.encode(expected(&b.inner)).unwrap().packet);
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
     }
     #[test]
     fn real_paid_fake_and_bolt_keep_custody_order_binding_restore_and_private_hand_both_seats() {
