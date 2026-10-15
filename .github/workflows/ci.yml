@@ -213,6 +213,8 @@ jobs:
           - limited-v2
           - limited-v3
           - limited-v1
+          - limited-v4
+          - limited-v5
           - standard
           - workspace
           - cuda
@@ -225,7 +227,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -454,8 +456,24 @@ jobs:
             binary_suffix=".exe"
           fi
           MTG_LIMITED_COMMON_TIMING_V3=1 python python/tools/check_limited_common_client_v3.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v3$binary_suffix"
+
+      - name: Validate Limited V4 Elenda process
+        if: ${{ !cancelled() && matrix.group == 'limited-v4' }}
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_elenda_env_v4
           MTG_LIMITED_ELENDA_TIMING_V4=1 python python/tools/check_limited_elenda_client_v4.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_elenda_env_v4$binary_suffix"
+
+      - name: Validate Prepared V57 consumers and Limited V5 process
+        if: ${{ !cancelled() && matrix.group == 'limited-v5' }}
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures prepared_observation_v57:: rl_session::prepared_v57:: human_bo3_v1::prepared_v57:: limited_prepared_session_v5::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
