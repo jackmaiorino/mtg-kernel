@@ -319,6 +319,14 @@ fn archive_distillation_commands_keep_their_wire_shape() {
         serde_json::from_value(probe).unwrap(),
         ExpandedTrainingCommandV1::ArchiveDistillationProbe { .. }
     ));
+    let trace = json!({"mode":"line_retention_trace","run":file,"completion":file,
+        "output_directory":"out"});
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(trace.clone()).unwrap();
+    assert!(matches!(
+        command,
+        ExpandedTrainingCommandV1::LineRetentionTrace { .. }
+    ));
+    assert_eq!(serde_json::to_value(&command).unwrap(), trace);
     assert_eq!(
         serde_json::to_value(ArchiveDistillationArmV1::Uniform).unwrap(),
         json!("uniform")
@@ -1703,4 +1711,517 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
         Err(error) => assert!(error.contains("no archive rows"), "{error}"),
     }
     fs::remove_dir_all(world.root).unwrap();
+}
+
+fn trace_group(episode: usize, value: f32, terminal_return: i8) -> retention_trace::TraceGroupV1 {
+    retention_trace::TraceGroupV1 {
+        episode,
+        rows: vec![0],
+        terminal_return,
+        value,
+    }
+}
+
+/// The retention trace's credit is the GAE recursion over each episode's
+/// learner decisions, with their TD errors, next values and decisions left,
+/// normalized over the whole update; an episode's decisions share one return.
+#[test]
+fn retention_credit_follows_the_gae_recursion_and_the_updates_normalization() {
+    let groups = vec![
+        trace_group(0, 0.25, 1),
+        trace_group(0, 0.5, 1),
+        trace_group(0, -0.125, 1),
+        trace_group(2, 0.0, -1),
+        trace_group(2, 0.75, -1),
+    ];
+    let (credit, statistics) = retention_trace::credit_v1(&groups, 1.0, 0.9).unwrap();
+    // By hand: the TD errors, then the advantages back from each episode's
+    // end with gamma times lambda 0.9.
+    let td: [f32; 5] = [0.25, -0.625, 1.125, 0.75, -1.75];
+    let raw: [f32; 5] = [
+        0.25 + 0.9 * (-0.625 + 0.9 * 1.125),
+        -0.625 + 0.9 * 1.125,
+        1.125,
+        0.75 + 0.9 * -1.75,
+        -1.75,
+    ];
+    for (index, entry) in credit.iter().enumerate() {
+        assert!((entry.td_error - td[index]).abs() < 1e-6, "{index}");
+        assert!((entry.raw - raw[index]).abs() < 1e-6, "{index}");
+        assert_eq!(entry.value, groups[index].value);
+    }
+    assert_eq!(
+        credit.iter().map(|c| c.next_value).collect::<Vec<_>>(),
+        vec![Some(0.5f32), Some(-0.125), None, Some(0.75), None]
+    );
+    assert_eq!(
+        credit.iter().map(|c| c.groups_left).collect::<Vec<_>>(),
+        vec![3usize, 2, 1, 2, 1]
+    );
+    let raw: Vec<f32> = credit.iter().map(|c| c.raw).collect();
+    let (normalized, expected) =
+        normalize_advantages_v1(&raw, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1).unwrap();
+    assert_eq!(statistics, expected);
+    assert_eq!(
+        credit.iter().map(|c| c.normalized).collect::<Vec<_>>(),
+        normalized
+    );
+    let mut mixed = groups.clone();
+    mixed[1].terminal_return = -1;
+    let error = retention_trace::credit_v1(&mixed, 1.0, 0.9).unwrap_err();
+    assert!(error.contains("terminal return"), "{error}");
+    assert!(retention_trace::credit_v1(&[], 1.0, 0.9).is_err());
+}
+
+/// The push is the normalized advantage over the update's group count times
+/// (chosen, less the line mass). The slope is the first-order change of
+/// log(line mass) under the same logit change: 2 (1 - p)^2 and -2 p (1 - p)
+/// times A / G at a two-action menu, and of the opposite sign to the push
+/// when a declined menu's chosen action is unlikely and a third action holds
+/// most of the mass.
+#[test]
+fn retention_push_follows_the_advantage_and_the_choice() {
+    assert_eq!(retention_trace::push_v1(2.0, 4, true, 0.25), 0.375);
+    assert_eq!(retention_trace::push_v1(2.0, 4, false, 0.25), -0.125);
+    assert_eq!(retention_trace::push_v1(-1.0, 2, true, 0.25), -0.375);
+    assert_eq!(retention_trace::push_v1(-1.0, 1, false, 1.0), 1.0);
+    let close = |a: Option<f64>, b: f64| assert!((a.unwrap() - b).abs() < 1e-12, "{a:?} {b}");
+    let two = [0.25, 0.75];
+    close(
+        retention_trace::slope_v1(2.0, 4, &two, &[0], 0),
+        0.5 * 2.0 * 0.75 * 0.75,
+    );
+    close(
+        retention_trace::slope_v1(2.0, 4, &two, &[0], 1),
+        -0.5 * 2.0 * 0.25 * 0.75,
+    );
+    let wide = [0.2, 0.1, 0.7];
+    assert_eq!(retention_trace::push_v1(1.0, 1, false, 0.2), -0.2);
+    close(retention_trace::slope_v1(1.0, 1, &wide, &[0], 1), 0.24);
+    assert_eq!(
+        retention_trace::slope_v1(1.0, 1, &[0.0, 1.0], &[0], 1),
+        None
+    );
+}
+
+/// A reset start of a real game whose Spy seat follows a scripted line (cast
+/// Spy, target itself, Dread Return on the Giant, else play a land, cast a
+/// spell or pass; the other seat passes), cut at the Spy seat's first menu
+/// that offers `decision` (1 the self-target, 2 Dread Return on the Giant).
+/// The learner's first decision after the cut offers that line choice.
+fn scripted_line_reset(id: &str, seed: u64, spy_seat: u8, decision: usize) -> ExpandedEpisodeV1 {
+    use crate::rl::ActionSemanticV1;
+    let mut episode = real_episode(id, seed, spy_seat);
+    let mut session = episode_session_v1(&episode, &episode.configurations().unwrap()).unwrap();
+    let mut prefix = Vec::new();
+    loop {
+        let FastActorResponseV1::Decision(d) = session.current_response() else {
+            panic!("the scripted game ends before the line")
+        };
+        let semantics = session
+            .diagnostic_current_action_semantics()
+            .unwrap_or_default();
+        let pick = |pred: &dyn Fn(&ActionSemanticV1) -> bool| semantics.iter().position(pred);
+        let action = if seat(d.acting_player) == spy_seat && d.legal_action_count >= 2 {
+            let flags = spy_menu_flags_v1(&session, spy_seat);
+            let line = |which: usize| flags.iter().position(|f| [f.0, f.1, f.2][which]);
+            if line(decision).is_some() {
+                assert_eq!(d.substep_index, 0, "the line menu starts a decision");
+                let (observation, menu) =
+                    crate::regret_census_v1::decision_replay_key(&session, d).unwrap();
+                episode.reset = Some(ExpandedResetStartV1 {
+                    guide: "scripted-line".into(),
+                    game_seed: seed,
+                    prefix,
+                    cut_physical_decision_id: d.physical_decision_id,
+                    cut_observation_sha256: observation,
+                    cut_menu_sha256: menu,
+                    cut_state_hash: format!("{:016x}", session.diagnostic_state_hash()),
+                });
+                return episode;
+            }
+            line(0)
+                .or_else(|| line(1))
+                .or_else(|| line(2))
+                .or_else(|| pick(&|x| matches!(x, ActionSemanticV1::PlayLand { .. })))
+                .or_else(|| pick(&|x| matches!(x, ActionSemanticV1::CastSpell { .. })))
+                .or_else(|| pick(&|x| matches!(x, ActionSemanticV1::Pass { .. })))
+                .unwrap_or(0)
+        } else {
+            pick(&|x| matches!(x, ActionSemanticV1::Pass { .. })).unwrap_or(0)
+        } as u32;
+        prefix.push(action);
+        session.step(d.episode_id, d.step, action).unwrap();
+    }
+}
+
+/// A real GAE run through the production run path: two updates of Spy
+/// learner games at both seats (ordinary games, and reset starts at the
+/// line's self-target and Giant menus), and one game with Spy as the other
+/// deck.
+fn retention_run_config_v1(
+    root: &Path,
+) -> crate::native_expanded_training_run_v1::NativeExpandedTrainingRunV1 {
+    use crate::native_expanded_training_run_v1::{
+        ExpandedOpponentAssignmentV1, ExpandedRunIterationV1, NativeExpandedTrainingRunV1,
+        ScheduledExpandedEpisodeV1,
+    };
+    let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+    let fresh = write_synthetic_fresh_source_with_parameters_v1(
+        &root.join("source"),
+        feature_identity,
+        |_parameters| {},
+    );
+    let initial_source = ExpandedModelSourceV1 {
+        play_import: write_pinned(&root.join("descriptor.json"), &fresh),
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+        },
+        checkpoint: None,
+    };
+    // `real_episode` seats Spy at its seat argument.
+    let scheduled = |id: &str, seed: u64, learner_seat: u8, spy_learner: bool| {
+        let spy_seat = if spy_learner {
+            learner_seat
+        } else {
+            1 - learner_seat
+        };
+        let mut episode = real_episode(id, seed, spy_seat);
+        episode.learner_seat = learner_seat;
+        ScheduledExpandedEpisodeV1 {
+            episode,
+            opponent: ExpandedOpponentAssignmentV1::Current,
+        }
+    };
+    let reset = |id: &str, seed: u64, spy_seat: u8, decision: usize| ScheduledExpandedEpisodeV1 {
+        episode: scripted_line_reset(id, seed, spy_seat, decision),
+        opponent: ExpandedOpponentAssignmentV1::Current,
+    };
+    let iterations = vec![
+        ExpandedRunIterationV1 {
+            episodes: vec![
+                scheduled("trace-u0-spy-s0", 2_026_101_501, 0, true),
+                scheduled("trace-u0-other-s0", 2_026_101_502, 0, false),
+                reset("trace-u0-self-s0", 2_026_101_511, 0, 1),
+                reset("trace-u0-giant-s1", 2_026_101_513, 1, 2),
+            ],
+        },
+        ExpandedRunIterationV1 {
+            episodes: vec![
+                scheduled("trace-u1-spy-s1", 2_026_101_505, 1, true),
+                reset("trace-u1-self-s1", 2_026_101_516, 1, 1),
+                reset("trace-u1-giant-s0", 2_026_101_515, 0, 2),
+            ],
+        },
+    ];
+    NativeExpandedTrainingRunV1 {
+        schema: "mtg-kernel-native-expanded-training-run/v1".into(),
+        initial_source,
+        opponents: vec![],
+        iterations,
+        learning_rate: 0.0001,
+        value_coefficient: 0.5,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        loss_selection: ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        },
+        update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+        collection_workers: 1,
+        preparation_workers: 1,
+        max_non_natural_episode_fraction: 0.0,
+        max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        collection_sampler: CollectionSamplerV1::Legacy,
+        line_b: None,
+        e_supported: None,
+        output_directory: root.join("run"),
+    }
+}
+
+fn file_pin(path: PathBuf) -> PinnedFileV1 {
+    let bytes = fs::read(&path).unwrap();
+    PinnedFileV1 {
+        sha256: sha(&bytes),
+        path,
+    }
+}
+
+fn read_jsonl(pin: &Value) -> Vec<Value> {
+    let pin: PinnedFileV1 = serde_json::from_value(pin.clone()).unwrap();
+    let bytes = fs::read(&pin.path).unwrap();
+    assert_eq!(sha(&bytes), pin.sha256);
+    bytes
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect()
+}
+
+/// The retention trace of a real two-update GAE run. X2 holds on both
+/// updates, policy sum, value sum and loss included; only the Spy learner's
+/// episodes are traced, and each one's offers and choices match a recount
+/// with the archive's classifier; each listed menu's push and slope follow
+/// its normalized advantage, the update's group count and the softmax of its
+/// recorded logits, and the update sums add up. A changed statistic, one ulp
+/// of the recorded loss, a changed recorded value, a run that is not GAE, a
+/// mismatched run pair and a used output directory are refused. Run
+/// explicitly, in release:
+/// `cargo test --release -p mtg-kernel --lib retention_trace_reads -- --ignored`.
+#[test]
+#[ignore = "end to end on real games; run explicitly"]
+fn retention_trace_reads_a_real_gae_run() {
+    let root = temp_root("retention-trace");
+    let config = retention_run_config_v1(&root);
+    let started = std::time::Instant::now();
+    let completion =
+        crate::native_expanded_training_run_v1::run_native_expanded_training_v1(&config, None)
+            .unwrap();
+    eprintln!(
+        "timing note: the two-update run took {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(completion["complete"], true);
+    let run_pin = file_pin(config.output_directory.join("run.json"));
+    let completion_pin = file_pin(config.output_directory.join("completion.json"));
+    let trace = |run: &PinnedFileV1, completion: &PinnedFileV1, name: &str| {
+        execute_v1(ExpandedTrainingCommandV1::LineRetentionTrace {
+            run: run.clone(),
+            completion: completion.clone(),
+            output_directory: root.join(name),
+        })
+    };
+    let result = trace(&run_pin, &completion_pin, "trace").unwrap();
+    assert_eq!(result["x2"], "passed");
+
+    // The update records' counts and statistics, and the Spy learner's
+    // trajectories in update order.
+    let receipts: Vec<PinnedFileV1> =
+        serde_json::from_value(completion["iterations"].clone()).unwrap();
+    let mut spy = Vec::new();
+    for (iteration, receipt) in receipts.iter().enumerate() {
+        let receipt: Value = read_pinned(receipt).unwrap();
+        let update: Value = read_pinned::<Value>(
+            &serde_json::from_value::<PinnedFileV1>(receipt["update"].clone()).unwrap(),
+        )
+        .unwrap();
+        let summary = &result["iterations"][iteration];
+        for key in [
+            "physical_decisions",
+            "policy_substeps",
+            "advantage_statistics",
+            "policy_sum",
+            "value_sum",
+            "loss",
+        ] {
+            assert_eq!(summary[key], update[key], "{key}");
+        }
+        let pins: Vec<PinnedFileV1> =
+            serde_json::from_value(update["trajectories"].clone()).unwrap();
+        for pin in &pins {
+            let t: ExpandedTrajectoryV1 = read_pinned(pin).unwrap();
+            if is_spy_label(&t.episode.selected[usize::from(t.episode.learner_seat)].label) {
+                spy.push((iteration, t));
+            }
+        }
+    }
+    assert_eq!(spy.len(), 6);
+    assert_eq!(result["spy_learner_episodes"], json!(spy.len()));
+
+    // A recount of every Spy learner episode with the archive's classifier.
+    let rows = read_jsonl(&result["rows"]);
+    let episodes = read_jsonl(&result["episodes"]);
+    assert_eq!(episodes.len(), spy.len());
+    let mut listed = 0;
+    for ((iteration, t), episode_row) in spy.iter().zip(&episodes) {
+        let learner = t.episode.learner_seat;
+        let mut session =
+            episode_session_v1(&t.episode, &t.episode.configurations().unwrap()).unwrap();
+        restore_reset_cut_v1(&mut session, &t.episode).unwrap();
+        let mut counts = [[0usize; 2]; 3];
+        let mut learner_decisions = 0;
+        for row in &t.decisions {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                panic!("the replay ends before its rows")
+            };
+            if row.actor == learner && row.substep_index == 0 {
+                learner_decisions += 1;
+            }
+            if row.actor == learner && row.logits.len() >= 2 {
+                let (flags, own, giant) = line_flags_v1(&session, learner, row.selected);
+                let pairs = [
+                    (flags.cast_offered, flags.cast_chosen),
+                    (flags.self_offered, flags.self_chosen),
+                    (flags.giant_offered, flags.giant_chosen),
+                ];
+                for (which, (offered, chosen)) in pairs.into_iter().enumerate() {
+                    counts[which][0] += usize::from(offered);
+                    counts[which][1] += usize::from(chosen);
+                }
+                for (which, actions) in [own, giant].iter().enumerate() {
+                    if actions.is_empty() {
+                        continue;
+                    }
+                    let entry = &rows[listed];
+                    listed += 1;
+                    assert_eq!(entry["iteration"], json!(iteration));
+                    assert_eq!(entry["episode"], json!(t.episode.id));
+                    assert_eq!(entry["step"], json!(row.step));
+                    assert_eq!(entry["decision"], ["self", "giant"][which]);
+                    assert_eq!(entry["line_actions"], json!(actions));
+                    let softmax = line_b_softmax_v1(&f64_logits(&recorded_logits(&row.logits)))
+                        .unwrap()
+                        .probabilities;
+                    let mass: f64 = actions.iter().map(|&a| softmax[a as usize]).sum();
+                    let chosen = actions.contains(&row.selected);
+                    assert_eq!(entry["chosen"], chosen);
+                    assert!((entry["softmax_mass"].as_f64().unwrap() - mass).abs() < 1e-12);
+                    let normalized = entry["normalized_advantage"].as_f64().unwrap() as f32;
+                    let groups = result["iterations"][*iteration]["physical_decisions"]
+                        .as_u64()
+                        .unwrap() as usize;
+                    assert_eq!(entry["group_count"], json!(groups));
+                    let push = retention_trace::push_v1(normalized, groups, chosen, mass);
+                    assert!((entry["push"].as_f64().unwrap() - push).abs() < 1e-12);
+                    let line: Vec<usize> = actions.iter().map(|&a| a as usize).collect();
+                    let slope = retention_trace::slope_v1(
+                        normalized,
+                        groups,
+                        &softmax,
+                        &line,
+                        row.selected as usize,
+                    );
+                    assert_eq!(entry["slope"].as_f64(), slope);
+                }
+            }
+            session.step(d.episode_id, d.step, row.selected).unwrap();
+        }
+        assert_eq!(episode_row["episode"], json!(t.episode.id));
+        for (which, name) in ["cast", "self", "giant"].into_iter().enumerate() {
+            assert_eq!(
+                episode_row[name]["offered"],
+                json!(counts[which][0]),
+                "{name}"
+            );
+            assert_eq!(
+                episode_row[name]["chosen"],
+                json!(counts[which][1]),
+                "{name}"
+            );
+        }
+        assert_eq!(episode_row["learner_decisions"], json!(learner_decisions));
+        assert_eq!(
+            episode_row["terminal_return"],
+            json!(t.terminal.terminal_reward[usize::from(learner)])
+        );
+    }
+    assert_eq!(listed, rows.len());
+    eprintln!(
+        "timing note: {} listed menus in {} Spy learner episodes",
+        rows.len(),
+        spy.len()
+    );
+    for decision in ["self", "giant"] {
+        assert!(
+            rows.iter().any(|r| r["decision"] == decision),
+            "the fixture's reset starts offer {decision}"
+        );
+    }
+
+    // Each update's summed push, by decision, choice and result.
+    let parts = ["chosen_won", "chosen_lost", "declined_won", "declined_lost"];
+    for (iteration, summary) in result["iterations"].as_array().unwrap().iter().enumerate() {
+        for name in ["self", "giant"] {
+            let mut sums = [0.0f64; 4];
+            let mut slopes = [0.0f64; 4];
+            let mut menus = [0usize; 4];
+            for entry in rows
+                .iter()
+                .filter(|r| r["iteration"] == json!(iteration) && r["decision"] == name)
+            {
+                let index = usize::from(entry["chosen"] != true) * 2
+                    + usize::from(entry["terminal_return"].as_i64().unwrap() <= 0);
+                sums[index] += entry["push"].as_f64().unwrap();
+                slopes[index] += entry["slope"].as_f64().unwrap_or(0.0);
+                menus[index] += 1;
+            }
+            for (index, part) in parts.iter().enumerate() {
+                let recorded = &summary["push"][name][*part];
+                assert_eq!(recorded["menus"], json!(menus[index]), "{name} {part}");
+                assert!((recorded["push"].as_f64().unwrap() - sums[index]).abs() < 1e-9);
+                assert!((recorded["slope"].as_f64().unwrap() - slopes[index]).abs() < 1e-9);
+            }
+        }
+    }
+
+    // Copies of the run's receipt chain with one change to update 0's
+    // record, in a fresh directory.
+    let rechain = |name: &str, change: &dyn Fn(&mut Value, &Path)| {
+        let directory = root.join(name);
+        fs::create_dir_all(&directory).unwrap();
+        let receipt_pin: PinnedFileV1 =
+            serde_json::from_value(completion["iterations"][0].clone()).unwrap();
+        let mut receipt: Value = read_pinned(&receipt_pin).unwrap();
+        let update_pin: PinnedFileV1 = serde_json::from_value(receipt["update"].clone()).unwrap();
+        let mut update: Value = read_pinned(&update_pin).unwrap();
+        change(&mut update, &directory);
+        receipt["update"] = json!(write_pinned(&directory.join("update.json"), &update));
+        let mut done = completion.clone();
+        done["iterations"][0] = json!(write_pinned(&directory.join("complete.json"), &receipt));
+        let manifest: Value = read_pinned(&run_pin).unwrap();
+        (
+            write_pinned(&directory.join("run.json"), &manifest),
+            write_pinned(&directory.join("completion.json"), &done),
+        )
+    };
+    let (run, done) = rechain("unchanged", &|_, _| {});
+    trace(&run, &done, "trace-unchanged").unwrap();
+    let (run, done) = rechain("statistic", &|update, _| {
+        update["advantage_statistics"]["max"] = json!(1.5);
+    });
+    let error = trace(&run, &done, "trace-statistic").unwrap_err();
+    assert!(error.contains("X2 failed at iteration 0"), "{error}");
+    // One ulp of the recorded loss.
+    let (run, done) = rechain("loss", &|update, _| {
+        let loss = update["loss"].as_f64().unwrap() as f32;
+        update["loss"] = json!(f32::from_bits(loss.to_bits() + 1));
+    });
+    let error = trace(&run, &done, "trace-loss").unwrap_err();
+    assert!(error.contains("X2 failed at iteration 0"), "{error}");
+    // A recorded value that enters the update's advantages.
+    let (run, done) = rechain("value", &|update, directory| {
+        let pin: PinnedFileV1 = serde_json::from_value(update["trajectories"][0].clone()).unwrap();
+        let mut t: ExpandedTrajectoryV1 = read_pinned(&pin).unwrap();
+        let learner = t.episode.learner_seat;
+        let row = t
+            .decisions
+            .iter_mut()
+            .find(|row| row.actor == learner && row.substep_index == 0)
+            .unwrap();
+        row.value = (f32::from_bits(row.value) + 0.5).to_bits();
+        update["trajectories"][0] = json!(write_pinned(&directory.join("trajectory.json"), &t));
+    });
+    let error = trace(&run, &done, "trace-value").unwrap_err();
+    assert!(error.contains("X2 failed at iteration 0"), "{error}");
+    let (_, done) = rechain("pair", &|_, _| {});
+    let error = trace(&run_pin, &done, "trace-pair").unwrap_err();
+    assert!(error.contains("not one run's"), "{error}");
+    let directory = root.join("legacy");
+    fs::create_dir_all(&directory).unwrap();
+    let mut manifest: Value = read_pinned(&run_pin).unwrap();
+    manifest["config"]
+        .as_object_mut()
+        .unwrap()
+        .remove("loss_selection");
+    let legacy = write_pinned(&directory.join("run.json"), &manifest);
+    let legacy_done = write_pinned(
+        &directory.join("completion.json"),
+        &read_pinned::<Value>(&completion_pin).unwrap(),
+    );
+    let error = trace(&legacy, &legacy_done, "trace-legacy").unwrap_err();
+    assert!(error.contains("gae_advantage_value runs only"), "{error}");
+    let error = trace(&run_pin, &completion_pin, "trace").unwrap_err();
+    assert!(error.contains("fresh"), "{error}");
+    fs::remove_dir_all(root).unwrap();
 }
