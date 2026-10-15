@@ -27,12 +27,22 @@ hidden later incarnation does not become its current source. DTOs contain no
 original worlds, snapshots, executable programs, stack IDs or history indices.
 Validation recaptures complete facts; source digests provide provenance only.
 
+Printed-return classification follows generic custody validation and excludes
+genuine granted triggers. A Phoenix hosting Black Mage's Rod damage does not
+acquire a phantom graveyard return or make capture refuse. Ungranted graveyard
+sources and exact return programs still require the complete printed root and
+original graveyard actor/zone. The added both-seat fixture pays two Rod casts,
+native Job Select entries and Equip {3}, then Think Twice. It inspects genuine
+held and published grants, restores both boundaries, and checks two damage with
+no return facts. Supporting lands are primitive inputs; grants and attachments
+are produced through actual engine actions.
+
 Pinned Mage `a5c90fe180021e70e2a644ade00eeab07f857a40` and all four SHA-256s in
 [the original provenance](fdn_flamewake_phoenix_source_v1.provenance.json) were
 rechecked from local Git objects. The Phoenix source SHA-256 is
 `ea8b6e6a4dbc8fbc4a52d7d99da273882de0c0cb89b9433b926dd052de2d33cc`.
 
-Two new meaning tests and five new public fixture groups are written. Genuine
+Two new meaning tests and six new public fixture groups are written. Genuine
 both-seat paid casts, Bolt deaths, combat triggers, optional payment/decline,
 restore, stale incarnation, public/private forgery, independent hidden worlds and
 native widths are covered in source. Existing paid Employment, Witness,

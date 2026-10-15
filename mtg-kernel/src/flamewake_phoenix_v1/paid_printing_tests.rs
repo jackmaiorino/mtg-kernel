@@ -1163,6 +1163,105 @@ fn phoenix_v56(state: &GameState) -> crate::phoenix_public_v56::FactsV56 {
     }
     facts
 }
+
+#[test]
+fn v56_paid_rods_grant_phoenix_damage_without_a_return_root_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid(actor);
+        let mut rods = Vec::new();
+        // Lands are primitive support inputs. Both Rod casts, their native Job
+        // Select attachments, Equip {3}, and the later spell are actually paid.
+        for _ in 0..2 {
+            let rod = put(&mut state, actor, "Black Mage's Rod", Zone::Hand);
+            for _ in 0..2 {
+                let swamp = put(&mut state, actor, "Swamp", Zone::Battlefield);
+                priority(&mut state, actor);
+                engine::step(&mut state, Action::ActivateManaAbility(swamp)).unwrap();
+            }
+            cast_owned(&mut state, actor, rod, None);
+            let hero = state.objects.get(rod).v4.attached_to.unwrap().object;
+            assert_ne!(hero, phoenix);
+            assert!(state.objects.get(hero).v4.is_token);
+            for _ in 0..3 {
+                let mountain = put(&mut state, actor, "Mountain", Zone::Battlefield);
+                priority(&mut state, actor);
+                engine::step(&mut state, Action::ActivateManaAbility(mountain)).unwrap();
+            }
+            engine::step(&mut state, Action::ActivateAbility(rod, 0)).unwrap();
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(phoenix)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(phoenix))).unwrap();
+            settle(&mut state);
+            assert_eq!(
+                state.objects.get(rod).v4.attached_to.unwrap().object,
+                phoenix
+            );
+            rods.push(rod);
+        }
+        assert_eq!(state.objects.get(phoenix).attachments, rods);
+        let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+        for _ in 0..2 {
+            let island = put(&mut state, actor, "Island", Zone::Battlefield);
+            priority(&mut state, actor);
+            engine::step(&mut state, Action::ActivateManaAbility(island)).unwrap();
+        }
+        let life = state.players[actor.opponent().index()].life;
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::OrderTriggers { player, pending }
+            if player == actor && pending.len() == 2)
+        );
+        assert_eq!(state.engine.pending_triggers.len(), 2);
+        assert!(state.engine.pending_triggers.iter().all(|pending| {
+            pending.source == phoenix
+                && pending
+                    .source_contract
+                    .is_some_and(|source| source.zone == Zone::Battlefield)
+                && pending
+                    .granted_by
+                    .is_some_and(|grant| rods.contains(&grant.source))
+        }));
+        let facts = phoenix_v56(&state);
+        assert!(facts.triggers.is_empty());
+        let current = facts
+            .current
+            .iter()
+            .find(|row| row.source.object == phoenix.0)
+            .unwrap();
+        assert_eq!(current.power, Some(4));
+        assert!(Subtype::Wizard.is_in_subtype_ids(&current.effective_subtype_ids));
+        assert!(facts.ferocious_now[actor.index()]);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            engine::step(branch, Action::OrderTriggers(vec![1, 0])).unwrap();
+            assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+            let grants = branch
+                .stack
+                .iter()
+                .filter(|item| {
+                    item.kind == StackItemKind::TriggeredAbility && item.source == phoenix
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(grants.len(), 2);
+            assert!(grants.iter().all(|item| item
+                .v4
+                .granted_by
+                .is_some_and(|grant| rods.contains(&grant.source))));
+            assert!(phoenix_v56(branch).triggers.is_empty());
+            let published_restore = restore(branch);
+            assert_eq!(phoenix_v56(&published_restore), phoenix_v56(branch));
+            settle(branch);
+            assert_eq!(branch.players[actor.opponent().index()].life, life - 2);
+            assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(branch.objects.get(phoenix).zone, Zone::Battlefield);
+            assert!(phoenix_v56(branch).triggers.is_empty());
+        }
+        same(&state, &replay);
+    }
+}
+
 #[test]
 fn v56_paid_current_published_payment_answer_and_completed_absence_restore_both_seats() {
     use crate::phoenix_public_v56::StageV56;

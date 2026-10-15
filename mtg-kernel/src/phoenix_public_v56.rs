@@ -294,6 +294,13 @@ pub fn capture(state: &GameState) -> Result<FactsV56, RlContractError> {
     let mut triggers = Vec::new();
     for pending in held {
         if let Some(source) = pending.source_contract.filter(|s| s.card_def == id) {
+            // Generic validation above authenticates grants independently. A
+            // Phoenix hosting an equipment trigger is not its printed return.
+            if pending.granted_by.is_some()
+                || (source.zone != Zone::Graveyard && pending.effect != meaning::return_program())
+            {
+                continue;
+            }
             if pending.effect != meaning::return_program() {
                 return Err(error("Phoenix held root changed"));
             }
@@ -328,6 +335,12 @@ pub fn capture(state: &GameState) -> Result<FactsV56, RlContractError> {
             }
         } else if item.kind == StackItemKind::TriggeredAbility {
             if let Some(source) = item.v4.ability_source_contract.filter(|s| s.card_def == id) {
+                if item.v4.granted_by.is_some()
+                    || (source.zone != Zone::Graveyard
+                        && item.inline_effect.as_ref() != Some(&meaning::return_program()))
+                {
+                    continue;
+                }
                 if item.inline_effect.as_ref() != Some(&meaning::return_program()) {
                     return Err(error("Phoenix published root changed"));
                 }
