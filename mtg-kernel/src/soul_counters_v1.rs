@@ -50,6 +50,7 @@ pub(crate) fn has_history(state: &GameState) -> bool {
 }
 
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    crate::ravenous_amulet_v1::validate_state(state)?;
     let history = &state.engine.event_history;
     for (index, event) in history.iter().enumerate() {
         match event {

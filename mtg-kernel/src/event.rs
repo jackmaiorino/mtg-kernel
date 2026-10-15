@@ -6073,6 +6073,88 @@ mod ravenous_amulet_paid_future_tests {
     use crate::policy_observation_v6::tests::{advance_to_next_main_for, put, ready_state_for};
     use crate::state::AbilitySourceContractV4;
 
+    fn payment_receipt_refusals(state: &GameState) {
+        crate::ravenous_amulet_v1::validate_state(state).unwrap();
+        for case in 0..10 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let index = branch
+                .engine
+                .event_history
+                .iter()
+                .rposition(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { .. }))
+                .unwrap();
+            let original = branch.engine.event_history[index].clone();
+            if case == 6 {
+                branch.engine.event_history.push(original);
+            } else if case == 7 {
+                branch.engine.event_log.push(original);
+            } else if case == 8 {
+                let CommittedEvent::RavenousPaymentV1 { paid } =
+                    &branch.engine.event_history[index]
+                else {
+                    unreachable!()
+                };
+                let id = paid.item.v4.stack_item_id;
+                branch
+                    .stack
+                    .iter_mut()
+                    .find(|item| item.v4.stack_item_id == id)
+                    .unwrap()
+                    .v4
+                    .x_value = 1;
+            } else {
+                let CommittedEvent::RavenousPaymentV1 { paid } =
+                    &mut branch.engine.event_history[index]
+                else {
+                    unreachable!()
+                };
+                match case {
+                    0 => paid.index += 1,
+                    1 => paid.tap_history_index = paid.index,
+                    2 => {
+                        paid.original_source.controller = paid.original_source.controller.opponent()
+                    }
+                    3 => {
+                        if paid.original_sacrifice.source == paid.original_source.source {
+                            let owner = paid.original_sacrifice.owner.opponent();
+                            let id = paid.item.v4.stack_item_id;
+                            paid.original_sacrifice.owner = owner;
+                            paid.item.v4.paid_cost_refs[0].owner = owner;
+                            branch
+                                .stack
+                                .iter_mut()
+                                .find(|item| item.v4.stack_item_id == id)
+                                .unwrap()
+                                .v4
+                                .paid_cost_refs[0]
+                                .owner = owner;
+                        } else {
+                            paid.original_sacrifice.zone_change_count += 1;
+                        }
+                    }
+                    4 => paid.item.is_copy = true,
+                    5 => paid.item.v4.paid_cost_refs.clear(),
+                    9 => {
+                        paid.original_soul_count =
+                            if paid.original_source.source == paid.original_sacrifice.source {
+                                paid.original_soul_count + 1
+                            } else {
+                                -1
+                            };
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let before = branch.clone();
+            assert!(
+                crate::ravenous_amulet_v1::validate_state(&branch).is_err(),
+                "payment case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
     fn paid_priority(state: &mut GameState, actor: PlayerId) {
         assert!(matches!(engine::advance_until_decision(state),
             Decision::CastSpellOrPass { player, .. } if player == actor));
@@ -6150,6 +6232,7 @@ mod ravenous_amulet_paid_future_tests {
                 assert_eq!(payments[0].original_soul_count, 0);
                 assert_eq!(payments[0].original_sacrifice.source, chosen);
                 assert_eq!(payments[0].item.v4.activated_ability_index, Some(0));
+                payment_receipt_refusals(branch);
                 finish(branch);
                 assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 1);
@@ -6184,6 +6267,7 @@ mod ravenous_amulet_paid_future_tests {
             assert_eq!(payments[1].original_sacrifice, original);
             assert_eq!(payments[1].original_soul_count, 1);
             assert_eq!(payments[1].item.v4.activated_ability_index, Some(1));
+            payment_receipt_refusals(&state);
             // Explicit zone-transition boundary after genuine paid self-sacrifice.
             // This is not a claim of a printed artifact-return producer.
             propose_and_commit(

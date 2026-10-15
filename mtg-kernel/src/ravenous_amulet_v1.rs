@@ -9,7 +9,7 @@ use crate::{
     event::CommittedEvent,
     ids::StackItemId,
     mana::Cost,
-    state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, Zone},
+    state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackStateV4, Zone},
 };
 use serde::{Deserialize, Serialize};
 
@@ -164,6 +164,138 @@ pub struct PaidV1 {
     pub item: Box<StackItem>,
 }
 
+fn printed_item(item: &StackItem) -> bool {
+    item.v4
+        .activated_ability_index
+        .is_some_and(|index| index < 2)
+        && item.v4.cauldron_grant.0.is_none()
+        && item.v4.granted_by.is_none()
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| definition(source.card_def))
+}
+
+/// Historical payment structure is checked without following current source
+/// control or a returned incarnation. This is not an operation-completion proof.
+fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
+    let item = paid.item.as_ref();
+    let source = paid.original_source;
+    let sacrifice = paid.original_sacrifice;
+    let [cost] = item.v4.paid_cost_refs.as_slice() else {
+        return Err("Amulet receipt lost its single sacrifice".into());
+    };
+    let mut published_source = source;
+    if sacrifice.source == source.source {
+        published_source.attached_to = None;
+    }
+    let role = item
+        .v4
+        .activated_ability_index
+        .ok_or("Amulet receipt lost printed index")?;
+    let expected = StackItem {
+        kind: StackItemKind::ActivatedAbility,
+        source: source.source,
+        controller: source.controller,
+        targets: Vec::new(),
+        is_copy: false,
+        inline_effect: Some(if role == 0 {
+            draw_program()
+        } else {
+            loss_program()
+        }),
+        discarded: Vec::new(),
+        is_flashback: false,
+        mode_chosen: 0,
+        madness_offer: false,
+        kicked: false,
+        v4: StackStateV4 {
+            stack_item_id: item.v4.stack_item_id,
+            paid_cost_refs: item.v4.paid_cost_refs.clone(),
+            ability_source_contract: Some(published_source),
+            target_spec: Some(TargetSpec::None),
+            activated_ability_index: Some(role),
+            ..Default::default()
+        },
+    };
+    if !printed_item(item)
+        || item != &expected
+        || item.v4.stack_item_id == StackItemId::default()
+        || source.zone != Zone::Battlefield
+        || sacrifice.zone != Zone::Battlefield
+        || sacrifice.controller != source.controller
+        || paid.original_soul_count < 0
+        || (role == 1 && sacrifice != source)
+        || (sacrifice.source == source.source && sacrifice != source)
+        || cost.object != sacrifice.source
+        || cost.owner != sacrifice.owner
+        || sacrifice.zone_change_count.checked_add(1) != Some(cost.zone_change_count)
+        || cost.zone == Zone::Battlefield
+        || !(paid.payment_history_start <= paid.tap_history_index
+            && paid.tap_history_index < paid.sacrificed_history_index
+            && paid.sacrificed_history_index < paid.sacrifice_history_index
+            && paid.sacrifice_history_index < paid.index)
+    {
+        return Err("Amulet payment receipt changed its printed source/root/cost".into());
+    }
+    let at = |index| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| state.engine.event_history.get(i))
+    };
+    if !matches!(at(paid.index), Some(CommittedEvent::RavenousPaymentV1 { paid: original }) if original.as_ref() == paid)
+        || !matches!(at(paid.tap_history_index), Some(CommittedEvent::Tap { object }) if *object == source.source)
+        || !matches!(at(paid.sacrificed_history_index), Some(CommittedEvent::Sacrificed { object, controller_before, .. }) if *object == sacrifice.source && *controller_before == source.controller)
+        || !matches!(at(paid.sacrifice_history_index), Some(CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, controller_before }) if *object == sacrifice.source && *to == cost.zone && *controller_before == source.controller)
+    {
+        return Err("Amulet payment receipt lost its actual indexed cost occurrences".into());
+    }
+    // A self-sacrificed original generation has stable LKI even after return.
+    // Other-creature payments may later gain more soul counters legitimately.
+    if source.source == sacrifice.source
+        && state.soul_count_for_ability_source_v1(source)? != paid.original_soul_count
+    {
+        return Err("Amulet self-sacrifice rewrote its original soul count".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let mut ids = Vec::new();
+    for (index, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::RavenousPaymentV1 { paid } = event else {
+            continue;
+        };
+        if paid.index != index as u64 || ids.contains(&paid.item.v4.stack_item_id) {
+            return Err("Amulet payment has duplicate/reordered authority".into());
+        }
+        validate_paid(state, paid)?;
+        ids.push(paid.item.v4.stack_item_id);
+        let live = state
+            .stack
+            .iter()
+            .filter(|item| item.v4.stack_item_id == paid.item.v4.stack_item_id)
+            .collect::<Vec<_>>();
+        if !live.is_empty() && live.as_slice() != [paid.item.as_ref()] {
+            return Err("Amulet current activation changed its whole paid row".into());
+        }
+    }
+    for item in &state.stack {
+        if printed_item(item) && !ids.contains(&item.v4.stack_item_id) {
+            return Err("Amulet current activation lost its actual payment receipt".into());
+        }
+    }
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { .. }))
+    {
+        return Err("private Amulet payment entered trigger log".into());
+    }
+    Ok(())
+}
+
 /// Called after the generic engine has successfully collected the entire cost.
 /// Payment failure never calls this, and a copied/borrowed activation cannot
 /// manufacture the private original source/count token.
@@ -177,16 +309,7 @@ pub(crate) fn record_paid(
     if published.next().is_some() {
         return Err("paid activation has duplicate finalized identities".into());
     }
-    let selected = item
-        .v4
-        .activated_ability_index
-        .is_some_and(|index| index < 2)
-        && item.v4.cauldron_grant.0.is_none()
-        && item.v4.granted_by.is_none()
-        && item
-            .v4
-            .ability_source_contract
-            .is_some_and(|s| definition(s.card_def));
+    let selected = printed_item(item);
     let Some(owner) = owner else {
         return if selected {
             Err("Amulet lost private prepayment capture".into())

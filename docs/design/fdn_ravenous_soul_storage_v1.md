@@ -26,10 +26,17 @@ factories. The existing ignored paid-printing cases now check zero/one soul
 payment receipts; their ignore remains. Hidden-world sampling refuses payment
 history even before a soul placement, and the counter-journal boundary rejects
 private receipts in the trigger log. This new payment custody is uncompiled and
-unrun. It does not yet authenticate restored receipts or bind a one-time resolving
-or counter-removal owner to the later draw/placement/loss operations.
+unrun. The shared journal validation boundary now checks indexed receipt
+structure, full printed stack shape, source/controller/cost relations, actual
+tap/sacrifice/departure links, unique receipt identities and exact live rows.
+Self-sacrifice counts are checked against the original generation's stable LKI,
+including after reentry. The existing ignored paid case exercises ten restored
+forgeries at both payment stages and read-only refusal. Other-creature payment
+counts still need the later draw/placement input anchor; replayed completed
+rows still need one-time resolving or counter-removal ownership. These checks
+are not a complete original-input or operation-completion proof.
 
-Remaining: complete printing-specific paid ownership through restore,
+Remaining: complete original-input authentication through restore,
 resolution/counter-removal and anchoring the primitive's original inputs;
 active registration; public/meaning/observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
