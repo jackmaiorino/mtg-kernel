@@ -744,7 +744,8 @@ fn resume_native_training_store_impl_v1(
         | NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
         | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch
         | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch
-        | NativeRunCatalogProfileV1::FdnFakePartialBatch => {
+        | NativeRunCatalogProfileV1::FdnFakePartialBatch
+        | NativeRunCatalogProfileV1::FdnRavenousPartialBatch => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(resume_error_v2(
                     NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -1734,6 +1735,39 @@ mod windows_resume_tests {
             result.unwrap_err().kind(),
             NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
         );
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn resume_rejects_prior_fdn_fake_partial_v85_before_store_lock_or_mutation() {
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_fake_partial_batch_v1, NativeRunCatalogProfileV1,
+        };
+        let parent = TestParentV2::new("prior-fdn-fake-partial-v85");
+        let root = bootstrap_native_training_store_v2(parent.path(), "store")
+            .unwrap()
+            .into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_fake_partial_batch_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFakePartialBatch
+        );
+        let retained = parent.path().join("store/segments/retained-v85-stage");
+        fs::write(&retained, b"preserve stale-profile store contents").unwrap();
+        let before = fs::read(&retained).unwrap();
+        // A stale catalog must refuse before recapture/walk or lock acquisition.
+        let _held_lock = root.lock_exclusive_v2().unwrap();
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert_eq!(fs::read(&retained).unwrap(), before);
+        assert!(!parent.path().join("store/run.json").exists());
+        assert!(!parent.path().join("store/latest.json").exists());
     }
 
     /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:

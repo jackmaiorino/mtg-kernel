@@ -743,7 +743,8 @@ fn publish_generation_v2(
         | NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
         | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch
         | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch
-        | NativeRunCatalogProfileV1::FdnFakePartialBatch => {
+        | NativeRunCatalogProfileV1::FdnFakePartialBatch
+        | NativeRunCatalogProfileV1::FdnRavenousPartialBatch => {
             if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
                 return Err(publisher_error_v2(
                     NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
@@ -3327,6 +3328,36 @@ mod windows_publisher_tests {
         assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
     }
 
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn publish_rejects_prior_fdn_fake_partial_v85_before_any_store_mutation() {
+        use crate::native_training_store_run_v2::test_fixture_bytes_fdn_fake_partial_batch_v1;
+        let store = TestStoreV2::with_skeleton("prior-fdn-fake-partial-v85");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_fake_partial_batch_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnFakePartialBatch
+        );
+        let live = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        assert_eq!(
+            live.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnRavenousPartialBatch
+        );
+        let executor = fresh_executor_v2(&live);
+        let genesis = genesis_authorities_v2(&live, &executor);
+        let before = snapshot_store_tree_v2(&root);
+        let result = publish_genesis_v2(&root, &run, &genesis);
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert_eq!(snapshot_store_tree_v2(&root), before);
+    }
+
     /// Construct, publish, reread and validate the selected live catalog profile.
     #[test]
     fn fdn_profile_record_round_trips_through_construct_seal_decode_validate() {
@@ -3336,6 +3367,14 @@ mod windows_publisher_tests {
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
         let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
         assert_eq!(run.catalog_profile_v1(), live_catalog_profile_v1());
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnRavenousPartialBatch
+        );
 
         let executor = fresh_executor_v2(&run);
         let genesis = genesis_authorities_v2(&run, &executor);
