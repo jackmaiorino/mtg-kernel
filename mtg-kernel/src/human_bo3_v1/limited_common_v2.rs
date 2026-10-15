@@ -1,32 +1,32 @@
-//! Complete V47 safe facts for the separate actor-facing Limited V2 successor.
+//! Complete V50 safe facts for the separate actor-facing Limited V2 successor.
 use super::*;
-use crate::panda_observation_v47::PandaObservationV47;
+use crate::fake_observation_v50::FakeObservationV50;
 use crate::rl::ActionSemanticV1;
 use visible::Project;
 
+use super::fake_v50::HumanFakeExtensionsV50;
 use super::limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1};
-use super::panda_v47::HumanPandaExtensionsV47;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LimitedCommonDecisionV2 {
     pub schema: String,
     pub actor: PlayerSeatV1,
     pub prompt_seq: u64,
-    pub state: HumanVisibleStateV1<HumanPandaExtensionsV47>,
+    pub state: HumanVisibleStateV1<HumanFakeExtensionsV50>,
     pub london_mulligans: Option<crate::rl::PublicLondonMulligansV1>,
     pub foundations_combat: Option<LimitedCombatV1>,
     pub actions: Vec<HumanLegalActionV1>,
 }
 
 pub(crate) fn project_limited_common_v2(
-    observation: &PandaObservationV47,
+    observation: &FakeObservationV50,
     actions: &[ActionSemanticV1],
     actor: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
     prompt_seq: u64,
 ) -> Result<(LimitedCommonDecisionV2, Vec<u32>), HumanDecisionErrorV1> {
     let (state, actions, indexes, mut handles) =
-        panda_v47::project_base_with_handles(observation, actions, actor, families)?;
+        fake_v50::project_base_with_handles(observation, actions, actor, families)?;
     let foundations_combat = observation
         .projection
         .foundations_combat

@@ -79,6 +79,225 @@ fn error(reply: &LimitedCommonReplyV2, expected: &str) {
     );
 }
 
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn drain_fake(core: &mut FastActorSessionV1) {
+    for _ in 0..80 {
+        let state = core.fake_fixture_state();
+        if state.stack.is_empty()
+            && state.engine.pending_cast.is_none()
+            && state.engine.pending_triggers.is_empty()
+            && state.engine.pending_effect.is_none()
+        {
+            return;
+        }
+        let FastActorResponseV1::Decision(expected) = core.current_response() else {
+            panic!("genuine complete V50 priority")
+        };
+        let (_, actions, binding) = core
+            .fake_current_decision_input_v50(expected, expected.acting_player)
+            .unwrap();
+        let index = actions
+            .iter()
+            .position(|action| matches!(action, crate::rl::ActionSemanticV1::Pass { .. }))
+            .unwrap();
+        core.fake_validate_bound_decision_v50(expected, expected.acting_player, &binding)
+            .unwrap();
+        core.step(
+            expected.episode_id,
+            expected.step,
+            u32::try_from(index).unwrap(),
+        )
+        .unwrap();
+    }
+    panic!("genuine complete V50 resolution did not finish");
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn drain_server(
+    server: &mut LimitedCommonJsonlServerV2,
+    mut reply: LimitedCommonReplyV2,
+) -> LimitedCommonReplyV2 {
+    for index in 0..80 {
+        let state = server.active.as_ref().unwrap().core.fake_fixture_state();
+        if state.stack.is_empty()
+            && state.engine.pending_cast.is_none()
+            && state.engine.pending_triggers.is_empty()
+            && state.engine.pending_effect.is_none()
+        {
+            return reply;
+        }
+        reply = server.handle_request(step(&reply, &format!("resolve{index}"), "Pass priority"));
+    }
+    panic!("actual V2 resolution did not finish");
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn paid_fake_and_bolt_return_treasure_safe_facts_restore_retry_both_seats() {
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::put;
+    use crate::state::Zone;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        // Test-only registered Partial state. Public reset must still reject
+        // Fake decks until printing admission is separately qualified.
+        let mut state = crate::rl_session::panda_v47::tests::ordinary(actor);
+        put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
+        put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        let target = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        for _ in 0..2 {
+            put(&mut state, actor, "Swamp", Zone::Battlefield);
+        }
+        put(&mut state, actor, "Mountain", Zone::Battlefield);
+        let mut server = LimitedCommonJsonlServerV2 {
+            active: Some(Active {
+                core: FastActorSessionV1::from_fake_v50_fixture_state(state),
+                owner: Arc::new(()),
+            }),
+            generation: 1,
+            ..Default::default()
+        };
+        let mut reply = server.handle_request(request("initial_fake"));
+        for index in 0..2 {
+            let label = decision(&reply)
+                .2
+                .actions
+                .iter()
+                .find(|action| action.label.contains("Swamp") && action.label.contains("{B}"))
+                .unwrap()
+                .label
+                .clone();
+            reply = server.handle_request(step(&reply, &format!("black_mana{index}"), &label));
+        }
+        reply = server.handle_request(step(
+            &reply,
+            "cast_fake",
+            "Begin casting Fake Your Own Death",
+        ));
+        let label = decision(&reply)
+            .2
+            .actions
+            .iter()
+            .find(|action| {
+                action.label.starts_with("Fake Your Own Death [")
+                    && action.label.contains(": target Llanowar Elves [")
+            })
+            .unwrap()
+            .label
+            .clone();
+        reply = server.handle_request(step(&reply, "fake_target", &label));
+        assert_eq!(
+            server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .fake_fixture_state()
+                .players[actor.index()]
+            .mana_pool[crate::mana::ManaColor::B.pool_index()],
+            0
+        );
+        let saved = server.handle_request(LimitedCommonRequestV2::Snapshot {
+            schema_version: SCHEMA_VERSION,
+            request_id: "save_paid_fake".into(),
+        });
+        let LimitedCommonBodyV2::State {
+            snapshot_id: Some(snapshot_id),
+            ..
+        } = saved.body
+        else {
+            panic!("paid Fake snapshot")
+        };
+        let mut first = None;
+        for replay in 0..2 {
+            if replay == 1 {
+                let stale = step(&reply, "stale_after_restore", "Pass priority");
+                reply = server.handle_request(LimitedCommonRequestV2::Restore {
+                    schema_version: SCHEMA_VERSION,
+                    request_id: "restore_fake".into(),
+                    snapshot_id,
+                });
+                let before = server
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .privileged_core_environment_hash();
+                error(&server.handle_request(stale), "stale_decision");
+                assert_eq!(
+                    server
+                        .active
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .privileged_core_environment_hash(),
+                    before
+                );
+            }
+            reply = drain_server(&mut server, reply);
+            assert!(decision(&reply).2.state.extensions.fake.grants[0].death_ability_active);
+            let label = decision(&reply)
+                .2
+                .actions
+                .iter()
+                .find(|action| action.label.contains("Mountain") && action.label.contains("{R}"))
+                .unwrap()
+                .label
+                .clone();
+            reply = server.handle_request(step(&reply, "red_mana", &label));
+            reply =
+                server.handle_request(step(&reply, "cast_bolt", "Begin casting Lightning Bolt"));
+            let label = decision(&reply)
+                .2
+                .actions
+                .iter()
+                .find(|action| action.label.contains(": target Llanowar Elves ["))
+                .unwrap()
+                .label
+                .clone();
+            reply = server.handle_request(step(&reply, "bolt_target", &label));
+            reply = drain_server(&mut server, reply);
+            let facts = &decision(&reply).2.state.extensions.fake;
+            assert_eq!(facts.deaths.len(), 1);
+            assert_eq!(facts.deaths[0].treasures.len(), 1);
+            let core = &server.active.as_ref().unwrap().core;
+            assert_eq!(
+                core.fake_fixture_state().objects.get(target).zone,
+                Zone::Battlefield
+            );
+            assert!(core.fake_fixture_state().objects.get(target).tapped);
+            let actual = (
+                serde_json::to_vec(core.fake_fixture_state()).unwrap(),
+                core.policy_step_count(),
+                core.physical_decision_count(),
+            );
+            if let Some(expected) = &first {
+                assert_eq!(&actual, expected);
+            } else {
+                first = Some(actual);
+            }
+            let json = serde_json::to_string(&reply).unwrap();
+            for private in [
+                "arena_id",
+                "card_db_id",
+                "event_history",
+                "private_snapshot_json",
+                "source_contract",
+            ] {
+                assert!(!json.contains(private), "{private}");
+            }
+        }
+    }
+}
+
 #[test]
 fn strict_requests_catalog_mismatch_and_unsupported_decks_do_not_replace_session() {
     let mut server = LimitedCommonJsonlServerV2::new();
@@ -150,7 +369,7 @@ fn fresh_complete_family_decks_select_v47_before_london_and_preserve_real_priori
             let core = &server.active.as_ref().unwrap().core;
             let bound = server.pending.as_ref().unwrap();
             assert!(core
-                .panda_current_decision_input_v47(bound.expected, bound.expected.acting_player)
+                .fake_current_decision_input_v50(bound.expected, bound.expected.acting_player)
                 .is_ok());
             for index in 0..2 {
                 reply =
@@ -184,7 +403,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
         let mut server = LimitedCommonJsonlServerV2 {
             active: Some(Active {
-                core: FastActorSessionV1::from_panda_v47_fixture_state(state),
+                core: FastActorSessionV1::from_fake_v50_fixture_state(state),
                 owner: Arc::new(()),
             }),
             generation: 1,
@@ -193,7 +412,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
         let mut reply = server.handle_request(request("initial"));
         reply = server.handle_request(step(&reply, "cast_angel", "Begin casting Dazzling Angel"));
         for index in 0..40 {
-            let state = server.active.as_ref().unwrap().core.panda_fixture_state();
+            let state = server.active.as_ref().unwrap().core.fake_fixture_state();
             if state.objects.get(angel).zone == Zone::Battlefield
                 && state.stack.is_empty()
                 && state.engine.pending_cast.is_none()
@@ -210,7 +429,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
                 .as_ref()
                 .unwrap()
                 .core
-                .panda_fixture_state()
+                .fake_fixture_state()
                 .objects
                 .get(angel)
                 .zone,
@@ -223,7 +442,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
                 .as_ref()
                 .unwrap()
                 .core
-                .panda_fixture_state()
+                .fake_fixture_state()
                 .stack
                 .iter()
                 .any(crate::panda_public_v47::selected)
@@ -282,7 +501,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
             before
         );
         for index in 0..40 {
-            let state = server.active.as_ref().unwrap().core.panda_fixture_state();
+            let state = server.active.as_ref().unwrap().core.fake_fixture_state();
             if state.stack.is_empty()
                 && state.engine.pending_triggers.is_empty()
                 && state.engine.pending_effect.is_none()
@@ -293,7 +512,7 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
         }
         let core = &server.active.as_ref().unwrap().core;
         assert_eq!(
-            core.panda_fixture_state()
+            core.fake_fixture_state()
                 .objects
                 .get(panda)
                 .counters
@@ -305,10 +524,10 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
             1
         );
         assert!(decision(&reply).2.state.extensions.panda.occurrences[0].operation_attempted);
-        crate::rl_session::panda_v47::tests::drain(&mut uninterrupted);
+        drain_fake(&mut uninterrupted);
         assert_eq!(
-            serde_json::to_vec(core.panda_fixture_state()).unwrap(),
-            serde_json::to_vec(uninterrupted.panda_fixture_state()).unwrap()
+            serde_json::to_vec(core.fake_fixture_state()).unwrap(),
+            serde_json::to_vec(uninterrupted.fake_fixture_state()).unwrap()
         );
         let (FastActorResponseV1::Decision(actual), FastActorResponseV1::Decision(reference)) =
             (core.current_response(), uninterrupted.current_response())
@@ -564,7 +783,7 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
             .as_ref()
             .unwrap()
             .core
-            .panda_fixture_state()
+            .fake_fixture_state()
             .clone();
         let player = match actor {
             crate::rl::PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
@@ -587,7 +806,7 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
         ));
         // Let the actual common incremental scan perform this declaration.
         server.active.as_mut().unwrap().core =
-            FastActorSessionV1::from_panda_v47_fixture_state(state);
+            FastActorSessionV1::from_fake_v50_fixture_state(state);
         server.pending = None;
         reply = server.handle_request(request("attack_scan"));
         assert!(decision(&reply)
@@ -672,7 +891,7 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
                     "Pass priority".into()
                 };
             reply = server.handle_request(step(&reply, &format!("combat{index}"), &label));
-            let state = server.active.as_ref().unwrap().core.panda_fixture_state();
+            let state = server.active.as_ref().unwrap().core.fake_fixture_state();
             if state.engine.event_history.iter().any(|event| matches!(event, crate::event::CommittedEvent::Damage { source, .. } if *source == attacker)) {
                 assert!(saw_blocker && restored_range);
                 assert!(state.objects.get(blocker).damage > 0 || state.objects.get(blocker).zone == Zone::Graveyard);

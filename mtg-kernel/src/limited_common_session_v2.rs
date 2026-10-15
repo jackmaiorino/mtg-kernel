@@ -1,4 +1,4 @@
-//! Opt-in actor-facing Limited playback over the complete common V47 binding.
+//! Opt-in actor-facing Limited playback over the complete common V50 binding.
 //! This is a trusted two-seat host interface, not a remote-player authorization
 //! service. Only the current actor's canonical safe DTO is returned.
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
@@ -7,7 +7,7 @@ use crate::human_bo3_v1::{
 };
 use crate::limited_session_v1::{CustomDeckV1, MAX_LIMITED_LINE_BYTES_V1};
 use crate::rl::PlayerSeatV1;
-use crate::rl_session::panda_v47::PandaDecisionBindingV47;
+use crate::rl_session::fake_v50::FakeDecisionBindingV50;
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
 };
@@ -148,8 +148,8 @@ pub fn producer_sha256_v2() -> String {
         include_str!("rl_session/limited_common_v1.rs"),
         include_str!("human_bo3_v1/limited_common_v2.rs"),
         include_str!("human_bo3_v1/limited_common_v1.rs"),
-        include_str!("rl_session/panda_v47.rs"),
-        include_str!("human_bo3_v1/panda_v47.rs"),
+        include_str!("rl_session/fake_v50.rs"),
+        include_str!("human_bo3_v1/fake_v50.rs"),
         include_str!("human_bo3_v1/labels.rs"),
         include_str!("human_bo3_v1/visible.rs"),
         include_str!("london_mulligan_v1.rs"),
@@ -159,7 +159,7 @@ pub fn producer_sha256_v2() -> String {
         hash.update([0]);
         hash.update(source.as_bytes());
     }
-    hash.update(crate::panda_observation_v47::producer_sha256().as_bytes());
+    hash.update(crate::fake_observation_v50::producer_sha256().as_bytes());
     format!("{:x}", hash.finalize())
 }
 
@@ -172,7 +172,7 @@ struct Bound {
     owner: Arc<()>,
     generation: u64,
     expected: FastActorDecisionV1,
-    binding: PandaDecisionBindingV47,
+    binding: FakeDecisionBindingV50,
     visible: LimitedCommonDecisionV2,
     indexes: Vec<u32>,
 }
@@ -341,7 +341,7 @@ impl LimitedCommonJsonlServerV2 {
                     }
                     format!("limited-common-v1:{:x}", hash.finalize())
                 });
-                let core = FastActorSessionV1::reset_panda_v47(
+                let core = FastActorSessionV1::reset_fake_v50(
                     *episode_id,
                     *env_seed,
                     (*max_physical_decisions, *max_policy_steps),
@@ -407,7 +407,7 @@ impl LimitedCommonJsonlServerV2 {
                     .ok_or("invalid_action")?;
                 active
                     .core
-                    .panda_validate_bound_decision_v47(bound.expected, *actor, &bound.binding)
+                    .fake_validate_bound_decision_v50(bound.expected, *actor, &bound.binding)
                     .map_err(|_| "changed_binding")?;
                 active
                     .core
@@ -458,7 +458,7 @@ impl LimitedCommonJsonlServerV2 {
                     .ok_or("authority_exhausted")?;
                 active
                     .core
-                    .panda_restore_v47(&saved.core)
+                    .fake_restore_v50(&saved.core)
                     .map_err(|_| "invalid_snapshot")?;
                 self.generation = next;
                 self.pending = None;
@@ -489,7 +489,7 @@ impl LimitedCommonJsonlServerV2 {
             FastActorResponseV1::Decision(expected) => {
                 let prepared = active
                     .core
-                    .panda_current_decision_input_v47(expected, expected.acting_player);
+                    .fake_current_decision_input_v50(expected, expected.acting_player);
                 let Ok((observation, actions, binding)) = prepared else {
                     self.pending = None;
                     return LimitedCommonStateV2::Unsupported {
