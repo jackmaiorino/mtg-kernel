@@ -271,7 +271,16 @@ impl Handles {
     pub(super) fn canonicalize_parts<E: Serialize>(
         &mut self,
         state: &HumanVisibleStateV1<E>,
+        unary_traits: BTreeMap<String, Vec<String>>,
+    ) -> Result<(), Error> {
+        self.canonicalize_parts_with_prepared(state, unary_traits, &())
+    }
+
+    pub(super) fn canonicalize_parts_with_prepared<E: Serialize, P: Serialize>(
+        &mut self,
+        state: &HumanVisibleStateV1<E>,
         mut unary_traits: BTreeMap<String, Vec<String>>,
+        prepared: &P,
     ) -> Result<(), Error> {
         // This JSON is produced solely from the explicit safe DTO above.
         // It is used internally to order safe fields, never to sanitize an
@@ -280,6 +289,16 @@ impl Handles {
         let mut roles = BTreeMap::<String, Vec<String>>::new();
         let mut graph_refs = BTreeSet::<String>::new();
         collect_roles(&safe, &mut Vec::new(), &mut roles, &mut graph_refs);
+        // Only an explicitly typed safe Prepared DTO enters here. Ordered
+        // occurrence and payment roles participate before canonical handles.
+        let prepared =
+            serde_json::to_value(prepared).map_err(|_| Error::InvalidVisibleReference)?;
+        collect_roles(
+            &prepared,
+            &mut vec!["prepared".into()],
+            &mut roles,
+            &mut graph_refs,
+        );
         let mut attributes = BTreeMap::<String, String>::new();
         for cards in state
             .public
@@ -467,7 +486,11 @@ fn collect_roles(
         serde_json::Value::Object(object) => {
             if let Some(handle) = object.get("handle").and_then(serde_json::Value::as_str) {
                 let location = path.join(".");
-                let inventory = location.starts_with("public.battlefield.")
+                let inventory = location.starts_with("prepared.drake.battlefield.")
+                    || location.starts_with("prepared.spinner.current.")
+                    || location.starts_with("prepared.quandary.current.")
+                    || location.starts_with("prepared.phoenix.current.")
+                    || location.starts_with("public.battlefield.")
                     || location.starts_with("public.exile.")
                     || location.starts_with("own_hand.")
                     || location.starts_with("known_hand_cards.")

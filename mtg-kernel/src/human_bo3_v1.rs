@@ -66,6 +66,7 @@ pub mod eaten_v46;
 pub mod elenda_v52;
 pub mod fake_v50;
 pub mod panda_v47;
+pub mod prepared_v57;
 pub mod ravenous_v51;
 pub mod season_v48;
 pub use panda_v47::{
@@ -323,6 +324,7 @@ mod limited_common_v1;
 mod limited_common_v2;
 mod limited_common_v3;
 mod limited_elenda_v4;
+mod limited_prepared_v5;
 pub use akroma_families_v40::HumanFamilyV40;
 pub use akroma_v40::{
     HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
@@ -341,6 +343,8 @@ pub(crate) use limited_common_v3::project_limited_common_v3;
 pub use limited_common_v3::LimitedCommonDecisionV3;
 pub(crate) use limited_elenda_v4::project_limited_elenda_v4;
 pub use limited_elenda_v4::LimitedElendaDecisionV4;
+pub(crate) use limited_prepared_v5::project_limited_prepared_v5;
+pub use limited_prepared_v5::LimitedPreparedDecisionV5;
 
 pub mod ajani_v42;
 pub use ajani_v42::{
