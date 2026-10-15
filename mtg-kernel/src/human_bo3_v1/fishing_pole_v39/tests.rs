@@ -308,6 +308,7 @@ mod future_printed {
         state.step = Step::Main1;
         for seat in [actor, actor.opponent()] {
             put(&mut state, seat, "Forest", Zone::Battlefield);
+            put(&mut state, seat, "Forest", Zone::Hand);
         }
         put(&mut state, actor.opponent(), hidden, Zone::Hand);
         let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
@@ -585,9 +586,9 @@ mod future_printed {
     fn actual_attached_fishing_hidden_hand_substitution_and_foreign_menu_readonly_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut first, mut projector, _, _) = equipped(actor, "Lightning Bolt");
-            let (second, _, _, _) = equipped(actor, "Island");
+            let (second, mut other_projector, _, _) = equipped(actor, "Island");
             let prompt = projector.project_current(&first, expected(&first)).unwrap();
-            let other = HumanFishingPoleProjectorV39::new(actor.into())
+            let other = other_projector
                 .project_current(&second, expected(&second))
                 .unwrap();
             assert_eq!(prompt, other);

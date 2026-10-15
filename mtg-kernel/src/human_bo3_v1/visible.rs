@@ -230,10 +230,11 @@ impl Handles {
     }
 
     fn attachment(&self, arena_id: u32) -> Result<HumanCardRefV1, Error> {
-        let mut matches = self
-            .rows
-            .iter()
-            .filter(|(key, _)| key.arena_id == arena_id && key.zone == Zone::Battlefield);
+        let mut matches = self.rows.iter().filter(|(key, _)| {
+            key.arena_id == arena_id
+                && key.zone == Zone::Battlefield
+                && self.current_battlefield.contains(key)
+        });
         let visible = matches
             .next()
             .ok_or(Error::InvalidVisibleReference)?

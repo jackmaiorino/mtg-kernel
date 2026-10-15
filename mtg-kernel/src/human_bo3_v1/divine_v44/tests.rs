@@ -339,8 +339,34 @@ fn actual_own_hidden_recipient_uses_safe_mask_and_departed_visibility_not_new_hi
         submit(&mut session, &mut p, |s| s.contains(": pay kicker"));
         let e = expected(&session);
         let menu = p.project_current(&session, e).unwrap();
-        let json = serde_json::to_string(&menu).unwrap();
-        assert!(!json.contains("Llanowar Elves"));
+        // The controller may look at its disguised permanent. That knowledge
+        // has a separate private row; public references and labels stay masked.
+        assert_eq!(menu.state.known_face_down_cards.len(), 1);
+        assert_eq!(menu.state.known_face_down_cards[0].name, "Llanowar Elves");
+        assert_eq!(
+            menu.state.known_face_down_cards[0].object.name,
+            "Face-down creature"
+        );
+        assert!(
+            session
+                .inner
+                .divine_fixture_state()
+                .objects
+                .get(target)
+                .v4
+                .face_down_v1
+                .unwrap()
+                .lookers
+                & (1 << actor.index())
+                != 0
+        );
+        let json =
+            serde_json::to_string(&(&menu.state.public, &menu.state.extensions, &menu.actions))
+                .unwrap();
+        assert!(
+            !json.contains("Llanowar Elves"),
+            "masked recipient leaked into public Human facts or labels: {json}"
+        );
         assert!(json.contains("Face-down creature"));
         submit(&mut session, &mut p, |s| s.contains(": select "));
         submit(&mut session, &mut p, |s| s.contains("finish with"));

@@ -526,18 +526,12 @@ fn real_eaten_cost_sacrifices_paid_panda_then_mandatory_return_and_exile_coexist
         let (public, _, _) = session
             .panda_current_decision_input_v47(e, actor.into())
             .unwrap();
-        let branch = public
-            .eaten
-            .pending
-            .as_ref()
-            .unwrap()
-            .payable_branches
-            .iter()
-            .position(|branch| *branch == crate::eaten_public_v46::BranchV46::SacrificeCreature)
-            .unwrap();
-        choose(
-            &mut session,
-            |a| matches!(a,ActionSemanticV1::ChooseEffectOption{option_index,..}if usize::from(*option_index)==branch),
+        // Paying for Panda leaves only one black mana. The printed mana
+        // alternative is unavailable, so the actual cast selects sacrifice
+        // and asks which of the two real creatures pays that cost.
+        assert_eq!(
+            public.eaten.pending.as_ref().unwrap().selected_branch,
+            Some(crate::eaten_public_v46::BranchV46::SacrificeCreature)
         );
         let e = expected(&session);
         let (_, candidates, _) = session

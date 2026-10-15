@@ -12525,7 +12525,9 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        // V39 binds the granting Pole through its explicit named-cost input,
+        // including a singleton menu, before either tap or mana is collected.
+        if candidates.len() == 1 && !crate::fishing_pole_v39::named_cost(ability.cost) {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
             let binding = EffectObjectBinding {
@@ -14131,7 +14133,8 @@ fn validated_stack_item_target_metadata(
     if state.engine.pending_cast.as_ref().is_some_and(|pending| {
         item.kind == StackItemKind::Spell
             && item.v4.source_contract == Some(pending.source_contract)
-    }) {
+    }) || mandatory_cast_cost_v1::linked_placeholder(state, item)?
+    {
         if item.kind != StackItemKind::Spell
             || item.inline_effect.is_some()
             || item.madness_offer
@@ -14345,6 +14348,14 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )?
         {
             return Err("stack target contract is structurally malformed".to_string());
         }
@@ -15559,6 +15570,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         )
         .is_err()
         {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        // The owned family resolver applies creation or the reflexive tap.
+        // A spell still performs its final ordinary departure afterward.
+        if finish_resolved_stack_item(state, &item).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;

@@ -1830,20 +1830,16 @@ fn flat_validate_current_decision_relations_v1(
                     definition.activated_abilities.get(*ability_index as usize)
                 {
                     ability.activation_zone
-                } else if *ability_index as usize == definition.activated_abilities.len() {
-                    // The engine reserves exactly the next slot for an
-                    // equipment-granted battlefield ability. The authoritative
-                    // origin check below still requires that actual offer.
-                    Zone::Battlefield
-                } else if crate::standard_cards_v1::capture_cauldron_grant(
+                } else if let Some(ability) = crate::engine::resolved_activated_ability(
+                    object.card_def,
+                    *ability_index,
                     state,
                     ObjectId(source.arena_id),
-                    *ability_index,
-                )
-                .0
-                .is_some()
-                {
-                    Zone::Battlefield
+                ) {
+                    // Ordinary Equipment and Fishing Pole grants have distinct slots.
+                    // Resolve the exact current grant; the origin check below
+                    // still requires that actual ordered engine offer.
+                    ability.activation_zone
                 } else {
                     return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
                 };

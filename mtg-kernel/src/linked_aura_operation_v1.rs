@@ -1090,6 +1090,13 @@ pub(crate) fn needs_event_owner(state: &GameState) -> bool {
                 .any(|(id, _)| crate::heraldic_banner_v1::owns_definition(id as u16)))
 }
 
+/// Whole-resolution ownership follows the same actual selection as outer
+/// Advance/Step. Catalog-aware event dispatch additionally probes new entries,
+/// but an unrelated catalog definition does not create a surrounding Runner.
+pub(crate) fn needs_surrounding_operation_owner(state: &GameState) -> bool {
+    !locally_owned(state) && (has_pending(state) || potential_operation(state))
+}
+
 pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
     if locally_owned(state) {
         return false;

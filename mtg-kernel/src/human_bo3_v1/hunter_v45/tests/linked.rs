@@ -96,7 +96,33 @@ fn genuine_hunter_sacrifice_and_foreign_aura_owner_prompt_use_distinct_sources_a
             .pending_effect
             .as_ref()
             .unwrap();
-        assert_eq!(row.source.as_ref().unwrap().arena_id, aura.0);
+        // This context still describes the paused Hunter resolution. The
+        // active owner-controlled Aura host choice has its own family/menu.
+        assert_eq!(row.source.as_ref().unwrap().arena_id, hunter.0);
+        assert_eq!(row.controller, actor.into());
+        let attachment = public
+            .families
+            .iter()
+            .find_map(|family| {
+                let crate::akroma_family_public_v40::FamilyFactsV40::Banishing(facts) = family
+                else {
+                    return None;
+                };
+                facts.attachment_choice.as_ref()
+            })
+            .unwrap();
+        assert_eq!(
+            (attachment.aura.arena_id, attachment.owner),
+            (aura.0, actor.opponent().into())
+        );
+        assert!(attachment.mandatory && attachment.untargeted);
+        let (_, actual_actions, _) = session
+            .inner
+            .hunter_current_decision_input_v45(e, actor.opponent().into())
+            .unwrap();
+        assert!(!actual_actions.is_empty());
+        assert_eq!(actual_actions.len(), attachment.legal_hosts.len());
+        assert!(actual_actions.iter().all(|action| matches!(action, crate::rl::ActionSemanticV1::ChooseEffectTarget { actor: chooser, source, .. } if *chooser == actor.opponent().into() && source.arena_id == aura.0)));
         assert_eq!(public.hunter.occurrences[0].source.arena_id, hunter.0);
         let menu = projector.project_current(&session, e).unwrap();
         assert!(menu.state.extensions.hunter.occurrences[0].sacrifice_paid);

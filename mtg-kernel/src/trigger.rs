@@ -4497,7 +4497,7 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
-        changed |= crate::controlled_creature_grants_v1::detach_protected_nonauras(state);
+        changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
         // 704.5m: an Aura attached to an illegal object or player, or not
         // attached at all, is put into its owner's graveyard. The current
         // attachment grammar supports creature Auras only and requires both

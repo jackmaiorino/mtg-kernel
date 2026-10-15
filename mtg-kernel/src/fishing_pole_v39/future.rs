@@ -18,6 +18,7 @@ fn ready(actor: PlayerId) -> GameState {
     state.step = Step::Main1;
     for owner in [actor, actor.opponent()] {
         put(&mut state, owner, "Forest", Zone::Battlefield);
+        put(&mut state, owner, "Forest", Zone::Hand);
     }
     put(&mut state, actor, "Forest", Zone::Library);
     state
@@ -580,7 +581,7 @@ fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_bo
         add(&mut state, actor, host, pole);
         finish(&mut state);
         let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
-        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
         engine::step(&mut state, Action::CastSpell(witness)).unwrap();
         assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
@@ -845,6 +846,33 @@ fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_
                 hidden_by: None,
                 hidden_by_source: None,
             });
+            if !disguised {
+                // A hidden card with no creature characteristics cannot
+                // retain an Equipment grant or pay its creature tap cost.
+                assert!(!engine::object_has_type(
+                    &state,
+                    host,
+                    card_def::CardType::Creature
+                ));
+                assert!(grants(&state, host).is_empty());
+                assert!(cost_candidates(&state, actor, host).is_empty());
+                // Direct characteristic setup has no engine event to initiate
+                // collection. Run the genuine SBA checkpoint before priority.
+                let waiting = crate::trigger::collect_and_process(&mut state);
+                state.engine.pending_triggers.extend(waiting);
+                let decision = next(&mut state);
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { ref activatable_abilities, .. }
+                    if !activatable_abilities.iter().any(|(id, _)| *id == host))
+                );
+                assert!(state.objects.get(pole).v4.attached_to.is_none());
+                assert!(!state.objects.get(host).attachments.contains(&pole));
+                assert_eq!(state.objects.get(pole).zone, Zone::Battlefield);
+                assert_eq!(state.objects.get(pole).counters.bait, 0);
+                assert_eq!(fish(&state, actor), 0);
+                assert_eq!(state, snapshot(&state));
+                continue;
+            }
             add(&mut state, actor, host, pole);
             let item = state.stack.last().unwrap().clone();
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
@@ -928,6 +956,22 @@ fn mixed_memorial(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
     finish(&mut state);
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    crate::rl::policy_observation_extensions_fishing_union_v40(&state, state.priority_player)
+        .expect("genuine mixed Memorial/Pole/Longbow normalization facts");
+    // Check the actual mixed public projection before installing its private
+    // session binding, retaining the precise projection error on regression.
+    crate::akroma_public_v1::observe_v1(
+        &state,
+        &crate::policy_surface_v5::PolicySurfaceV5::new_with_priority_mode_v1(
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            crate::surface_v2::SuppressionAuditMode::Off,
+        ),
+        state.priority_player,
+        0,
+        0,
+        (0, 1),
+    )
+    .expect("genuine mixed Memorial/Pole/Longbow observation");
     (state, host, pole)
 }
 #[test]
@@ -946,9 +990,9 @@ fn real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_re
             legacy.current_response(),
             FastActorResponseV1::Terminal(_)
         ));
-        let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+        let mut session = FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state);
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
-            panic!("actual mixed menu");
+            panic!("actual mixed menu: {:?}", session.current_response());
         };
         let (public, actions, binding) = session
             .akroma_current_decision_input_v40(expected, expected.acting_player)
@@ -1039,15 +1083,22 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, _, pole) = mixed_memorial(actor);
         let mut human = HumanAkromaSessionV40::from_session(
-            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
             actor.into(),
         )
         .unwrap();
         let mut projector = HumanAkromaProjectorV40::new(actor.into());
         let FastActorResponseV1::Decision(expected) = human.current_response() else {
-            panic!("actual mixed Human");
+            panic!("actual mixed Human: {:?}", human.current_response());
         };
         let prompt = projector.project_current(&human, expected).unwrap();
+        // Pool mana plus the genuine available Forest/Elf mana sources also
+        // make Longbow's printed equip legal in this same complete menu.
+        assert!(prompt.actions.iter().any(|action| action
+            .label
+            .starts_with("Activate Viridian Longbow")
+            && action.label.contains("target creature you control")
+            && action.label.contains("only as a sorcery")));
         assert!(prompt
             .actions
             .iter()

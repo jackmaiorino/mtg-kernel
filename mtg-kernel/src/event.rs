@@ -2302,8 +2302,7 @@ pub(crate) fn propose_and_commit_twinflame_fiery_equipment_owned(
             )
             .is_none_or(|(_, item)| item != *capture.item)
         || !matches!(state.engine.event_history.get(capture.index as usize),Some(CommittedEvent::TwinflameFieryCaptureV38{capture:original}) if original.as_ref()==capture)
-        || crate::linked_aura_operation_v1::needs_event_owner(state)
-            && !crate::linked_aura_operation_v1::locally_owned(state)
+        || crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state)
     {
         return Err(
             "Fiery equipment instruction lost private original or linked-operation owner".into(),

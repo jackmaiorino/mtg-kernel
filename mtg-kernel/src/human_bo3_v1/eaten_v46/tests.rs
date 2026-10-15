@@ -420,8 +420,14 @@ mod limited {
                     .get(target)
                     .tapped
             );
-            let first = session.inner.privileged_core_environment_hash();
+            let first = (
+                serde_json::to_vec(session.inner.eaten_fixture_state()).unwrap(),
+                session.inner.policy_step_count(),
+                session.inner.physical_decision_count(),
+            );
+            let before_revision = expected(&session).environment_revision;
             session.restore_v46(&finalized_snapshot).unwrap();
+            assert!(expected(&session).environment_revision > before_revision);
             for _ in 0..12 {
                 if !session
                     .inner
@@ -434,7 +440,14 @@ mod limited {
                 }
                 pass(&mut session, &mut projector, actor);
             }
-            assert_eq!(session.inner.privileged_core_environment_hash(), first);
+            assert_eq!(
+                (
+                    serde_json::to_vec(session.inner.eaten_fixture_state()).unwrap(),
+                    session.inner.policy_step_count(),
+                    session.inner.physical_decision_count()
+                ),
+                first
+            );
             crate::faebloom_trick_v43::validate_state(session.inner.eaten_fixture_state()).unwrap();
         }
     }
@@ -630,8 +643,14 @@ mod limited {
                     session.inner.eaten_fixture_state().objects.get(spell).zone,
                     Zone::Graveyard
                 );
-                let first = session.inner.privileged_core_environment_hash();
+                let first = (
+                    serde_json::to_vec(session.inner.eaten_fixture_state()).unwrap(),
+                    session.inner.policy_step_count(),
+                    session.inner.physical_decision_count(),
+                );
+                let before_revision = expected(&session).environment_revision;
                 session.restore_v46(&paid_snapshot).unwrap();
+                assert!(expected(&session).environment_revision > before_revision);
                 for _ in 0..24 {
                     if !session
                         .inner
@@ -644,7 +663,14 @@ mod limited {
                     }
                     pass(&mut session, &mut projector, actor);
                 }
-                assert_eq!(session.inner.privileged_core_environment_hash(), first);
+                assert_eq!(
+                    (
+                        serde_json::to_vec(session.inner.eaten_fixture_state()).unwrap(),
+                        session.inner.policy_step_count(),
+                        session.inner.physical_decision_count()
+                    ),
+                    first
+                );
             }
         }
     }

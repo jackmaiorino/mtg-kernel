@@ -88,6 +88,10 @@ pub(crate) mod registered {
             if flashback { 5 } else { 2 };
         state.players[actor.index()].mana_pool[crate::mana::ManaColor::U.pool_index()] =
             if flashback { 2 } else { 1 };
+        assert!(state.known_library_cards(actor, actor).is_empty());
+        assert!(state
+            .known_library_cards(actor.opponent(), actor)
+            .is_empty());
         engine::step(&mut state, Action::CastSpell(spell)).unwrap();
         for _ in 0..16 {
             let decision = engine::advance_until_decision(&mut state);
@@ -162,7 +166,13 @@ pub(crate) mod registered {
             let mut state = at_mill(actor, "Lightning Bolt");
             let surface = PolicySurfaceV5::new_for_session();
             let bytes = serde_json::to_vec(&state).unwrap();
-            assert!(state.known_library_cards(actor, actor).is_empty());
+            // The actual mill-order choice gives only its owner temporary
+            // knowledge of the three cards, before their simultaneous move.
+            let known = state.known_library_cards(actor, actor);
+            assert_eq!(known.len(), 3);
+            assert!(state
+                .known_library_cards(actor.opponent(), actor)
+                .is_empty());
             assert!(observe_v1(&state, &surface, actor.opponent(), 0, 0, 0, 1).is_err());
             assert!(crate::rl::observe_v1(&state, actor, 0).is_err());
             assert!(crate::rl::observe_v2(
@@ -177,6 +187,14 @@ pub(crate) mod registered {
             assert_eq!(choice.phase, PhaseV1::MillOrder);
             assert_eq!((choice.minimum, choice.maximum), (3, 3));
             assert_eq!(choice.legal.len(), 3);
+            assert_eq!(
+                known.iter().map(|row| row.object.0).collect::<Vec<_>>(),
+                choice
+                    .legal
+                    .iter()
+                    .map(|row| row.arena_id)
+                    .collect::<Vec<_>>()
+            );
             assert!(choice.selected.is_empty() && !choice.can_finish);
             assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
             let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();

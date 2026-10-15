@@ -47,6 +47,22 @@ impl HumanAjaniSessionV42 {
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn fixture_core_v42(&self) -> &FastActorSessionV1 {
+        &self.inner
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn fixture_core_mut_v42(&mut self) -> &mut FastActorSessionV1 {
+        &mut self.inner
+    }
     pub fn snapshot_v42(&self) -> HumanAjaniSnapshotV42 {
         HumanAjaniSnapshotV42 {
             snapshot: self.inner.snapshot_v1(),

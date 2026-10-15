@@ -9,8 +9,14 @@ use crate::{
 };
 fn held(actor: PlayerId, memorial: bool) -> (GameState, ObjectId, ObjectId) {
     let mut state = ready_state_for(actor);
+    for owner in [actor, actor.opponent()] {
+        put(&mut state, owner, "Forest", Zone::Hand);
+        for _ in 0..12 {
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+    }
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
-    put(&mut state, actor.opponent(), "Forest", Zone::Hand);
+    put(&mut state, actor.opponent(), "Island", Zone::Hand);
     let target = put(
         &mut state,
         actor.opponent(),
@@ -63,7 +69,7 @@ fn resolve(state: &mut GameState, source: ObjectId) {
 }
 fn owning(state: GameState, actor: PlayerId) -> HumanAkromaSessionV40 {
     HumanAkromaSessionV40::from_session(
-        FastActorSessionV1::from_akroma_v40_fixture_state(state),
+        FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
         actor.into(),
     )
     .unwrap()
@@ -89,7 +95,7 @@ fn check(memorial: bool) {
             "source_contract",
             "event_history",
             "arena_id",
-            "Forest",
+            "Island",
         ] {
             assert!(!json.contains(hidden), "{hidden}");
         }
