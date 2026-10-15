@@ -4938,6 +4938,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::fake_your_own_death_v50::death_custody::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {

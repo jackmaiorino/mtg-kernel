@@ -880,7 +880,11 @@ pub(crate) fn build_for_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<Vec<FamilyProjectionV40>, RlContractError> {
-    if scope == crate::rl::CommonProjectionScopeV42::ConquerorV49 {
+    if matches!(
+        scope,
+        crate::rl::CommonProjectionScopeV42::ConquerorV49
+            | crate::rl::CommonProjectionScopeV42::FakeV50
+    ) {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
         crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
@@ -901,7 +905,8 @@ pub(crate) fn build_for_scope(
         | crate::rl::CommonProjectionScopeV42::EatenV46 => {}
         crate::rl::CommonProjectionScopeV42::PandaV47
         | crate::rl::CommonProjectionScopeV42::SeasonV48
-        | crate::rl::CommonProjectionScopeV42::ConquerorV49 => {}
+        | crate::rl::CommonProjectionScopeV42::ConquerorV49
+        | crate::rl::CommonProjectionScopeV42::FakeV50 => {}
     }
     let base = crate::rl::common_family_observation_storage_scoped(
         (scope, state),

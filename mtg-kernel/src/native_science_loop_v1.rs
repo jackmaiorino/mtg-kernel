@@ -650,7 +650,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnPreparedLifecycleBatch
         | NativeRunCatalogProfileV1::FdnAjaniFaebloomBatch
         | NativeRunCatalogProfileV1::FdnHunterEatenPandaBatch
-        | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch => {
+        | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch
+        | NativeRunCatalogProfileV1::FdnFakePartialBatch => {
             if !crate::native_training_store_run_v2::current_profile_matches_live_build_identity_v1(
                 run.record().environment(),
             ) {

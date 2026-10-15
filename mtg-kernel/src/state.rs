@@ -2869,6 +2869,15 @@ impl GameState {
             crate::standard_cards_v1::aegis_attached(self, source, host_link);
         }
         self.validate_attachment_relations()?;
+        crate::fake_your_own_death_v50::return_aura::record_attachment(
+            self,
+            ObjectLinkV4 {
+                object: source,
+                zone_change_count: source_zone_change_count,
+            },
+            host_link,
+        )
+        .map_err(|_| source)?;
         if crate::doubling_season_v48::requires_successor(self) {
             crate::season_token_attachment_v48::record(
                 self,

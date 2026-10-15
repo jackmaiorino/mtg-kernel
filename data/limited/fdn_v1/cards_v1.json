@@ -7436,6 +7436,31 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FiendishPanda.java",
       "is_token": false
+    },
+    {
+      "name": "Fake Your Own Death",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": ["B"],
+      "types": ["Instant"],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": ["FDN_reference_fake_your_own_death_partial.dck"],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "until_end_of_turn_power_boost",
+        "gained_death_trigger",
+        "return_original_card_tapped",
+        "treasure_for_death_controller"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FakeYourOwnDeath.java",
+      "is_token": false
     }
   ]
 }

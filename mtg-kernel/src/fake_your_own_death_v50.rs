@@ -1,4 +1,4 @@
-//! Ordered death-resolution primitive for the unregistered FDN printing.
+//! Ordered death-resolution primitives for the Partial FDN printing candidate.
 //!
 //! This factory does not grant an ability, collect a death, or authorize a
 //! publication. Its future caller must bind the context and token fact to
@@ -12,7 +12,18 @@ use crate::effect::{EffectOp, ExecCtx, PlayerRef};
 use crate::mana::ManaColor;
 use crate::state::{GameState, Zone};
 
+pub mod death_custody;
 pub mod grant_primitive;
+pub mod public_v50;
+pub mod return_aura;
+pub mod spell_custody;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod paid_printing_tests;
 
 fn treasure_definition() -> Result<u16, String> {
     let id = crate::card_def::card_id_by_name("Treasure Token")
@@ -84,6 +95,25 @@ pub fn primitive_death_program_v50(
     let source = context
         .ability_source_contract
         .ok_or("Fake Your Own Death primitive lacks its captured graveyard source")?;
+    primitive_death_program_from_input_v50(
+        context,
+        was_token_at_death,
+        state.objects.try_get(source.source),
+        state.players[source.owner.index()]
+            .graveyard
+            .contains(&source.source),
+    )
+}
+
+pub(crate) fn primitive_death_program_from_input_v50(
+    context: &ExecCtx,
+    was_token_at_death: bool,
+    original: Option<&crate::state::GameObject>,
+    in_original_graveyard: bool,
+) -> Result<EffectOp, String> {
+    let source = context
+        .ability_source_contract
+        .ok_or("Fake Your Own Death primitive lacks its captured graveyard source")?;
     if source.source != context.source
         || source.zone != Zone::Graveyard
         || !context.targets.is_empty()
@@ -93,7 +123,7 @@ pub fn primitive_death_program_v50(
     }
     let token_def = treasure_definition()?;
     let can_return = !was_token_at_death
-        && state.objects.try_get(source.source).is_some_and(|live| {
+        && original.is_some_and(|live| {
             live.zone == Zone::Graveyard
                 && live.zone_change_count == source.zone_change_count
                 && live.card_def == source.card_def
@@ -113,9 +143,7 @@ pub fn primitive_death_program_v50(
                         .into_iter()
                         .any(|kind| definition.has_type(kind))
                     })
-                && state.players[source.owner.index()]
-                    .graveyard
-                    .contains(&source.source)
+                && in_original_graveyard
         });
     let mut program = Vec::with_capacity(2);
     if can_return {
@@ -155,6 +183,225 @@ mod tests {
                 object.card_def == blueprint && object.v4.is_token
             })
             .collect()
+    }
+
+    #[test]
+    fn ownerless_install_root_refuses_without_grant_or_gameplay_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let context = ExecCtx::no_targets(source, actor);
+            for (round, op) in [
+                EffectOp::FakeInstallGrantV50,
+                EffectOp::FakeDeathFromCaptureV50 { capture: u64::MAX },
+            ]
+            .into_iter()
+            .cycle()
+            .take(6)
+            .enumerate()
+            {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                effect::execute(&op, &context, &mut state);
+                assert_eq!(
+                    state.engine.halted,
+                    Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        source
+                    ))
+                );
+                state.engine.halted = None;
+                assert_eq!(state, before, "ownerless {op:?} restore {round}");
+                assert!(spell_custody::installed_grants(&state).unwrap().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn forged_death_root_and_original_publication_refuse_readonly_both_seats() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event::CommittedEvent;
+        use crate::state::{AbilitySourceContractV4, StackItem, StackItemKind, StackStateV4};
+        use spell_custody::JournalV50;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let item = StackItem {
+                kind: StackItemKind::TriggeredAbility,
+                source,
+                controller: actor,
+                targets: Vec::new(),
+                is_copy: false,
+                inline_effect: Some(EffectOp::FakeDeathFromCaptureV50 { capture: 0 }),
+                discarded: Vec::new(),
+                is_flashback: false,
+                mode_chosen: 0,
+                madness_offer: false,
+                kicked: false,
+                v4: StackStateV4 {
+                    stack_item_id: crate::ids::StackItemId(1),
+                    ability_source_contract: Some(AbilitySourceContractV4::capture(&state, source)),
+                    ..Default::default()
+                },
+            };
+            state.stack.push(item.clone());
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(death_custody::validate_trigger_identity(&state, &item).is_err());
+                assert!(death_custody::publish(&mut state, &item).is_err());
+                assert_eq!(state, before);
+                assert!(death_custody::acquire_counter(&state, &item).is_err());
+                assert!(death_custody::acquire_resolution(&state, &item).is_err());
+                assert!(
+                    engine::counter_stack_item_by_id(&mut state, item.v4.stack_item_id).is_err()
+                );
+                assert_eq!(state, before);
+                assert!(engine::step(&mut state, Action::Pass).is_err());
+                assert_eq!(state, before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::Halted { .. }
+                ));
+                state.engine.halted = None;
+                assert_eq!(state, before);
+            }
+            for orphan in [
+                JournalV50::DeathPublished {
+                    capture: 0,
+                    collection: 0,
+                    item: Box::new(item.clone()),
+                },
+                JournalV50::DeathCounterInput {
+                    publication: 0,
+                    original_stack: vec![item.clone()],
+                },
+                JournalV50::DeathCounterClosed {
+                    input: 0,
+                    remaining_stack: Vec::new(),
+                },
+                JournalV50::DeathResolutionInput {
+                    publication: 0,
+                    original_stack: vec![item.clone()],
+                    context: Box::new(context(&state, source, actor)),
+                    original_source: Some(Box::new(state.objects.get(source).clone())),
+                    in_original_graveyard: false,
+                    program: Box::new(EffectOp::Sequence(Vec::new())),
+                },
+                JournalV50::DeathTreasureInput {
+                    resolution: 0,
+                    replacement: crate::doubling_season_v48::ReplacementInputV48::capture(
+                        &state, actor,
+                    ),
+                },
+                JournalV50::DeathResolutionClosed {
+                    input: 0,
+                    treasure: 0,
+                    returned: None,
+                    created: Vec::new(),
+                },
+            ] {
+                let mut injected = state.clone();
+                injected
+                    .engine
+                    .event_history
+                    .push(CommittedEvent::FakeJournalV50 {
+                        journal: Box::new(orphan),
+                    });
+                for _ in 0..3 {
+                    injected =
+                        serde_json::from_slice(&serde_json::to_vec(&injected).unwrap()).unwrap();
+                    let before = injected.clone();
+                    assert!(engine::step(&mut injected, Action::Pass).is_err());
+                    assert_eq!(injected, before);
+                    assert!(matches!(
+                        engine::advance_until_decision(&mut injected),
+                        Decision::Halted { .. }
+                    ));
+                    injected.engine.halted = None;
+                    assert_eq!(injected, before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn orphan_cleanup_and_empty_death_inputs_refuse_before_engine_work_both_seats() {
+        use spell_custody::JournalV50;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for journal in [
+                JournalV50::CleanupCompleted {
+                    occurrence: u64::MAX,
+                },
+                JournalV50::DeathInput {
+                    lookbacks: Vec::new(),
+                    departure: 0,
+                },
+                JournalV50::DeathCollected {
+                    input: u64::MAX,
+                    ordinal: 0,
+                    capture: 0,
+                },
+                JournalV50::CollectionCompleted { input: u64::MAX },
+                JournalV50::CollectionInput { captures: vec![0] },
+            ] {
+                let mut state = ready_state_for(actor);
+                state
+                    .engine
+                    .event_history
+                    .push(crate::event::CommittedEvent::FakeJournalV50 {
+                        journal: Box::new(journal),
+                    });
+                for _ in 0..3 {
+                    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                    let before = state.clone();
+                    assert!(crate::engine::step(&mut state, crate::engine::Action::Pass).is_err());
+                    assert_eq!(state, before);
+                    assert!(matches!(
+                        crate::engine::advance_until_decision(&mut state),
+                        crate::engine::Decision::Halted {
+                            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            source: ObjectId(0),
+                        }
+                    ));
+                    state.engine.halted = None;
+                    assert_eq!(state, before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn forged_mutable_death_input_cannot_supply_collection_authority_both_seats() {
+        use crate::engine::{self, Action, Decision};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let events = vec![crate::event::CommittedEvent::FakeJournalV50 {
+                journal: Box::new(spell_custody::JournalV50::DeathInput {
+                    lookbacks: Vec::new(),
+                    departure: u64::MAX,
+                }),
+            }];
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(death_custody::collect(&mut state, &events).is_err());
+                assert_eq!(state, before);
+            }
+            state.engine.event_log = events;
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let before = state.clone();
+                assert!(engine::step(&mut state, Action::Pass).is_err());
+                assert_eq!(state, before);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::Halted { .. }
+                ));
+                state.engine.halted = None;
+                assert_eq!(state, before);
+            }
+        }
     }
 
     #[test]
@@ -245,6 +492,67 @@ mod tests {
         )
         .is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn primitive_finishes_treasure_before_legend_sba_choice_and_restore_both_seats() {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            for keep_returned in [false, true] {
+                let mut state = ready_state_for(owner);
+                let existing = put(
+                    &mut state,
+                    owner,
+                    "Balmor, Battlemage Captain",
+                    Zone::Battlefield,
+                );
+                let returned = put(
+                    &mut state,
+                    owner,
+                    "Balmor, Battlemage Captain",
+                    Zone::Graveyard,
+                );
+                let beneficiary = owner.opponent();
+                let context = context(&state, returned, beneficiary);
+                let program = primitive_death_program_v50(&state, &context, false).unwrap();
+                effect::execute(&program, &context, &mut state);
+                assert_eq!(state.objects.get(returned).zone, Zone::Battlefield);
+                assert!(state.objects.get(returned).tapped);
+                assert_eq!(treasures(&state, beneficiary).len(), 1);
+                assert!(state.pending_legend_rule_v1.is_none());
+
+                // This is the next SBA pass, after both ordered instructions.
+                // The primitive does not publish an actual Fake death trigger.
+                assert!(crate::legend_rule_v1::stage(&mut state, &[]));
+                assert!(matches!(
+                    crate::legend_rule_v1::drain_or_decide(&mut state).unwrap(),
+                    Some(crate::engine::Decision::ChooseLegendPermanent { player, candidates })
+                        if player == owner && candidates.len() == 2
+                            && candidates.contains(&existing) && candidates.contains(&returned)
+                ));
+                let serialized = serde_json::to_vec(&state).unwrap();
+                let mut restored: GameState = serde_json::from_slice(&serialized).unwrap();
+                let keep = if keep_returned { returned } else { existing };
+                let discard = if keep_returned { existing } else { returned };
+                for candidate in [&mut state, &mut restored] {
+                    crate::legend_rule_v1::answer(candidate, keep).unwrap();
+                    assert!(crate::legend_rule_v1::drain_or_decide(candidate)
+                        .unwrap()
+                        .is_none());
+                    assert_eq!(candidate.objects.get(keep).zone, Zone::Battlefield);
+                    assert_eq!(candidate.objects.get(discard).zone, Zone::Graveyard);
+                    assert_eq!(treasures(candidate, beneficiary).len(), 1);
+                    assert!(treasures(candidate, owner).is_empty());
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&restored).unwrap()
+                );
+            }
+        }
     }
 
     #[test]

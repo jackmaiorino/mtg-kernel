@@ -377,6 +377,14 @@ pub(crate) fn discard_menu_inner(
     actor: PlayerId,
     accept_akroma: bool,
 ) -> Result<Option<DiscardMenuV2>, RlContractError> {
+    discard_menu_fake_scoped_v50(state, actor, accept_akroma, false)
+}
+pub(crate) fn discard_menu_fake_scoped_v50(
+    state: &GameState,
+    actor: PlayerId,
+    accept_akroma: bool,
+    accept_fake: bool,
+) -> Result<Option<DiscardMenuV2>, RlContractError> {
     if !crate::effect::crystal_prevention_v1::is_discard_choice(state) {
         return Ok(None);
     }
@@ -389,7 +397,11 @@ pub(crate) fn discard_menu_inner(
     Ok(Some(DiscardMenuV2 {
         chooser: actor.into(),
         source: if accept_akroma {
-            crate::rl::akroma_crystal_resolving_source_ref_v40(state, &pending.resolving_item)?
+            crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(
+                state,
+                &pending.resolving_item,
+                accept_fake,
+            )?
         } else {
             crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?
         },
@@ -401,6 +413,13 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     menu_inner(state, false)
 }
 fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
+    menu_fake_scoped_v50(state, accept_akroma, false)
+}
+fn menu_fake_scoped_v50(
+    state: &GameState,
+    accept_akroma: bool,
+    accept_fake: bool,
+) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
     let Some(PendingEffectChoice::ChooseOption {
@@ -441,9 +460,10 @@ fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, 
         chooser: choice.chooser.into(),
         source,
         resolving_source: if accept_akroma {
-            crate::rl::akroma_crystal_resolving_source_ref_v40(
+            crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(
                 state,
                 &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+                accept_fake,
             )?
         } else {
             crate::rl::crystal_resolving_source_ref(
@@ -540,11 +560,12 @@ pub(crate) fn parts_for_common_scope(
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<CrystalObservationV1, RlContractError> {
     let (substep_index, substep_count) = substep;
+    let accept_fake = scope == crate::rl::CommonProjectionScopeV42::FakeV50;
 
     validate_state(state).map_err(RlContractError)?;
     let project_menu = !crate::twinflame_observation_v1::owns_family_menu(state);
     let optional_discard_menu = if project_menu {
-        discard_menu_inner(state, actor, true)?
+        discard_menu_fake_scoped_v50(state, actor, true, accept_fake)?
     } else {
         None
     };
@@ -557,9 +578,10 @@ pub(crate) fn parts_for_common_scope(
                 .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
             Some(ProgramMenuV3 {
                 chooser: pending.ctx.controller.into(),
-                source: crate::rl::akroma_crystal_resolving_source_ref_v40(
+                source: crate::rl::akroma_crystal_resolving_source_ref_fake_scoped_v50(
                     state,
                     &pending.resolving_item,
+                    accept_fake,
                 )?,
                 decline_index: 0,
                 fight_index: 1,
@@ -613,7 +635,7 @@ pub(crate) fn parts_for_common_scope(
         prevention_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
             None
         } else {
-            menu_inner(state, true)?
+            menu_fake_scoped_v50(state, true, accept_fake)?
         },
         optional_discard_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
             None
