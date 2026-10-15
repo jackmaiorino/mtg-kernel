@@ -252,6 +252,10 @@ pub struct RemovedV1 {
     pub item: Box<StackItem>,
     pub kind: RemovalKindV1,
     pub source_present: bool,
+    /// Canonical whole world acquired while the exact paid row was live.
+    /// Histories are linked through this removal's outer prefix, not nested.
+    pub original_world: Box<GameState>,
+    pub replay_borrow: Option<crate::linked_aura_operation_v1::RavenousReplayBorrowV51>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -266,12 +270,57 @@ pub struct CompletedV1 {
     pub index: u64,
     pub removed: u64,
     pub operation: OperationV1,
+    pub output_world: Box<GameState>,
 }
 /// Exact live-row loan acquired before the engine removes the actual row.
 /// No public/snapshot constructor can supply this one-use capability.
 pub(crate) struct OwnerV1 {
     paid: u64,
     item: StackItem,
+    history_index: u64,
+    world: Box<GameState>,
+    replay_borrow: crate::linked_aura_operation_v1::RavenousReplayBorrowV51,
+}
+
+fn operation_world(state: &GameState) -> Result<GameState, String> {
+    let mut world = state.clone();
+    world.engine.event_history.clear();
+    world.engine.event_log.clear();
+    let bytes = serde_json::to_vec(&world).map_err(|error| error.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
+fn after_removal(
+    original: &GameState,
+    item: &StackItem,
+    kind: RemovalKindV1,
+) -> Result<GameState, String> {
+    if !original.engine.event_history.is_empty() || !original.engine.event_log.is_empty() {
+        return Err("Amulet original operation world contains nested journals".into());
+    }
+    let positions = original
+        .stack
+        .iter()
+        .enumerate()
+        .filter_map(|(index, live)| {
+            (live.v4.stack_item_id == item.v4.stack_item_id).then_some((index, live))
+        })
+        .collect::<Vec<_>>();
+    let [(position, live)] = positions.as_slice() else {
+        return Err("Amulet original operation world lost unique live row".into());
+    };
+    if *live != item
+        || (kind == RemovalKindV1::Resolving
+            && position.checked_add(1) != Some(original.stack.len()))
+    {
+        return Err("Amulet original operation changed its whole live row/top".into());
+    }
+    let mut world = original.clone();
+    world.stack.remove(*position);
+    if kind == RemovalKindV1::Resolving {
+        world.engine.pending_kicked_source = None;
+    }
+    Ok(world)
 }
 
 fn paid_for(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
@@ -328,6 +377,9 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     Ok(Some(OwnerV1 {
         paid: paid_for(state, item.v4.stack_item_id)?.index,
         item: item.clone(),
+        history_index: state.engine.event_history.len() as u64,
+        world: Box::new(operation_world(state)?),
+        replay_borrow: crate::linked_aura_operation_v1::capture_ravenous_replay_borrow_v51(state),
     }))
 }
 fn remove_owned(
@@ -336,6 +388,11 @@ fn remove_owned(
     kind: RemovalKindV1,
 ) -> Result<u64, String> {
     validate_item(state, &owner.item)?;
+    if state.engine.event_history.len() as u64 != owner.history_index
+        || operation_world(state)? != after_removal(&owner.world, &owner.item, kind)?
+    {
+        return Err("Amulet removed operation changed its complete original world".into());
+    }
     if state
         .stack
         .iter()
@@ -363,12 +420,16 @@ fn remove_owned(
                 item: Box::new(owner.item.clone()),
                 kind,
                 source_present,
+                original_world: owner.world.clone(),
+                replay_borrow: (kind == RemovalKindV1::Resolving)
+                    .then(|| owner.replay_borrow.clone()),
             }),
         });
     Ok(index)
 }
 fn complete(state: &mut GameState, removed: u64, operation: OperationV1) -> Result<(), String> {
     let index = state.engine.event_history.len() as u64;
+    let output_world = Box::new(operation_world(state)?);
     state
         .engine
         .event_history
@@ -377,6 +438,7 @@ fn complete(state: &mut GameState, removed: u64, operation: OperationV1) -> Resu
                 index,
                 removed,
                 operation,
+                output_world,
             }),
         });
     crate::soul_counters_v1::validate(state)
@@ -482,6 +544,7 @@ fn validate_completion(
     let rows = history
         .get(start..end)
         .ok_or("Amulet operation history range absent")?;
+    validate_operation_world(state, paid, removed, completed, rows)?;
     let draws = rows
         .iter()
         .enumerate()
@@ -581,6 +644,81 @@ fn validate_completion(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_operation_world(
+    state: &GameState,
+    paid: &PaidV1,
+    removed: &RemovedV1,
+    completed: &CompletedV1,
+    rows: &[CommittedEvent],
+) -> Result<(), String> {
+    if !completed.output_world.engine.event_history.is_empty()
+        || !completed.output_world.engine.event_log.is_empty()
+    {
+        return Err("Amulet output world contains nested journals".into());
+    }
+    let mut replay = after_removal(&removed.original_world, &paid.item, removed.kind)?;
+    let source = paid
+        .item
+        .v4
+        .ability_source_contract
+        .ok_or("Amulet original operation source absent")?;
+    let present = replay.objects.try_get(source.source).is_some_and(|live| {
+        live.zone == source.zone && live.zone_change_count == source.zone_change_count
+    });
+    if present != removed.source_present {
+        return Err("Amulet operation changed its original source presence".into());
+    }
+    let start = usize::try_from(removed.index)
+        .ok()
+        .and_then(|index| index.checked_add(1))
+        .ok_or("Amulet original operation prefix overflow")?;
+    // Reattach the actual outer prefix. Running stable validators against a
+    // stripped snapshot alone would erase required prior Fake/Season custody.
+    replay.engine.event_history = state
+        .engine
+        .event_history
+        .get(..start)
+        .ok_or("Amulet original operation prefix absent")?
+        .to_vec();
+    if removed.kind == RemovalKindV1::Resolving {
+        let borrow = removed
+            .replay_borrow
+            .as_ref()
+            .ok_or("Amulet original replay scope absent")?;
+        let mut ctx = crate::effect::ExecCtx::no_targets(paid.item.source, paid.item.controller);
+        ctx.stack_item_id = Some(paid.item.v4.stack_item_id);
+        ctx.paid_cost_refs = paid.item.v4.paid_cost_refs.clone();
+        ctx.ability_source_contract = paid.item.v4.ability_source_contract;
+        crate::linked_aura_operation_v1::with_ravenous_replay_borrow_v51(
+            &mut replay,
+            &paid.item,
+            borrow,
+            |world| {
+                crate::effect::execute(
+                    paid.item
+                        .inline_effect
+                        .as_ref()
+                        .ok_or("Amulet original program absent")?,
+                    &ctx,
+                    world,
+                );
+                if world.engine.halted.is_some() || world.engine.pending_effect.is_some() {
+                    return Err("Amulet original atomic operation halted or suspended".into());
+                }
+                Ok(())
+            },
+        )?;
+    } else if removed.replay_borrow.is_some() {
+        return Err("Countered Amulet invented a resolution scope".into());
+    }
+    if replay.engine.event_history.get(start..) != Some(rows)
+        || operation_world(&replay)? != *completed.output_world
+    {
+        return Err("Amulet complete original-world operation replay differs".into());
     }
     Ok(())
 }

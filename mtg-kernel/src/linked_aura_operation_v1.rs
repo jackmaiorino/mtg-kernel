@@ -105,7 +105,7 @@ struct ColorPlanV36 {
 }
 
 /// GameState never restores runtime ownership, and other modules cannot
-/// construct it. Opaque input borrowing is confined to speculative Panda replay.
+/// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
     original_stack: Vec<crate::state::StackItem>,
@@ -255,6 +255,132 @@ pub(crate) fn with_panda_replay_borrow_v1(
     replay.engine.linked_aura_operation_v1.runtime = None;
     result
 }
+/// Captured scope for the two exact atomic Amulet programs. No original worlds,
+/// answers or executable entry loans are nested in this input.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RavenousReplayBorrowV51 {
+    enclosing: Option<RavenousEnclosingV51>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RavenousEnclosingV51 {
+    original_stack: Vec<crate::state::StackItem>,
+    original_history_len: usize,
+    operation: OperationV1,
+    original_sha256: String,
+    had_checkpoint: bool,
+}
+pub(crate) fn capture_ravenous_replay_borrow_v51(state: &GameState) -> RavenousReplayBorrowV51 {
+    RavenousReplayBorrowV51 {
+        enclosing: state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_ref()
+            .map(|runner| RavenousEnclosingV51 {
+                original_stack: runner.original_stack.clone(),
+                original_history_len: runner.original_history_len,
+                operation: runner.operation.clone(),
+                original_sha256: runner.original_sha256.clone(),
+                had_checkpoint: runner.checkpoint.is_some(),
+            }),
+    }
+}
+pub(crate) fn with_ravenous_replay_borrow_v51(
+    replay: &mut GameState,
+    original_item: &crate::state::StackItem,
+    input: &RavenousReplayBorrowV51,
+    run: impl FnOnce(&mut GameState) -> Result<(), String>,
+) -> Result<(), String> {
+    if locally_owned(replay) || has_pending(replay) {
+        return Err("Amulet verification cannot acquire a public checkpoint".into());
+    }
+    let expected = match original_item.v4.activated_ability_index {
+        Some(0) => crate::ravenous_amulet_v1::draw_program(),
+        Some(1) => crate::ravenous_amulet_v1::loss_program(),
+        _ => return Err("Amulet verification lost its exact atomic program".into()),
+    };
+    let Some(CommittedEvent::RavenousRemovedV1 { removed }) = replay.engine.event_history.last()
+    else {
+        return Err("Amulet verification lost its original removal".into());
+    };
+    if original_item.inline_effect.as_ref() != Some(&expected)
+        || !original_item
+            .v4
+            .ability_source_contract
+            .is_some_and(|source| crate::ravenous_amulet_v1::definition(source.card_def))
+        || removed.item.as_ref() != original_item
+        || removed.kind != crate::ravenous_amulet_v1::RemovalKindV1::Resolving
+        || removed.replay_borrow.as_ref() != Some(input)
+    {
+        return Err("Amulet verification lacks its original removed atomic input".into());
+    }
+    let Some(enclosing) = &input.enclosing else {
+        return run(replay);
+    };
+    if enclosing.operation != OperationV1::Advance
+        || enclosing.had_checkpoint
+        || enclosing.original_history_len > removed.index as usize
+        || enclosing.original_sha256.len() != 64
+        || !enclosing
+            .original_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || enclosing
+            .original_stack
+            .iter()
+            .filter(|item| item.v4.stack_item_id == original_item.v4.stack_item_id)
+            .collect::<Vec<_>>()
+            .as_slice()
+            != [original_item]
+    {
+        return Err("Amulet replay changed its enclosing Advance/stack input".into());
+    }
+    // The installer is limited to this disposable atomic replay. It never
+    // returns a Runner or installs one in an actual/restored game.
+    replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+        original_stack: enclosing.original_stack.clone(),
+        original_history_len: enclosing.original_history_len,
+        batch_depth: 0,
+        deferred_departures: Vec::new(),
+        answers: Vec::new(),
+        cursor: 0,
+        checkpoint: None,
+        operation: enclosing.operation.clone(),
+        original_sha256: enclosing.original_sha256.clone(),
+        banner_start: None,
+        color_plans: Vec::new(),
+        used_banner: false,
+        original_world_v48: None,
+        attachment_input_v48: None,
+        original_world_v50: None,
+        active_fake_aura_entry_v50: None,
+    }));
+    let result = run(replay);
+    let runner = replay
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .take()
+        .ok_or("Amulet verification lost its local borrowed scope")?;
+    if runner.checkpoint.is_some()
+        || runner.cursor != 0
+        || runner.batch_depth != 0
+        || !runner.answers.is_empty()
+        || !runner.deferred_departures.is_empty()
+        || runner.banner_start.is_some()
+        || !runner.color_plans.is_empty()
+        || runner.attachment_input_v48.is_some()
+        || runner.original_world_v48.is_some()
+        || runner.original_world_v50.is_some()
+        || runner.active_fake_aura_entry_v50.is_some()
+    {
+        return Err("Amulet atomic replay attempted a choice or departure".into());
+    }
+    result
+}
+
 pub fn has_pending(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.pending.is_some()
         || has_banner_pending(state)

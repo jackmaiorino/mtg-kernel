@@ -83,10 +83,33 @@ or miscontrolled objects. Paid fixtures check complete card-view restore,
 changed soul refusal, absent roster refusal and private-content noninterference.
 No new executable session or model consumes this wrapper yet.
 
-Remaining: native qualification and cross-family original-world validation of
-the new lifecycle and observation/consumer support; actual paid
-both-seat tests and qualification. No Full, model, sampler, fair-search, or
-training claim follows from this prerequisite.
+The live-row owner now captures a canonical complete original operation world
+before removal. Removal verifies the whole post-pop state and retains that
+input; completion retains its exact canonical output. Validation reattaches the
+actual outer history prefix and replays the original atomic program, comparing
+every operation event, captured soul-input world and complete output. Histories
+are linked through the outer prefix instead of nested in these two snapshots.
+Countered operations retain no resolution borrow and produce no effects.
+
+An opaque narrow enclosing-Advance input preserves linked-operation ownership
+only on the disposable verification replay. It records the actual original
+stack and operation header without nesting the Runner's original worlds or
+entry loans. The installer checks the original row and prefix, permits no
+choice, entry, departure or answer work, and removes the local scope on return.
+This prevents a genuine Banishing link from opening a second operation while
+verifying Draw/Soul. It never installs runtime ownership in a restored game.
+The meaning producer binds this new direct linked-operation dependency.
+
+The paid Fake coexistence fixture now checks changed returned-creature, hand,
+stack, input/output worlds and read-only refusal with two real own hand cards.
+An additional both-seat paid Amulet case preserves a genuine Banishing Aura
+link across live-row restore and complete resolution. Banishing's initial
+permanent entry is the existing fixture operand, not a paid Banishing cast.
+These new Rust paths and cases are uncompiled and unrun.
+
+Remaining: actual native cross-family qualification and observation/consumer
+support. No Full, model, sampler, fair-search or training claim follows from
+this prerequisite.
 
 Primary source receipts:
 

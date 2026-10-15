@@ -6216,7 +6216,7 @@ mod ravenous_amulet_paid_future_tests {
             .iter()
             .any(|activation| activation.outcome
                 != crate::ravenous_public_v51::OutcomeV51::Published));
-        for case in 0..7 {
+        for case in 0..11 {
             let mut branch: GameState =
                 serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
             let (paid_index, item) = branch
@@ -6275,12 +6275,119 @@ mod ravenous_amulet_paid_future_tests {
                         completed.removed = paid_index;
                     }
                 }
+                7 | 9 | 10 => {
+                    let CommittedEvent::RavenousRemovedV1 { removed } =
+                        &mut branch.engine.event_history[removed_at]
+                    else {
+                        unreachable!()
+                    };
+                    if case == 7 {
+                        removed.original_world.stack.clear();
+                    } else if case == 9 {
+                        removed
+                            .original_world
+                            .engine
+                            .event_log
+                            .push(CommittedEvent::LifeLoss {
+                                player: PlayerId::P0,
+                                amount: 0,
+                            });
+                    } else {
+                        removed.replay_borrow = if removed.replay_borrow.is_some() {
+                            None
+                        } else {
+                            Some(
+                                serde_json::from_value(serde_json::json!({"enclosing": null}))
+                                    .unwrap(),
+                            )
+                        };
+                    }
+                }
+                8 => {
+                    let CommittedEvent::RavenousCompletedV1 { completed } =
+                        &mut branch.engine.event_history[completed_at]
+                    else {
+                        unreachable!()
+                    };
+                    completed.output_world.players[0].life += 1;
+                }
                 _ => unreachable!(),
             }
             let before = branch.clone();
             assert!(
                 crate::doubling_season_v48::validate_token_journals(&branch).is_err(),
                 "completion case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
+    fn cross_family_original_world_refusals(
+        state: &GameState,
+        actor: PlayerId,
+        returned: crate::ids::ObjectId,
+    ) {
+        for case in 0..5 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let paid_item = branch
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.item.as_ref().clone()),
+                    _ => None,
+                })
+                .unwrap();
+            if case < 3 {
+                let input = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::SoulCounterInputV1 { input } => Some(input),
+                        _ => None,
+                    })
+                    .unwrap();
+                match case {
+                    0 => input.world.objects.get_mut(returned).tapped = false,
+                    1 => {
+                        assert!(input.world.players[actor.index()].hand.len() > 1);
+                        input.world.players[actor.index()].hand.reverse();
+                    }
+                    2 => input.world.stack.push(paid_item),
+                    _ => unreachable!(),
+                }
+            } else if case == 3 {
+                let removed = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousRemovedV1 { removed } => Some(removed),
+                        _ => None,
+                    })
+                    .unwrap();
+                removed.original_world.objects.get_mut(returned).tapped = false;
+            } else {
+                let completed = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousCompletedV1 { completed } => Some(completed),
+                        _ => None,
+                    })
+                    .unwrap();
+                completed.output_world.objects.get_mut(returned).tapped = false;
+            }
+            // Only nested operation worlds changed. The actual returned Fake
+            // creature and the outer paid/capture/return journals remain intact.
+            assert!(branch.objects.get(returned).tapped);
+            let before = branch.clone();
+            assert!(
+                crate::doubling_season_v48::validate_token_journals(&branch).is_err(),
+                "cross-family operation world case {case}"
             );
             assert_eq!(branch, before);
         }
@@ -6387,7 +6494,10 @@ mod ravenous_amulet_paid_future_tests {
     }
 
     fn cast_amulet(actor: PlayerId) -> (GameState, ObjectId) {
-        let mut state = ready_state_for(actor);
+        cast_amulet_in(ready_state_for(actor), actor)
+    }
+
+    fn cast_amulet_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
         for player in [PlayerId::P0, PlayerId::P1] {
             for _ in 0..8 {
                 put(&mut state, player, "Forest", Zone::Library);
@@ -6567,6 +6677,7 @@ mod ravenous_amulet_paid_future_tests {
     fn actual_paid_amulet_sacrifice_coexists_with_paid_fake_return_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, amulet) = cast_amulet(actor);
+            put(&mut state, actor, "Island", Zone::Hand);
             let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             let fake = put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
@@ -6620,6 +6731,56 @@ mod ravenous_amulet_paid_future_tests {
                     branch,
                 )
                 .unwrap();
+                cross_family_original_world_refusals(branch, actor, creature);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn actual_paid_amulet_keeps_genuine_banishing_aura_link_and_enclosing_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            // This existing helper owns the genuine ETB/exile/capture path.
+            // Its permanent entry is a fixture operand, not a paid Banishing cast.
+            let (linked, banishing, aura, host) =
+                crate::banishing_light_v1::tests::linked_aura(actor);
+            let (mut state, amulet) = cast_amulet_in(linked, actor);
+            let chosen = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let forest = put(&mut state, actor, "Forest", Zone::Battlefield);
+            paid_priority(&mut state, actor);
+            engine::step(&mut state, Action::ActivateManaAbility(forest)).unwrap();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, .. }
+                    if candidates.contains(&chosen) && candidates.contains(&spare)));
+            engine::step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+            paid_priority(&mut state, actor);
+            let hand = state.players[actor.index()].hand.len();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(chosen).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(banishing).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(aura).zone, Zone::Exile);
+                assert_eq!(branch.objects.get(host).zone, Zone::Battlefield);
+                crate::banishing_light_v1::validate_state(branch).unwrap();
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                let removed = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousRemovedV1 { removed } => Some(removed),
+                        _ => None,
+                    })
+                    .unwrap();
+                let borrow = serde_json::to_value(removed.replay_borrow.as_ref().unwrap()).unwrap();
+                assert!(borrow["enclosing"].is_object());
+                completed_refusals(branch, removed.item.v4.stack_item_id);
             }
             assert_eq!(state, restored);
         }
