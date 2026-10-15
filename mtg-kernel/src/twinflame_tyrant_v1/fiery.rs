@@ -54,9 +54,7 @@ pub(crate) fn capture(
     path: &[u16],
 ) -> Result<(), String> {
     let op = EffectOp::FieryAnnihilation;
-    if crate::linked_aura_operation_v1::needs_event_owner(state)
-        && !crate::linked_aura_operation_v1::locally_owned(state)
-    {
+    if crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state) {
         return Err("Fiery stages require the actual surrounding linked-operation owner".into());
     }
     if lookup(state, ctx, path)?.is_some() {

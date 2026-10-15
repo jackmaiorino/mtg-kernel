@@ -161,7 +161,7 @@ fn check(memorial: bool) {
         assert_eq!(state.objects.get(source).controller, actor.opponent());
         let surface = crate::policy_surface_v5::PolicySurfaceV5::new_for_session();
         assert!(crate::rl::observe_policy_v8(&state, &surface, actor, 0, 0, 0, 1).is_err());
-        let core = FastActorSessionV1::from_akroma_v40_fixture_state(state.clone());
+        let core = FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state.clone());
         let mut session = HumanAkromaSessionV40::from_session(core, actor.into()).unwrap();
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("actual held ability");
@@ -291,7 +291,7 @@ fn menu_check(memorial: bool) {
         assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
         let chooser = actor.opponent();
         let mut session = HumanAkromaSessionV40::from_session(
-            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
             chooser.into(),
         )
         .unwrap();
@@ -482,7 +482,7 @@ fn real_fishing_and_copied_heartfire_rows_keep_independent_original_sources_and_
         );
         let restored: GameState =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-        let core = FastActorSessionV1::from_akroma_v40_fixture_state(restored);
+        let core = FastActorSessionV1::from_akroma_v40_engine_priority_fixture(restored);
         let mut session = HumanAkromaSessionV40::from_session(core, actor.into()).unwrap();
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
             panic!("actual two-family held rows");
@@ -665,7 +665,7 @@ fn actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_b
         assert!(crate::effect::crystal_prevention_v1::is_choice(&state));
         let chooser = actor.opponent();
         let mut session = HumanAkromaSessionV40::from_session(
-            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
             chooser.into(),
         )
         .unwrap();
@@ -865,7 +865,7 @@ fn actual_twinflame_incinerating_discard_parts_and_owning_decline_pay_restore_bo
             &state
         ));
         let mut session = HumanAkromaSessionV40::from_session(
-            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
             actor.into(),
         )
         .unwrap();

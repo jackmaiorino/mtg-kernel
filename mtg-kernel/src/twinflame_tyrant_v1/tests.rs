@@ -1461,6 +1461,9 @@ mod future_printed {
                     let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
                     for branch in [&mut state, &mut restored] {
                         engine::step(branch, Action::ChooseEffectOption(option as u16)).unwrap();
+                        crate::effect::validate_pending_effect_choice(branch).unwrap_or_else(|error| {
+                            panic!("Fiery after-answer continuation: actor={actor:?}, equipment={equipment_chosen}, double_first={double_first}: {error}")
+                        });
                         finish(branch);
                         assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
                         assert_eq!(
