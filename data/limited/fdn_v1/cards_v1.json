@@ -7532,6 +7532,42 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/ElendaSaintOfDusk.java",
       "is_token": false
+    },
+    {
+      "name": "Flamewake Phoenix",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{R}{R}",
+      "mana_value": 3,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phoenix"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_flamewake_phoenix_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "haste",
+        "must_attack_each_combat",
+        "graveyard_controller_beginning_combat",
+        "intervening_ferocious",
+        "optional_red_payment",
+        "return_exact_graveyard_incarnation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlamewakePhoenix.java",
+      "is_token": false
     }
   ]
 }

@@ -1,0 +1,34 @@
+{
+  "status": "source_candidate_uncompiled_unexecuted",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "sources": [
+    {
+      "path": "Mage.Sets/src/mage/cards/f/FlamewakePhoenix.java",
+      "blob": "e5f4600d7884cf2fa20610acfafde6c0aff33624",
+      "sha256": "ea8b6e6a4dbc8fbc4a52d7d99da273882de0c0cb89b9433b926dd052de2d33cc"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/condition/common/FerociousCondition.java",
+      "blob": "e92720f33ab4493650b20e4f2933fc6ddeb8c10d",
+      "sha256": "4cb67672f9434ee2230c941595cd3489a6b27658508e5cadaa3cecacbc8e84fa"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/triggers/BeginningOfCombatTriggeredAbility.java",
+      "blob": "1e40d20c7389f2fabb587f5aab66313f5149efeb",
+      "sha256": "47f00f63b85b4977da4df83717b07480371f717c1f389e9e9d51e2e7fb119c89"
+    },
+    {
+      "path": "Mage/src/main/java/mage/abilities/effects/common/ReturnSourceFromGraveyardToBattlefieldEffect.java",
+      "blob": "3b3290a8d700686d4187388b204014577fc5f833",
+      "sha256": "16cae19ce2e7af02a635cb76afbd5f1139e792df2170daa35f5692a12412f54b"
+    }
+  ],
+  "parent_source": "eb05b03b241a09cbc2c29e79470de018741ddf83",
+  "prior_fdn_records": 252,
+  "prior_registry_canonical_sha256": "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10",
+  "provisional_combined_id": 444,
+  "capability": "partial",
+  "full_admission": false,
+  "native_qualification": "pending with assigned lead",
+  "catalog_hash": "not observed"
+}

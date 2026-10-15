@@ -4149,6 +4149,10 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Flamewake Phoenix" => {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::HASTE");
+        }
         "Herald of Eternal Dawn"
             if cfg!(all(
                 feature = "limited-fdn-fixtures",
@@ -7313,6 +7317,7 @@ fn standard_static_recipe_for(name: &str) -> &'static str {
 
 fn combat_static_rules_for(name: &str) -> &'static str {
     match name {
+        "Flamewake Phoenix" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: None }",
         "Juggernaut" => "CombatStaticRulesDef { must_attack_each_combat: true, cant_be_blocked_by_subtype: Some(Subtype::Wall) }",
         _ => "CombatStaticRulesDef::NONE",
     }
@@ -10930,6 +10935,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Elk" => "Subtype::Elk",
         "Demon" => "Subtype::Demon",
         "Bear" => "Subtype::Bear",
+        "Phoenix" => "Subtype::Phoenix",
         "Scout" => "Subtype::Scout",
         "Bat" => "Subtype::Bat",
         "Mercenary" => "Subtype::Mercenary",

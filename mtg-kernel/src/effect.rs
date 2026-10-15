@@ -6340,6 +6340,51 @@ fn validate_linked_exile_chosen_hand_frame(
     Ok(())
 }
 
+/// The old root-payment form and a single true ferocious arm are the only
+/// supported payment origins. Conditional evaluation happens in the actual
+/// interpreter before this choice; validation must not add a later threshold
+/// check while a resolution-time payment is already in progress.
+fn validate_pay_mana_then_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    canonical_path: &[u16],
+    player: PlayerId,
+    colored: &[ManaColor],
+    generic: u8,
+    then: &EffectOp,
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let origin = match (root.as_ref(), canonical_path) {
+        (root @ EffectOp::MayPayManaThen { .. }, []) => root,
+        (
+            EffectOp::Conditional {
+                cond: EffectCond::ControlsCreaturePowerAtLeast(_),
+                then,
+                else_,
+            },
+            [0],
+        ) if **else_ == EffectOp::Sequence(vec![]) => then.as_ref(),
+        _ => return Err("optional-mana lost its definition-owned originating path".into()),
+    };
+    let EffectOp::MayPayManaThen {
+        player: original_player,
+        colored: original_colored,
+        generic: original_generic,
+        then: original_then,
+    } = origin
+    else {
+        return Err("optional-mana lost its originating operation".into());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != player
+        || original_colored != colored
+        || *original_generic != generic
+        || original_then.as_ref() != then
+    {
+        return Err("optional-mana cost or consequence changed".into());
+    }
+    validate_resumable_program(then)
+}
+
 fn validate_pay_mana_then_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -6352,34 +6397,25 @@ fn validate_pay_mana_then_frame(
         then,
         path,
         canonical_path,
-        ..
+        expected_remaining_frames,
     } = frame
     else {
         return Err("optional-mana answer guard changed frame kind".to_string());
     };
     let mut expected_path = canonical_path.clone();
     expected_path.push(1);
-    if !canonical_path.is_empty() || path != &expected_path {
+    if path != &expected_path || !expected_remaining_frames.is_empty() {
         return Err("optional-mana answered path changed".to_string());
     }
-    let root = validated_definition_owned_root_effect(state, pending)?;
-    let EffectOp::MayPayManaThen {
-        player: original_player,
-        colored: original_colored,
-        generic: original_generic,
-        then: original_then,
-    } = root.as_ref()
-    else {
-        return Err("optional-mana answer lost its originating operation".to_string());
-    };
-    if pending.ctx.resolve_player(*original_player, state) != *player
-        || original_colored != colored
-        || original_generic != generic
-        || original_then != then
-    {
-        return Err("optional-mana answered cost or consequence changed".to_string());
-    }
-    validate_resumable_program(then)?;
+    validate_pay_mana_then_origin(
+        state,
+        pending,
+        canonical_path,
+        *player,
+        colored,
+        *generic,
+        then,
+    )?;
     if !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
         return Err("accepted optional mana cost is no longer payable".to_string());
     }
@@ -9651,7 +9687,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 if player != payer {
                     return Err("mana-payment choice player mismatch".to_string());
                 }
-                validate_resumable_program(then)?;
+                // Both supported origins have no trailing instruction. Keep
+                // the complete originating root, path and consequence bound
+                // across a live-choice restore as well as an accepted answer.
+                if !pending.frames.is_empty() {
+                    return Err("optional-mana choice has unrelated remaining frames".into());
+                }
+                validate_pay_mana_then_origin(
+                    state, pending, path, *payer, colored, *generic, then,
+                )?;
                 if !crate::engine::can_pay_effect_mana(*payer, colored, *generic, state) {
                     return Err("pending optional mana cost is not payable".to_string());
                 }

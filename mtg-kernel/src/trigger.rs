@@ -266,6 +266,9 @@ pub enum TriggerCondition {
     /// Any OTHER nontoken effective creature death; captured on the prebatch battlefield.
     OtherNontokenCreatureDies,
     OpponentLosesLifeBatchV49,
+    /// Intervening ferocious condition on the source controller's combat.
+    /// A graveyard home zone is supplied by the printed ability definition.
+    BeginningControllerCombatWithCreaturePowerAtLeast(i32),
 }
 
 pub struct TriggeredAbilityDef {
@@ -2406,6 +2409,35 @@ const FORSAKEN_MINER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(forsaken_miner_crime_effect)
 }];
 
+fn flamewake_phoenix_combat_effect() -> EffectOp {
+    // Recheck ferocious once, when resolution starts, before offering payment.
+    // The source-incarnation check belongs after payment: paying is permitted
+    // even if a response has removed the card from its original graveyard.
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsCreaturePowerAtLeast(4),
+        then: Box::new(EffectOp::MayPayManaThen {
+            player: PlayerRef::Controller,
+            colored: vec![crate::mana::ManaColor::R],
+            generic: 0,
+            then: Box::new(EffectOp::Conditional {
+                cond: EffectCond::SourceStillInTriggerZone,
+                then: Box::new(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            }),
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+const FLAMEWAKE_PHOENIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(4),
+    home_zone: Zone::Graveyard,
+    ..etb_trigger(flamewake_phoenix_combat_effect)
+}];
+
 fn aloe_alchemist_plotted_effect() -> EffectOp {
     EffectOp::Sequence(vec![
         EffectOp::PumpTargetUntilEndOfTurnDynamic {
@@ -3663,6 +3695,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         }
         "Aloe Alchemist" => &ALOE_ALCHEMIST_TRIGGERS,
         "Forsaken Miner" => &FORSAKEN_MINER_TRIGGERS,
+        "Flamewake Phoenix" => &FLAMEWAKE_PHOENIX_TRIGGERS,
         "Hopeful Initiate" => &HOPEFUL_INITIATE_TRIGGERS,
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
@@ -6439,6 +6472,20 @@ fn trigger_matches(
             TriggerCondition::BeginningOfControllerCombat,
             CommittedEvent::BeginningOfCombat { active_player },
         ) => *active_player == controller,
+        (
+            TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(minimum),
+            CommittedEvent::BeginningOfCombat { active_player },
+        ) => {
+            *active_player == controller
+                && state.players[controller.index()]
+                    .battlefield
+                    .iter()
+                    .copied()
+                    .any(|object| {
+                        crate::engine::object_has_type(state, object, CardType::Creature)
+                            && crate::engine::effective_power(state, object) >= minimum
+                    })
+        }
         (
             TriggerCondition::BeginningControllerCombatWithOtherCreaturePowerAtLeast(minimum),
             CommittedEvent::BeginningOfCombat { active_player },

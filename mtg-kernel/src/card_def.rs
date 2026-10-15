@@ -344,6 +344,8 @@ pub enum Subtype {
     /// Appended for the unregistered Fiendish Panda target grammar. Existing
     /// creature-choice projections stay frozen until printed registration.
     Bear,
+    /// Appended for the Partial Flamewake Phoenix source candidate.
+    Phoenix,
 }
 
 impl Subtype {
@@ -831,6 +833,7 @@ impl Subtype {
                 | Subtype::Ooze
                 | Subtype::Devil
                 | Subtype::Bear
+                | Subtype::Phoenix
         )
     }
 }
@@ -2723,7 +2726,7 @@ mod tests {
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                444
+                446
             } else {
                 192
             }
