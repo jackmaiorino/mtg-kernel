@@ -77,6 +77,10 @@ pub struct Command {
     pub matches: Vec<Match>,
     pub cross_generation_evaluation: bool,
     pub capture_decisions: bool,
+    /// Stop after the first natural physical game, including a draw.
+    /// The result is a game-one record, never a completed match reward.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub game_one_only: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub terminal_audit_v1: bool,
     pub output_directory: PathBuf,
@@ -505,6 +509,33 @@ fn save(directory: &Path, name: &str, value: &Value) -> Result<String, String> {
     Ok(hash(&bytes))
 }
 
+fn session_result_fields_v1(
+    played: &SessionExecutionV1,
+    game_one_only: bool,
+) -> Result<Value, String> {
+    if game_one_only
+        && (played.outcome.is_some()
+            || played.games.len() != 1
+            || !played.sideboard_decisions.is_empty())
+    {
+        return Err("game-one evaluation requires exactly one game and no match outcome".into());
+    }
+    if !game_one_only && played.outcome.is_none() {
+        return Err("completed match has no outcome".into());
+    }
+    let mut result = json!({
+        "schema": if game_one_only { "public-input-evaluation-game-one/v1" } else { "public-input-evaluation-match/v1" },
+        "games": played.games, "sideboard_decisions": played.sideboard_decisions,
+    });
+    if let Some(outcome) = played.outcome {
+        result["outcome"] = json!(outcome);
+    }
+    if game_one_only {
+        result["game_one_only"] = json!(true);
+    }
+    Ok(result)
+}
+
 pub fn run(command: Command) -> Result<Value, String> {
     if command.matches.is_empty()
         || command.matches.len() > 1024
@@ -597,13 +628,14 @@ pub fn run(command: Command) -> Result<Value, String> {
             };
             let mut s0 = fixed(0);
             let mut s1 = fixed(1);
-            let played = run_learned_bo3_session_v1(
+            let played = run_learned_session_v1(
                 item.config.clone(),
                 session,
                 Bo3ModelProvenanceV1::PerSeat(weights),
                 &tags,
                 &mut trace,
                 [&mut s0, &mut s1],
+                command.game_one_only,
             );
             let played = match played {
                 Ok(played) => played,
@@ -629,11 +661,15 @@ pub fn run(command: Command) -> Result<Value, String> {
             };
             games += played.games.len();
             decisions += trace.decisions;
-            let mut result = json!({"schema":"public-input-evaluation-match/v1","match":item,"models":identities,
+            let mut result = session_result_fields_v1(&played, command.game_one_only)?;
+            let common = json!({"match":item,"models":identities,
                 "registrations":registrations,"seat_generations":generations,"cross_generation_evaluation":command.cross_generation_evaluation,
-                "outcome":played.outcome,"games":played.games,"sideboard_decisions":played.sideboard_decisions,
                 "seed_resets":trace.resets,"decision_count":trace.decisions,"decisions":trace.rows,
                 "diagnostic_spell_target_repairs":trace.diagnostic_repairs});
+            result
+                .as_object_mut()
+                .unwrap()
+                .extend(common.as_object().unwrap().clone());
             if command.terminal_audit_v1 {
                 result["terminal_audit_v1"] = json!({"counts":trace.terminal_counts,"branches":trace.terminal_branches,"roots":trace.terminal_roots});
             }
@@ -660,10 +696,12 @@ pub fn run(command: Command) -> Result<Value, String> {
                 &result,
             )?);
         }
-        Ok(
-            json!({"schema":"public-input-evaluation-completion/v1","matches":hashes.len(),"natural_games":games,"decisions":decisions,"match_sha256":hashes,
-            "non_claim":"Development evaluation; no human-strength or promotion claim from engineering qualification."}),
-        )
+        let mut completion = json!({"schema":"public-input-evaluation-completion/v1","matches":hashes.len(),"natural_games":games,"decisions":decisions,"match_sha256":hashes,
+            "non_claim":"Development evaluation; no human-strength or promotion claim from engineering qualification."});
+        if command.game_one_only {
+            completion["game_one_only"] = json!(true);
+        }
+        Ok(completion)
     })();
     match execution {
         Ok(result) => {
@@ -684,6 +722,54 @@ pub fn run(command: Command) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn game_one_command_defaults_preserve_old_wire_shape() {
+        let source = json!({"kind":"public_checkpoint","config":{"path":"unused","sha256":"a"},
+            "checkpoint":{"path":"unused","sha256":"b"}});
+        let legacy = json!({"sources":[source,source],"matches":[],"cross_generation_evaluation":true,
+            "capture_decisions":false,"output_directory":"unused"});
+        let command: Command = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(!command.game_one_only);
+        assert_eq!(serde_json::to_value(command).unwrap(), legacy);
+        let mut opt_in = legacy;
+        opt_in["game_one_only"] = json!(true);
+        let command: Command = serde_json::from_value(opt_in.clone()).unwrap();
+        assert!(command.game_one_only);
+        assert_eq!(serde_json::to_value(command).unwrap(), opt_in);
+    }
+
+    #[test]
+    fn game_one_draw_is_preserved_without_fabricating_match_outcome() {
+        let config = serde_json::from_value(json!({"deck_ids":["Mountain","Island"],"seed":99,
+            "game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":256,"max_policy_steps":8192})).unwrap();
+        let mut played = SessionExecutionV1 {
+            config,
+            outcome: None,
+            games: vec![LearnedBo3GameRecordV1 {
+                start: GameStartV1 {
+                    game_index: 1,
+                    chooser: PlayerId::P0,
+                    choice: PlayDrawChoiceV1::Play,
+                    starting_player: PlayerId::P0,
+                },
+                environment_seed: 123,
+                mainboard_sha256: ["a".into(), "b".into()],
+                winner: None,
+            }],
+            sideboard_decisions: vec![],
+        };
+        let result = session_result_fields_v1(&played, true).unwrap();
+        assert_eq!(result["schema"], "public-input-evaluation-game-one/v1");
+        assert_eq!(result["games"].as_array().unwrap().len(), 1);
+        assert!(result["games"][0]["winner"].is_null());
+        assert!(result.get("outcome").is_none());
+        assert!(session_result_fields_v1(&played, false).is_err());
+        played.outcome = Some(MatchOutcomeV1::Winner {
+            winner: PlayerId::P0,
+        });
+        assert!(session_result_fields_v1(&played, true).is_err());
+    }
 
     #[test]
     fn v3_spell_target_trace_requires_opt_in_and_preserves_selection() {
