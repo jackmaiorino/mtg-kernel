@@ -7,9 +7,13 @@ use crate::{
     state::{GameState, Zone},
 };
 mod entry_attack;
+mod memorial_panda;
 
 pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
     entry_attack::paid::<O>();
+}
+pub(in crate::current_mixed_policy_v1) fn paid_memorial_panda<O: Owner>() {
+    memorial_panda::paid::<O>();
 }
 
 pub(in crate::current_mixed_policy_v1) trait Owner:
@@ -265,6 +269,8 @@ pub(in crate::current_mixed_policy_v1) fn privacy<O: Owner>() {
             "Stromkirk Bloodthief",
             "Strongbox Raider",
             "Vampire Gourmand",
+            "Akroma's Memorial",
+            "Fiendish Panda",
         ] {
             for known in [false, true] {
                 let mut a = crate::extra_turn_v1::tests::ready(actor);
@@ -359,6 +365,10 @@ fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_fake_both_seats() 
     paid_entry_attack::<FakeSession>();
 }
 #[test]
+fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_fake_both_seats() {
+    paid_memorial_panda::<FakeSession>();
+}
+#[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_fake_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<FakeSession>();
 }
@@ -430,6 +440,10 @@ fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_ravenous_both_seat
 #[test]
 fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_ravenous_both_seats() {
     paid_entry_attack::<RavenousSession>();
+}
+#[test]
+fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_ravenous_both_seats() {
+    paid_memorial_panda::<RavenousSession>();
 }
 #[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_ravenous_both_seats() {

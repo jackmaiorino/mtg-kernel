@@ -1173,7 +1173,7 @@ mod paid {
             enters_with_plus_one_counters: None,
             controlled_counter_keyword: None,
             game_outcome_protection_v1: None,
-            controlled_creature_grant: None,
+            controlled_creature_grant: d.controlled_creature_grant,
             is_land: d.is_land,
             produces_mana: d.produces_mana,
             colors: d.colors,
@@ -1739,7 +1739,7 @@ mod paid {
         ] {
             let id = crate::card_def::card_id_by_name(name).unwrap();
             let d = ordinary_recipe(id);
-            roots::validate_triggered_creature_recipe(id, &d).unwrap();
+            roots::validate_family_permanent_recipe(id, &d).unwrap();
             let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
             let p = &descriptor["registered_permanent_printing"];
             let c = &p["characteristics"];
@@ -1776,7 +1776,7 @@ mod paid {
             );
             assert_eq!(cast["zone_replacements_still_apply"], true);
             macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
-                assert!(matches!(roots::validate_triggered_creature_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+                assert!(matches!(roots::validate_family_permanent_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
             reject!(cost, crate::mana::Cost::zero());
             reject!(mana_value, 0);
             reject!(object_name, "different");
@@ -1878,6 +1878,115 @@ mod paid {
                 && gourmand.rule.unblockable_binds_original_source_incarnation
                 && gourmand.rule.draw_count_after_payment == 1
         );
+    }
+
+    #[test]
+    fn memorial_panda_closed_ordinary_printings_preserve_grants_and_all_family_roots() {
+        for (name, cost, characteristics) in [
+            (
+                "Akroma's Memorial",
+                json!({"generic":7,"pips":[],"x_count":0}),
+                json!({"types":["Artifact"],"subtypes":[],"supertypes":[crate::card_def::Supertype::Legendary as u8],
+                "colors":[],"mana_value":7,"power":null,"toughness":null,"ordered_keywords":[],
+                "minimum_blockers":1,"token":false,"land":false,"enters_tapped":false,
+                "printed_mana_abilities":0,"printed_activated_abilities":0}),
+            ),
+            (
+                "Fiendish Panda",
+                json!({"generic":2,"pips":[{"Colored":"W"},{"Colored":"B"}],"x_count":0}),
+                json!({"types":["Creature"],"subtypes":["Bear","Demon"],"supertypes":[],
+                "colors":["W","B"],"mana_value":4,"power":3,"toughness":2,"ordered_keywords":[],
+                "minimum_blockers":1,"token":false,"land":false,"enters_tapped":false,
+                "printed_mana_abilities":0,"printed_activated_abilities":0}),
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            roots::validate_family_permanent_recipe(id, &ordinary_recipe(id)).unwrap();
+            let value = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let printing = &value["registered_permanent_printing"];
+            assert_eq!(printing["characteristics"], characteristics);
+            let root = &printing["ordered_cast_roots"][0];
+            assert_eq!(root["ordered_costs"][0]["PrintedMana"], cost);
+            assert_eq!(root["ordinary_origin"], "Hand");
+            assert_eq!(root["targets"], "None");
+            assert_eq!(
+                root["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::validate_family_permanent_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(types, &[crate::card_def::CardType::Enchantment]);
+            reject!(power, Some(9));
+            reject!(toughness, Some(9));
+            reject!(keywords, crate::card_def::Keywords::FLYING);
+            reject!(minimum_blockers, 2);
+            reject!(target_spec, crate::card_def::TargetSpec::Creature);
+            reject!(spell_effect, || None);
+            reject!(
+                controlled_creature_grant,
+                if name == "Akroma's Memorial" {
+                    None
+                } else {
+                    Some(crate::controlled_creature_grants_v1::MEMORIAL)
+                }
+            );
+            reject!(
+                source_type_hexproof_v1,
+                Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+            );
+        }
+        use crate::rules_meaning_akroma_v1 as memorial;
+        let id = crate::card_def::card_id_by_name("Akroma's Memorial").unwrap();
+        for root in [
+            memorial::RootV1::PermanentSpell,
+            memorial::RootV1::ControlledCreatureGrant,
+        ] {
+            let value = memorial::meaning(&memorial::live_selector().unwrap(), id, root).unwrap();
+            assert_eq!(
+                value.rule.keywords,
+                ["Flying", "First strike", "Vigilance", "Trample", "Haste"].map(String::from)
+            );
+            assert_eq!(
+                value.rule.protection_colors,
+                ["Black", "Red"].map(String::from)
+            );
+            assert!(
+                value.rule.current_source_controller
+                    && value.rule.current_effective_creature
+                    && value.rule.recipient_ability_loss_timestamp_applies
+            );
+        }
+        use crate::rules_meaning_fiendish_panda_v1 as panda;
+        let id = crate::card_def::card_id_by_name("Fiendish Panda").unwrap();
+        for root in [
+            panda::RootV1::CreatureSpell,
+            panda::RootV1::ControllerLifeGain,
+            panda::RootV1::SourceDeath,
+        ] {
+            let value = panda::printed_meaning(id, root).unwrap();
+            panda::validate(&value).unwrap();
+            assert_eq!(
+                value.ordered_printed_roots,
+                [
+                    panda::RootV1::ControllerLifeGain,
+                    panda::RootV1::SourceDeath
+                ]
+            );
+            if root == panda::RootV1::ControllerLifeGain {
+                assert!(
+                    value.one_counter_per_event && !value.counter_count_multiplied_by_life_amount
+                );
+            }
+            if root == panda::RootV1::SourceDeath {
+                assert!(
+                    value.last_battlefield_power_signed
+                        && value.target_excludes_bear_and_changeling
+                        && value.return_to_battlefield
+                        && !value.instruction_forces_tapped
+                );
+            }
+        }
     }
 
     #[test]

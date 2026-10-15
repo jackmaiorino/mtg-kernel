@@ -619,8 +619,13 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Sower of Chaos" => return sower_printing(id, d),
         "Wildwood Scourge" => return wildwood_printing(id, d),
-        "Ashroot Animist" | "Stromkirk Bloodthief" | "Strongbox Raider" | "Vampire Gourmand" => {
-            validate_triggered_creature_recipe(id, d)?;
+        "Ashroot Animist"
+        | "Stromkirk Bloodthief"
+        | "Strongbox Raider"
+        | "Vampire Gourmand"
+        | "Akroma's Memorial"
+        | "Fiendish Panda" => {
+            validate_family_permanent_recipe(id, d)?;
             if d.name == "Ashroot Animist" {
                 vec![PermanentKeyword::Trample]
             } else {
@@ -687,11 +692,12 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     }})))
 }
 
-/// These family records authenticate only their triggered program. The exact
+/// Family records need an independently closed ordinary printing, even when
+/// they already carry some ordinary or triggered facts. The exact
 /// ordinary recipe is independently required for every authorized reference.
 /// Keep the exhaustive field pattern so a newly added CardDef field cannot
 /// silently acquire an unauthenticated default in this closed supplement.
-pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result<()> {
+pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<()> {
     use crate::card_def::{Keywords, Subtype};
     use crate::mana::{Cost, ManaColor, Pip};
     if CARD_DEFS
@@ -700,61 +706,102 @@ pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }
-    let (cost, mana_value, subtypes, colors, power, toughness, keywords) = match d.name {
-        "Ashroot Animist" => (
-            Cost {
-                generic: 2,
-                pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)],
-                x_count: 0,
-            },
-            4,
-            &[Subtype::Lizard, Subtype::Druid][..],
-            &[ManaColor::R, ManaColor::G][..],
-            4,
-            4,
-            Keywords::TRAMPLE,
-        ),
-        "Stromkirk Bloodthief" => (
-            Cost {
-                generic: 2,
-                pips: &[Pip::Colored(ManaColor::B)],
-                x_count: 0,
-            },
-            3,
-            &[Subtype::Vampire, Subtype::Rogue][..],
-            &[ManaColor::B][..],
-            2,
-            2,
-            Keywords::NONE,
-        ),
-        "Strongbox Raider" => (
-            Cost {
-                generic: 2,
-                pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
-                x_count: 0,
-            },
-            4,
-            &[Subtype::Orc, Subtype::Pirate][..],
-            &[ManaColor::R][..],
-            5,
-            2,
-            Keywords::NONE,
-        ),
-        "Vampire Gourmand" => (
-            Cost {
-                generic: 1,
-                pips: &[Pip::Colored(ManaColor::B)],
-                x_count: 0,
-            },
-            2,
-            &[Subtype::Vampire][..],
-            &[ManaColor::B][..],
-            2,
-            2,
-            Keywords::NONE,
-        ),
-        _ => return Err(Error::UnsupportedPrintedRoot(id)),
-    };
+    let (cost, mana_value, types, subtypes, supertypes, colors, power, toughness, keywords, grant) =
+        match d.name {
+            "Ashroot Animist" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)],
+                    x_count: 0,
+                },
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Lizard, Subtype::Druid][..],
+                &[][..],
+                &[ManaColor::R, ManaColor::G][..],
+                Some(4),
+                Some(4),
+                Keywords::TRAMPLE,
+                None,
+            ),
+            "Stromkirk Bloodthief" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::B)],
+                    x_count: 0,
+                },
+                3,
+                &[CardType::Creature][..],
+                &[Subtype::Vampire, Subtype::Rogue][..],
+                &[][..],
+                &[ManaColor::B][..],
+                Some(2),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Strongbox Raider" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
+                    x_count: 0,
+                },
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Orc, Subtype::Pirate][..],
+                &[][..],
+                &[ManaColor::R][..],
+                Some(5),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Vampire Gourmand" => (
+                Cost {
+                    generic: 1,
+                    pips: &[Pip::Colored(ManaColor::B)],
+                    x_count: 0,
+                },
+                2,
+                &[CardType::Creature][..],
+                &[Subtype::Vampire][..],
+                &[][..],
+                &[ManaColor::B][..],
+                Some(2),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Akroma's Memorial" => (
+                Cost {
+                    generic: 7,
+                    pips: &[],
+                    x_count: 0,
+                },
+                7,
+                &[CardType::Artifact][..],
+                &[][..],
+                &[crate::card_def::Supertype::Legendary][..],
+                &[][..],
+                None,
+                None,
+                Keywords::NONE,
+                Some(crate::controlled_creature_grants_v1::MEMORIAL),
+            ),
+            "Fiendish Panda" => (
+                crate::fiendish_panda_v1::PRINTED_COST,
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Bear, Subtype::Demon][..],
+                &[][..],
+                &[ManaColor::W, ManaColor::B][..],
+                Some(3),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            _ => return Err(Error::UnsupportedPrintedRoot(id)),
+        };
     let crate::card_def::CardDef {
         name: _,
         capability: _,
@@ -833,12 +880,12 @@ pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result
         || d.capability != CardCapability::Full
         || d.cost != cost
         || d.mana_value != mana_value
-        || d.types != [CardType::Creature]
+        || d.types != types
         || d.subtypes != subtypes
         || d.colors != colors
-        || !d.supertypes.is_empty()
-        || d.power != Some(power)
-        || d.toughness != Some(toughness)
+        || d.supertypes != supertypes
+        || d.power != power
+        || d.toughness != toughness
         || d.keywords != keywords
         || d.is_land
         || d.is_token
@@ -862,7 +909,7 @@ pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result
         || d.starting_loyalty.is_some()
         || d.enters_with_plus_one_counters.is_some()
         || d.controlled_counter_keyword.is_some()
-        || d.controlled_creature_grant.is_some()
+        || d.controlled_creature_grant != grant
         || d.game_outcome_protection_v1.is_some()
         || d.alt_cost.is_some()
         || d.kicker_cost.is_some()
@@ -924,6 +971,32 @@ pub(super) fn validate_triggered_creature_recipe(id: u16, d: &CardDef) -> Result
         "Stromkirk Bloodthief" => family!(rules_meaning_stromkirk_v1),
         "Strongbox Raider" => family!(rules_meaning_strongbox_v1),
         "Vampire Gourmand" => family!(rules_meaning_gourmand_v1),
+        "Akroma's Memorial" => {
+            use crate::rules_meaning_akroma_v1 as family;
+            let selector =
+                family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            for root in [
+                family::RootV1::PermanentSpell,
+                family::RootV1::ControlledCreatureGrant,
+            ] {
+                family::meaning(&selector, id, root)
+                    .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            }
+            Ok(())
+        }
+        "Fiendish Panda" => {
+            use crate::rules_meaning_fiendish_panda_v1 as family;
+            for root in [
+                family::RootV1::CreatureSpell,
+                family::RootV1::ControllerLifeGain,
+                family::RootV1::SourceDeath,
+            ] {
+                let meaning = family::printed_meaning(id, root)
+                    .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+                family::validate(&meaning).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            }
+            Ok(())
+        }
         _ => Err(Error::UnsupportedPrintedRoot(id)),
     }
 }

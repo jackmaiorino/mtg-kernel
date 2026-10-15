@@ -14,7 +14,7 @@ fn quiet<O: Owner>(s: &mut O) {
     step(s, |a| a == &next);
 }
 
-fn tap<O: Owner>(s: &mut O, land: ObjectId) {
+pub(super) fn tap<O: Owner>(s: &mut O, land: ObjectId) {
     for _ in 0..8 {
         if s.actions().iter().any(|a| matches!(a, ActionSemanticV1::ActivateManaAbility { source, .. } if source.arena_id == land.0)) {
             step(s, |a| matches!(a, ActionSemanticV1::ActivateManaAbility { source, .. } if source.arena_id == land.0));
@@ -26,7 +26,7 @@ fn tap<O: Owner>(s: &mut O, land: ObjectId) {
     panic!("real mana ability absent")
 }
 
-fn pay_cast<O: Owner>(s: &mut O, actor: PlayerId, source: ObjectId, lands: &[ObjectId]) {
+pub(super) fn pay_cast<O: Owner>(s: &mut O, actor: PlayerId, source: ObjectId, lands: &[ObjectId]) {
     assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
     for land in lands {
         tap(s, *land);
@@ -40,18 +40,20 @@ fn pay_cast<O: Owner>(s: &mut O, actor: PlayerId, source: ObjectId, lands: &[Obj
         && row.kind == crate::state::StackItemKind::Spell));
 }
 
-fn finish_entry<O: Owner>(s: &mut O, source: ObjectId) {
+pub(super) fn finish_entry<O: Owner>(s: &mut O, source: ObjectId) {
     let paid = s.snapshot();
     drain(s);
     assert_eq!(s.world().objects.get(source).zone, Zone::Battlefield);
-    assert!(s.world().objects.get(source).summoning_sick);
+    if crate::engine::object_has_type(s.world(), source, crate::card_def::CardType::Creature) {
+        assert!(s.world().objects.get(source).summoning_sick);
+    }
     let after = (gameplay(s), O::packet(&s.encode()).clone());
     s.restore(&paid).unwrap();
     drain(s);
     assert_eq!((gameplay(s), O::packet(&s.encode()).clone()), after);
 }
 
-fn choice_guards<O: Owner>(s: &mut O, index: usize) {
+pub(super) fn choice_guards<O: Owner>(s: &mut O, index: usize) {
     let issued = s.encode();
     let before = gameplay(s);
     let mut erased = issued.clone();
