@@ -221,8 +221,19 @@ class Accounting(ctypes.Structure):
 
 
 class Guard:
-    """One contained job accumulates CPU for all descendants, including exited ones."""
-    def __init__(self, plan, root, qualifying):
+    """One contained job accumulates CPU for all descendants, including exited ones.
+
+    New callers may opt into host_slots reservation pauses. The default retains
+    immediate conflict failure, including for existing archive dispatch plans.
+    Pauses do not reset or subtract from the wall clock or any other limit.
+    """
+    def __init__(self, plan, root, qualifying, *, pause_on_reservation=False):
+        require(type(pause_on_reservation) is bool, "boolean reservation pause mode required")
+        self.pause_on_reservation = pause_on_reservation
+        self.transition_lock = threading.RLock()
+        self.claim_identity = None
+        self.paused = False
+        self.pause_transitions = []
         self.plan, self.root = plan, absolute(root)
         self.limits = plan["qualification_limits" if qualifying else "run_limits"]
         self.started, self.cpu_started = time.monotonic(), time.process_time()
@@ -249,7 +260,20 @@ class Guard:
     def check(self, admission=False):
         if self.error:
             raise RuntimeError(self.error)
+        if getattr(self, "pause_on_reservation", False):
+            with self.transition_lock:
+                with slots.Mutex():
+                    self._pause_resources()
+                sample = self._check_limits(admission)
+                # Never resume from an old no-conflict snapshot, or before
+                # checking STOP, CPU, the unchanged wall clock and storage.
+                with slots.Mutex():
+                    self._pause_resources(allow_resume=True)
+                return sample
         resource_context(self.plan["cpu_affinity"])
+        return self._check_limits(admission)
+
+    def _check_limits(self, admission=False):
         require(not any(Path(p).exists() for p in [*self.plan["stop_files"], self.root / "STOP"]), "STOP requested")
         sample = self.sample()
         require(sample["seconds"] < self.limits["wall_seconds"], "batch wall limit reached")
@@ -267,6 +291,37 @@ class Guard:
         require(shutil.disk_usage(anchor).free >= storage["reserve_bytes"] + pending, "60 GiB reserve unavailable")
         return {**sample, "charged_physical_bound_bytes": charged}
 
+    def _pause_resources(self, allow_resume=False):
+        """Slot mutex and transition lock held; balance only this Tree's pauses.
+
+        The outer supported runner may also suspend this supervisor and its
+        descendants. Its suspension counts remain independent of this Tree's.
+        Opt-in callers must use an ordinary live BelowNormal host_slots claim.
+        """
+        claim_id = os.environ.get(slots.CLAIM_ENV)
+        claim = slots.read_json(slots.slots_dir() / f"claim-{claim_id}.json") if claim_id else None
+        require(claim and claim.get("id") == claim_id
+                and claim.get("state") in ("running", "suspended")
+                and claim.get("priority") == "below_normal"
+                and slots.process_state(claim.get("pid"), claim.get("creation_time")) == "alive",
+                "live matching BelowNormal host_slots claim required")
+        identity = {key: claim[key] for key in ("id", "pid", "creation_time", "cores", "priority", "background")}
+        require(self.claim_identity is None or identity == self.claim_identity, "guard claim identity changed")
+        self.claim_identity = identity
+        requested = set(self.plan["cpu_affinity"])
+        require(requested <= set(claim["cores"])
+                and requested <= set(slots.parse_cores(os.environ.get(slots.CORES_ENV, ""))),
+                "guard cores differ from host_slots claim")
+        conflict = slots.claim_conflicts(self.plan["cpu_affinity"], claim["background"])
+        paused = conflict or claim["state"] != "running"
+        if paused or allow_resume:
+            require(self.tree.set_suspended(paused), "guard tree suspension transition incomplete")
+            if paused != self.paused:
+                self.pause_transitions.append(dict(seconds=time.monotonic() - self.started, paused=paused,
+                    reason="reservation conflict" if conflict else "outer claim suspended" if paused else "claim running without conflict"))
+            self.paused = paused
+        return paused
+
     def watch(self):
         while not self.done.wait(.5):
             try:
@@ -277,6 +332,8 @@ class Guard:
                 return
 
     def spawn(self, command, stdout, stderr):
+        if self.pause_on_reservation:
+            return self._spawn_pausing(command, stdout, stderr)
         self.check()
         # Assign while suspended so no native work or descendant can escape containment.
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
@@ -289,6 +346,26 @@ class Guard:
             child.kill(); child.wait()
             raise
         return child
+
+    def _spawn_pausing(self, command, stdout, stderr):
+        while True:
+            self.check()
+            with self.transition_lock, slots.Mutex():
+                if not self._pause_resources():
+                    child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
+                        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS | 4,
+                        env=dict(os.environ, CUDA_VISIBLE_DEVICES="", VSCMD_SKIP_SENDTELEMETRY="1"))
+                    try:
+                        self.tree.adopt(child.pid, slots.creation_time(child.pid))
+                        self._pause_resources(allow_resume=True)
+                        # Remove CREATE_SUSPENDED's initial count only. A new
+                        # conflict has already added its own tracked pause.
+                        require(slots._NtResumeProcess(int(child._handle)) >= 0, "cannot resume contained native child")
+                    except BaseException:
+                        child.kill(); child.wait()
+                        raise
+                    return child
+            time.sleep(.05)
 
     def close(self):
         self.done.set()
