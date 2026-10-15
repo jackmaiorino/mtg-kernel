@@ -430,9 +430,9 @@ mod tests {
     fn exact_partial_inventory_and_frozen_vector_refusal() {
         use crate::card_def::{card_id_by_name, CardCapability, CARD_DEFS};
         let id = card_id_by_name("Drake Hatcher").unwrap();
-        assert_eq!(id, 444);
-        assert_eq!(card_id_by_name("Drake Token"), Some(445));
-        assert_eq!(CARD_DEFS.len(), 446);
+        assert_eq!(id, 448);
+        assert_eq!(card_id_by_name("Drake Token"), Some(449));
+        assert_eq!(CARD_DEFS.len(), 450);
         assert_eq!(
             CARD_DEFS[usize::from(id)].capability,
             CardCapability::Partial

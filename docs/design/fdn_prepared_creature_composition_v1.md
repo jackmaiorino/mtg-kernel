@@ -1,11 +1,10 @@
 # Prepared FDN engine source composition
 
-Isolated source branch based on published Ravenous `ac700ef7b2094397e02dca3fb34a653865070551`.
-This also contains the later Ravenous fixture repair `c52cbfcf5f` and standalone
-Elenda public V52 `af379535d0`. This is source preparation. No Rust compilation,
-runtime, Full, model, search or default-branch acceptance is established here.
-Native151's failure is retained; Native152 owns the shared remote source/target
-at its separate repaired Partial parent. This local composition changes neither.
+This isolated source contains Ravenous through `883639db716137146b788064beafd60ac2cfcedf`,
+Elenda public/observation/backend/Human V52 through `f2fb2b819b`, and the five
+printing implementations below. Native155 owns a separate immutable Ravenous
+source/target. This composition establishes no Rust compilation, runtime,
+Full promotion, model, search or default-branch acceptance.
 
 | Printing | Original isolated source | Composed ID | Capability |
 | --- | --- | --- | --- |
@@ -13,40 +12,36 @@ at its separate repaired Partial parent. This local composition changes neither.
 | Flamewake Phoenix | `8a40c01435e355bd4098bd840051531e1cbc43f1`, provisional444 | 445 | Partial |
 | Spinner of Souls | `31eddf45dfe35ec08a4040d37e001233554b236f`, provisional444 | 446 | Partial |
 | Painful Quandary | `ac01fd839d789d5b9529009b510b4f61db1f5c1e`, provisional444 | 447 | Partial |
+| Drake Hatcher | `f3ffec09fba4d4059bab530f95b3411f0682b613`, provisional444 | 448 | Partial |
+| Drake Token | same genuine frozen dependency, provisional445 | 449 | Full |
 
-All 252 preceding FDN records retain their exact parsed values and order.
-Fake442 and Ravenous443 remain Partial in this source branch. The prospective
-registry is 448 definitions / 256 FDN rows, with 236 Full, 6 Partial and 44 Missing
-of the frozen 286 printings. The 24 token dependencies and original UG/WG inputs
-remain fixed. The separate dual-Full candidate is not composed here.
+The registry has 450 definitions / 258 FDN rows. All 256 predecessor rows retain
+their exact parsed values and order. The frozen 286-printing inventory is
+prospectively 236 Full, 7 Partial and 43 Missing. Fake442 and Ravenous443 remain
+Partial. The external Drake token does not increase that printing Full count.
+The 24 dependency records, original UG/WG inputs and frozen profiles remain fixed.
+The separate dual-Full candidate is not composed here.
 
-Elenda's starting-life and source-type hexproof prerequisites, original
-pre-batch source-type reconstruction, genuine paid cases and ordered V52 meaning
-are composed before Phoenix's graveyard ferocious trigger and definition-owned
-conditional mana payment. Original source commits and attribution remain in
-their own branches. Recipe tests resolve names; current inventory assertions
-bind the new IDs explicitly. Phoenix remains at the appended subtype tail, while
-the old creature-type choice list remains frozen and is a later consumer task.
-Spinner's controlled-other-nontoken death descriptor and reveal program append
-after those prerequisites. Quandary's opposing-cast condition and optional
-private discard continuation follow it. Merge resolution preserves every
-descriptor and appends the new effect/trigger variants after the accepted prefix.
+Composition preserves the old subtype/cost/effect/trigger/event prefixes and
+CardDef/Counters/EngineState fields. Phoenix then Drake append to the subtype
+tail. Spinner's reveal and Quandary's private optional discard precede Drake's
+capture roots at the effect tail. Drake custody retains original combat input,
+exact paid activation, nested records, visible fresh-source selection and the
+three reviewed dispatch/privacy repairs. Standalone V53 meaning/public facts
+from `7ac6e3b484` are composed. No observation/backend/Human/V3 successor for
+Drake is claimed.
 
-The composed Elenda reference uses its original 20 spell rows plus 20 basics,
-five of each original basic type, giving a 40-card correctness input. Its original
-60-card source input remains on the isolated branch; no frozen measurement is
-changed. Both new reference decks still refuse Full-only deck resolution.
+The Elenda reference is a genuine 40-card correctness input using its original
+20 spells and 20 basics. All five candidate decks refuse Full-only resolution.
+Observed: 71 Python deck/pool tests pass; pinned formatting, diff and static
+prefix checks pass. Every added Rust fixture is uncompiled and unrun. No catalog
+hash is guessed; live-v86 canaries await the actual successor export/profile.
 
-Observed: 70 affected Python deck/pool tests pass. Pinned formatting, diff and
-static prefix checks are recorded with the source commit. All new Rust remains
-uncompiled and unrun. No generated catalog hash is guessed. Every frozen profile
-literal and ordinal is preserved; the old live-v86 canaries deliberately await
-the actual successor export/profile after serial parent integration.
-
-Remaining: qualify engine and historical payment/capture custody, complete the
-V52/Phoenix/Spinner/Quandary public/observation/backend/Human/model consumers and predecessor
-refusals, then perform genuine public admission and current catalog/profile
-qualification before any Full promotion or delivery. Drake custody and its
-review repairs remain isolated sources for later composition. The source-only
-Spinner/Quandary notes retain their original provisional IDs; this table is the
-current composition mapping.
+Remaining engine work includes the reviewed Phoenix restored-payment bypass and
+Treasure-only payment gap. Its ordinary generic trigger authority does not need
+another whole-world journal. Remaining consumer work includes Phoenix/Spinner/
+Quandary projections and all successor model/search qualification. Drake's
+effective power/toughness projection refuses its explicit checked-overflow
+boundary; the engine's later unchecked modifiers still need a concrete repair
+before relying on extreme arithmetic cases. Original source notes retain their
+provisional IDs; the table above supplies the composed mapping.

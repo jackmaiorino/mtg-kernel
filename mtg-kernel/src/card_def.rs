@@ -2743,7 +2743,6 @@ mod tests {
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
         // batches append through id 449 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
-        // batches append through id 445 (Partial Drake Hatcher, genuine Drake token, Partial Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // The seven Partial source candidates occupy ids 442-448.
@@ -2786,6 +2785,9 @@ mod tests {
             assert_eq!(card_id_by_name("Ravenous Amulet"), Some(443));
             assert_eq!(card_id_by_name("Spinner of Souls"), Some(446));
             assert_eq!(card_id_by_name("Painful Quandary"), Some(447));
+            assert_eq!(card_id_by_name("Drake Hatcher"), Some(448));
+            assert_eq!(card_id_by_name("Drake Token"), Some(449));
+            assert_eq!(CARD_DEFS[449].capability, CardCapability::Full);
         }
     }
 
