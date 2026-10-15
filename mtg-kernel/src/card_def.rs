@@ -2696,13 +2696,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 441 (Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 442 (Partial Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                442
+                443
             } else {
                 192
             }
@@ -2712,6 +2712,12 @@ mod tests {
             not(feature = "standard-magezero-fixtures")
         ))]
         {
+            let fake = card_id_by_name("Fake Your Own Death").unwrap();
+            assert_eq!(fake, 442);
+            assert_eq!(
+                CARD_DEFS[usize::from(fake)].capability,
+                CardCapability::Partial
+            );
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
             assert_eq!(card_id_by_name("Soulstone Sanctuary"), Some(428));
@@ -2890,8 +2896,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v84_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x7821_9e60_a949_c923;
+    fn card_db_hash_v85_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x2fa3_e070_7397_5972;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3141,9 +3147,30 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len(),
-            "the Limited Ajani reference now uses its full loyalty owner"
+            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the registered Partial Fake printing may remain outside Full"
         );
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            let non_full: Vec<_> = CARD_DEFS
+                .iter()
+                .enumerate()
+                .filter(|(_, def)| def.capability != CardCapability::Full)
+                .map(|(id, def)| (id, def.name, def.capability))
+                .collect();
+            assert_eq!(
+                non_full,
+                vec![(442, "Fake Your Own Death", CardCapability::Partial)]
+            );
+            assert!(matches!(
+                preflight_fully_supported_deck(&[442]),
+                Err(DeckPreflightError::NotFullySupported {
+                    index: 0,
+                    capability: CardCapability::Partial,
+                    ..
+                })
+            ));
+        }
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[
             card_id_by_name("Dwynen, Gilt-Leaf Daen").unwrap()
