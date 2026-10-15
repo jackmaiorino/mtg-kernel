@@ -265,6 +265,7 @@ impl Scan<'_> {
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
             | ReturnSourceAsDemonWithTwoCountersV1
+            | DealXDamageThenCreateTokensForExcess { .. }
             | SearchLibraryCardsToDestination { .. }
             | CreateTokensDynamic { .. }
             | BackupTarget { .. }

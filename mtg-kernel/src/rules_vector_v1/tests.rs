@@ -62,11 +62,18 @@ fn supported_v1_card_ids() -> Vec<u16> {
         .iter()
         .enumerate()
         .filter(|(id, def)| {
+            if matches!(
+                (def.spell_effect)(),
+                Some(EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+            ) {
+                return true;
+            }
             if crate::trigger::triggers_for(*id as u16).iter().any(|t| {
                 matches!(
                     (t.effect)(),
                     EffectOp::CreateAnotherControlledNonlandTargetCopyV1
                         | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                        | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
                 )
             }) {
                 return true;
@@ -109,6 +116,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Extravagant Replication"));
             expected.push(card_id("Infernal Vessel"));
             expected.push(card_id("Giada, Font of Hope"));
+            expected.push(card_id("Goblin Negotiation"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(

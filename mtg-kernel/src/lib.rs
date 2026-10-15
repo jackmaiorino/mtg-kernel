@@ -756,3 +756,5 @@ pub(crate) mod ravenous_full_engine_admission_v1_tests;
 
 pub mod midnight_snack_public_v58;
 pub mod rules_meaning_midnight_snack_v58;
+
+pub mod goblin_negotiation_v1;

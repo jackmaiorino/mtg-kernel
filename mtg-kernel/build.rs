@@ -3498,6 +3498,11 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
             "EffectOp::TakeExtraTurnAfterThisOneV1",
         ),
+        "Goblin Negotiation" => program(
+            "Creature",
+            "DealXDamageThenCreateTokensForExcess(Target0,GoblinToken,actualCommittedDamage,currentEffectiveToughnessMinusMarkedDamage,deathtouchLethalOne,oneTokenBatch)",
+            "EffectOp::DealXDamageThenCreateTokensForExcess { target_index: 0, token_def: crate::card_def::card_id_by_name(\"Goblin Token\").expect(\"Goblin Token in CARD_DEFS\") }",
+        ),
         "Giada, Font of Hope" => program("None", "MoveObject(ThisSource,Battlefield);otherControlledAngelEntersWithCountersPerAlreadyControlledAngel;tapWhiteOnlyAngelSpell", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Infernal Vessel" => program("None", "MoveObject(ThisSource,Battlefield);diesUnlessSubtype:Demon:returnExactGraveyardIncarnationUnderOwnerWithCounters:2:addSubtype:Demon", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Extravagant Replication" => program("None", "MoveObject(ThisSource,Battlefield);controllerUpkeep:CreateAnotherControlledNonlandTargetCopyV1(exactOriginalSourceAndTargetIncarnations,currentCopiableValues,untargetedAuraAttachmentBeforeEntry,replacementsApply)", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),

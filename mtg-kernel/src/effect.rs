@@ -1752,6 +1752,12 @@ pub enum EffectOp {
     },
     /// Bound departed source returns with actual entry counters and Demon subtype.
     ReturnSourceAsDemonWithTwoCountersV1,
+    /// Deal the chosen X, then create tokens from actual committed excess damage.
+    /// Appended to preserve predecessor effect Hash discriminants.
+    DealXDamageThenCreateTokensForExcess {
+        target_index: u8,
+        token_def: u16,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17593,6 +17599,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     event::ProposedEvent::life_gain(ctx.controller, creatures),
                 );
             }
+        }
+        EffectOp::DealXDamageThenCreateTokensForExcess {
+            target_index,
+            token_def,
+        } => {
+            crate::goblin_negotiation_v1::resolve(state, ctx, *target_index, *token_def);
         }
         EffectOp::ReturnSourceAsDemonWithTwoCountersV1 => {
             crate::infernal_vessel_v1::resolve(state, ctx);

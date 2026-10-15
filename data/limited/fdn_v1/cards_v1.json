@@ -7889,6 +7889,35 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GiadaFontOfHope.java",
       "is_token": false
+    },
+    {
+      "name": "Goblin Negotiation",
+      "engine_capability": "partial",
+      "mana_cost": "{X}{R}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_goblin_negotiation_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "x_damage_target_creature",
+        "create_goblins_equal_actual_excess_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GoblinNegotiation.java",
+      "is_token": false
     }
   ]
 }

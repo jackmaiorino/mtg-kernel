@@ -1071,6 +1071,13 @@ pub(crate) fn acquire_owner(
     if !started && ordinary_nondamage(&root) {
         return Ok(None);
     }
+    // This new linked damage/token instruction uses the ordinary commit path
+    // for commuting replacements. It cannot borrow the fixed-damage owner's
+    // continuation: the token count depends on the damage actually committed.
+    if !started && matches!(&root, EffectOp::DealXDamageThenCreateTokensForExcess { .. }) {
+        crate::goblin_negotiation_v1::validate_commuting_path(state, &context(item), &root)?;
+        return Ok(None);
+    }
     if !supported(&root) {
         return Err("mixed Crystal prevention needs a supported fixed-damage producer".into());
     }

@@ -2769,14 +2769,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 453 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 456 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The nine Partial source candidates occupy ids 444-448 and 450-453.
+        // The twelve Partial source candidates occupy ids 444-448 and 450-456.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                454
+                457
             } else {
                 192
             }
@@ -3237,6 +3237,9 @@ mod tests {
                 (451, "Doubling Season"),
                 (452, "Midnight Snack"),
                 (453, "Extravagant Replication"),
+                (454, "Infernal Vessel"),
+                (455, "Giada, Font of Hope"),
+                (456, "Goblin Negotiation"),
             ]
         } else {
             &[]
