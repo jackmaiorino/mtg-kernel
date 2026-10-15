@@ -2696,13 +2696,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 441 (Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 442 (Partial Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                442
+                443
             } else {
                 192
             }
@@ -2712,6 +2712,12 @@ mod tests {
             not(feature = "standard-magezero-fixtures")
         ))]
         {
+            let fake = card_id_by_name("Fake Your Own Death").unwrap();
+            assert_eq!(fake, 442);
+            assert_eq!(
+                CARD_DEFS[usize::from(fake)].capability,
+                CardCapability::Partial
+            );
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
             assert_eq!(card_id_by_name("Soulstone Sanctuary"), Some(428));
