@@ -758,5 +758,5 @@ pub mod midnight_snack_public_v58;
 pub mod rules_meaning_midnight_snack_v58;
 
 pub mod goblin_negotiation_v1;
-pub mod rules_meaning_next_five_v59;
 pub mod next_five_public_v59;
+pub mod rules_meaning_next_five_v59;
