@@ -1,41 +1,12 @@
 //! Partial source for X damage followed by a batch of excess-damage tokens.
-use crate::{
-    card_def::{CardType, Keywords, TargetSpec, CARD_DEFS},
-    effect::{EffectOp, ExecCtx},
-    event::{self, CommittedEvent, ProposedEvent},
-    state::{GameState, StackItem, Target, Zone},
-};
+pub(crate) mod owned;
 
-/// The existing fixed-damage owner cannot suspend this linked instruction.
-/// Ordinary replacement processing is sufficient when its replacements commute.
-pub(crate) fn validate_commuting_path(
-    state: &GameState,
-    ctx: &ExecCtx,
-    op: &EffectOp,
-) -> Result<(), String> {
-    let EffectOp::DealXDamageThenCreateTokensForExcess { target_index, .. } = op else {
-        return Err("excess damage route lost its printed operation".into());
-    };
-    if !ctx.target_incarnation_matches(usize::from(*target_index), state) {
-        return Ok(()); // Ordinary all-targets-illegal resolution handles the fizzle.
-    }
-    let target = *ctx
-        .targets
-        .get(usize::from(*target_index))
-        .ok_or("excess damage target absent")?;
-    let ProposedEvent::Damage(damage) =
-        ProposedEvent::damage(ctx.source, target, i32::from(ctx.x_value))
-    else {
-        unreachable!()
-    };
-    crate::twinflame_tyrant_v1::validate_commuting_damage(state, &damage)?;
-    if crate::effect::crystal_prevention_v1::needs_choice(state, &damage) {
-        return Err(
-            "excess damage requires a successor for noncommuting prevention ordering".into(),
-        );
-    }
-    Ok(())
-}
+use crate::{
+    card_def::{CardType, Keywords, CARD_DEFS},
+    effect::{EffectOp, ExecCtx},
+    event::{self, ProposedEvent},
+    state::{GameState, StackItem, Target},
+};
 
 /// Called unconditionally by native resolution while the complete paid spell
 /// remains on the stack, before any resolution publication or removal.
@@ -60,7 +31,7 @@ pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Resul
     ctx.targets = item.targets.clone();
     ctx.target_contracts = item.v4.target_contracts.clone();
     ctx.x_value = item.v4.x_value;
-    validate_commuting_path(state, &ctx, &op)?;
+
     let index = usize::from(*target_index);
     if !ctx.target_incarnation_matches(index, state) {
         return Ok(());
@@ -69,24 +40,38 @@ pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Resul
         return Err("excess damage lost creature target".into());
     };
     let lethal = lethal_threshold(state, ctx.source, target)?;
-    // Reuse the real replacement/prevention pass on a disposable copy. It may
-    // consume shields there, but never commits damage or mutates the live world.
-    let mut preview = state.clone();
-    let result = event::apply_replacements(
-        &mut preview,
-        ProposedEvent::damage(ctx.source, Target::Object(target), i32::from(ctx.x_value)),
-    );
-    if preview.engine.halted.is_some() {
-        return Err("excess damage replacement preview refused".into());
-    }
-    let amount = match result {
-        None => 0,
-        Some(ProposedEvent::Damage(damage))
-            if damage.source == ctx.source && damage.target == Target::Object(target) =>
-        {
-            damage.amount.max(0)
+    let ProposedEvent::Damage(original_damage) =
+        ProposedEvent::damage(ctx.source, Target::Object(target), i32::from(ctx.x_value))
+    else {
+        unreachable!()
+    };
+    let amount = if crate::effect::crystal_prevention_v1::needs_choice(state, &original_damage) {
+        // Capacity bound only. This is never a damage result or replacement
+        // answer: real ordered damage is committed by the private Crystal owner.
+        crate::twinflame_tyrant_v1::sources(state, &original_damage)?
+            .iter()
+            .try_fold(i32::from(ctx.x_value), |bound, _| {
+                bound
+                    .checked_mul(2)
+                    .ok_or("excess ordered damage capacity bound overflow")
+            })?
+    } else {
+        // Reuse the actual commuting replacement pass on a disposable copy.
+        let mut preview = state.clone();
+        let result =
+            event::apply_replacements(&mut preview, ProposedEvent::Damage(original_damage));
+        if preview.engine.halted.is_some() {
+            return Err("excess damage replacement preview refused".into());
         }
-        _ => return Err("excess damage preview changed unsupported recipient or event".into()),
+        match result {
+            None => 0,
+            Some(ProposedEvent::Damage(damage))
+                if damage.source == ctx.source && damage.target == Target::Object(target) =>
+            {
+                damage.amount.max(0)
+            }
+            _ => return Err("excess damage preview changed unsupported recipient or event".into()),
+        }
     };
     state
         .objects
@@ -99,14 +84,25 @@ pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Resul
     if original == 0 {
         return Ok(());
     }
+    preflight_tokens(state, ctx.controller, *token_def, original)
+}
+
+pub(crate) fn preflight_tokens(
+    state: &GameState,
+    controller: crate::ids::PlayerId,
+    token_def: u16,
+    original: usize,
+) -> Result<(), String> {
+    if original == 0 {
+        return Ok(());
+    }
     let token = CARD_DEFS
-        .get(usize::from(*token_def))
+        .get(usize::from(token_def))
         .ok_or("excess token definition absent")?;
     if !(token.is_token && token.is_executable() && token.has_full_support()) {
         return Err("excess token definition is not executable Full token".into());
     }
-    let replacement =
-        crate::doubling_season_v48::ReplacementInputV48::capture(state, ctx.controller);
+    let replacement = crate::doubling_season_v48::ReplacementInputV48::capture(state, controller);
     let expanded = replacement.replaced_token_count(original)?;
     let final_objects = state
         .objects
@@ -126,13 +122,13 @@ pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Resul
     }
     // Every member has this same definition and unchanged pre-entry board.
     // Validate one template without allocating an exponential expanded roster.
-    let template = [ProposedEvent::create_token(*token_def, ctx.controller)];
+    let template = [ProposedEvent::create_token(token_def, controller)];
     crate::doubling_season_v48::preflight_entry_roster(state, &template)?;
     crate::doubling_season_v48::preflight_token_initialization(state, &template)?;
     Ok(())
 }
 
-fn lethal_threshold(
+pub(crate) fn lethal_threshold(
     state: &GameState,
     source: crate::ids::ObjectId,
     target: crate::ids::ObjectId,
@@ -155,83 +151,38 @@ fn lethal_threshold(
     )
 }
 
-pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, slot: u8, token_def: u16) {
-    let index = usize::from(slot);
-    if !ctx.target_incarnation_matches(index, state)
-        || !crate::engine::effect_target_is_legal(
-            state,
-            ctx.source,
-            ctx.controller,
-            TargetSpec::Creature,
-            &ctx.targets,
-            index,
-        )
-    {
-        return;
-    }
-    let Some(Target::Object(target)) = ctx.targets.get(index).copied() else {
-        return;
-    };
-    let live = state.objects.get(target);
-    if live.zone != Zone::Battlefield
-        || !crate::engine::object_has_type(state, target, CardType::Creature)
-    {
-        return;
-    }
-    let lethal = match lethal_threshold(state, ctx.source, target) {
-        Ok(lethal) => lethal,
-        Err(_) => {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                ctx.source,
-            ));
-            return;
-        }
-    };
-    let start = state.engine.event_history.len();
-    event::propose_and_commit(
-        state,
-        ProposedEvent::damage(ctx.source, Target::Object(target), i32::from(ctx.x_value)),
-    );
-    if state.engine.halted.is_some() {
-        return;
-    }
-    // The replacement/prevention pipeline determines damage actually dealt.
-    // No SBA occurs between the damage and this instruction's token creation.
-    let dealt: i64 = state.engine.event_history[start..]
-        .iter()
-        .filter_map(|event| match event {
-            CommittedEvent::Damage {
-                source,
-                target: Target::Object(recipient),
-                amount,
-            } if *source == ctx.source && *recipient == target => Some(i64::from((*amount).max(0))),
-            _ => None,
-        })
-        .sum();
-    let excess = dealt.saturating_sub(lethal).max(0);
-    let Ok(excess) = i32::try_from(excess) else {
-        state.engine.halted = Some((
-            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-            ctx.source,
-        ));
-        return;
-    };
-    if excess > 0 {
-        let token = CARD_DEFS
-            .get(usize::from(token_def))
-            .expect("excess token definition exists");
-        assert!(
-            token.is_token && token.is_executable() && token.has_full_support(),
-            "excess token creation requires a fully supported executable token"
-        );
-        // One simultaneous creation event, including with no replacement source.
-        // The existing batch driver applies Season and captures entry observers.
-        let events = (0..excess)
-            .map(|_| ProposedEvent::create_token(token_def, ctx.controller))
-            .collect();
-        event::propose_and_commit_batch(state, events);
-    }
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicOrderingStageV1 {
+    pub source: crate::rl::CardStableRefV1,
+    pub target: crate::rl::CardStableRefV1,
+    pub controller: crate::rl::PlayerSeatV1,
+    pub chooser: crate::rl::PlayerSeatV1,
+    pub original_x: u16,
+    pub lethal_damage: i64,
+    pub remaining_damage: i32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicCompletedV1 {
+    pub source: crate::rl::CardStableRefV1,
+    pub target: crate::rl::CardStableRefV1,
+    pub controller: crate::rl::PlayerSeatV1,
+    pub original_x: u16,
+    pub lethal_damage: i64,
+    pub actual_damage: i32,
+    pub excess: u32,
+    pub tokens_created: u64,
+}
+pub fn public_ordering_stage(
+    state: &GameState,
+) -> Result<Option<PublicOrderingStageV1>, crate::rl::RlContractError> {
+    owned::public_ordering_stage(state)
+}
+pub fn public_completed(
+    state: &GameState,
+) -> Result<Vec<PublicCompletedV1>, crate::rl::RlContractError> {
+    owned::public_completed(state)
 }
 
 #[cfg(all(
