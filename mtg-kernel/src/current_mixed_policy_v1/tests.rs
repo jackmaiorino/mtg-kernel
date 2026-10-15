@@ -248,12 +248,14 @@ mod paid {
                 session.inner.fake_fixture_state().objects.get(bolt).zone,
                 Zone::Graveyard
             );
-            let mut alternative = session.inner.fake_fixture_state().clone();
+            let mut alternative = state(actor);
             let hidden = put(&mut alternative, actor.opponent(), "Island", Zone::Hand);
             let mut variant = alternative.clone();
             variant.objects.get_mut(hidden).card_def =
                 crate::card_def::card_id_by_name("Mountain").unwrap();
-            // New owning sessions rederive their own current observations; hidden definition is absent.
+            variant.objects.get_mut(hidden).name = "Mountain".into();
+            // Initial information-set operands have no retained private-world journals to alter.
+            // Each owning session rederives its own genuine current observation.
             let a = FakeSession::from_session(FastActorSessionV1::from_fake_v50_fixture_state(
                 alternative,
             ))
