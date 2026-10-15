@@ -62,7 +62,14 @@ fn supported_v1_card_ids() -> Vec<u16> {
         .iter()
         .enumerate()
         .filter(|(_, def)| {
-            def.target_spec == TargetSpec::KickerControlledCreatures
+            def.activated_abilities.iter().any(|a| {
+                a.cost.iter().any(|c| {
+                    matches!(
+                        c,
+                        crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }
+                    )
+                })
+            }) || def.target_spec == TargetSpec::KickerControlledCreatures
                 || def.kicked_target_spec == Some(TargetSpec::KickerControlledCreatures)
                 || def.damage_replacement_v1.is_some()
                 || def.game_outcome_protection_v1.is_some()
@@ -87,6 +94,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
         )) {
             expected.push(card_id("Elenda, Saint of Dusk"));
             expected.push(card_id("Spinner of Souls"));
+            expected.push(card_id("Drake Hatcher"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(
@@ -875,6 +883,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Drake Hatcher",
     "Fishing Pole",
     "Kellan, Planar Trailblazer",
     "Bloodthirsty Conqueror",

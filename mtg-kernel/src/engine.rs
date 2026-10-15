@@ -5351,6 +5351,12 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 craft_material_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::RemoveSourceCountersV1 { count, .. } => {
+                if *count == 0 {
+                    return false;
+                }
+                net_counter_count += 1;
+            }
             CostComponent::RemoveNetCounterFromSelf
             | CostComponent::RemoveChargeCounterFromSelf => {
                 net_counter_count += 1;
@@ -5672,6 +5678,9 @@ fn can_pay_components(
             CostComponent::RemoveChargeCounterFromSelf => {
                 state.objects.get(source).counters.charge > 0
             }
+            CostComponent::RemoveSourceCountersV1 { kind, count } => {
+                crate::drake_hatcher_v1::can_pay(state, source, *kind, *count)
+            }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {
                 !chosen_creature_cost_candidates(
                     player,
@@ -5804,6 +5813,7 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
+    if components.iter().any(|c| matches!(c, CostComponent::RemoveSourceCountersV1 { kind, count } if !crate::drake_hatcher_v1::can_pay(state, source, *kind, *count))) { return None; }
     if components.contains(&CostComponent::RemoveChargeCounterFromSelf)
         && state.objects.get(source).counters.charge <= 0
     {
@@ -6231,6 +6241,9 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::RemoveChargeCounterFromSelf => {
                 state.objects.get_mut(source).counters.charge -= 1;
+            }
+            CostComponent::RemoveSourceCountersV1 { kind, count } => {
+                crate::drake_hatcher_v1::pay(state, source, *kind, *count)?;
             }
         }
     }

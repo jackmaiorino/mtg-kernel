@@ -501,6 +501,16 @@ fn materialize_trigger_event_effect(
             };
         }
     }
+    if matches!(
+        (trigger.effect)(),
+        EffectOp::IncubationFromCombatDamageV1 { amount: None }
+    ) {
+        if let CommittedEvent::CombatDamageToPlayer { amount, .. } = event {
+            return EffectOp::IncubationFromCombatDamageV1 {
+                amount: Some(*amount),
+            };
+        }
+    }
     materialize_trigger_effect(trigger, source, state)
 }
 
@@ -1997,6 +2007,14 @@ fn knight_errant_of_eos_effect() -> EffectOp {
 /// it), put them into hand, then shuffle.
 const KNIGHT_ERRANT_OF_EOS_TRIGGERS: [TriggeredAbilityDef; 1] =
     [etb_trigger(knight_errant_of_eos_effect)];
+
+const DRAKE_HATCHER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    PROWESS_TRIGGER,
+    TriggeredAbilityDef {
+        condition: TriggerCondition::DealsCombatDamageToPlayer,
+        ..etb_trigger(crate::drake_hatcher_v1::combat_binder)
+    },
+];
 
 const MONASTERY_SWIFTSPEAR_TRIGGERS: [TriggeredAbilityDef; 1] = [PROWESS_TRIGGER];
 
@@ -3733,6 +3751,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Chrome Host Seedshark" => &CHROME_HOST_SEEDSHARK_TRIGGERS,
         "Brutal Cathar" => &BRUTAL_CATHAR_TRIGGERS,
         "Knight-Errant of Eos" => &KNIGHT_ERRANT_OF_EOS_TRIGGERS,
+        "Drake Hatcher" => &DRAKE_HATCHER_TRIGGERS,
         "Monastery Swiftspear" | "Heartfire Immolator" => &MONASTERY_SWIFTSPEAR_TRIGGERS,
         "Heartfire Hero" => &HEARTFIRE_HERO_TRIGGERS,
         "Slickshot Show-Off" => &SLICKSHOT_SHOW_OFF_TRIGGERS,

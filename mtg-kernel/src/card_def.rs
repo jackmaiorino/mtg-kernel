@@ -346,6 +346,8 @@ pub enum Subtype {
     Bear,
     /// Appended for the Partial Flamewake Phoenix source candidate.
     Phoenix,
+    /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
+    Drake,
 }
 
 impl Subtype {
@@ -636,6 +638,11 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Avatar,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Drake,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -834,6 +841,7 @@ impl Subtype {
                 | Subtype::Devil
                 | Subtype::Bear
                 | Subtype::Phoenix
+                | Subtype::Drake
         )
     }
 }
@@ -1406,6 +1414,11 @@ pub enum CostComponent {
     /// `standard_cards_v1`'s per-incarnation state.
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
+    /// Remove an exact typed quantity from the ability source before stacking.
+    RemoveSourceCountersV1 {
+        kind: crate::drake_hatcher_v1::SourceCounterKindV1,
+        count: u16,
+    },
     /// Identifies one actual Pole grant and taps that payer-controlled Pole
     /// attached to this exact host. This is a named source cost, not a spell
     /// target or an unrestricted artifact-tap cost.
@@ -2692,6 +2705,7 @@ mod tests {
                 Subtype::Scout.stable_id(),
                 Subtype::Devil.stable_id(),
                 Subtype::Avatar.stable_id(),
+                Subtype::Drake.stable_id(),
             ]);
         }
         assert_eq!(
@@ -2728,14 +2742,15 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 447 (Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 449 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 445 (Partial Drake Hatcher, genuine Drake token, Partial Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The six Partial source candidates occupy ids 442-447.
+        // The seven Partial source candidates occupy ids 442-448.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                448
+                450
             } else {
                 192
             }
@@ -3188,6 +3203,7 @@ mod tests {
                 (445, "Flamewake Phoenix"),
                 (446, "Spinner of Souls"),
                 (447, "Painful Quandary"),
+                (448, "Drake Hatcher"),
             ]
         } else {
             &[]
@@ -3235,9 +3251,10 @@ mod tests {
                     (445, "Flamewake Phoenix", CardCapability::Partial),
                     (446, "Spinner of Souls", CardCapability::Partial),
                     (447, "Painful Quandary", CardCapability::Partial),
+                    (448, "Drake Hatcher", CardCapability::Partial),
                 ]
             );
-            for id in [442, 443, 444, 445, 446, 447] {
+            for id in [442, 443, 444, 445, 446, 447, 448] {
                 assert!(matches!(
                     preflight_fully_supported_deck(&[id]),
                     Err(DeckPreflightError::NotFullySupported {

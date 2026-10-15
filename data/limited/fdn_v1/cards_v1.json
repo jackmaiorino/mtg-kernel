@@ -7634,6 +7634,68 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/p/PainfulQuandary.java",
       "is_token": false
+    },
+    {
+      "name": "Drake Hatcher",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{U}",
+      "mana_value": 2,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_drake_hatcher_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "vigilance",
+        "prowess",
+        "combat_damage_incubation_counters",
+        "remove_source_counters_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DrakeHatcher.java",
+      "is_token": false
+    },
+    {
+      "name": "Drake Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Drake"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "flying"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/DrakeToken.java",
+      "is_token": true
     }
   ]
 }

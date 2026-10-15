@@ -677,6 +677,7 @@ pub mod conqueror_observation_v49;
 pub mod conqueror_public_v49;
 pub mod controlled_creature_grants_v1;
 pub mod doubling_season_v48;
+pub mod drake_hatcher_v1;
 pub mod ravenous_amulet_v1;
 pub mod ravenous_observation_v51;
 pub mod ravenous_public_v51;

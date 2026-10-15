@@ -8450,6 +8450,7 @@ fn effect_target_ref_visible(
 }
 
 fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
+    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)
@@ -8523,6 +8524,7 @@ fn public_card_v2_non_soul_fields(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
+    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)

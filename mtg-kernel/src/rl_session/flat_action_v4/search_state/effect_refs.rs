@@ -273,6 +273,7 @@ impl Scan<'_> {
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
             | AddPlusOneCounterToAbilitySource
+            | IncubationFromCombatDamageV1 { .. }
             | AddSoulCounterToAbilitySourceV1
             | LoseLifeEachOpponentEqualSourceSoulV1
             | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }

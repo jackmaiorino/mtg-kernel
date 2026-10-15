@@ -637,6 +637,9 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             out.cost(CostAtom::RemoveCounters);
             out.atoms.push(Atom::Opaque);
         }
+        CostComponent::RemoveSourceCountersV1 { kind: _, count: _ } => {
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::RemoveChargeCounterFromSelf => {
             // Exactly one charge counter leaves the source as payment.
             out.cost(CostAtom::RemoveCounters);

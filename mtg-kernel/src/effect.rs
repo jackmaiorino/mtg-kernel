@@ -1714,6 +1714,10 @@ pub enum EffectOp {
     /// Appended to preserve every predecessor Hash discriminant. A departed
     /// or reentered ability source receives none; prior instructions remain.
     AddSoulCounterToAbilitySourceV1,
+    /// None is a printed binder, Some is the final positive combat event amount.
+    IncubationFromCombatDamageV1 {
+        amount: Option<i32>,
+    },
     /// Appended original-source soul count. Uses the current battlefield
     /// incarnation or exact departure LKI, never a later incarnation's count.
     LoseLifeEachOpponentEqualSourceSoulV1,
@@ -17809,6 +17813,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             if event::add_plus_one_counters(state, contract.source, ctx.controller, 1).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::IncubationFromCombatDamageV1 { amount } => {
+            if crate::drake_hatcher_v1::place(state, ctx, *amount).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

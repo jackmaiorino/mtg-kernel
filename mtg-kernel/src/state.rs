@@ -72,6 +72,8 @@ pub struct Counters {
     /// predecessor snapshot and hash; old public counter shapes refuse it.
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub soul: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub incubation: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -95,6 +97,7 @@ impl Counters {
             || self.net != 0
             || self.bait != 0
             || self.soul != 0
+            || self.incubation != 0
     }
 }
 
@@ -130,6 +133,10 @@ impl std::hash::Hash for Counters {
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);
             self.oil.hash(state);
+        }
+        if self.incubation != 0 {
+            b"incubation_counters_v1".hash(state);
+            self.incubation.hash(state);
         }
         if self.soul != 0 {
             b"soul_counters_v1".hash(state);

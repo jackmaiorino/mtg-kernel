@@ -194,6 +194,14 @@ fn apply_counter_transfer(
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
     let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
+    let incubation_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.incubation)
+            .ok()?;
+    let incubation_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(incubation_scaled)
+            .ok()?;
+    let incubation = live.counters.incubation.checked_add(incubation_placed)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -241,6 +249,7 @@ fn apply_counter_transfer(
     live.counters.net = net;
     live.counters.bait = bait;
     live.counters.soul = soul;
+    live.counters.incubation = incubation;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {

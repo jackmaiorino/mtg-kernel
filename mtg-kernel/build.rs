@@ -3105,6 +3105,7 @@ enum AbilityCostRecipe {
     /// (`CostComponent::RemoveNetCounterFromSelf`).
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
+    RemoveSourceIncubationCounters(u16),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4210,7 +4211,8 @@ fn keywords_for(card: &CardJson) -> String {
         }
         "Preacher of the Schism" | "Gutless Plunderer" => keywords.push("Keywords::DEATHTOUCH"),
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
-        "Knight Vigilance Token" => keywords.push("Keywords::VIGILANCE"),
+        "Knight Vigilance Token" | "Drake Hatcher" => keywords.push("Keywords::VIGILANCE"),
+        "Drake Token" => keywords.push("Keywords::FLYING"),
         "Mosswood Dreadknight" => keywords.push("Keywords::TRAMPLE"),
         "Tishana's Tidebinder" => keywords.push("Keywords::FLASH"),
         "Brightglass Gearhulk" => {
@@ -5791,6 +5793,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Drake Hatcher" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
+            effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Ravenous Amulet" => &[
             ActivatedAbilityRecipe {
                 cost: &[
@@ -6196,6 +6204,7 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::Loyalty(delta) => format!("CostComponent::Loyalty({delta})"),
         AbilityCostRecipe::RemoveChargeCounterFromSelf => "CostComponent::RemoveChargeCounterFromSelf".into(),
+        AbilityCostRecipe::RemoveSourceIncubationCounters(count) => format!("CostComponent::RemoveSourceCountersV1 {{ kind: crate::drake_hatcher_v1::SourceCounterKindV1::Incubation, count: {count} }}"),
         AbilityCostRecipe::LoyaltyX => "CostComponent::LoyaltyX".into(),
         AbilityCostRecipe::Crew(power) => format!("CostComponent::Crew({power})"),
         AbilityCostRecipe::PayLife(amount) => format!("CostComponent::PayLife({amount})"),
@@ -6248,6 +6257,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::Loyalty(delta) => format!("loyalty:{delta}"),
         AbilityCostRecipe::RemoveChargeCounterFromSelf => "remove_charge:1".into(),
+        AbilityCostRecipe::RemoveSourceIncubationCounters(count) => {
+            format!("remove_source:incubation:{count}")
+        }
         AbilityCostRecipe::LoyaltyX => "loyalty:x".into(),
         AbilityCostRecipe::Crew(power) => format!("crew:{power}"),
         AbilityCostRecipe::PayLife(amount) => format!("pay_life:{amount}"),
@@ -7096,6 +7108,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
         "Vampire Gourmand" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_draw_controller:1_and_exact_source_cannot_be_blocked_until_cleanup",
         "Bloodthirsty Conqueror" => "actual_opponent_positive_life_loss_operation:sum_by_player:post_event_active_source_before_SBA:mandatory_saved_amount_gain_original_controller:exact_occurrence_publication_removal_gain_completion",
+        "Drake Hatcher" => "cast_noncreature:source_gets_+1/+1_until_end_of_turn;source_combat_damage_to_player:save_actual_final_damage_amount:put_that_many_incubation_on_same_source_incarnation",
         "High-Society Hunter" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_counter_exact_original_source:+1/+1;prebatch_each_other_nontoken_creature_dies:any_controller:draw_captured_source_controller:1:including_simultaneous_source_death",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
@@ -10987,6 +11000,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wolf" => "Subtype::Wolf",
         "Kraken" => "Subtype::Kraken",
         "Djinn" => "Subtype::Djinn",
+        "Drake" => "Subtype::Drake",
         "Mouse" => "Subtype::Mouse",
         "Werewolf" => "Subtype::Werewolf",
         "Rabbit" => "Subtype::Rabbit",
