@@ -7461,6 +7461,34 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FakeYourOwnDeath.java",
       "is_token": false
+    },
+    {
+      "name": "Ravenous Amulet",
+      "engine_capability": "partial",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_ravenous_amulet_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_sacrifice",
+        "soul_counter",
+        "original_source_counter_lki"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/r/RavenousAmulet.java",
+      "is_token": false
     }
   ]
 }

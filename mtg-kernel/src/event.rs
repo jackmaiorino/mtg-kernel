@@ -6325,7 +6325,6 @@ mod ravenous_amulet_paid_future_tests {
     }
 
     #[test]
-    #[ignore = "requires genuine Ravenous Amulet registration and paid-owner qualification"]
     fn actual_paid_draw_soul_and_self_sacrifice_keep_original_count_after_reentry_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (mut state, amulet) = cast_amulet(actor);
@@ -6462,7 +6461,6 @@ mod ravenous_amulet_paid_future_tests {
     }
 
     #[test]
-    #[ignore = "requires genuine Ravenous Amulet registration and paid-owner qualification"]
     fn actual_first_ability_refuses_nonempty_stack_while_zero_soul_second_ability_is_instant_speed_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

@@ -1,6 +1,6 @@
 # Ravenous Amulet soul-counter storage prerequisite
 
-Issue #110, source only. Ravenous Amulet remains unregistered and Missing. This prerequisite does not change printing inventory, generated definitions, public schema versions, tensor shapes, or model admission.
+Issue #110, source only. Ravenous Amulet is registered as Partial after Fake Your Own Death, prospective ID443 in444 definitions/252 FDN records. Candidate coverage is236 Full/2 Partial/48 Missing. The accepted default and PR266 inventory remain unchanged. Public schema versions, tensor shapes and model admission remain unqualified.
 
 Pinned Mage source `a5c90fe180021e70e2a644ade00eeab07f857a40` defines a {2} artifact. Its first ability costs {1}, tap, sacrifice a creature, draws one card then puts a soul counter, and is sorcery-speed only. Its second costs {4}, tap, sacrifice itself; each opponent loses life equal to its soul counters. `CountersSourceCount` reads the source permanent or last-known information. Clearing counters on zone change cannot supply that loss amount.
 
@@ -12,9 +12,9 @@ Each soul placement now captures a canonical original world with its event histo
 
 The appended `LoseLifeEachOpponentEqualSourceSoulV1` instruction reads the original battlefield generation or one exact, unique departure record. A returned incarnation never substitutes its counters. Nonzero soul and definitions with this exact activated root retain counter LKI, including zero for those definitions. Unused zero-soul cards keep the old absent cache. The original ability controller determines the opponent after a source control change. Before mutation, the new loss instruction checks the exact Standard life-loss multiplier and resulting life total, then submits the original amount through the existing life-loss event path. Legacy loss callers remain unchanged. Missing, duplicate, negative, future-generation, and overflowing operands refuse.
 
-Unregistered generator recipes now express both printed abilities. The first uses the existing controlled-creature sacrifice cost, including an animated Amulet itself, and orders draw before placement. Only this ability is sorcery-speed. The second uses tap and self-sacrifice with an untargeted loss root. The existing engine freezes the original source before payment. Prepared metadata is deliberately outside active catalog loading, declares partial capability, and records both pinned Mage hashes. No active definition or registry row is added.
+Generator recipes express both printed abilities. The first uses the existing controlled-creature sacrifice cost, including an animated Amulet itself, and orders draw before placement. Only this ability is sorcery-speed. The second uses tap and self-sacrifice with an untargeted loss root. The existing engine freezes the original source before payment. The actual Partial registry row copies the attributed prepared metadata and names a separate40-card reference. Full deck resolution refuses both Partial printings. Previous251 records are preserved. Actual generated count/hash and Rust execution remain pending; existing profile literals are retained.
 
-Sixteen focused Rust tests are written for storage/refusal/transfer, ordered draw and departure/reentry, distinct recipient control, original-generation LKI and restore, original-controller untargeted loss, life-total boundaries, Standard's actual Bloodletter multiplier, both-seat placement journal restore/refusal, and refusal before any hidden-owner permutation. The journal cases include changed actor, arithmetic, original world, input links, and private/duplicate trigger events, with read-only refusal assertions. The sampler case covers cleared trigger logs, live/departed sources and restored states. The existing opaque-program test covers both new instructions. Two additional paid-printing tests remain explicitly ignored until genuine registration and paid-owner qualification. They advance actual staged payments before asserting costs or LKI, use a real turn to untap, preserve the pre-cost count across labeled reentry, and distinguish first-ability sorcery timing from the zero-soul second ability above a real Think Twice. None has been compiled or executed. New enum variants append after all predecessor variants; a source-prefix comparison preserves both complete old enum bodies. Pinned Rust 1.94.1 formatting and diff checks pass. The future Doubling Season multikind test retains its existing ignore; its literal and assertions include soul. Forest operands establish primitive semantics, not printed Ravenous activations.
+Sixteen focused Rust tests are written for storage/refusal/transfer, ordered draw and departure/reentry, distinct recipient control, original-generation LKI and restore, original-controller untargeted loss, life-total boundaries, Standard's actual Bloodletter multiplier, both-seat placement journal restore/refusal, and refusal before any hidden-owner permutation. The journal cases include changed actor, arithmetic, original world, input links, and private/duplicate trigger events, with read-only refusal assertions. The sampler case covers cleared trigger logs, live/departed sources and restored states. The existing opaque-program test covers both new instructions. Two additional genuine paid-printing tests are enabled with actual Partial registration. They advance actual staged payments before asserting costs or LKI, use a real turn to untap, preserve the pre-cost count across labeled reentry, and distinguish first-ability sorcery timing from the zero-soul second ability above a real Think Twice. None has been compiled or executed. New enum variants append after all predecessor variants; a source-prefix comparison preserves both complete old enum bodies. Pinned Rust 1.94.1 formatting and diff checks pass. The future Doubling Season multikind test retains its existing ignore; its literal and assertions include soul. Forest operands establish primitive semantics, not printed Ravenous activations.
 
 The genuine cost branches now acquire a private nonserialized Amulet payment
 token before paying. It captures the original source, chosen creature or self,
@@ -22,21 +22,21 @@ ability index and, for the self-sacrifice ability only, its soul count. Only suc
 at finalized publication. The appended private payment receipt binds the whole
 stack row, original-generation count and unique ordered tap, sacrifice-marker
 and departure occurrences. Both generator recipes share the checked program
-factories. The existing ignored paid-printing cases check absent draw-count
-captures and zero/nonzero self-sacrifice counts; their ignore remains. Hidden-world sampling refuses payment
+factories. The existing paid-printing cases check absent draw-count
+captures and zero/nonzero self-sacrifice counts; execution remains pending. Hidden-world sampling refuses payment
 history even before a soul placement, and the counter-journal boundary rejects
 private receipts in the trigger log. This new payment custody is uncompiled and
 unrun. The shared journal validation boundary now checks indexed receipt
 structure, full printed stack shape, source/controller/cost relations, actual
 tap/sacrifice/departure links, unique receipt identities and exact live rows.
 Self-sacrifice counts are checked against the original generation's stable LKI,
-including after reentry. The existing ignored paid case exercises ten restored
+including after reentry. The existing paid case exercises ten restored
 forgeries at both payment stages and read-only refusal.
 
 The draw ability uses its actual resolution world, not a frozen pre-payment
 count. Zimone can change an artifact's counters in response. Only the second
 ability reads the self-sacrificed original generation's count, so its receipt
-contains the optional count. The ignored paid test now resolves another genuine
+contains the optional count. The paid test now resolves another genuine
 draw activation after an accepted soul-placement response boundary and checks
 two then three counters, followed by loss of three after self-sacrifice/reentry.
 This is not qualification of a printed Zimone producer.
@@ -49,14 +49,14 @@ paired soul input/placement or exact original-controller untargeted loss. A
 countered ability keeps its paid costs and produces no effect. Restore validation
 requires either the exact live paid row or its unique complete removal; an old
 completed row cannot be installed again. Seven additional restored-record/replay
-forgeries are exercised inside the ignored paid case, after both real resolution
+forgeries are exercised inside the paid case, after both real resolution
 and the actual engine counter primitive. No named counterspell producer is
 claimed. These changes remain uncompiled and unrun. The printed ownership path
 is limited to the pure FDN feature set; the generic soul instruction retains its
 separate Standard modifier behavior.
 
 Remaining: native qualification and cross-family original-world validation of
-the new lifecycle, active registration, public/meaning/observation/consumer support; actual paid
+the new lifecycle and public/meaning/observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
 training claim follows from this prerequisite.
 

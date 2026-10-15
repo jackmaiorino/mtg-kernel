@@ -1,5 +1,5 @@
-//! Prepayment custody for the unregistered Ravenous Amulet candidate.
-//! This records actual engine publication, not resolution or Full admission.
+//! Paid activation and operation ownership for the Partial Ravenous candidate.
+//! Registration enables real printing checks; Full admission remains unqualified.
 use crate::{
     card_def::{
         ActivationTargetFilter, CardType, CostComponent, PermanentFilter, TargetSpec, CARD_DEFS,

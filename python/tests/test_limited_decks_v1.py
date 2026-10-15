@@ -22,6 +22,21 @@ class LimitedDeckTest(unittest.TestCase):
     def setUp(self) -> None:
         self.registry = limited.fdn_registry()
 
+    def test_ravenous_partial_printing_preserves_prefix_and_refuses_full_deck_resolution(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        prefix = json.dumps(records[:251], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(), "d5bc58f4d8afe65ea7add52d000ea127e66d695779c5250e75cdd64b0ccae6af")
+        self.assertEqual(len(records), 252)
+        self.assertEqual(self.registry["Ravenous Amulet"].card_id, 443)
+        self.assertEqual(self.registry["Fake Your Own Death"].card_id, 442)
+        self.assertEqual(limited.card_status("Ravenous Amulet", self.registry), "partial")
+        self.assertEqual(limited.card_status("Fake Your Own Death", self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_ravenous_amulet_partial.dck").read_text())
+        self.assertEqual(sum(entry.count for entry in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+            limited.resolve_mainboard(deck, self.registry)
+
     def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
         cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
         original_names = json.dumps([card["name"] for card in cards[:162]],
@@ -56,7 +71,7 @@ class LimitedDeckTest(unittest.TestCase):
         candidates = [("High-Society Hunter", 439, "hunter"),
                       ("Eaten Alive", 440, "eaten_alive"),
                       ("Fiendish Panda", 441, "panda")]
-        self.assertEqual([row["name"] for row in records[247:]],
+        self.assertEqual([row["name"] for row in records[247:250]],
                          [name for name, _, _ in candidates])
         for name, card_id, slug in candidates:
             with self.subTest(name=name):
@@ -69,8 +84,8 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_full_ajani_candidate_preserves_prior_prefix_and_distinct_token_dependency(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(self.registry), 442)
-        self.assertEqual(len(records), 250)
+        self.assertEqual(len(self.registry), 444)
+        self.assertEqual(len(records), 252)
         original = json.loads(json.dumps(records[:245]))
         ajani = original[215 - 192]
         self.assertEqual(ajani["name"], "Ajani, Caller of the Pride")
@@ -118,8 +133,8 @@ class LimitedDeckTest(unittest.TestCase):
 
     def test_faebloom_candidate_appends_exact_printing_and_reuses_existing_faerie(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
-        self.assertEqual(len(records), 250)
-        self.assertEqual(len(self.registry), 442)
+        self.assertEqual(len(records), 252)
+        self.assertEqual(len(self.registry), 444)
         prefix = json.dumps(records[:246], sort_keys=True, separators=(",", ":"),
                             ensure_ascii=False).encode()
         self.assertEqual(hashlib.sha256(prefix).hexdigest(),
