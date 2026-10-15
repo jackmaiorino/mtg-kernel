@@ -15707,6 +15707,21 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if let Some(owner) = fake_owner.as_ref() {
+        if crate::fake_your_own_death_v50::spell_custody::preflight_resolution(
+            state,
+            owner,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    }
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,

@@ -46,3 +46,14 @@ panic on an unguarded invalid state, not structured refusal or saturation.
 Other direct family callers of the void boost installer must also honor halt;
 their complete operation rollback is outside the demonstrated Prowess closure.
 The new battlefield sweeps add query work; no throughput claim is made.
+
+Fake follow-up: the grant primitive preflights its real +2/+0 before any
+mutation and returns an error on overflow. Its actual legal resolving owner
+checks the same preflight before popping the original paid row, and rechecks
+before journaling removal and installing the grant. Counter/fizzle/other
+departures do not run this boost preflight. V50/V51 observation validation now
+checks the native battlefield envelope before inherited queries. Two additional
+baseline-only paid Fake/Elf groups cover the exact safe maximum, overflow with
+the original publication/stack/history/timestamp intact and no grant, both seats
+and owners, serialized replay, and the safe genuine death/return/Treasure path.
+These two groups are also uncompiled and unrun.
