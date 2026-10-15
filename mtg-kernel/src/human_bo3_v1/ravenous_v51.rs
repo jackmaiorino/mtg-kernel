@@ -6,16 +6,25 @@ use crate::rl::ActionSemanticV1;
 use crate::rl_session::ravenous_v51::RavenousDecisionBindingV51;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionSnapshotV1};
 use std::collections::BTreeMap;
+// These field-only helpers are intentionally instantiated in both parents:
+// Fake binds MixedObservation to V50; Ravenous binds it directly to V51.
+// Keeping the four inclusions preserves typed family projection without
+// converting or admitting a V51 observation through the V50 contract.
+// The allowances apply only to these declarations, not their other lints.
+#[allow(clippy::duplicate_mod)]
 #[path = "fake_v50/conqueror_facts.rs"]
 mod conqueror_facts;
+#[allow(clippy::duplicate_mod)]
 #[path = "fake_v50/fake_facts.rs"]
 mod fake_facts;
 pub use fake_facts::{
     HumanFakeAuraMenuV50, HumanFakeCopyV50, HumanFakeDeathV50, HumanFakeFactsV50,
     HumanFakeGrantV50, HumanFakeSpellV50, HumanFakeTreasureV50,
 };
+#[allow(clippy::duplicate_mod)]
 #[path = "fake_v50/facts.rs"]
 mod facts;
+#[allow(clippy::duplicate_mod)]
 #[path = "fake_v50/season_facts.rs"]
 mod season_facts;
 pub use conqueror_facts::{HumanConquerorFactsV49, HumanConquerorOccurrenceV49};
