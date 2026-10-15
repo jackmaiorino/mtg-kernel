@@ -235,21 +235,21 @@ fn validate_capture(c: &CaptureV1, item: &StackItem, ctx: &ExecCtx) -> Result<()
     let EffectOp::DealXDamageThenCreateTokensForExcess { target_index, .. } = &c.op else {
         unreachable!()
     };
-    let contract = StackTargetContractV4::Object {
-        object: id,
-        card_def: c.target.card_def,
-        owner: c.target.owner,
-        controller: c.target.controller,
-        zone: c.target.zone,
-        zone_change_count: c.target.zone_change_count,
-        spell_copy_origin: c.target.spell_copy_origin,
-    };
+    // Match the announcement's incarnation fields using the same semantics as
+    // engine::target_contract_matches_live. A Creature target remains legal
+    // after a control change; its resolution-time controller is captured here
+    // for the affected-player menu, independently of the spell's controller.
+    let same_incarnation = matches!(c.ctx.target_contracts.get(usize::from(*target_index)),
+        Some(StackTargetContractV4::Object { object, card_def, owner, zone, zone_change_count, spell_copy_origin, .. })
+            if *object == id && *card_def == c.target.card_def && *owner == c.target.owner
+                && *zone == c.target.zone && *zone_change_count == c.target.zone_change_count
+                && *spell_copy_origin == c.target.spell_copy_origin);
     let remaining = (i64::from(c.toughness) - i64::from(c.target.damage)).max(0);
     if c.ctx != *ctx
         || c.ctx != crystal_prevention_v1::context(item)
         || c.source.zone != Zone::Stack
         || c.source.controller != ctx.controller
-        || c.ctx.target_contracts.get(usize::from(*target_index)) != Some(&contract)
+        || !same_incarnation
         || c.target.zone != Zone::Battlefield
         || c.lethal
             != if c.deathtouch {

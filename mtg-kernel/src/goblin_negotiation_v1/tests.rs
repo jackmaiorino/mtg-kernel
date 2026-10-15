@@ -641,3 +641,81 @@ fn native_pending_ordering_refuses_stale_source_target_reentry_and_changed_actor
         }
     }
 }
+
+#[test]
+fn paid_flash_control_response_preserves_creature_target_and_excess_both_seats_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        // Existing registered permission makes the genuine control sorcery a
+        // legal response to Goblin Negotiation. Both spells pay their full cost.
+        put(&mut s, actor, "High Fae Trickster", Zone::Battlefield);
+        let response = put(&mut s, actor, "Involuntary Employment", Zone::Hand);
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let incarnation = s.objects.get(target).zone_change_count;
+        let spell = announce(&mut s, actor, target, 3);
+        let announced_target = s.stack.last().unwrap().v4.target_contracts[0];
+        assert!(
+            matches!(next(&mut s), Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor && castable_spells.contains(&response))
+        );
+        engine::step(&mut s, Action::CastSpell(response)).unwrap();
+        assert!(
+            matches!(next(&mut s), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(target)))
+        );
+        engine::step(&mut s, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(
+            matches!(next(&mut s), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(tapped(&s, actor), 9); // X3+RR, then3R.
+        assert_eq!(s.stack.len(), 2);
+        let mut response_restore = restore(&s);
+        for branch in [&mut s, &mut response_restore] {
+            let mut completed = false;
+            for _ in 0..16 {
+                let decision = next(branch);
+                if branch.objects.get(response).zone == Zone::Graveyard
+                    && branch.stack.len() == 1
+                    && branch.engine.pending_effect.is_none()
+                {
+                    assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                    completed = true;
+                    break;
+                }
+                quiet(branch, decision);
+            }
+            assert!(completed);
+            assert_eq!(branch.stack[0].source, spell);
+            assert_eq!(branch.objects.get(target).controller, actor);
+            assert_eq!(branch.objects.get(target).owner, actor.opponent());
+            assert_eq!(branch.objects.get(target).zone_change_count, incarnation);
+            assert!(engine::target_contract_matches_live(
+                branch,
+                Target::Object(target),
+                announced_target
+            ));
+        }
+        assert_eq!(s.state_hash(), response_restore.state_hash());
+        let mut after_control_restore = restore(&s);
+        for branch in [&mut s, &mut response_restore, &mut after_control_restore] {
+            settle(branch);
+            assert_eq!(damage(branch, spell, target), 3);
+            assert_eq!(goblins(branch, actor).len(), 1);
+            assert!(goblins(branch, actor.opponent()).is_empty());
+            let completed = super::public_completed(branch).unwrap();
+            assert_eq!(completed.len(), 1);
+            assert_eq!(completed[0].actual_damage, 3);
+            assert_eq!(completed[0].excess, 1);
+            assert_eq!(completed[0].tokens_created, 1);
+            assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+        }
+        assert_eq!(s.state_hash(), response_restore.state_hash());
+        assert_eq!(s.state_hash(), after_control_restore.state_hash());
+    }
+}
