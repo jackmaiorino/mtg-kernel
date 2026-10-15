@@ -22,7 +22,7 @@ class LimitedDeckTest(unittest.TestCase):
     def setUp(self) -> None:
         self.registry = limited.fdn_registry()
 
-    def test_ravenous_partial_printing_preserves_prefix_and_refuses_full_deck_resolution(self) -> None:
+    def test_ravenous_engine_full_preserves_prefix_and_resolves_reference_deck(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
         historical = json.loads(json.dumps(records[:251]))
         historical[250]["engine_capability"] = "partial"
@@ -32,12 +32,13 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(len(records), 252)
         self.assertEqual(self.registry["Ravenous Amulet"].card_id, 443)
         self.assertEqual(self.registry["Fake Your Own Death"].card_id, 442)
-        self.assertEqual(limited.card_status("Ravenous Amulet", self.registry), "partial")
+        self.assertEqual(limited.card_status("Ravenous Amulet", self.registry), "full")
         self.assertEqual(limited.card_status("Fake Your Own Death", self.registry), "full")
         deck = limited.parse_dck((FIXTURES / "FDN_reference_ravenous_amulet_partial.dck").read_text())
         self.assertEqual(sum(entry.count for entry in deck.mainboard), 40)
-        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
-            limited.resolve_mainboard(deck, self.registry)
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(resolved.count(443), 4)
 
     def test_fake_engine_full_preserves_prior_registry_and_resolves_reference_deck(self) -> None:
         records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
@@ -53,7 +54,7 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(len(resolved), 40)
         self.assertEqual(resolved.count(442), 4)
         self.assertEqual([(row["name"], row["engine_capability"]) for row in records
-                          if row["engine_capability"] != "full"], [("Ravenous Amulet", "partial")])
+                          if row["engine_capability"] != "full"], [])
 
     def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
         cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
@@ -632,8 +633,8 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 237)
-        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 1)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 238)
+        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 0)
         self.assertEqual(sum(card["status"] == "missing" for card in report["cards"]), 48)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)

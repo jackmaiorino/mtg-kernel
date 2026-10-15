@@ -2696,7 +2696,7 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 443 (Partial Ravenous and Full Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 443 (Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
@@ -3147,8 +3147,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the registered Partial Ravenous printing may remain outside Full"
+            CARD_DEFS.len(),
+            "every registered definition is engine Full"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3158,19 +3158,11 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert_eq!(
-                non_full,
-                vec![(443, "Ravenous Amulet", CardCapability::Partial)]
-            );
-            assert!(preflight_fully_supported_deck(&[442]).is_ok());
-            assert!(matches!(
-                preflight_fully_supported_deck(&[443]),
-                Err(DeckPreflightError::NotFullySupported {
-                    index: 0,
-                    capability: CardCapability::Partial,
-                    ..
-                })
-            ));
+            assert!(non_full.is_empty());
+            for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
+                assert_eq!(card_id_by_name(name), Some(id));
+                assert!(preflight_fully_supported_deck(&[id]).is_ok());
+            }
         }
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[

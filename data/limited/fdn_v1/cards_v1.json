@@ -7464,7 +7464,7 @@
     },
     {
       "name": "Ravenous Amulet",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],

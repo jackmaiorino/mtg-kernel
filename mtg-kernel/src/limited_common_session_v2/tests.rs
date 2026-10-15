@@ -1031,3 +1031,43 @@ fn public_v2_full_fake_reference_reset_owned_restore_and_continued_gameplay_both
         }
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn full_ravenous_deck_still_refuses_legacy_v2_publication_both_seats() {
+    for actor in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let mut server = LimitedCommonJsonlServerV2::new();
+        let mut input = reset(actor, "full_ravenous_requires_v3");
+        if let LimitedCommonRequestV2::Reset { decks, .. } = &mut input {
+            // A legal Limited deck makes the unsupported printing visible in
+            // either real opening hand without inserting a privileged state.
+            *decks = [deck("Ravenous Amulet", 40), deck("Ravenous Amulet", 40)];
+        }
+        let reply = server.handle_request(input);
+        let LimitedCommonBodyV2::State { state, .. } = reply.body else {
+            panic!("engine Full passes deck admission before legacy refusal")
+        };
+        assert!(matches!(
+            state.as_ref(),
+            LimitedCommonStateV2::Terminal {
+                classification: crate::rl::TerminalClassificationV1::Halted,
+                code: crate::rl::TerminalSafeCodeV2::FailClosed,
+                policy_steps: 0,
+                physical_decisions: 0,
+                ..
+            }
+        ));
+        let FastActorResponseV1::Terminal(terminal) =
+            server.active.as_ref().unwrap().core.current_response()
+        else {
+            panic!("legacy V50 backend must retain its refusal")
+        };
+        assert!(terminal
+            .terminal_reason
+            .starts_with("fail_closed:ravenous_v51_required:"));
+        assert!(server.pending.is_none());
+    }
+}

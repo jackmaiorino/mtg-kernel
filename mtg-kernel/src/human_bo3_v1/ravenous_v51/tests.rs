@@ -234,7 +234,7 @@ fn actual_human_paid_cast_draw_loss_typed_and_generic_restore_both_seats() {
                     .card_def
             )]
             .capability,
-            crate::card_def::CardCapability::Partial
+            crate::card_def::CardCapability::Full
         );
         draw_cost(&mut session, &mut projector);
         let cost_snapshot = session.snapshot_v51();

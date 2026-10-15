@@ -705,3 +705,10 @@ pub mod fake_observation_v50;
     not(feature = "standard-magezero-fixtures")
 ))]
 pub(crate) mod fake_full_engine_admission_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod ravenous_full_engine_admission_v1_tests;

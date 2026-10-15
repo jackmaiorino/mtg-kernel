@@ -6507,9 +6507,9 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
         let definition = state.objects.get(amulet).card_def;
         assert_eq!(
             crate::card_def::CARD_DEFS[usize::from(definition)].capability,
-            crate::card_def::CardCapability::Partial
+            crate::card_def::CardCapability::Full
         );
-        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_ok());
         for root in [
             crate::rules_meaning_ravenous_amulet_v51::RootV51::DrawAndSoul,
             crate::rules_meaning_ravenous_amulet_v51::RootV51::SoulLoss,

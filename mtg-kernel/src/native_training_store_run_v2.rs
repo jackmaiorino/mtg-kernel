@@ -8931,7 +8931,7 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn prospective_fake_engine_full_inventory_keeps_ravenous_partial() {
+    fn prospective_dual_engine_full_inventory_preserves_printing_ids() {
         // Independent of v86's live-catalog canary. A new actual export must
         // establish v87 before source promotion is qualified for publication.
         let partials: Vec<_> = crate::card_def::CARD_DEFS
@@ -8941,15 +8941,14 @@ mod tests {
             .map(|(id, def)| (id as u16, def.name))
             .collect();
         assert_eq!(crate::card_def::CARD_DEFS.len(), 444);
-        assert_eq!(partials, [(443, "Ravenous Amulet")]);
-        assert_eq!(
-            crate::card_def::card_id_by_name("Fake Your Own Death"),
-            Some(442)
-        );
-        assert!(crate::card_def::preflight_fully_supported_deck(&[442]).is_ok());
-        for (id, name) in partials {
+        assert!(partials.is_empty());
+        for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
-            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_err());
+            assert_eq!(
+                crate::card_def::CARD_DEFS[usize::from(id)].capability,
+                crate::card_def::CardCapability::Full
+            );
+            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
         }
     }
 
