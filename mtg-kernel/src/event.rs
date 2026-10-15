@@ -1449,12 +1449,17 @@ pub enum CommittedEvent {
     /// Appended without changing predecessor Hash discriminants. Soul
     /// placement retains the original source and recipient replacement inputs.
     SoulCounterAddedV1 {
+        input_history_index: u64,
         source: crate::state::AbilitySourceContractV4,
         player: PlayerId,
         replacement: crate::doubling_season_v48::ReplacementInputV48,
         before: i32,
         count: i32,
         after: i32,
+    },
+    /// Private source/actor/recipient world immediately before soul placement.
+    SoulCounterInputV1 {
+        input: Box<crate::soul_counters_v1::PlacementInputV1>,
     },
 }
 
@@ -1719,7 +1724,9 @@ pub(crate) fn add_soul_counter_to_ability_source_v1(
     let count = replacement.replaced_count(scaled)?;
     let before = live.counters.soul;
     let after = before.checked_add(count).ok_or("soul counter overflow")?;
+    let input = crate::soul_counters_v1::PlacementInputV1::capture(state, source, ctx.controller)?;
     let event = CommittedEvent::SoulCounterAddedV1 {
+        input_history_index: input.index,
         source,
         player: ctx.controller,
         replacement,
@@ -1727,6 +1734,12 @@ pub(crate) fn add_soul_counter_to_ability_source_v1(
         count,
         after,
     };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::SoulCounterInputV1 {
+            input: Box::new(input),
+        });
     state.objects.get_mut(source.source).counters.soul = after;
     state.engine.event_log.push(event.clone());
     state.engine.event_history.push(event);
@@ -5885,6 +5898,7 @@ mod soul_placement_primitive_v1_tests {
                 before,
                 count,
                 after,
+                ..
             }) = state.engine.event_history.last()
             else {
                 panic!("actual soul placement")

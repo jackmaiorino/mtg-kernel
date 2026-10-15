@@ -670,6 +670,7 @@ pub mod controlled_creature_grants_v1;
 pub mod doubling_season_v48;
 pub mod rules_meaning_akroma_v1;
 pub mod rules_meaning_doubling_season_v48;
+pub mod soul_counters_v1;
 pub mod twinflame_observation_v1;
 pub mod twinflame_tyrant_v1;
 

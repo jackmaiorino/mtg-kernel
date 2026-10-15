@@ -7,7 +7,9 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
-    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+    if crate::bloodthirsty_conqueror_v49::has_history(state)
+        || crate::soul_counters_v1::has_history(state)
+    {
         return true;
     }
     if crate::ajani_full_v42::lifecycle::requires_successor(state) {
@@ -280,7 +282,9 @@ fn redeterminize_with_library_plan_inner(
     classified: bool,
 ) -> Result<(), Error> {
     // Refuse before even the first hidden-owner permutation, including empty pools.
-    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+    if crate::bloodthirsty_conqueror_v49::has_history(state)
+        || crate::soul_counters_v1::has_history(state)
+    {
         return Err(if classified {
             Error::HiddenReferenceConflict
         } else {
@@ -399,6 +403,46 @@ fn redeterminize_with_library_plan_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_soul_world_refuses_before_any_hidden_owner_permutation_both_seats() {
+        use crate::{
+            effect::ExecCtx,
+            event::{add_soul_counter_to_ability_source_v1, propose_and_commit, ProposedEvent},
+            policy_observation_v6::tests::put,
+        };
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for departed in [false, true] {
+                let mut state = super::super::tests::state(actor);
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                let mut ctx = ExecCtx::no_targets(source, actor);
+                ctx.ability_source_contract =
+                    Some(AbilitySourceContractV4::capture(&state, source));
+                add_soul_counter_to_ability_source_v1(&mut state, &ctx).unwrap();
+                if departed {
+                    propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+                    assert_eq!(state.objects.get(source).counters.soul, 0);
+                }
+                state.engine.event_log.clear();
+                crate::soul_counters_v1::validate(&state).unwrap();
+                let restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for mut branch in [state, restored] {
+                    let before = branch.clone();
+                    assert_eq!(
+                        redeterminize_with_library_plan_classified(&mut branch, actor, 8172, None),
+                        Err(Error::HiddenReferenceConflict)
+                    );
+                    assert_eq!(branch, before);
+                    assert_eq!(
+                        redeterminize(&mut branch, actor, 8172),
+                        Err(Error::HiddenStateContract)
+                    );
+                    assert_eq!(branch, before);
+                }
+            }
+        }
+    }
+
     #[test]
     fn v4_search_sampler_identity_repeatability_and_slot_knowledge() {
         for actor in [PlayerId::P0, PlayerId::P1] {

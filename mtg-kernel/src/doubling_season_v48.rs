@@ -1040,6 +1040,7 @@ pub(crate) fn record_token_creation(
 }
 
 pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
+    crate::soul_counters_v1::validate(state)?;
     crate::season_token_attachment_v48::validate_journals(state)?;
     validate_bait_transfers(state)?;
 

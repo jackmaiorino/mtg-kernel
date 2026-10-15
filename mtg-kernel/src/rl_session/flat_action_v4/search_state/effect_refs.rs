@@ -972,9 +972,10 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
-    // Both retained original-world mechanisms require their qualified sampler.
+    // Retained original-world mechanisms require their qualified sampler.
     if crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::doubling_season_v48::requires_successor(state)
+        || crate::soul_counters_v1::has_history(state)
     {
         return true;
     }
@@ -1413,7 +1414,8 @@ pub(super) fn conflicts(
                 | FiendishPandaCaptureCollectedV1 { .. }
                 | FiendishPandaJournalV1 { .. }
                 | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
-                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } => true,
+                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. }
+                | SoulCounterInputV1 { .. } => true,
         }
     })
 }
