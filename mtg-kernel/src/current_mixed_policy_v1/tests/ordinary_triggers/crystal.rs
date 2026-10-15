@@ -62,7 +62,7 @@ fn paid_bolt<O: Owner>(
         if replay != 0 {
             s.restore(&prompt).unwrap();
         }
-        step(s, &choose);
+        step(s, choose);
         assert_eq!(s.world().players[caster.index()].mana_pool, [0; 6]);
         assert!(s.world().objects.get(mountain).tapped);
         assert!(s.world().engine.pending_cast.is_none());

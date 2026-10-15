@@ -22,10 +22,10 @@ enum Owner {
     Prepared(PreparedSession),
 }
 enum Choice {
-    Fake(FakeDecision),
-    Ravenous(RavenousDecision),
-    Elenda(ElendaDecision),
-    Prepared(PreparedDecision),
+    Fake(Box<FakeDecision>),
+    Ravenous(Box<RavenousDecision>),
+    Elenda(Box<ElendaDecision>),
+    Prepared(Box<PreparedDecision>),
 }
 enum Snapshot {
     Fake(FakeSnapshot),
@@ -52,10 +52,10 @@ impl Owner {
     }
     fn encode(&self, e: FastActorDecisionV1) -> Choice {
         match self {
-            Self::Fake(s) => Choice::Fake(s.encode(e).unwrap()),
-            Self::Ravenous(s) => Choice::Ravenous(s.encode(e).unwrap()),
-            Self::Elenda(s) => Choice::Elenda(s.encode(e).unwrap()),
-            Self::Prepared(s) => Choice::Prepared(s.encode(e).unwrap()),
+            Self::Fake(s) => Choice::Fake(Box::new(s.encode(e).unwrap())),
+            Self::Ravenous(s) => Choice::Ravenous(Box::new(s.encode(e).unwrap())),
+            Self::Elenda(s) => Choice::Elenda(Box::new(s.encode(e).unwrap())),
+            Self::Prepared(s) => Choice::Prepared(Box::new(s.encode(e).unwrap())),
         }
     }
     fn apply(&mut self, d: &Choice, index: u32) -> Result<FastActorResponseV1> {

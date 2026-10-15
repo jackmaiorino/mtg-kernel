@@ -80,7 +80,7 @@ fn bolt<O: Owner>(s: &mut O, actor: PlayerId, source: ObjectId, land: ObjectId, 
         if replay != 0 {
             s.restore(&prompt).unwrap();
         }
-        step(s, &select);
+        step(s, select);
         assert!(s.world().engine.pending_cast.is_none());
         assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);
         assert!(s.world().objects.get(land).tapped);
