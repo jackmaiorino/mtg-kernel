@@ -608,3 +608,9 @@ fn tyrant_herald_paid_cast_damage_flash_restore_privacy_preparedsession_both_sea
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_tyrant_herald::<PreparedSession>(
     );
 }
+
+#[test]
+fn rallier_bloom_paid_cast_private_pick_and_mana_restore_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<PreparedSession>(
+    );
+}

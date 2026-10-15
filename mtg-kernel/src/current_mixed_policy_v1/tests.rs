@@ -1232,6 +1232,183 @@ mod paid {
     }
 
     #[test]
+    fn rallier_bloom_exact_closed_printings_keep_private_selection_and_dynamic_mana_meaning() {
+        use crate::{
+            card_def::{ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef},
+            mana::ManaColor,
+        };
+        for name in ["Squad Rallier", "Bloom Tender"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let bloom = name == "Bloom Tender";
+            let fixture = || {
+                let mut d = ordinary_recipe(id);
+                d.mana_ability_def = crate::card_def::CARD_DEFS[usize::from(id)].mana_ability_def;
+                d
+            };
+            let d = fixture();
+            let baseline = roots::baseline(id).unwrap();
+            assert_eq!(
+                baseline["definition_owned_family_meanings"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            let printing = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &printing["registered_permanent_printing"];
+            assert_eq!(p["characteristics"]["power"], if bloom { 1 } else { 3 });
+            assert_eq!(p["characteristics"]["toughness"], if bloom { 1 } else { 4 });
+            assert_eq!(
+                p["characteristics"]["subtypes"],
+                if bloom {
+                    json!(["Elf", "Druid"])
+                } else {
+                    json!(["Human", "Scout"])
+                }
+            );
+            assert_eq!(
+                p["characteristics"]["printed_mana_abilities"],
+                u8::from(bloom)
+            );
+            assert_eq!(
+                p["characteristics"]["printed_activated_abilities"],
+                u8::from(!bloom)
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"],
+                json!({"generic":if bloom{1}else{3},"pips":[{"Colored":if bloom{"G"}else{"W"}}],"x_count":0})
+            );
+            let m = &p["canonical_family_roots"][0];
+            if bloom {
+                assert_eq!(m["tap_source"], true);
+                assert_eq!(m["immediate_mana_ability_without_stack_or_targets"], true);
+                assert_eq!(
+                    m["color_query_uses_current_control_and_effective_battlefield_colors"],
+                    true
+                );
+                assert_eq!(m["source_included"], true);
+                assert_eq!(m["colorless_is_not_a_color"], true);
+                assert_eq!(
+                    m["one_unit_of_each_distinct_color_added_simultaneously"],
+                    true
+                );
+                assert_eq!(
+                    m["all_output_pool_cells_preflight_before_any_cost_or_use_mutation"],
+                    true
+                );
+                assert_eq!(
+                    p["ordered_mana_roots"][0]["ordered_costs"],
+                    json!(["TapOriginalSource"])
+                );
+                assert_eq!(p["ordered_mana_roots"][0]["uses_stack"], false);
+                assert_eq!(
+                    p["ordered_mana_roots"][0]["timing"],
+                    "CurrentManaWindowAndOrdinaryCreatureTapRestrictions"
+                );
+                assert!(p["ordered_activation_roots"].as_array().unwrap().is_empty());
+            } else {
+                assert_eq!(m["mana_cost"], "{2}{W}");
+                assert_eq!(m["private_look_maximum"], 4);
+                assert_eq!(m["select_minimum"], 0);
+                assert_eq!(m["select_maximum"], 1);
+                assert_eq!(
+                    m["selected_card_effective_power_including_supported_cda_maximum"],
+                    2
+                );
+                assert_eq!(m["selected_card_mana_value_unrestricted"], true);
+                assert_eq!(
+                    m["selection_is_nontargeting_and_ignores_hexproof_protection"],
+                    true
+                );
+                assert_eq!(
+                    m["selected_card_revealed_to_both_then_put_in_controllers_hand"],
+                    true
+                );
+                assert_eq!(m["rest_goes_to_bottom_in_random_order"], true);
+                assert_eq!(m["unseen_library_suffix_keeps_order"], true);
+                assert_eq!(m["captured_controller_library_after_source_departure_reentry_or_control_change"],true);
+                assert_eq!(m["continuation_authority_is_never_public"], true);
+                assert_eq!(p["ordered_activation_roots"][0]["target_count"], 0);
+                assert_eq!(
+                    p["ordered_activation_roots"][0]["ordered_costs"],
+                    json!([{"Mana":{"generic":2,"pips":[{"Colored":"W"}],"x_count":0}}])
+                );
+                assert_eq!(p["ordered_activation_roots"][0]["uses_stack"], true);
+                assert!(p["ordered_mana_roots"].as_array().unwrap().is_empty());
+            }
+            macro_rules! reject {($field:ident,$value:expr)=>{{let mut changed=fixture();changed.$field=$value;
+                assert!(matches!(roots::rallier_bloom_printing::printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};}
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(power, Some(8));
+            reject!(toughness, Some(8));
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(subtypes, &[crate::card_def::Subtype::Bear]);
+            reject!(colors, &[ManaColor::R]);
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(spell_effect, || None);
+            reject!(minimum_blockers, 2);
+            reject!(produces_mana, &[ManaColor::C]);
+            if bloom {
+                reject!(mana_ability, || None);
+                reject!(mana_ability_def, None);
+                reject!(mana_ability_choices, &[ManaColor::W]);
+                for corrupt in 0..4 {
+                    let mut changed = fixture();
+                    let mut a = d.mana_ability_def.unwrap();
+                    match corrupt {
+                        0 => a.cost = ManaAbilityCostDef::SacrificeSelf,
+                        1 => a.amount = ManaAbilityAmountDef::Fixed(1),
+                        2 => a.controller_damage = 1,
+                        _ => a.max_activations_per_turn = Some(1),
+                    }
+                    changed.mana_ability_def = Some(a);
+                    assert!(roots::rallier_bloom_printing::printing(id, &changed).is_err());
+                }
+            } else {
+                reject!(
+                    mana_ability_def,
+                    Some(ManaAbilityDef {
+                        cost: ManaAbilityCostDef::TapSelf,
+                        amount: ManaAbilityAmountDef::Fixed(1),
+                        controller_damage: 0,
+                        max_activations_per_turn: None
+                    })
+                );
+                reject!(mana_ability, || Some(crate::effect::EffectOp::Sequence(
+                    vec![]
+                )));
+                for corrupt in 0..9 {
+                    let mut changed = fixture();
+                    let mut a = d.activated_abilities[0];
+                    match corrupt {
+                        0 => a.cost = &[crate::card_def::CostComponent::Tap],
+                        1 => a.target_spec = crate::card_def::TargetSpec::AnyPlayer,
+                        2 => a.effect = || crate::effect::EffectOp::Sequence(vec![]),
+                        3 => a.activation_zone = Zone::Hand,
+                        4 => a.sorcery_speed_only = true,
+                        5 => {
+                            a.activation_target_filter =
+                                crate::card_def::ActivationTargetFilter::CreatureSubtype(
+                                    crate::card_def::Subtype::Bear,
+                                )
+                        }
+                        6 => a.max_activations_per_turn = Some(1),
+                        7 => a.face = Some(1),
+                        _ => {}
+                    }
+                    changed.activated_abilities = Box::leak(
+                        if corrupt == 8 { vec![a, a] } else { vec![a] }.into_boxed_slice(),
+                    );
+                    assert!(
+                        roots::rallier_bloom_printing::printing(id, &changed).is_err(),
+                        "nested activation {corrupt}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn frenzied_banner_closed_printings_supply_exact_cast_entry_and_mana_operands() {
         use crate::mana::ManaColor;
         for (name, cost, kind, power, subtypes) in [

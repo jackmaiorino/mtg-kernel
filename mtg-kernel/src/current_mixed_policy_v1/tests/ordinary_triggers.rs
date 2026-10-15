@@ -10,7 +10,12 @@ mod crystal;
 mod early_activation;
 mod entry_attack;
 mod memorial_panda;
+mod rallier_bloom;
 mod tyrant_herald;
+
+pub(in crate::current_mixed_policy_v1) fn paid_rallier_bloom<O: Owner>() {
+    rallier_bloom::paid::<O>();
+}
 
 pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
     entry_attack::paid::<O>();
@@ -289,6 +294,8 @@ pub(in crate::current_mixed_policy_v1) fn privacy<O: Owner>() {
             "Scavenging Ooze",
             "Heartfire Immolator",
             "Soul-Shackled Zombie",
+            "Squad Rallier",
+            "Bloom Tender",
         ] {
             for known in [false, true] {
                 let mut a = crate::extra_turn_v1::tests::ready(actor);
@@ -493,4 +500,13 @@ fn tyrant_herald_paid_cast_damage_flash_restore_privacy_fake_both_seats() {
 #[test]
 fn tyrant_herald_paid_cast_damage_flash_restore_privacy_ravenous_both_seats() {
     paid_tyrant_herald::<RavenousSession>();
+}
+
+#[test]
+fn rallier_bloom_paid_cast_private_pick_and_mana_restore_fake_both_seats() {
+    paid_rallier_bloom::<FakeSession>();
+}
+#[test]
+fn rallier_bloom_paid_cast_private_pick_and_mana_restore_ravenous_both_seats() {
+    paid_rallier_bloom::<RavenousSession>();
 }
