@@ -969,3 +969,59 @@ fn wildwood_variable_printing_supplement_preserves_independent_hidden_hands_v52_
         }
     }
 }
+
+impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for ElendaSession {
+    type Decision = ElendaDecision;
+    type Snapshot = ElendaSnapshot;
+    fn own(s: GameState) -> Self {
+        Self::from_session(FastActorSessionV1::from_elenda_v52_fixture_state(s)).unwrap()
+    }
+    fn world(&self) -> &GameState {
+        self.inner.fixture_state_v52()
+    }
+    fn counts(&self) -> (u64, u64) {
+        self.inner.fixture_counts_v52()
+    }
+    fn actions(&self) -> Vec<ActionSemanticV1> {
+        self.inner.decision_v52().unwrap().actions().to_vec()
+    }
+    fn encode(&self) -> Self::Decision {
+        let e = match self.inner.current_response() {
+            FastActorResponseV1::Decision(e) => e,
+            other => panic!("real decision absent:{other:?}"),
+        };
+        ElendaSession::encode(self, e).unwrap()
+    }
+    fn packet(d: &Self::Decision) -> &crate::current_mixed_policy_v1::Packet {
+        d.packet()
+    }
+    fn erase(d: &mut Self::Decision) {
+        d.packet.state =
+            crate::current_mixed_policy_v1::NumericTree::encode(&serde_json::json!({})).unwrap();
+    }
+    fn apply(&mut self, d: &Self::Decision, index: u32) -> Result<()> {
+        let mut reference = self.inner.clone();
+        let native = reference.decision_v52().unwrap();
+        let actual = ElendaSession::apply(self, d, index)?;
+        assert_eq!(actual, reference.step_v52(&native, index).unwrap());
+        assert_eq!(
+            self.inner.fixture_state_v52(),
+            reference.fixture_state_v52()
+        );
+        Ok(())
+    }
+    fn snapshot(&self) -> Self::Snapshot {
+        ElendaSession::snapshot(self)
+    }
+    fn restore(&mut self, s: &Self::Snapshot) -> Result<()> {
+        ElendaSession::restore(self, s)
+    }
+}
+#[test]
+fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<ElendaSession>();
+}
+#[test]
+fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<ElendaSession>();
+}

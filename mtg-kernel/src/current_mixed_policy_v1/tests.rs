@@ -1689,6 +1689,151 @@ mod paid {
     }
 
     #[test]
+    fn ashroot_stromkirk_closed_supplements_preserve_native_printing_and_reject_foreign_fields() {
+        use crate::mana::ManaColor;
+        for (name, subtypes, power, keywords, pips) in [
+            (
+                "Ashroot Animist",
+                json!(["Lizard", "Druid"]),
+                4,
+                json!(["Trample"]),
+                json!([{"Colored":"R"},{"Colored":"G"}]),
+            ),
+            (
+                "Stromkirk Bloodthief",
+                json!(["Vampire", "Rogue"]),
+                2,
+                json!([]),
+                json!([{"Colored":"B"}]),
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let d = ordinary_recipe(id);
+            roots::validate_attack_or_endstep_recipe(id, &d).unwrap();
+            let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &descriptor["registered_permanent_printing"];
+            let c = &p["characteristics"];
+            assert_eq!(c["types"], json!(["Creature"]));
+            assert_eq!(c["subtypes"], subtypes);
+            assert_eq!(c["supertypes"], json!([]));
+            assert_eq!(c["power"], power);
+            assert_eq!(c["toughness"], power);
+            assert_eq!(c["ordered_keywords"], keywords);
+            assert_eq!(c["printed_mana_abilities"], 0);
+            assert_eq!(c["printed_activated_abilities"], 0);
+            assert_eq!(
+                c["colors"],
+                if power == 4 {
+                    json!(["R", "G"])
+                } else {
+                    json!(["B"])
+                }
+            );
+            assert_eq!(c["mana_value"], if power == 4 { 4 } else { 3 });
+            let cast = &p["ordered_cast_roots"][0];
+            assert_eq!(
+                cast["ordered_costs"][0]["PrintedMana"],
+                json!({"generic":2,"pips":pips,"x_count":0})
+            );
+            assert_eq!(cast["ordinary_origin"], "Hand");
+            assert_eq!(cast["ordinary_route"], "Hand");
+            assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+            assert_eq!(cast["targets"], "None");
+            assert_eq!(
+                cast["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            assert_eq!(
+                cast["physical_departure"],
+                "BattlefieldOnResolutionOtherwiseGraveyard"
+            );
+            assert_eq!(
+                cast["other_cast_permissions_require_current_candidate_authority"],
+                true
+            );
+            assert_eq!(cast["zone_replacements_still_apply"], true);
+            macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::validate_attack_or_endstep_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(mana_value, 0);
+            reject!(object_name, "different");
+            reject!(capability, crate::card_def::CardCapability::Partial);
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(subtypes, &[crate::card_def::Subtype::Human]);
+            reject!(supertypes, &[crate::card_def::Supertype::Legendary]);
+            reject!(colors, &[ManaColor::U]);
+            reject!(power, Some(7));
+            reject!(toughness, Some(8));
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(target_spec, crate::card_def::TargetSpec::Creature);
+            reject!(spell_effect, || None);
+            reject!(
+                alt_cost,
+                Some(crate::card_def::AltCostDef {
+                    components: &[],
+                    condition: crate::card_def::AltCostCondition::Always
+                })
+            );
+            reject!(
+                mode2,
+                Some(crate::card_def::ModeDef {
+                    target_spec: crate::card_def::TargetSpec::None,
+                    effect: || crate::effect::EffectOp::Sequence(vec![])
+                })
+            );
+            reject!(
+                activated_abilities,
+                crate::card_def::CARD_DEFS
+                    [usize::from(crate::card_def::card_id_by_name("Masked Meower").unwrap())]
+                .activated_abilities
+            );
+            reject!(
+                combat_static_rules,
+                crate::card_def::CombatStaticRulesDef {
+                    must_attack_each_combat: true,
+                    cant_be_blocked_by_subtype: None
+                }
+            );
+            reject!(
+                source_type_hexproof_v1,
+                Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+            );
+            reject!(other_controlled_nontoken_death_v1,Some(crate::card_def::OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom));
+            reject!(produces_mana, &[ManaColor::G]);
+            reject!(mana_ability, || Some(crate::effect::EffectOp::Sequence(
+                vec![]
+            )));
+            reject!(minimum_blockers, 2);
+            reject!(is_land, true);
+            reject!(is_token, true);
+            reject!(enters_battlefield_tapped, true);
+        }
+        let ash = crate::rules_meaning_ashroot_v1::meaning(
+            &crate::rules_meaning_ashroot_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Ashroot Animist").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            ash.rule
+                .mandatory_another_controlled_creature_target_at_placement
+                && ash.rule.source_power_sampled_once_at_resolution
+                && ash.rule.actual_departure_power_used_after_source_leaves
+        );
+        let blood = crate::rules_meaning_stromkirk_v1::meaning(
+            &crate::rules_meaning_stromkirk_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Stromkirk Bloodthief").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            blood.rule.actual_opponent_loss_before_trigger
+                && blood.rule.intervening_condition_rechecked_at_resolution
+                && blood.rule.mandatory_controlled_vampire_permanent_target
+        );
+    }
+
+    #[test]
     fn genuine_paid_sower_cast_and_target_bound_activation_restore_v50_v51_both_seats() {
         macro_rules! run {
             ($session:ident,$from:ident,$input:ident,$world:ident)=>{
@@ -2392,3 +2537,9 @@ mod thin_producer_transport {
         );
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) mod ordinary_triggers;

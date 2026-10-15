@@ -523,3 +523,59 @@ fn typed_public_references_keep_identity_and_reuse_common_ranks_without_raw_stam
         json!({"Known":{"card_id":id}})
     );
 }
+
+impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for PreparedSession {
+    type Decision = PreparedDecision;
+    type Snapshot = PreparedSnapshot;
+    fn own(s: GameState) -> Self {
+        Self::from_session(FastActorSessionV1::from_prepared_v57_fixture_state(s)).unwrap()
+    }
+    fn world(&self) -> &GameState {
+        self.inner.fixture_state_v57()
+    }
+    fn counts(&self) -> (u64, u64) {
+        self.inner.fixture_counts_v57()
+    }
+    fn actions(&self) -> Vec<ActionSemanticV1> {
+        self.inner.decision_v57().unwrap().actions().to_vec()
+    }
+    fn encode(&self) -> Self::Decision {
+        let e = match self.inner.current_response() {
+            FastActorResponseV1::Decision(e) => e,
+            other => panic!("real decision absent:{other:?}"),
+        };
+        PreparedSession::encode(self, e).unwrap()
+    }
+    fn packet(d: &Self::Decision) -> &crate::current_mixed_policy_v1::Packet {
+        d.packet()
+    }
+    fn erase(d: &mut Self::Decision) {
+        d.packet.state =
+            crate::current_mixed_policy_v1::NumericTree::encode(&serde_json::json!({})).unwrap();
+    }
+    fn apply(&mut self, d: &Self::Decision, index: u32) -> Result<()> {
+        let mut reference = self.inner.clone();
+        let native = reference.decision_v57().unwrap();
+        let actual = PreparedSession::apply(self, d, index)?;
+        assert_eq!(actual, reference.step_v57(&native, index).unwrap());
+        assert_eq!(
+            self.inner.fixture_state_v57(),
+            reference.fixture_state_v57()
+        );
+        Ok(())
+    }
+    fn snapshot(&self) -> Self::Snapshot {
+        PreparedSession::snapshot(self)
+    }
+    fn restore(&mut self, s: &Self::Snapshot) -> Result<()> {
+        PreparedSession::restore(self, s)
+    }
+}
+#[test]
+fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<PreparedSession>();
+}
+#[test]
+fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<PreparedSession>();
+}
