@@ -1,6 +1,6 @@
 # Current-family Limited JSONL V2
 
-Prepared against PR266 source `4d760ff562de70ac5a128ce06dc02e82ef109746` for
+Prepared against PR266 source `dd42a69c5210187a9f0c5585c7b46d0a6c937877` for
 issue110. This is a distinct schema2 server, `kernel_limited_common_env_v2`,
 with a matching Python client. The V1 server, executable, client, requests and
 safe decision shape remain unchanged. No registration, catalog/profile,
@@ -36,8 +36,12 @@ foreign prompts and snapshots refuse locally; corrupt replies close only its
 owned process. The real-process checker requires two identical-seed transcripts,
 natural terminal/code consistency and actual stale-after-restore refusal.
 
-Source review is clear. Pinned formatting/diff checks and75 Python tests pass,
-including11 V2 transport tests and64 pool/deck tests. Written Rust cases cover
+The current PR266 fixes merge without conflicts. The V2 server, projector,
+client and tests retain their original source; the parent fixes include genuine
+Equipment/Fishing grant lookup and the empty Lagrella return correction.
+Source review is clear. Pinned formatting and diff checks pass; all 75 Python
+tests pass after this refresh, including 11 V2 transport tests and 64 pool/deck
+tests. Written Rust cases cover
 schema isolation, both-seat London privacy, replay/owner/retry/forgery boundaries,
 fresh resets for all six newer families, actual paid Angel/Panda trigger execution
 and uninterrupted-backend equality, and real combat scan/range/restore. Rust
