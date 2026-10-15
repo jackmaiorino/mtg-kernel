@@ -266,6 +266,7 @@ pub(crate) fn source_at(state: &GameState, index: u64) -> Result<StackSourceCont
     if item.kind != StackItemKind::Spell || item.v4.source_contract != Some(*source) {
         return Err("Faebloom capture changed its original spell".into());
     }
+    crate::source_type_hexproof_v1::validate_retained_spell_types(state, *source)?;
     Ok(*source)
 }
 fn pending_for(source: StackSourceContractV4, capture: u64) -> PendingTrigger {

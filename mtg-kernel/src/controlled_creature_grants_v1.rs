@@ -194,6 +194,11 @@ pub struct DepartureColorV1 {
         skip_serializing_if = "crate::source_type_hexproof_v1::SourceTypeProjectionV1::is_empty"
     )]
     pub source_types_v1: crate::source_type_hexproof_v1::SourceTypeProjectionV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::source_type_hexproof_v1::SourceTypeInputProjectionV1::is_empty"
+    )]
+    pub source_type_input_v1: crate::source_type_hexproof_v1::SourceTypeInputProjectionV1,
 }
 pub(crate) fn capture_departure_color(
     state: &GameState,
@@ -220,6 +225,14 @@ pub(crate) fn capture_departure_color(
             crate::source_type_hexproof_v1::enabled().then(|| {
                 crate::source_type_hexproof_v1::current_types(state, change.object)
                     .expect("actual departure retains selected source types")
+            }),
+        ),
+        source_type_input_v1: crate::source_type_hexproof_v1::SourceTypeInputProjectionV1(
+            crate::source_type_hexproof_v1::enabled().then(|| {
+                Box::new(
+                    crate::source_type_hexproof_v1::capture_type_input(state, change.object)
+                        .expect("actual prebatch type input"),
+                )
             }),
         ),
     })
@@ -268,12 +281,20 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
                 return Err("color snapshot lacks exact committed battlefield departure".into());
             }
             if crate::source_type_hexproof_v1::enabled() != snapshot.source_types_v1.0.is_some()
+                || crate::source_type_hexproof_v1::enabled()
+                    != snapshot.source_type_input_v1.0.is_some()
                 || snapshot
                     .source_types_v1
                     .0
                     .is_some_and(|types| !types.valid())
             {
                 return Err("source-type departure projection missing or foreign".into());
+            }
+            if crate::source_type_hexproof_v1::enabled() {
+                crate::source_type_hexproof_v1::validate_snapshot_types(
+                    snapshot,
+                    state.objects.len(),
+                )?;
             }
             let captured: crate::state::GameObject =
                 serde_json::from_str(&snapshot.private_snapshot_json)

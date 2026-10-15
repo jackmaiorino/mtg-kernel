@@ -4404,6 +4404,20 @@ pub(crate) fn is_crewed_creature(state: &GameState, object: ObjectId) -> bool {
             })
     })
 }
+pub(crate) fn source_type_crew_input(state: &GameState) -> Vec<(ObjectId, u32)> {
+    state
+        .standard_v1
+        .as_ref()
+        .map_or_else(Vec::new, |s| s.crewed_creatures.clone())
+}
+pub(crate) fn restore_source_type_crew_input(state: &mut GameState, input: Vec<(ObjectId, u32)>) {
+    if !input.is_empty() {
+        state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .crewed_creatures = input;
+    }
+}
 pub fn crew_animation() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::SourceBecomesArtifactCreatureUntilEndOfTurn)
 }

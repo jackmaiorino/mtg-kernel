@@ -63,7 +63,14 @@ prebatch, SBA and sacrifice capture paths freeze types before any member moves.
 use their authenticated original source contract to read this projection; their
 original payment/publication/departure authorities remain intact. Missing,
 duplicate or foreign type evidence refuses, without printed-type fallback.
-The journals retain their existing trusted-occurrence assumption.
+Each typed departure also freezes a separate raw prebatch input capsule. The
+original source stays bound to the existing private object snapshot; the capsule
+holds transitive attachment/host/suppression objects and original turn, loyalty
+and crew inputs. Validation reconstructs a minimal board and recomputes the
+shared effective-type query. Stack sources recompute their selected form from
+the original finalized cast or immutable copy provenance. Rewriting only valid
+projection bits therefore refuses while original journals and inputs remain
+unchanged. The journals retain their existing trusted-occurrence assumption.
 
 When the new descriptor selects it, copies append the optional projection to
 immutable `SpellCopyOriginV4` and retain their actual alternative cast form.
@@ -84,6 +91,11 @@ and Standard Questing Druid, copy them, counter the parent and restore. Those
 are source-form tests, not Elenda gameplay. The new opt-in emitters remain
 inactive in the current unregistered catalog and require genuine-printing
 qualification. All Rust cases and generated catalog exports remain **unrun**.
+Additional primitive source tests preserve actual paid Bolt/Adventure and
+departure journals while changing only projected types, and preserve an actual
+paid Zoetic Glyph animation's raw dependencies after Aura/source departure.
+They also reject erasing a required dependency. These exercise replay inputs
+without inserting invented opt-in journal occurrences in the current catalog.
 
 Pending genuine-printing acceptance: paid Elenda casts/restores at all four
 thresholds and downward transitions; opponent instant refusal versus own

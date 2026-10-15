@@ -60,6 +60,154 @@ impl Hash for SourceTypeProjectionV1 {
     }
 }
 
+/// Raw inputs to the effective-type query, frozen before a departure batch.
+/// The source object itself is independently held by private_snapshot_json.
+/// Only transitive attachment and suppression references are copied here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceTypeInputV1 {
+    arena_len: u32,
+    dependencies: Vec<(ObjectId, crate::state::GameObject)>,
+    active_player: PlayerId,
+    planeswalkers: Option<crate::planeswalker_v1::PlaneswalkersV1>,
+    crewed: Vec<(ObjectId, u32)>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceTypeInputProjectionV1(pub Option<Box<SourceTypeInputV1>>);
+impl SourceTypeInputProjectionV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for SourceTypeInputProjectionV1 {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        if let Some(input) = &self.0 {
+            "effective-source-type-input/v1".hash(h);
+            input.hash(h);
+        }
+    }
+}
+fn type_dependencies(object: &crate::state::GameObject) -> Vec<ObjectId> {
+    let mut ids = object.attachments.clone();
+    if let Some(host) = object.v4.attached_to {
+        ids.push(host.object);
+    }
+    if let Some(upgrade) = &object.v4.creature_upgrade {
+        ids.extend(upgrade.suppressed_by.iter().map(|e| e.source.object));
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+pub(crate) fn capture_type_input(
+    state: &GameState,
+    source: ObjectId,
+) -> Result<SourceTypeInputV1, String> {
+    let root = state
+        .objects
+        .try_get(source)
+        .ok_or("type input source missing")?;
+    let mut pending = type_dependencies(root);
+    let mut seen = std::collections::BTreeSet::from([source]);
+    let mut dependencies = std::collections::BTreeMap::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let object = state
+            .objects
+            .try_get(id)
+            .ok_or("type input dependency missing")?;
+        pending.extend(type_dependencies(object));
+        dependencies.insert(id, object.clone());
+    }
+    Ok(SourceTypeInputV1 {
+        arena_len: u32::try_from(state.objects.len()).map_err(|_| "source type arena overflow")?,
+        dependencies: dependencies.into_iter().collect(),
+        active_player: state.active_player,
+        planeswalkers: state.planeswalkers_v1.clone(),
+        crewed: crate::standard_cards_v1::source_type_crew_input(state),
+    })
+}
+
+pub(crate) fn validate_snapshot_types(
+    snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
+    arena_bound: usize,
+) -> Result<(), String> {
+    let input = snapshot
+        .source_type_input_v1
+        .0
+        .as_ref()
+        .ok_or("source types lost independent prebatch inputs")?;
+    let captured: crate::state::GameObject = serde_json::from_str(&snapshot.private_snapshot_json)
+        .map_err(|_| "source type input object JSON malformed")?;
+    if serde_json::to_string(&captured).map_err(|_| "source type input serialization")?
+        != snapshot.private_snapshot_json
+        || usize::from(captured.card_def) >= CARD_DEFS.len()
+        || captured.card_def != snapshot.source.card_def
+        || captured.zone != snapshot.source.zone
+        || captured.owner != snapshot.source.owner
+        || captured.controller != snapshot.source.controller
+        || captured.zone_change_count != snapshot.source.zone_change_count
+        || input.arena_len as usize > arena_bound
+        || snapshot.source.source.0 >= input.arena_len
+        || !input
+            .dependencies
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0)
+        || input.dependencies.iter().any(|(id, object)| {
+            *id == snapshot.source.source
+                || id.0 >= input.arena_len
+                || usize::from(object.card_def) >= CARD_DEFS.len()
+        })
+    {
+        return Err("source type prebatch input changed source or dependency identities".into());
+    }
+    let nodes = std::iter::once((snapshot.source.source, &captured))
+        .chain(input.dependencies.iter().map(|(id, object)| (*id, object)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut needed = std::collections::BTreeSet::from([snapshot.source.source]);
+    let mut pending = type_dependencies(&captured);
+    while let Some(id) = pending.pop() {
+        if !needed.insert(id) {
+            continue;
+        }
+        let object = nodes
+            .get(&id)
+            .ok_or("source type input erased a transitive dependency")?;
+        pending.extend(type_dependencies(object));
+    }
+    if needed.len() != nodes.len() {
+        return Err("source type input added unrelated dependencies".into());
+    }
+    let mut replay = GameState::new_from_libraries(&[], &[], |_| String::new(), 0);
+    let mut absent = captured.clone();
+    absent.zone = Zone::Exile;
+    absent.attachments.clear();
+    absent.v4 = crate::state::ObjectStateV4::from_card_def(absent.card_def);
+    absent.spell_copy_origin = None;
+    for _ in 0..input.arena_len {
+        replay.objects.push(absent.clone());
+    }
+    for (id, object) in nodes {
+        *replay.objects.get_mut(id) = object.clone();
+        if object.zone == Zone::Battlefield {
+            replay.players[object.controller.index()]
+                .battlefield
+                .push(id);
+        }
+    }
+    replay.active_player = input.active_player;
+    replay.planeswalkers_v1 = input.planeswalkers.clone();
+    crate::standard_cards_v1::restore_source_type_crew_input(&mut replay, input.crewed.clone());
+    let expected = current_types(&replay, snapshot.source.source)?;
+    if snapshot.source_types_v1.0 != Some(expected) {
+        return Err("source type projection differs from original prebatch inputs".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
@@ -206,6 +354,43 @@ pub(crate) fn source_types(
         return Err("historical source types duplicate or invalid".into());
     }
     Ok(types)
+}
+
+/// A retained targeting reflexive also binds a ceased copy to its original
+/// spell contract. Arena membership alone cannot authenticate a ceased copy.
+pub(crate) fn validate_retained_spell_types(
+    state: &GameState,
+    source: crate::state::StackSourceContractV4,
+) -> Result<(), String> {
+    if !enabled() {
+        return Ok(());
+    }
+    let expected = spell_types(&CARD_DEFS[usize::from(source.card_def)], source.cast_method)?;
+    if let Some(origin) = source.spell_copy_origin {
+        let object = state
+            .objects
+            .try_get(source.source)
+            .ok_or("retained copy source missing")?;
+        if object.card_def != source.card_def
+            || object.owner != source.owner
+            || object.zone != source.zone
+            || object.zone_change_count != source.zone_change_count
+            || object.spell_copy_origin != Some(origin)
+            || origin.source_types_v1.0 != Some(expected)
+        {
+            return Err("retained copy changed original effective-type provenance".into());
+        }
+    } else if source_types(
+        state,
+        source.source,
+        source.card_def,
+        source.zone,
+        source.zone_change_count,
+    )? != expected
+    {
+        return Err("retained spell types differ from original selected form".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn active_rule(

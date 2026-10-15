@@ -333,3 +333,160 @@ fn foreign_copy_type_projection_cannot_extend_an_old_catalog_contract() {
     assert!(engine::validate_spell_stack_source(&state, row).is_err());
     assert_eq!(before, serde_json::to_vec(&state).unwrap());
 }
+
+fn explicit_snapshot_input(
+    state: &GameState,
+    source: ObjectId,
+) -> crate::controlled_creature_grants_v1::DepartureColorV1 {
+    // A primitive input built from the actual current board. This is not
+    // inserted as a fabricated journal occurrence in the unselected catalog.
+    crate::controlled_creature_grants_v1::DepartureColorV1 {
+        source: crate::state::AbilitySourceContractV4::capture(state, source),
+        color_mask: engine::object_color_mask(state, source),
+        private_snapshot_json: serde_json::to_string(state.objects.get(source)).unwrap(),
+        source_types_v1: SourceTypeProjectionV1(Some(current_types(state, source).unwrap())),
+        source_type_input_v1: SourceTypeInputProjectionV1(Some(Box::new(
+            capture_type_input(state, source).unwrap(),
+        ))),
+    }
+}
+
+#[test]
+fn paid_instant_type_only_rewrites_refuse_with_original_cast_and_input_unchanged() {
+    let mut state = ready();
+    let source = put(&mut state, "Lightning Bolt");
+    state.players[0].mana_pool = [5; 6];
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::CastSpell(source)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { .. }
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(crate::state::Target::Player(PlayerId::P1)),
+    )
+    .unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    let input = explicit_snapshot_input(&state, source);
+    assert!(input.source_types_v1.0.unwrap().contains(CardType::Instant));
+    let id = state
+        .stack
+        .iter()
+        .find(|row| row.source == source)
+        .unwrap()
+        .v4
+        .stack_item_id;
+    engine::counter_stack_item_by_id(&mut state, id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+    validate_snapshot_types(&input, state.objects.len()).unwrap();
+    let original = serde_json::to_vec(&state).unwrap();
+    for types in [
+        SourceTypesV1::from_types(&[CardType::Sorcery]),
+        SourceTypesV1::from_types(&[]),
+    ] {
+        let mut rewritten = input.clone();
+        rewritten.source_types_v1 = SourceTypeProjectionV1(Some(types));
+        assert_eq!(input.private_snapshot_json, rewritten.private_snapshot_json);
+        assert_eq!(input.source_type_input_v1, rewritten.source_type_input_v1);
+        assert!(validate_snapshot_types(&rewritten, state.objects.len()).is_err());
+        assert_eq!(original, serde_json::to_vec(&state).unwrap());
+    }
+}
+
+#[test]
+#[cfg(feature = "standard-magezero-fixtures")]
+fn paid_instant_adventure_type_projection_recomputes_original_selected_form() {
+    let mut state = ready();
+    let (source, id) = paid_form(&mut state, "Questing Druid", 1);
+    let input = explicit_snapshot_input(&state, source);
+    engine::counter_stack_item_by_id(&mut state, id)
+        .unwrap()
+        .unwrap();
+    validate_snapshot_types(&input, state.objects.len()).unwrap();
+    let mut rewritten = input.clone();
+    rewritten.source_types_v1 =
+        SourceTypeProjectionV1(Some(SourceTypesV1::from_types(&[CardType::Creature])));
+    assert!(validate_snapshot_types(&rewritten, state.objects.len()).is_err());
+    assert_eq!(input.private_snapshot_json, rewritten.private_snapshot_json);
+}
+
+#[test]
+#[cfg(feature = "standard-magezero-fixtures")]
+fn paid_aura_animation_retains_original_prebatch_dependencies_after_aura_departure() {
+    let mut state = ready();
+    let source = put(&mut state, "Great Furnace");
+    crate::event::propose_and_commit(
+        &mut state,
+        crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+    );
+    let aura = put(&mut state, "Zoetic Glyph");
+    state.players[0].mana_pool = [5; 6];
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::CastSpell(aura)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { .. }
+    ));
+    engine::step(
+        &mut state,
+        Action::ChooseTarget(crate::state::Target::Object(source)),
+    )
+    .unwrap();
+    for _ in 0..30 {
+        match engine::advance_until_decision(&mut state) {
+            Decision::CastSpellOrPass { .. } if state.stack.is_empty() => break,
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected Glyph decision: {other:?}"),
+        }
+    }
+    assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+    let input = explicit_snapshot_input(&state, source);
+    assert!(input
+        .source_types_v1
+        .0
+        .unwrap()
+        .contains(CardType::Creature));
+    assert!(input
+        .source_type_input_v1
+        .0
+        .as_ref()
+        .unwrap()
+        .dependencies
+        .iter()
+        .any(|(id, _)| *id == aura));
+    crate::event::propose_and_commit(
+        &mut state,
+        crate::event::ProposedEvent::zone_change(aura, Zone::Graveyard),
+    );
+    let after = current_types(&state, source).unwrap();
+    assert!(!after.contains(CardType::Creature));
+    crate::event::propose_and_commit(
+        &mut state,
+        crate::event::ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
+    validate_snapshot_types(&input, state.objects.len()).unwrap();
+    let mut rewritten = input.clone();
+    rewritten.source_types_v1 = SourceTypeProjectionV1(Some(after));
+    assert!(validate_snapshot_types(&rewritten, state.objects.len()).is_err());
+    let mut erased = input;
+    erased
+        .source_type_input_v1
+        .0
+        .as_mut()
+        .unwrap()
+        .dependencies
+        .clear();
+    assert!(validate_snapshot_types(&erased, state.objects.len()).is_err());
+}
