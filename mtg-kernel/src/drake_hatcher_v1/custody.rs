@@ -159,14 +159,21 @@ fn world(state: &GameState) -> Result<GameState, String> {
     let mut copy = state.clone();
     copy.engine.event_history.clear();
     let mut value = serde_json::to_value(&copy).map_err(|e| e.to_string())?;
-    strip_nested_receipts(&mut value)?;
+    strip_nested_receipts(&mut value, &state.engine.event_history)?;
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
 // A sibling checkpoint retains its exact original history length and positions.
 // Only existing Drake records in that original are represented by their actual
 // immutable outer index. Every non-Drake field/event remains byte-equivalent.
-fn strip_nested_receipts(value: &mut serde_json::Value) -> Result<(), String> {
-    fn strip(value: &mut serde_json::Value, position: Option<usize>) -> Result<(), String> {
+fn strip_nested_receipts(
+    value: &mut serde_json::Value,
+    prefix: &[CommittedEvent],
+) -> Result<(), String> {
+    fn strip(
+        value: &mut serde_json::Value,
+        position: Option<usize>,
+        prefix: &[CommittedEvent],
+    ) -> Result<(), String> {
         if let Some(record) = value.get("DrakeJournalV1").and_then(|v| v.get("record")) {
             let index = record
                 .get("index")
@@ -177,13 +184,24 @@ fn strip_nested_receipts(value: &mut serde_json::Value) -> Result<(), String> {
                     "Drake nested original record shifted from its bound input position".into(),
                 );
             }
+            let actual = usize::try_from(index)
+                .ok()
+                .and_then(|at| prefix.get(at))
+                .ok_or("Drake nested original lies outside actual enclosing prefix")?;
+            if journal(actual).is_none_or(|row| row.index != index)
+                || serde_json::to_value(actual).map_err(|e| e.to_string())? != *value
+            {
+                return Err(
+                    "Drake nested original differs from whole actual indexed record".into(),
+                );
+            }
             *value = serde_json::json!({ "DrakeHistoryRefV1": { "index": index } });
             return Ok(());
         }
         match value {
             serde_json::Value::Array(values) => {
                 for child in values {
-                    strip(child, None)?;
+                    strip(child, None, prefix)?;
                 }
             }
             serde_json::Value::Object(values) => {
@@ -193,10 +211,10 @@ fn strip_nested_receipts(value: &mut serde_json::Value) -> Result<(), String> {
                             .as_array_mut()
                             .ok_or("Drake nested history changed type")?;
                         for (at, event) in events.iter_mut().enumerate() {
-                            strip(event, Some(at))?;
+                            strip(event, Some(at), prefix)?;
                         }
                     } else {
-                        strip(child, None)?;
+                        strip(child, None, prefix)?;
                     }
                 }
             }
@@ -204,7 +222,7 @@ fn strip_nested_receipts(value: &mut serde_json::Value) -> Result<(), String> {
         }
         Ok(())
     }
-    strip(value, None)
+    strip(value, None, prefix)
 }
 fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameState, String> {
     fn restore(
@@ -280,11 +298,26 @@ pub(crate) fn definition(id: u16) -> bool {
             && (d.activated_abilities[0].effect)() == EffectOp::DrakeCreateTokenFromPaidV1
     })
 }
+/// A fresh owner is selected from publicly active printing semantics only.
+/// A concealed underlying definition cannot change ownership, refusal or Hash.
+fn fresh_source(state: &GameState, id: ObjectId) -> bool {
+    state.objects.try_get(id).is_some_and(|object| {
+        matches!(object.zone, Zone::Battlefield | Zone::Stack)
+            && object.v4.face_down_v1.is_none()
+            && definition(object.card_def)
+            && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    })
+}
 pub(crate) fn relevant(state: &GameState) -> bool {
     !state.engine.drake_ledger_v1.is_empty()
-        || state.objects.iter().any(|(_, o)| {
-            matches!(o.zone, Zone::Battlefield | Zone::Stack) && definition(o.card_def)
-        })
+        || state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| journal(event).is_some())
+        || state.stack.iter().any(tracked)
+        || held(state).any(|pending| capture_of(&pending.effect).is_some())
+        || state.objects.iter().any(|(id, _)| fresh_source(state, id))
 }
 fn capture_of(effect: &EffectOp) -> Option<u64> {
     if let EffectOp::DrakeIncubationFromCaptureV1 { capture } = effect {
@@ -368,7 +401,12 @@ pub(crate) fn begin_combat(
     state: &mut GameState,
     proposals: &[ProposedEvent],
 ) -> Result<(), String> {
-    if !proposals.iter().any(|p| matches!(p,ProposedEvent::Damage(d) if state.objects.try_get(d.source).is_some_and(|o| definition(o.card_def)))) { return Ok(()); }
+    if !proposals
+        .iter()
+        .any(|p| matches!(p, ProposedEvent::Damage(d) if fresh_source(state, d.source)))
+    {
+        return Ok(());
+    }
     if open_combat(state)?.is_some() {
         return Err("Drake combat input replayed before completion".into());
     }
@@ -410,7 +448,7 @@ pub(crate) fn original_generation(state: &GameState, object: ObjectId) -> Option
         return None;
     };
     let live = world.objects.try_get(object)?;
-    definition(live.card_def).then_some(live.zone_change_count)
+    fresh_source(world, object).then_some(live.zone_change_count)
 }
 pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     let Some(input) = open_combat(state)? else {
@@ -571,12 +609,12 @@ pub(crate) fn capture_payment(
     let Some(live) = state.objects.try_get(p.source) else {
         return Err("Drake payment source absent".into());
     };
-    if !definition(live.card_def) {
+    // This loan owns only the printed slot. Equipment and Cauldron donor
+    // activations have independent exact producers and payment validators.
+    if !definition(live.card_def) || p.ability_index != 0 || p.cauldron_grant.0.is_some() {
         return Ok(None);
     };
-    if p.ability_index != 0
-        || p.cauldron_grant.0.is_some()
-        || live.zone != Zone::Battlefield
+    if live.zone != Zone::Battlefield
         || live.controller != p.controller
         || live.zone_change_count != p.source_zone_change_count
         || !crate::continuous_characteristics_v1::printed_abilities_active(state, p.source)
@@ -903,6 +941,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
     }
+    if !rows.is_empty() {
+        // Compression must prove every discarded nested original equals the
+        // whole actual indexed record before any caller can normalize it.
+        world(state)?;
+    }
     if state
         .engine
         .event_history
@@ -945,7 +988,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         }
         match &row.value {
             JournalV1::CombatInput { world, proposals } => {
-                let genuine = proposals.iter().any(|p| matches!(p, ProposedEvent::Damage(d) if d.is_combat && world.objects.try_get(d.source).is_some_and(|o| definition(o.card_def))));
+                let genuine = proposals.iter().any(|p| matches!(p, ProposedEvent::Damage(d) if d.is_combat && fresh_source(world, d.source)));
                 if !world.engine.event_history.is_empty() || !genuine {
                     return Err("Drake pre-batch input changed".into());
                 }

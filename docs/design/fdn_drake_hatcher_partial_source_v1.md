@@ -36,6 +36,8 @@ Runtime ownership and disposable replay recursion control cannot be restored
 from JSON. Snapshot outer histories are absent. Nested sibling original histories
 retain exact lengths/positions and replace only prior Drake records by exact
 references to the actual outer prefix; missing/shifted references refuse.
+Every discarded nested record must equal the whole actual record at its exact
+outer index before compression; same-index/different originals are refused.
 No sibling original or convenient later prefix is synthesized. This is original
 input replay custody, not cryptographic authenticity against rewriting an entire
 initial GameState/history. Ordinary worlds without a genuine Drake owner retain
@@ -47,7 +49,10 @@ APNAP multi-source capture, controller change, departure/reentry; exact paid
 activation, restore, counter/no-refund, independent original-controller token;
 forged/erased/replayed damage, collection, payment, publication and completion;
 genuine paid Banner checkpoint coexistence/restore with erased/shifted nested
-originals; counter overflow/underflow and absent-owner default compatibility.
+originals; counter overflow/underflow and absent-owner default compatibility. Paid Longbow
+cast/equip/granted tap-ping fixtures preserve independent ability slots. Fresh
+face-down primitive worlds with different concealed printings have the same
+ordinary/combat owner selection and predecessor publication/refusal behavior.
 Synthetic prevention, suppression and intervening-control setup use existing
 fixture mechanisms. These bodies have not executed.
 
@@ -68,7 +73,7 @@ engine fixtures, then implement exact public/transport/session/tensor/ordered
 meaning consumers and separately qualify model/sampler/search admission. Whole-world
 replay cost and sibling-family composition remain unmeasured. Full stays closed.
 
-Source digest: `706ceea161b44a3d10a46092ff9e7887a24de79c69583a4011dea63c05e635e4`.
+Source digest: `9738b84da6f8f94b9435737f02bbf09487ffe75ad1ee01a374d977741f42fe46`.
 Algorithm: sorted changed source/catalog/test/reference paths versus original base,
 excluding this note; SHA-256 over UTF-8 path, NUL, raw SHA-256 of LF-normalized bytes.
 Catalog LF SHA-256: `e9677499904a105bc9a1c889740d91e6414007950b80a4728e58aa4603b2ded2`.

@@ -789,9 +789,37 @@ mod tests {
             assert!(reached);
             let mut original = restored(&state);
             custody::validate(&original).unwrap();
-            for mode in 0..3 {
+            for mode in 0..4 {
                 let mut bad = original.clone();
-                if mode < 2 {
+                if mode == 3 {
+                    // Keep index/position unchanged but alter the whole nested
+                    // record. Compression must not erase this disagreement.
+                    let nested = &mut bad
+                        .engine
+                        .linked_aura_operation_v1
+                        .pending_general_v36
+                        .as_mut()
+                        .unwrap()
+                        .original
+                        .engine
+                        .event_history;
+                    let captured = nested
+                        .iter_mut()
+                        .find_map(|event| match event {
+                            event::CommittedEvent::DrakeJournalV1 { record }
+                                if matches!(record.value, J::Captured { .. }) =>
+                            {
+                                Some(record)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    let J::Captured { amount, .. } = &mut captured.value else {
+                        unreachable!()
+                    };
+                    *amount += 1;
+                    assert!(custody::validate(&bad).is_err());
+                } else if mode < 2 {
                     let nested = &mut bad
                         .engine
                         .linked_aura_operation_v1
@@ -889,6 +917,111 @@ mod tests {
                 .event_history
                 .iter()
                 .all(|e| custody::journal(e).is_none()));
+        }
+    }
+    #[test]
+    fn genuine_longbow_granted_paid_slot_remains_independent_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, drake) = cast(actor);
+            crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor);
+            let bow = put(&mut state, actor, "Viridian Longbow", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            state.priority_player = actor;
+            engine::step(&mut state, Action::CastSpell(bow)).unwrap();
+            finish(&mut state);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            state.priority_player = actor;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+            engine::step(&mut state, Action::ActivateAbility(bow, 0)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { .. }
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(drake))).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(bow).v4.attached_to.unwrap().object, drake);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            let mut own_restore = restored(&state);
+            for branch in [&mut state, &mut own_restore] {
+                branch.priority_player = actor;
+                assert!(!branch.objects.get(drake).summoning_sick);
+                let life = branch.players[actor.opponent().index()].life;
+                engine::step(branch, Action::ActivateAbility(drake, 1)).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(branch),
+                    Decision::ChooseTargets { .. }
+                ));
+                engine::step(
+                    branch,
+                    Action::ChooseTarget(Target::Player(actor.opponent())),
+                )
+                .unwrap();
+                let _ = engine::advance_until_decision(branch);
+                assert!(branch.objects.get(drake).tapped);
+                assert_eq!(branch.objects.get(drake).counters.incubation, 0);
+                assert!(branch.stack.last().unwrap().v4.granted_by.is_some());
+                finish(branch);
+                custody::validate(branch).unwrap();
+                assert_eq!(branch.players[actor.opponent().index()].life, life - 1);
+                assert!(!branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(custody::journal)
+                    .any(|row| matches!(row.value, custody::JournalV1::Paid { .. })));
+            }
+            assert_eq!(state, own_restore);
+        }
+    }
+    #[test]
+    fn fresh_concealed_printing_never_selects_drake_owner_or_refusal_both_seats() {
+        use crate::state::FaceDownV1;
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut worlds = Vec::new();
+            for name in ["Drake Hatcher", "Llanowar Elves"] {
+                // Primitive worlds isolate concealment, not an admitted
+                // disguise producer for either printed creature.
+                let mut state = ready_state_for(actor);
+                let source = put(&mut state, actor, name, Zone::Battlefield);
+                state.objects.get_mut(source).v4.face_down_v1 = Some(FaceDownV1 {
+                    disguised: true,
+                    lookers: 0,
+                    hidden_by: None,
+                    hidden_by_source: None,
+                });
+                assert!(!custody::relevant(&state));
+                assert!(require_public_counter(&state, source).is_ok());
+                engine::step(&mut state, Action::Pass).unwrap();
+                assert!(state.engine.drake_ledger_v1.is_empty());
+                engine::commit_combat_damage_events(
+                    &mut state,
+                    vec![ProposedEvent::damage(
+                        source,
+                        Target::Player(actor.opponent()),
+                        1,
+                    )],
+                );
+                assert!(state.engine.halted.is_none());
+                assert!(state.engine.drake_ledger_v1.is_empty());
+                assert_eq!(state.objects.get(source).counters.incubation, 0);
+                assert_eq!(state.players[actor.opponent().index()].life, 19);
+                assert!(!state
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| custody::journal(event).is_some()));
+                let predecessor = crate::rl::observe_v1(&state, actor, 0)
+                    .ok()
+                    .map(|view| serde_json::to_vec(&view).unwrap());
+                worlds.push((require_public_counter(&state, source).is_ok(), predecessor));
+            }
+            assert_eq!(worlds[0], worlds[1]);
         }
     }
 }
