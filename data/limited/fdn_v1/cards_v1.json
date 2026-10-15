@@ -7852,6 +7852,43 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/i/InfernalVessel.java",
       "is_token": false
+    },
+    {
+      "name": "Giada, Font of Hope",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{W}",
+      "mana_value": 2,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Angel"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [
+        "W"
+      ],
+      "decks": [
+        "FDN_reference_giada_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "vigilance",
+        "other_controlled_angel_enters_with_counters_per_preentry_angel",
+        "tap_white_only_to_cast_angel_spell"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GiadaFontOfHope.java",
+      "is_token": false
     }
   ]
 }

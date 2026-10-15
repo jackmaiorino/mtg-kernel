@@ -107,6 +107,8 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Drake Hatcher"));
             expected.push(card_id("Doubling Season"));
             expected.push(card_id("Extravagant Replication"));
+            expected.push(card_id("Infernal Vessel"));
+            expected.push(card_id("Giada, Font of Hope"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(

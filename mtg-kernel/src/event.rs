@@ -3526,6 +3526,17 @@ fn commit_with_entry_batch_and_source_color(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    if let Some(object) = entry_counter_object {
+        // All fixed, X and token-entry counters already exist, while no entry
+        // event or observer has been published. Use the original batch input.
+        if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
     let left_battlefield = match &committed {
         CommittedEvent::ZoneChange {
             object,

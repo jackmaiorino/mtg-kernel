@@ -1796,12 +1796,14 @@ pub enum ManaSpendRestrictionDef {
     LegendarySpell,
     Unrestricted,
     CreatureSpellOrCreatureAbility,
+    /// Spend only on casting a spell with the named subtype, never an activation.
+    SpellWithSubtype(Subtype),
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
-/// spending restriction. It is never an explicit action: the payment
-/// planner offers these colors from the source only while paying the total
-/// cost of a spell the restriction allows, so restricted mana never floats.
+/// spending restriction. Spell payment offers the source only for eligible
+/// casts. Explicit activation retains the restriction on each floating unit,
+/// including after its producing incarnation leaves the battlefield.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestrictedManaAbilityDef {
     pub colors: &'static [ManaColor],
@@ -2094,6 +2096,9 @@ pub enum DamageReplacementDefV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TokenCounterReplacementDefV48 {
     DoubleEffectTokensAndControlledPermanentCounters,
+    /// Each OTHER controlled permanent of this subtype enters with one
+    /// additional +1/+1 counter per already-controlled permanent of that subtype.
+    OtherControlledSubtypeEntry(Subtype),
 }
 
 /// One additive, battlefield-only self bonus. The threshold reads the live
@@ -2467,7 +2472,8 @@ impl CardDef {
         self.is_executable()
             && (!self.mana_ability_choices.is_empty()
                 || self.mana_ability_includes_chosen_color
-                || !self.additional_mana_abilities.is_empty())
+                || !self.additional_mana_abilities.is_empty()
+                || !self.restricted_mana_abilities.is_empty())
     }
 
     /// Automatic spell-cost payment may only tap sources whose entire printed

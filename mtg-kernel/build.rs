@@ -3498,6 +3498,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
             "EffectOp::TakeExtraTurnAfterThisOneV1",
         ),
+        "Giada, Font of Hope" => program("None", "MoveObject(ThisSource,Battlefield);otherControlledAngelEntersWithCountersPerAlreadyControlledAngel;tapWhiteOnlyAngelSpell", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Infernal Vessel" => program("None", "MoveObject(ThisSource,Battlefield);diesUnlessSubtype:Demon:returnExactGraveyardIncarnationUnderOwnerWithCounters:2:addSubtype:Demon", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Extravagant Replication" => program("None", "MoveObject(ThisSource,Battlefield);controllerUpkeep:CreateAnotherControlledNonlandTargetCopyV1(exactOriginalSourceAndTargetIncarnations,currentCopiableValues,untargetedAuraAttachmentBeforeEntry,replacementsApply)", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Self-Reflection" => program(
@@ -4350,7 +4351,7 @@ fn keywords_for(card: &CardJson) -> String {
     }
     // FDN keyword-only creatures, in printed keyword order.
     match card.name.as_str() {
-        "Serra Angel" => {
+        "Serra Angel" | "Giada, Font of Hope" => {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::VIGILANCE");
         }
@@ -10440,6 +10441,8 @@ fn codegen(cards: &[CardJson]) -> String {
             "        token_counter_replacement_v48: {},",
             if executable && c.name == "Doubling Season" {
                 "Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)"
+            } else if executable && c.name == "Giada, Font of Hope" {
+                "Some(TokenCounterReplacementDefV48::OtherControlledSubtypeEntry(Subtype::Angel))"
             } else {
                 "None"
             }
@@ -10699,6 +10702,10 @@ fn codegen(cards: &[CardJson]) -> String {
             canon.push_str(
                 "other_controlled_nontoken_death_v1=MayRevealCreatureToHandRandomBottom|",
             );
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Giada, Font of Hope"
+        {
+            canon.push_str("token_counter_replacement_v48=OtherControlledSubtypeEntry(Angel):preentry_sources_and_count:excludes_entrant:simultaneous_batch_snapshot|" );
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
             canon.push_str(
