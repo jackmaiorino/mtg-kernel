@@ -8887,7 +8887,10 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "limited-fdn-fixtures")]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(super) fn fixture_bytes_fdn_hunter_flying_repair_batch() -> Vec<u8> {
         let mut record = fixture_record();
         record.environment.card_db_hash_u64_hex =
