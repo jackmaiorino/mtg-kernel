@@ -69,7 +69,7 @@ fn resolve(state: &mut GameState, source: ObjectId) {
 }
 fn owning(state: GameState, actor: PlayerId) -> HumanAkromaSessionV40 {
     HumanAkromaSessionV40::from_session(
-        FastActorSessionV1::from_akroma_v40_fixture_state(state),
+        FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
         actor.into(),
     )
     .unwrap()

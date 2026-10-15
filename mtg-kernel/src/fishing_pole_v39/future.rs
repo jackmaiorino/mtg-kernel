@@ -856,6 +856,10 @@ fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_
                 ));
                 assert!(grants(&state, host).is_empty());
                 assert!(cost_candidates(&state, actor, host).is_empty());
+                // Direct characteristic setup has no engine event to initiate
+                // collection. Run the genuine SBA checkpoint before priority.
+                let waiting = crate::trigger::collect_and_process(&mut state);
+                state.engine.pending_triggers.extend(waiting);
                 let decision = next(&mut state);
                 assert!(
                     matches!(decision, Decision::CastSpellOrPass { ref activatable_abilities, .. }
@@ -970,9 +974,9 @@ fn real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_re
             legacy.current_response(),
             FastActorResponseV1::Terminal(_)
         ));
-        let mut session = FastActorSessionV1::from_akroma_v40_fixture_state(state);
+        let mut session = FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state);
         let FastActorResponseV1::Decision(expected) = session.current_response() else {
-            panic!("actual mixed menu");
+            panic!("actual mixed menu: {:?}", session.current_response());
         };
         let (public, actions, binding) = session
             .akroma_current_decision_input_v40(expected, expected.acting_player)
@@ -1063,13 +1067,13 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, _, pole) = mixed_memorial(actor);
         let mut human = HumanAkromaSessionV40::from_session(
-            FastActorSessionV1::from_akroma_v40_fixture_state(state),
+            FastActorSessionV1::from_akroma_v40_engine_priority_fixture(state),
             actor.into(),
         )
         .unwrap();
         let mut projector = HumanAkromaProjectorV40::new(actor.into());
         let FastActorResponseV1::Decision(expected) = human.current_response() else {
-            panic!("actual mixed Human");
+            panic!("actual mixed Human: {:?}", human.current_response());
         };
         let prompt = projector.project_current(&human, expected).unwrap();
         assert!(prompt

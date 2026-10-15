@@ -207,9 +207,28 @@ impl FastActorSessionV1 {
 
     #[cfg(test)]
     pub(crate) fn from_akroma_v40_fixture_state(state: GameState) -> Self {
+        Self::from_akroma_v40_fixture_state_with_surface(state, PolicySurfaceV5::new_for_session())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_akroma_v40_engine_priority_fixture(state: GameState) -> Self {
+        Self::from_akroma_v40_fixture_state_with_surface(
+            state,
+            PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                crate::surface_v2::SuppressionAuditMode::Off,
+            ),
+        )
+    }
+
+    #[cfg(test)]
+    fn from_akroma_v40_fixture_state_with_surface(
+        state: GameState,
+        surface: PolicySurfaceV5,
+    ) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
-        session.surface = PolicySurfaceV5::new_for_session();
+        session.surface = surface;
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;

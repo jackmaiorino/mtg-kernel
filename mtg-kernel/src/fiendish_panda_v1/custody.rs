@@ -1,6 +1,6 @@
 //! Panda-specific ownership of mandatory roots and their actual operations.
 use super::*;
-use crate::state::{GameObject, StackItem, StackItemKind, StackStateV4};
+use crate::state::{GameObject, StackItem, StackItemKind, StackStateV4, StackTargetContractV4};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -312,6 +312,17 @@ pub(crate) struct OwnerV1 {
     world: WorldV1,
 }
 pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<OwnerV1>, String> {
+    let Some(publication) = validated_live_publication(state, item)? else {
+        return Ok(None);
+    };
+    Ok(Some(OwnerV1 {
+        original: item.clone(),
+        publication,
+        world: WorldV1::capture(state)?,
+    }))
+}
+
+fn validated_live_publication(state: &GameState, item: &StackItem) -> Result<Option<u64>, String> {
     let Some(capture) = item_capture(item) else {
         return Ok(None);
     };
@@ -333,11 +344,52 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     let [publication] = publications.as_slice() else {
         return Err("Panda original full publication missing or duplicated".into());
     };
-    Ok(Some(OwnerV1 {
-        original: item.clone(),
-        publication: *publication,
-        world: WorldV1::capture(state)?,
-    }))
+    Ok(Some(*publication))
+}
+
+/// A published graveyard target keeps its original public contract after a
+/// real departure. Authenticate that complete publication in its original
+/// world, without consulting the newer incarnation's hidden definition.
+pub(crate) fn authenticates_stale_target(
+    state: &GameState,
+    item: &StackItem,
+    spec: TargetSpec,
+    index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> Result<bool, String> {
+    let Some(EffectOp::FiendishPandaReturnFromCaptureV1 { maximum, .. }) = &item.inline_effect
+    else {
+        return Ok(false);
+    };
+    if spec != TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(*maximum)
+        || index != 0
+        || item.targets.as_slice() != [target]
+        || item.v4.target_contracts.as_slice() != [contract]
+    {
+        return Ok(false);
+    }
+    let StackTargetContractV4::Object {
+        object,
+        owner,
+        zone: Zone::Graveyard,
+        zone_change_count,
+        spell_copy_origin: None,
+        ..
+    } = contract
+    else {
+        return Ok(false);
+    };
+    if target != Target::Object(object)
+        || !state.objects.try_get(object).is_some_and(|live| {
+            live.owner == owner
+                && live.spell_copy_origin.is_none()
+                && live.zone_change_count > zone_change_count
+        })
+    {
+        return Ok(false);
+    }
+    Ok(validated_live_publication(state, item)?.is_some())
 }
 fn record_removal(
     state: &mut GameState,
