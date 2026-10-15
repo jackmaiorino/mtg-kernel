@@ -1,0 +1,75 @@
+{
+  "schema": "scorer-only-acquisition-inputs/v1",
+  "status": "prospective input descriptors only, not dispatch qualified",
+  "owner_thread": "01a13f6e-7234-73d1-b247-0145587e31ff",
+  "lineages": [
+    {
+      "lineage": "r1",
+      "parent_descriptor": {
+        "path": "D:\\spy-reset-20261010\\sources\\r1-source.json",
+        "sha256": "a63d24ea8305a378f2cf08878813c26481855519eb04e6e97afd8cd6c4405634"
+      },
+      "declared_parent": {
+        "checkpoint": {
+          "path": "E:/nine-deck-baseline-20261007/computehost-campaign/checkpoints/r1/block-20.json",
+          "sha256": "5c104b0d5bb532568549e9b2bdf6f787d32e51652b7154a148ffc94213c1a50b"
+        },
+        "feature_transfer": {
+          "expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
+          "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"
+        },
+        "play_import": {
+          "path": "C:/mtg-node/nine-deck-baseline-20261007/inputs/metadata/t1-import.json",
+          "sha256": "d2d3eb6dd354feec9de116cd3447486213b608899f9a2a4ee8e331e0f6a4d375"
+        }
+      },
+      "bank": {
+        "path": "E:\\student-target-conflicts-20261015\\inputs\\r1-bank.json",
+        "sha256": "c13ea564e6bbabaf3332c2382d1be43226bfb12d55a55116bb5c01ce78f0f2c5",
+        "bytes": 3075909
+      },
+      "anchor_descriptor": {
+        "path": "D:\\spy-distill-20261013\\sets\\r1\\anchor.json",
+        "sha256": "2a69cd15a8ef6e820d16b97b0b8e3fdd3dbd1c57bb653655123277e3535de603",
+        "bytes": 99821
+      }
+    },
+    {
+      "lineage": "r2",
+      "parent_descriptor": {
+        "path": "D:\\spy-reset-20261010\\sources\\r2-source.json",
+        "sha256": "edfed71da0d5ea2b6c707f2620bb95e3114531fa811dfb016960627205c89548"
+      },
+      "declared_parent": {
+        "checkpoint": {
+          "path": "E:/nine-deck-baseline-20261007/computehost-campaign/checkpoints/r2/block-20.json",
+          "sha256": "d61079228505aac620302e3e5e608020f4ac4790343ea6a48979e4b10603da99"
+        },
+        "feature_transfer": {
+          "expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b",
+          "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"
+        },
+        "play_import": {
+          "path": "C:/mtg-node/nine-deck-baseline-20261007/inputs/metadata/t1-import.json",
+          "sha256": "d2d3eb6dd354feec9de116cd3447486213b608899f9a2a4ee8e331e0f6a4d375"
+        }
+      },
+      "bank": {
+        "path": "E:\\student-target-conflicts-20261015\\inputs\\r2-bank.json",
+        "sha256": "414c766d179d5a2f3fbad548bb682b14170f95f34d18377d4c6a41084f8fe4ed",
+        "bytes": 3881429
+      },
+      "anchor_descriptor": {
+        "path": "D:\\spy-distill-20261013\\sets\\r2\\anchor.json",
+        "sha256": "d54812b995be71daf29f59677d11ccc0cb4f46f1ebdc77d21e2b5dee102c0952",
+        "bytes": 99821
+      }
+    }
+  ],
+  "verification": "Descriptor and bank file hashes verified. Nested checkpoints, imports, games and anchor trajectories must be validated by supported runtime before launch. No late U checkpoints included.",
+  "new_paid_authority_usd": 0,
+  "proposed_total_cpu_seconds_cap": 21600,
+  "runtime": null,
+  "concrete_panel": null,
+  "physical_byte_cap": null
+}

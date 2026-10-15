@@ -25,6 +25,11 @@
 //!   LANES/spy-u-collapse-20261014): arm U with one change to its step size,
 //!   anchor coefficient, rows or checkpoint steps. Absent, phase 1 is the
 //!   screen's frozen recipe exactly.
+//! - The independent optional `update_scope: "scorer_only"` freezes every
+//!   non-scorer parameter and both Adam moments. Both scorer layers update
+//!   with the same Adam age; the final bias stays in its canonical gauge.
+//!   Omission keeps historical full-network updates and serialized fields.
+//!   Gradient telemetry still describes the unmasked loss derivatives.
 //!
 //! No policy plays a game here, and no outcome is ever a label or a readout.
 
@@ -33,7 +38,8 @@ use crate::line_b_teacher_target_v1::{
     line_b_divergence_v1, line_b_softmax_v1, LineBDivergenceV1, LineBSoftmaxV1,
 };
 use crate::native_policy_train_step_v1::{
-    one_hot_target_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
+    one_hot_target_v1, ArchiveDistillationUpdateScopeV1, ExternalAuxiliaryInputV1,
+    ExternalAuxiliaryRowV1,
 };
 use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
@@ -428,6 +434,12 @@ pub struct ArchiveDistillationProvenanceV1 {
     /// absent for the screen's frozen recipe.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell: Option<ArchiveDistillationCellV1>,
+    /// Omitted for historical full-network checkpoints.
+    #[serde(
+        default,
+        skip_serializing_if = "ArchiveDistillationUpdateScopeV1::is_full_network_v1"
+    )]
+    pub update_scope: ArchiveDistillationUpdateScopeV1,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -508,7 +520,24 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
             && parent.first_moments == saved.first_moments
             && parent.second_moments == saved.second_moments,
         "phase-1 checkpoint does not hold its parent's exact optimizer state",
-    )
+    )?;
+    if provenance.update_scope == ArchiveDistillationUpdateScopeV1::ScorerOnly {
+        ensure(
+            saved.parameters.len() == parent.parameters.len()
+                && saved
+                    .parameters
+                    .iter()
+                    .zip(&parent.parameters)
+                    .all(|(after, before)| {
+                        matches!(
+                            after.name.as_str(),
+                            "scorer.0.weight" | "scorer.0.bias" | "scorer.2.weight"
+                        ) || after == before
+                    }),
+            "scorer-only phase-1 checkpoint changed a frozen parameter",
+        )?;
+    }
+    Ok(())
 }
 
 /// A deck label names Spy: the runtime deck id itself, or a nine-deck
@@ -1112,6 +1141,7 @@ fn anchor_identity_preflight_v1(
     rows: &[AnchorRowV1],
     targets: &[LineBSoftmaxV1],
     recipe: &RecipeV1,
+    update_scope: ArchiveDistillationUpdateScopeV1,
 ) -> Result<usize, String> {
     ensure(
         fresh.adam_step_v1() == 0,
@@ -1132,8 +1162,18 @@ fn anchor_identity_preflight_v1(
             })
             .collect(),
     };
-    copy.train_step_auxiliary_only_v1(generation, recipe.learning_rate, &[&input])
-        .map_err(|e| format!("anchor pre-flight step: {e:?}"))?;
+    let result = match update_scope {
+        ArchiveDistillationUpdateScopeV1::FullNetwork => {
+            copy.train_step_auxiliary_only_v1(generation, recipe.learning_rate, &[&input])
+        }
+        ArchiveDistillationUpdateScopeV1::ScorerOnly => copy.train_step_auxiliary_only_scoped_v1(
+            generation,
+            recipe.learning_rate,
+            &[&input],
+            update_scope,
+        ),
+    };
+    result.map_err(|e| format!("anchor pre-flight step: {e:?}"))?;
     let after = copy.model_v1().parameter_snapshot_v1();
     ensure(
         same_parameter_bits(&before, &after),
@@ -1425,6 +1465,7 @@ pub(super) fn phase1_v1(
     stop_after_steps: Option<u64>,
     dry_run: bool,
     options: Option<ArchiveDistillationOptionsV1>,
+    update_scope: ArchiveDistillationUpdateScopeV1,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
@@ -1496,6 +1537,9 @@ pub(super) fn phase1_v1(
     if let Some(options) = &options {
         recipe["options"] = json!(options);
     }
+    if !update_scope.is_full_network_v1() {
+        recipe["update_scope"] = json!(update_scope);
+    }
     let arm_rows: Vec<ArchiveRowV1> = selected.iter().map(|&i| rows[i].0.clone()).collect();
     let mut census = json!({"bank":bank_census_v1(&bank_record.game_status, &bank_record.rows),
         "arm":bank_census_v1(&[], &arm_rows),
@@ -1533,6 +1577,7 @@ pub(super) fn phase1_v1(
         &anchor_train,
         &anchor_targets,
         &recipe_values,
+        update_scope,
     )?;
     if dry_run {
         let result = json!({"schema":PHASE1_SCHEMA,"dry_run":true,"identity":identity,
@@ -1573,10 +1618,11 @@ pub(super) fn phase1_v1(
                 .collect(),
         };
         let (terms, gauge) = state
-            .train_step_auxiliary_only_v1(
+            .train_step_auxiliary_only_scoped_v1(
                 generation,
                 recipe_values.learning_rate,
                 &[&anchor_input, &archive_input],
+                update_scope,
             )
             .map_err(|e| format!("phase-1 step {number}: {e:?}"))?;
         let [anchor_term, archive_term] = terms.as_slice() else {
@@ -1621,6 +1667,7 @@ pub(super) fn phase1_v1(
                 phase1_state_sha256: phase1_state.clone(),
                 runtime_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").into(),
                 cell: recipe_values.cell.clone(),
+                update_scope,
             };
             let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
                 &output_directory,
@@ -1985,6 +2032,9 @@ pub(super) fn probe_v1(
     publish_json(&output_directory, "probe.json", &result)?;
     Ok(result)
 }
+
+mod retention_trace;
+pub(super) use retention_trace::retention_trace_v1;
 
 #[cfg(test)]
 mod tests;

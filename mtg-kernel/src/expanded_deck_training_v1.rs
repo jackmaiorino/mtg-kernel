@@ -2706,6 +2706,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// frozen recipe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<archive_distillation_v1::ArchiveDistillationOptionsV1>,
+        /// Prospective scorer-only updates; omission preserves full-network steps.
+        #[serde(
+            default,
+            skip_serializing_if = "crate::native_policy_train_step_v1::ArchiveDistillationUpdateScopeV1::is_full_network_v1"
+        )]
+        update_scope: crate::native_policy_train_step_v1::ArchiveDistillationUpdateScopeV1,
         output_directory: PathBuf,
     },
     /// Spy archive distillation fit check: forward-only readouts of each
@@ -2717,6 +2723,16 @@ pub enum ExpandedTrainingCommandV1 {
         banks: Vec<archive_distillation_v1::ArchiveDistillationProbeBankV1>,
         anchor: archive_distillation_v1::ArchiveDistillationAnchorV1,
         offers: Vec<PinnedFileV1>,
+        output_directory: PathBuf,
+    },
+    /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
+    /// one completed run's update-by-update GAE credit, checked against its
+    /// update records, and the Spy learner's line menus. Trains nothing.
+    LineRetentionTrace {
+        /// The run's `run.json` manifest.
+        run: PinnedFileV1,
+        /// The same run's `completion.json`.
+        completion: PinnedFileV1,
         output_directory: PathBuf,
     },
 }
@@ -2792,6 +2808,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             stop_after_steps,
             dry_run,
             options,
+            update_scope,
             output_directory,
         } => archive_distillation_v1::phase1_v1(
             parent,
@@ -2803,6 +2820,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             stop_after_steps,
             dry_run,
             options,
+            update_scope,
             output_directory,
         ),
         ExpandedTrainingCommandV1::ArchiveDistillationProbe {
@@ -2822,6 +2840,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             offers,
             output_directory,
         ),
+        ExpandedTrainingCommandV1::LineRetentionTrace {
+            run,
+            completion,
+            output_directory,
+        } => archive_distillation_v1::retention_trace_v1(run, completion, output_directory),
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,

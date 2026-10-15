@@ -9,11 +9,22 @@ initial source and must reproduce O's recorded final state, which proves the
 mapping exact; phase 2 starts from the selected phase-1 checkpoint's source.
 Episode ids stay O's, so non-natural retry seeds match too.
 
+The Spy line retention trace (collab LANES/spy-line-retention-20261015,
+DESIGN.md section 2) adds two options to a phase-2 config, both off by
+default: ``--replicate K`` (K = 1 to 3) gives every unit a new seed and its
+episodes new ids, keeping O's units, order, seats, starting players and
+opponents; ``--drop-spy-learner`` removes the 90 units whose learner deck is
+Spy (180 episodes), keeping the 162 updates in order. Its A-s0 run checks
+against the screen's D2L checkpoint with ``check --recorded-sha256``.
+
 CLI (JSON on stdout):
   config --lineage r1 --o-config O.json (--source SRC.json | --reproduce)
          --workers W --output-directory DIR --out CFG.json
+         [--replicate K] [--drop-spy-learner]
   check  --lineage r1 --completion RUN/completion.json --recorded O_FINAL_CHECKPOINT.json
-``check`` compares the run's final checkpoint state with O's recorded one.
+         [--recorded-sha256 SHA]
+``check`` compares the run's final checkpoint state and Adam step with a
+recorded checkpoint's: O's final one, or the one whose SHA-256 is given.
 """
 from __future__ import annotations
 
@@ -33,15 +44,70 @@ NAMED_PARENT = {"kind": "fixed", "id": PARENT_ID}
 RUN_SCHEMA = pilot.ndb.SCHEMA
 # O's "initial" units: j = 3 to 7 of every ordered pair, both seats.
 INITIAL_EPISODES = pilot.DECKS * pilot.DECKS * 5 * 2
+# The retention trace's replicate seeds (its DESIGN.md section 2).
+RETENTION_NS = "spy-line-retention-v1"
+REPLICATES = (1, 2, 3)
+SPY_LEARNER_EPISODES = pilot.DECKS * pilot.REPEATS * 2
 
 
 def expected_iterations(lineage: str, decks: list[dict]) -> list[dict]:
     return pilot.iterations(lineage, "O", decks, None)[0]
 
 
+def unit_id(lineage: str, entry: dict) -> str:
+    """O's episode id of one schedule entry (pilot.episode)."""
+    return f"{pilot.NS}-{lineage}-o{entry['own']}-t{entry['other']}-j{entry['j']}-s{entry['seat']}"
+
+
+def replicate_seed(lineage: str, replicate: int, own: int, other: int, j: int) -> int:
+    return pilot.seed([f"{RETENTION_NS}/train/rep{replicate}", lineage, own, other, j])
+
+
+def replicate_id(lineage: str, replicate: int, entry: dict) -> str:
+    return (f"{RETENTION_NS}-{lineage}-rep{replicate}-o{entry['own']}-t{entry['other']}"
+            f"-j{entry['j']}-s{entry['seat']}")
+
+
+def retention_iterations(lineage: str, iterations: list[dict], replicate: int,
+                         drop_spy_learner: bool) -> list[dict]:
+    """O's updates with replicate ``replicate``'s unit seeds and ids (0 keeps
+    O's) and, with ``drop_spy_learner``, without the Spy learner's units.
+    Each recorded episode must be its schedule entry's, in order."""
+    require(replicate == 0 or replicate in REPLICATES, f"unknown replicate {replicate!r}")
+    plan = pilot.schedule(lineage)["updates"]
+    require(len(plan) == len(iterations) == pilot.UPDATES, "O's updates differ from the pilot's schedule")
+    out, dropped = [], 0
+    for entries, update in zip(plan, iterations):
+        require(set(update) == {"episodes"} and len(entries) == len(update["episodes"]),
+                "O's update differs from the pilot's schedule")
+        items = []
+        for entry, item in zip(entries, update["episodes"]):
+            recorded = item["episode"]
+            require(recorded["id"] == unit_id(lineage, entry) and recorded["seed"] == entry["seed"]
+                    and recorded["learner_seat"] == entry["seat"]
+                    and recorded["starting_player"] == entry["starting_player"],
+                    "O's episode differs from its schedule entry")
+            if drop_spy_learner and entry["own"] == pilot.SPY:
+                dropped += 1
+                continue
+            value = copy.deepcopy(item)
+            if replicate:
+                value["episode"]["id"] = replicate_id(lineage, replicate, entry)
+                value["episode"]["seed"] = replicate_seed(lineage, replicate, entry["own"], entry["other"],
+                                                          entry["j"])
+            items.append(value)
+        require(items, "an update would hold no episodes")
+        out.append({"episodes": items})
+    require(dropped == (SPY_LEARNER_EPISODES if drop_spy_learner else 0),
+            "the Spy learner's units are not 90 units at both seats")
+    return out
+
+
 def config(lineage: str, o_config: dict, source: dict | None, workers: int, output_directory: str,
-           decks: list[dict] | None = None) -> dict:
-    """O's config with the named parent; ``source`` None reproduces O."""
+           decks: list[dict] | None = None, replicate: int = 0, drop_spy_learner: bool = False) -> dict:
+    """O's config with the named parent; ``source`` None reproduces O.
+    ``replicate`` and ``drop_spy_learner`` are the retention trace's options
+    and apply only to a phase-2 run from a phase-1 checkpoint."""
     require(o_config.get("schema") == RUN_SCHEMA, "not a native expanded training run config")
     parent = o_config["initial_source"]
     check_parent(lineage, parent)
@@ -75,6 +141,9 @@ def config(lineage: str, o_config: dict, source: dict | None, workers: int, outp
         require(((saved.get("archive_distillation") or {}).get("cell")) is None,
                 "a U collapse diagnostic cell's checkpoint does not start phase 2")
         value["initial_source"] = source
+    if replicate or drop_spy_learner:
+        require(source is not None, "the retention options apply to phase 2, not to O's reproduction")
+        value["iterations"] = retention_iterations(lineage, value["iterations"], replicate, drop_spy_learner)
     value["collection_workers"] = workers
     value["preparation_workers"] = workers
     value["output_directory"] = absolute(output_directory)
@@ -95,11 +164,14 @@ def resolved_opponent(cfg: dict, assignment: dict, current: dict) -> dict:
     return matches[0]
 
 
-def check(lineage: str, completion: dict, recorded_path: Path) -> dict:
-    """The run's final checkpoint state against O's recorded final state."""
+def check(lineage: str, completion: dict, recorded_path: Path, recorded_sha256: str | None = None) -> dict:
+    """The run's final checkpoint state against a recorded checkpoint's: O's
+    final one unless ``recorded_sha256`` names another."""
     data = Path(recorded_path).read_bytes()
-    require(hashlib.sha256(data).hexdigest() == O_FINAL_CHECKPOINT_SHA256[lineage],
-            f"not O's recorded {lineage} final checkpoint")
+    expected = recorded_sha256 or O_FINAL_CHECKPOINT_SHA256[lineage]
+    require(hashlib.sha256(data).hexdigest() == expected,
+            f"not O's recorded {lineage} final checkpoint" if recorded_sha256 is None
+            else f"not the recorded {lineage} checkpoint {expected}")
     recorded = json.loads(data)
     require(completion.get("schema") == RUN_SCHEMA and completion.get("complete") is True
             and completion["completed_iterations"] == pilot.UPDATES, "not a complete 162-update run")
@@ -124,17 +196,21 @@ def main(argv=None) -> int:
     c.add_argument("--workers", type=int, required=True)
     c.add_argument("--output-directory", required=True)
     c.add_argument("--out", type=Path, required=True)
+    c.add_argument("--replicate", type=int, choices=REPLICATES, default=0)
+    c.add_argument("--drop-spy-learner", action="store_true")
     k = sub.add_parser("check")
     k.add_argument("--lineage", required=True, choices=pilot.LINEAGES)
     k.add_argument("--completion", type=Path, required=True)
     k.add_argument("--recorded", type=Path, required=True)
+    k.add_argument("--recorded-sha256")
     a = ap.parse_args(argv)
     if a.op == "config":
         value = config(a.lineage, read_json(a.o_config), None if a.reproduce else read_json(a.source),
-                       a.workers, a.output_directory)
+                       a.workers, a.output_directory, replicate=a.replicate,
+                       drop_spy_learner=a.drop_spy_learner)
         print(json.dumps(write_json(a.out, value)))
     else:
-        result = check(a.lineage, read_json(a.completion), a.recorded)
+        result = check(a.lineage, read_json(a.completion), a.recorded, a.recorded_sha256)
         print(json.dumps(result))
         return 0 if result["reproduced"] else 1
     return 0

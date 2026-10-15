@@ -16,6 +16,32 @@ use super::*;
 use crate::line_b_teacher_target_v1::{line_b_divergence_v1, LineBDivergenceV1, LineBSoftmaxV1};
 use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
 
+/// Optional phase-1 optimizer scope. The default retains the historical
+/// full-network update, including decay of inherited moments at zero gradients.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveDistillationUpdateScopeV1 {
+    #[default]
+    FullNetwork,
+    /// Both policy scorer layers only. The final scalar bias remains the
+    /// canonical gauge, with its anchored parameter and zero moments.
+    ScorerOnly,
+}
+
+impl ArchiveDistillationUpdateScopeV1 {
+    pub(crate) fn is_full_network_v1(&self) -> bool {
+        *self == Self::FullNetwork
+    }
+
+    fn trains_v1(self, index: usize) -> bool {
+        self == Self::FullNetwork
+            || matches!(
+                index,
+                SCORER_FIRST_WEIGHT | SCORER_FIRST_BIAS | SCORER_SECOND_WEIGHT
+            )
+    }
+}
+
 /// One off-batch row: its encoded decision and frozen target.
 pub(crate) struct ExternalAuxiliaryRowV1<'a> {
     pub(crate) encoded: NativeEncodedDecisionViewV1<'a>,
@@ -140,6 +166,24 @@ impl NativePolicyValueTrainStateV1 {
         (Vec<LineBAuxiliaryResultV1>, NativeScorerBiasGaugeRecordV1),
         NativePolicyTrainErrorV1,
     > {
+        self.train_step_auxiliary_only_scoped_v1(
+            generation,
+            learning_rate,
+            terms,
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+        )
+    }
+
+    pub(crate) fn train_step_auxiliary_only_scoped_v1(
+        &mut self,
+        generation: FreshLineageGenerationV1,
+        learning_rate: f32,
+        terms: &[&ExternalAuxiliaryInputV1<'_>],
+        update_scope: ArchiveDistillationUpdateScopeV1,
+    ) -> Result<
+        (Vec<LineBAuxiliaryResultV1>, NativeScorerBiasGaugeRecordV1),
+        NativePolicyTrainErrorV1,
+    > {
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
@@ -180,6 +224,7 @@ impl NativePolicyValueTrainStateV1 {
             &gradients,
             learning_rate,
             &mut scorer_bias_gauge,
+            update_scope,
         )?;
         Ok((results, scorer_bias_gauge))
     }
@@ -192,6 +237,7 @@ impl NativePolicyValueTrainStateV1 {
         gradients: &[Vec<f32>],
         learning_rate: f32,
         scorer_bias_gauge: &mut NativeScorerBiasGaugeRecordV1,
+        update_scope: ArchiveDistillationUpdateScopeV1,
     ) -> Result<(), NativePolicyTrainErrorV1> {
         let next_step = self
             .adam_step
@@ -205,6 +251,19 @@ impl NativePolicyValueTrainStateV1 {
             next_step,
             learning_rate,
         )?;
+        // Adam is elementwise and has no global gradient clipping. Restore
+        // frozen tensors before validation/publication; gradients alone would
+        // still decay their moments and move their parameters. Scorer tensors
+        // retain exactly the full step's update and shared Adam age.
+        if update_scope == ArchiveDistillationUpdateScopeV1::ScorerOnly {
+            for index in 0..parameters.len() {
+                if !update_scope.trains_v1(index) {
+                    next_parameters[index] = parameters[index].clone();
+                    next_first_moments[index] = self.first_moments[index].clone();
+                    next_second_moments[index] = self.second_moments[index].clone();
+                }
+            }
+        }
         next_parameters[SCORER_SECOND_BIAS].values[0] =
             f32::from_bits(self.scorer_bias_anchor_bits);
         next_first_moments[SCORER_SECOND_BIAS][0] = 0.0;
