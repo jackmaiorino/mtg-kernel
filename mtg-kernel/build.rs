@@ -5793,6 +5793,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Midnight Snack" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana { colored: Some("B"), generic: 2 }, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::Program { name: "midnight_snack_turn_gain_loss_v1", effect: "crate::midnight_snack_v1::activation()" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Drake Hatcher" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
             effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },
@@ -7083,6 +7089,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Midnight Snack" => "beginning_original_controller_end_step:intervening_raid_actual_declaration_turn_history:capture_and_resolution_recheck:create_food_token_for_original_controller:1",
         "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
         "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",
         "Restless Bivouac" => "attacks:controlled_creature_plus_one_counter:1",

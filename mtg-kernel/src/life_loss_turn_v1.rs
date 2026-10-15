@@ -1,5 +1,7 @@
 //! Selected Limited life-loss history. Standard keeps its original recording path.
 //! Opt-in uses public catalog definitions, never hidden roster identities.
+//! Midnight Snack also reads this authenticated turn boundary and existing gains;
+//! it adds neither loss flags nor first-gain captures of its own.
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
 use crate::ids::PlayerId;
@@ -10,10 +12,10 @@ pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| {
         cfg!(all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))
             && CARD_DEFS.iter().enumerate().any(|(id, definition)| {
-                definition.is_executable() && crate::trigger::triggers_for(id as u16).iter().any(|ability| {
+                definition.is_executable() && (crate::midnight_snack_v1::definition(id as u16) || crate::trigger::triggers_for(id as u16).iter().any(|ability| {
                     ability.condition == crate::trigger::TriggerCondition::BeginningControllerEndStepIfOpponentLostLife
                         && ability.home_zone == crate::state::Zone::Battlefield
-                })
+                }))
             })
     })
 }

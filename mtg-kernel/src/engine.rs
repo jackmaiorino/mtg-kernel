@@ -15660,6 +15660,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let midnight_owner = match crate::midnight_snack_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15811,6 +15821,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     if let Some(owner) = drake_owner {
         if crate::drake_hatcher_v1::custody::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = midnight_owner {
+        if crate::midnight_snack_v1::resolve(state, owner, &ctx, targets_legal).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;

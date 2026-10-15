@@ -86,6 +86,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1
         | EffectOp::IncubationFromCombatDamageV1 { amount: _ }
         | EffectOp::AddSoulCounterToAbilitySourceV1
         | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }

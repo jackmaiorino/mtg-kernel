@@ -734,6 +734,7 @@ pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
 pub mod spinner_public_v54;
 
+pub mod midnight_snack_v1;
 pub mod prepared_observation_v57;
 
 #[cfg(all(

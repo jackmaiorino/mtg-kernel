@@ -1740,6 +1740,8 @@ pub enum EffectOp {
     },
     /// Printed activation root, executable only with its actual paid input.
     DrakeCreateTokenFromPaidV1,
+    /// Exact resolved controller turn-total; only original removed activation executes.
+    LoseLifeEqualControllerTurnGainsV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17981,7 +17983,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::IncubationFromCombatDamageV1 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
-        | EffectOp::DrakeCreateTokenFromPaidV1 => {
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1 => {
             // Public inline programs cannot manufacture damage or payment authority.
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

@@ -1698,6 +1698,11 @@ static AUTHORITY_OF_THE_CONSULS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredA
     effect: authority_entry_effect,
 }];
 
+const MIDNIGHT_SNACK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+    ..etb_trigger(crate::midnight_snack_v1::raid)
+}];
+
 const SEARSLICER_GOBLIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
     ..etb_trigger(searslicer_goblin_effect)
@@ -3674,6 +3679,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
+        "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,

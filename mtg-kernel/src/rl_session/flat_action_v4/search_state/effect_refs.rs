@@ -55,6 +55,7 @@ impl Scan<'_> {
             AjaniLoyaltyV42 { .. }
             | DrakeIncubationFromCaptureV1 { .. }
             | DrakeCreateTokenFromPaidV1
+            | LoseLifeEqualControllerTurnGainsV1
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,

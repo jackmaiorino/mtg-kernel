@@ -7603,7 +7603,9 @@
       "java_file": "Mage.Sets/src/mage/cards/s/SpinnerOfSouls.java",
       "is_token": false,
       "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
-      "intrinsic_keywords_v1": ["reach"]
+      "intrinsic_keywords_v1": [
+        "reach"
+      ]
     },
     {
       "name": "Painful Quandary",
@@ -7757,6 +7759,35 @@
         "double_controlled_permanent_effect_counters"
       ],
       "java_file": "Mage.Sets/src/mage/cards/d/DoublingSeason.java",
+      "is_token": false
+    },
+    {
+      "name": "Midnight Snack",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_midnight_snack_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "raid_endstep_food",
+        "sacrifice_source_opponent_loses_controller_total_life_gained_this_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MidnightSnack.java",
       "is_token": false
     }
   ]

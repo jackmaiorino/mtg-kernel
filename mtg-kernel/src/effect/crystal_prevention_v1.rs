@@ -565,7 +565,8 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // Conqueror custody authenticates a mandatory gain-only root.
         EffectOp::ConquerorGainFromCaptureV49 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
-        | EffectOp::DrakeCreateTokenFromPaidV1 => true,
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::LoseLifeEqualControllerTurnGainsV1 => true,
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,

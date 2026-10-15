@@ -451,7 +451,7 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V3=1 python python/tools/check_limited_common_client_v3.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v3$binary_suffix"
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_elenda_env_v4
           MTG_LIMITED_ELENDA_TIMING_V4=1 python python/tools/check_limited_elenda_client_v4.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_elenda_env_v4$binary_suffix"
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures prepared_observation_v57:: rl_session::prepared_v57:: human_bo3_v1::prepared_v57:: limited_prepared_session_v5::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures prepared_observation_v57:: rl_session::prepared_v57:: human_bo3_v1::prepared_v57:: limited_prepared_session_v5:: midnight_snack_v1::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
 
