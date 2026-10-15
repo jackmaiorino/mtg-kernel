@@ -28,9 +28,11 @@ class PublicPanelTests(unittest.TestCase):
         plan = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "p2", 4)
         self.assertEqual(plan["cases"], 1944)
         self.assertEqual(len(plan["requests"]), 8)
+        self.assertNotIn("game_one_only", plan)
         self.assertEqual(sum(len(item["cases"]) for item in plan["requests"]), 1944)
         for item in plan["requests"]:
             request = json.loads(Path(item["request"]["path"]).read_text())
+            self.assertNotIn("game_one_only", request)
             seat = item["seat"]
             self.assertEqual(request["sources"][seat]["source"], self.candidate)
             self.assertEqual(request["sources"][1 - seat], self.opponent)
@@ -40,12 +42,122 @@ class PublicPanelTests(unittest.TestCase):
                 self.assertEqual(match["config"]["game_one_chooser"], case["starting_player"])
                 self.assertEqual(match["config"]["max_physical_decisions"], panel.MAX_DECISIONS)
 
+    def test_game_one_mode_is_part_of_requests_schedule_and_qualification(self):
+        legacy = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "old", 2, own_decks=(4,))
+        plan = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "one", 2,
+                           own_decks=(4,), game_one_only=True)
+        self.assertNotEqual(legacy["schedule_sha256"], plan["schedule_sha256"])
+        for item in plan["requests"]:
+            self.assertIs(panel.request_for_plan(plan, item)["game_one_only"], True)
+        executable = self.root / "evaluator.exe"
+        executable.write_bytes(b"binary")
+        def hashes(request_path):
+            request = json.loads(Path(request_path).read_text())
+            self.assertIs(request["game_one_only"], True)
+            return [str(m["config"]["seed"]) for m in request["matches"]]
+        with mock.patch.object(panel, "run_requests", return_value=1.), \
+                mock.patch.object(panel, "match_hashes", side_effect=hashes), \
+                mock.patch.object(panel, "candidate_layout", return_value="layout"):
+            receipt = panel.qualify(self.root / "one/plan.json", 2, [1, 2], self.root / "qual", str(executable))
+            self.assertIs(receipt["game_one_only"], True)
+            receipt.pop("game_one_only")
+            panel.write_json(self.root / "bad-receipt.json", receipt)
+            with self.assertRaisesRegex(SystemExit, "qualification receipt"):
+                panel.run(self.root / "one/plan.json", self.root / "bad-receipt.json", str(executable))
+
+    def test_game_one_rows_preserve_draws_and_refuse_match_outcomes_or_extra_games(self):
+        plan = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "one", 2,
+                           own_decks=(4,), game_one_only=True)
+        for item in plan["requests"]:
+            request = panel.request_for_plan(plan, item)
+            out = Path(request["output_directory"])
+            out.mkdir(parents=True)
+            panel.write_json(out / "start.json", {"schema": "public-input-evaluation-start/v1", "command": request})
+            for index, case in enumerate(item["cases"]):
+                game = {"start": {"starting_player": case["starting_player"]}, "winner": None}
+                (out / f"match-{index:06d}.json").write_text(json.dumps({
+                    "schema": "public-input-evaluation-game-one/v1", "game_one_only": True,
+                    "match": {"config": {"seed": case["seed"]}}, "games": [game], "sideboard_decisions": []}))
+        result = panel.rows(self.root / "one/plan.json")
+        self.assertEqual(len(result), 216)
+        self.assertTrue(all(r["complete"] and r["score"] == .5 for r in result))
+        first_request = panel.request_for_plan(plan, plan["requests"][0])
+        path = Path(first_request["output_directory"]) / "match-000000.json"
+        original = json.loads(path.read_text())
+        for change in ({"outcome": {"winner": 0}}, {"games": original["games"] * 2}):
+            path.write_text(json.dumps(dict(original, **change)))
+            with self.assertRaisesRegex(ValueError, "game-one result"):
+                panel.rows(self.root / "one/plan.json")
+
+    def test_request_mode_must_match_the_plan(self):
+        plan = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "one", 1,
+                           own_decks=(4,), game_one_only=True)
+        item = plan["requests"][0]
+        request = panel.request_for_plan(plan, item)
+        request.pop("game_one_only")
+        item["request"] = panel.write_json(Path(item["request"]["path"]), request)
+        with self.assertRaisesRegex(ValueError, "evaluation mode"):
+            panel.request_for_plan(plan, item)
+
+    def test_completed_bo3_output_cannot_be_reused_for_game_one_request(self):
+        output = self.root / "completed"
+        output.mkdir()
+        panel.write_json(output / "completion.json", {"match_sha256": []})
+        request = {"output_directory": str(output), "game_one_only": True, "matches": []}
+        path = self.root / "request.json"
+        panel.write_json(path, request)
+        with self.assertRaisesRegex(ValueError, "completion evaluation mode"):
+            panel.match_hashes(path)
+        panel.write_json(output / "start.json", {"schema": "public-input-evaluation-start/v1", "command": request})
+        with self.assertRaisesRegex(ValueError, "completion evaluation mode"):
+            panel.recover("unused", path)
+
+    def test_failed_bo3_directory_and_stale_recovery_pins_are_rejected(self):
+        output = self.root / "failed"
+        output.mkdir()
+        request = {"output_directory": str(output), "game_one_only": True,
+                   "matches": [{"config": {"seed": 42}}]}
+        path = self.root / "request.json"
+        panel.write_json(path, request)
+        old = dict(request)
+        old.pop("game_one_only")
+        panel.write_json(output / "start.json", {"schema": "public-input-evaluation-start/v1", "command": old})
+        panel.write_json(output / "failure.json", {"error": "A versus B, match seed 42, game 2, environment seed 123: InvalidReference"})
+        with self.assertRaisesRegex(ValueError, "native start command"):
+            panel.recover("unused", path)
+        panel.write_json(output / "start.json", {"schema": "public-input-evaluation-start/v1", "command": request})
+        with self.assertRaisesRegex(ValueError, "physical game 1"):
+            panel.recover("unused", path)
+        panel.write_json(output / "failure.json", {
+            "error": "A versus B, match seed 42, game 1, environment seed 123: InvalidReference"})
+        valid = panel.recover("unused", path)
+        self.assertEqual(json.loads(Path(valid["path"]).read_text())["errors"][0]["seed"], 42)
+        ledger = {"request": panel.pin(path), "segments": [
+            {"request": panel.pin(path), "output_directory": str(output), "start": 0, "count": 0}], "errors": []}
+        panel.write_json(path.with_suffix(".recovery.json"), ledger)
+        self.assertEqual(panel.recovery_for_request(path), ledger)
+        ledger["segments"][0]["request"]["sha256"] = "0" * 64
+        panel.write_json(path.with_suffix(".recovery.json"), ledger)
+        with self.assertRaisesRegex(ValueError, "pinned file changed"):
+            panel.recovery_for_request(path)
+        ledger["segments"][0]["request"] = panel.pin(path)
+        ledger["errors"] = [{"seed": 42, "error": "A versus B, match seed 42, game 2, environment seed 123: InvalidReference"}]
+        panel.write_json(path.with_suffix(".recovery.json"), ledger)
+        with self.assertRaisesRegex(ValueError, "physical game 1"):
+            panel.recovery_for_request(path)
+        ledger["errors"] = []
+        ledger["request"]["sha256"] = "0" * 64
+        panel.write_json(path.with_suffix(".recovery.json"), ledger)
+        with self.assertRaisesRegex(ValueError, "recovery request pin"):
+            panel.recovery_for_request(path)
+
     def test_rows_read_game_one_for_the_candidate_seat(self):
         plan = panel.build("p2", self.candidate, self.opponent, self.decks, self.root / "p2", 2,
                            own_decks=(4,))
         for item in plan["requests"]:
             request = json.loads(Path(item["request"]["path"]).read_text())
             out = Path(request["output_directory"]); out.mkdir(parents=True)
+            panel.write_json(out / "start.json", {"schema": "public-input-evaluation-start/v1", "command": request})
             for index, case in enumerate(item["cases"]):
                 # Every fifth match's game 1 is a natural draw (no winner); match files hold only natural games.
                 game = {"start": {"starting_player": case["starting_player"]}, "winner": None if index % 5 == 4 else index % 2}
@@ -70,11 +182,12 @@ class PublicPanelTests(unittest.TestCase):
 from pathlib import Path
 request = json.loads(Path(sys.argv[1]).read_text())
 out = Path(request["output_directory"]); out.mkdir()
+(out / "start.json").write_text(json.dumps({"schema": "public-input-evaluation-start/v1", "command": request}))
 fail = set(json.loads((Path(sys.argv[0]).parent / "fail.json").read_text()))
 for index, match in enumerate(request["matches"]):
     seed = match["config"]["seed"]
     if seed in fail:
-        (out / "failure.json").write_text(json.dumps({"error": f"A versus B, match seed {seed}, game 1: InvalidReference"}))
+        (out / "failure.json").write_text(json.dumps({"error": f"A versus B, match seed {seed}, game 1, environment seed 123: InvalidReference"}))
         sys.exit(1)
     game = {"start": {"starting_player": match["config"]["game_one_chooser"]}, "winner": 0}
     (out / f"match-{index:06d}.json").write_text(json.dumps({"match": {"config": {"seed": seed}}, "games": [game]}))
