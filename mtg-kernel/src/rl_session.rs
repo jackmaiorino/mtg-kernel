@@ -4478,6 +4478,26 @@ fn flat_validate_expected_decision_akroma_inner(
     expected: FastActorDecisionV1,
     accept_akroma: bool,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_expected_decision_numeric_domain(session, current, expected, accept_akroma, false)
+}
+
+/// V51 carries native counter/damage widths in its exact battlefield rows.
+/// Its caller still validates the complete ordered observation and binding.
+fn flat_validate_expected_decision_ravenous_v51(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    expected: FastActorDecisionV1,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_expected_decision_numeric_domain(session, current, expected, true, true)
+}
+
+fn flat_validate_expected_decision_numeric_domain(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    expected: FastActorDecisionV1,
+    accept_akroma: bool,
+    exact_battlefield_v51: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
     if !accept_akroma
         && crate::game_outcome_protection_v1::requires_successor(
             &session.state,
@@ -4542,10 +4562,10 @@ fn flat_validate_expected_decision_akroma_inner(
         && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40())
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
         && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && !session.is_common_v40())
-        || session.state.objects.iter().any(|(_, object)| {
+        || (!exact_battlefield_v51 && session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
-    }) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
+    })) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
