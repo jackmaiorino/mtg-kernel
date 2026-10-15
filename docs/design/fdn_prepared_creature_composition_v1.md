@@ -1,8 +1,9 @@
 # Prepared FDN engine source composition
 
 This isolated source contains Ravenous through `883639db716137146b788064beafd60ac2cfcedf`,
-Elenda public/observation/backend/Human V52 through `f2fb2b819b`, and the five
-printing implementations below. Native155 owns a separate immutable Ravenous
+Elenda public/observation/backend/Human V52, schema-4 transport from `15faddf602`,
+the mixed numeric V52 prerequisite from `058b4e81ec`, and the five printing
+implementations below. Native155 owns a separate immutable Ravenous
 source/target. This composition establishes no Rust compilation, runtime,
 Full promotion, model, search or default-branch acceptance.
 
@@ -33,14 +34,24 @@ Drake is claimed.
 
 The Elenda reference is a genuine 40-card correctness input using its original
 20 spells and 20 basics. All five candidate decks refuse Full-only resolution.
-Observed: 71 Python deck/pool tests pass; pinned formatting, diff and static
-prefix checks pass. Every added Rust fixture is uncompiled and unrun. No catalog
+Observed: 101 Python tests pass across deck/pool, schema-4 and predecessor V3;
+pinned formatting, diff and static prefix checks pass. Separate scoped source
+reviews of the new transport and V52 model are clear. Every added Rust fixture
+is uncompiled and unrun. No catalog
 hash is guessed; live-v86 canaries await the actual successor export/profile.
 
-Remaining engine work includes the reviewed Phoenix restored-payment bypass and
-Treasure-only payment gap. Its ordinary generic trigger authority does not need
-another whole-world journal. Remaining consumer work includes Phoenix/Spinner/
-Quandary projections and all successor model/search qualification. Drake's
+Phoenix restored-payment and Treasure-only payment source repairs from
+`7c13ca4dcc` / `22b44f3935` are composed, with their genuine fixtures still unrun.
+Phoenix also appends to the current creature-type choices and changeling
+materialization after every previous choice. Ordinary generic trigger authority
+does not need another whole-world journal.
+
+The named Drake composition review found a predecessor actor-visible own/known
+hand path without its successor refusal; a narrow source repair is in progress.
+Spinner/Quandary review found their ordinary engine paths already validate
+choices, but direct public resume can bypass those validators; its source repair
+is also in progress. Remaining consumer work includes Phoenix/Spinner/Quandary
+projections and all successor model/search qualification. Drake's
 effective power/toughness projection refuses its explicit checked-overflow
 boundary; the engine's later unchecked modifiers still need a concrete repair
 before relying on extreme arithmetic cases. Original source notes retain their
