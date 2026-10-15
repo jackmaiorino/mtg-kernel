@@ -343,7 +343,7 @@ fn strict_requests_catalog_mismatch_and_unsupported_decks_do_not_replace_session
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-fn fresh_complete_family_decks_select_v47_before_london_and_preserve_real_priority_both_seats() {
+fn fresh_complete_family_decks_select_v50_before_london_and_preserve_real_priority_both_seats() {
     for name in [
         "Ajani, Caller of the Pride",
         "Faebloom Trick",
