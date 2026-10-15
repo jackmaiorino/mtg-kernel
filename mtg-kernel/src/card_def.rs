@@ -2731,10 +2731,11 @@ mod tests {
         // batches append through id 445 (Partial Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
+        // Partial Fake, Ravenous and Spinner append at ids 442-444.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                446
+                447
             } else {
                 192
             }
@@ -2766,6 +2767,9 @@ mod tests {
             assert_eq!(card_id_by_name("Ajani Cat Token"), Some(437));
             assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), Some(215));
             assert_eq!(CARD_DEFS[215].capability, CardCapability::Full);
+            assert_eq!(card_id_by_name("Fake Your Own Death"), Some(442));
+            assert_eq!(card_id_by_name("Ravenous Amulet"), Some(443));
+            assert_eq!(card_id_by_name("Spinner of Souls"), Some(444));
         }
     }
 
@@ -3175,15 +3179,43 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
+        let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
+            &[
+                (442, "Fake Your Own Death"),
+                (443, "Ravenous Amulet"),
+                (444, "Elenda, Saint of Dusk"),
+                (445, "Flamewake Phoenix"),
+                (446, "Spinner of Souls"),
+            ]
+        } else {
+            &[]
+        };
+        let partial = CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| def.capability == CardCapability::Partial)
+            .map(|(id, def)| (id as u16, def.name))
+            .collect::<Vec<_>>();
+        assert_eq!(partial.as_slice(), expected_partial);
         let full = CARD_DEFS
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - 4 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the four registered Partial source candidates may remain outside Full"
+            CARD_DEFS.len() - expected_partial.len(),
+            "every other definition remains Full"
         );
+        for &(id, name) in expected_partial {
+            assert_eq!(card_id_by_name(name), Some(id));
+            assert!(CARD_DEFS[usize::from(id)].is_executable());
+            assert!(!CARD_DEFS[usize::from(id)].has_full_support());
+            assert!(matches!(preflight_fully_supported_deck(&[
+                card_id_by_name("Forest").unwrap(), id]),
+                Err(DeckPreflightError::NotFullySupported {
+                    index: 1, card_def, name: actual, capability: CardCapability::Partial
+                }) if card_def == id && actual == name));
+        }
         #[cfg(feature = "limited-fdn-fixtures")]
         {
             let non_full: Vec<_> = CARD_DEFS

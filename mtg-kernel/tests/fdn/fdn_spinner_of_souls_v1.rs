@@ -242,7 +242,7 @@ fn genuine_partial_printing_and_typed_recipe() {
     assert_eq!(def.cost.generic, 2);
     assert_eq!((def.power, def.toughness), (Some(4), Some(3)));
     assert_eq!(def.subtypes, &[Subtype::Spider, Subtype::Spirit]);
-    assert!(def.keywords.contains(Keywords::REACH));
+    assert!(def.keywords.has(Keywords::REACH));
     assert_eq!(
         def.other_controlled_nontoken_death_v1,
         Some(OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom)

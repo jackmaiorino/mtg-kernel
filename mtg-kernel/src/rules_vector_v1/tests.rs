@@ -68,19 +68,24 @@ fn supported_v1_card_ids() -> Vec<u16> {
                 || def.game_outcome_protection_v1.is_some()
                 || def.as_enters_color_choice_v1.is_some()
                 || def.chosen_color_creature_boost_v1.is_some()
+                || def.other_controlled_nontoken_death_v1.is_some()
         })
         .map(|(id, _)| id as u16)
         .collect();
     if !excluded.is_empty() {
-        assert_eq!(
-            excluded,
-            vec![
-                card_id("Divine Resilience"),
-                card_id("Heraldic Banner"),
-                card_id("Herald of Eternal Dawn"),
-                card_id("Twinflame Tyrant"),
-            ]
-        );
+        let mut expected = vec![
+            card_id("Divine Resilience"),
+            card_id("Heraldic Banner"),
+            card_id("Herald of Eternal Dawn"),
+            card_id("Twinflame Tyrant"),
+        ];
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) {
+            expected.push(card_id("Spinner of Souls"));
+        }
+        assert_eq!(excluded, expected);
         assert!(matches!(
             (CARD_DEFS[usize::from(excluded[0])].spell_effect)(),
             Some(EffectOp::GrantKeywordToDeclaredTargetsUntilEndOfTurn { .. })
@@ -175,6 +180,32 @@ fn registered_twinflame_still_refuses_frozen_v1_publication() {
 )]
 fn registered_banner_still_refuses_frozen_v1_publication() {
     card_rules(card_id("Heraldic Banner"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "controlled-other-nontoken death reveal requires its precise successor")]
+fn registered_spinner_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Spinner of Souls"));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn spinner_is_excluded_only_from_test_audit_and_complete_public_table_still_refuses() {
+    let spinner = card_id("Spinner of Souls");
+    assert!(CARD_DEFS[usize::from(spinner)]
+        .other_controlled_nontoken_death_v1
+        .is_some());
+    assert!(!supported_v1_card_ids().contains(&spinner));
+    // The production table still visits all definitions and refuses at its
+    // first unsupported predecessor. The test-only subset cannot publish it.
+    assert!(std::panic::catch_unwind(build_table).is_err());
 }
 
 // 1. Determinism.

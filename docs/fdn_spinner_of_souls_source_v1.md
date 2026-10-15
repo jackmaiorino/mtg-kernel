@@ -49,6 +49,17 @@ predecessor `EffectOp` and `TriggerCondition` prefixes, and no Spinner runtime
 or codegen name dispatch. Absent descriptors add no catalog semantic token;
 empty intrinsic-keyword lists leave the old keyword expression unchanged.
 
+Follow-up review repairs correct the test keyword API to `Keywords::has`, pin
+the standalone totals to445 definitions/253 FDN rows, and retain every prior
+prefix hash and ID. The capability canary now requires exactly Partial
+Fake442/Ravenous443/Spinner444 and explicitly checks each genuine printing's
+Full-only refusal. The test-only frozen-V1 audit excludes Spinner's intentionally
+refused descriptor and has explicit extractor and complete-table refusal tests;
+production capability and extractor refusal are unchanged. Actual small Python
+results:61 Limited deck cases and6 frozen-pool cases pass. Pinned formatting,
+diff checks and repeated static prefix/inventory checks pass. Rust test bodies
+remain uncompiled and unrun.
+
 No Cargo build/test/check/clippy, native launch, gameplay, simulation, GPU,
 paid execution, push or PR occurred. The new descriptor explicitly refuses the
 frozen V1 rules source extractor, and the new effect/condition are opaque in its
