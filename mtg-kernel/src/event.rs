@@ -6140,6 +6140,36 @@ mod ravenous_amulet_paid_future_tests {
     fn public_facts(state: &GameState) -> crate::ravenous_public_v51::FactsV51 {
         let facts = crate::ravenous_public_v51::capture(state).unwrap();
         crate::ravenous_public_v51::validate(state, &facts).unwrap();
+        let battlefield = crate::ravenous_public_v51::battlefield(state).unwrap();
+        assert_eq!(battlefield.facts, facts);
+        let restored_battlefield =
+            serde_json::from_slice(&serde_json::to_vec(&battlefield).unwrap()).unwrap();
+        assert_eq!(battlefield, restored_battlefield);
+        crate::ravenous_public_v51::validate_battlefield(state, &restored_battlefield).unwrap();
+        for card in battlefield.cards.iter().flatten() {
+            let live = state
+                .objects
+                .get(crate::ids::ObjectId(card.card.stable.arena_id));
+            assert_eq!(card.soul, live.counters.soul);
+            assert_eq!(card.plus_one_counters, live.counters.plus1_plus1);
+            assert_eq!(card.marked_damage, live.damage);
+        }
+        let mut changed_battlefield = battlefield.clone();
+        changed_battlefield
+            .cards
+            .iter_mut()
+            .flatten()
+            .next()
+            .unwrap()
+            .soul ^= 1;
+        assert!(
+            crate::ravenous_public_v51::validate_battlefield(state, &changed_battlefield).is_err()
+        );
+        let mut missing = state.clone();
+        missing.players[0]
+            .battlefield
+            .push(crate::ids::ObjectId(u32::MAX));
+        assert!(crate::ravenous_public_v51::battlefield(&missing).is_err());
         let bytes = serde_json::to_vec(&facts).unwrap();
         let restored = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(facts, restored);
@@ -6165,6 +6195,10 @@ mod ravenous_amulet_paid_future_tests {
         assert_eq!(
             crate::ravenous_public_v51::capture(&private_variant).unwrap(),
             facts
+        );
+        assert_eq!(
+            crate::ravenous_public_v51::battlefield(&private_variant).unwrap(),
+            battlefield
         );
         let mut changed = facts.clone();
         changed.card_db_hash ^= 1;

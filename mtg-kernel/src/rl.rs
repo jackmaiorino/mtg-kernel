@@ -8415,6 +8415,25 @@ fn public_card_v2(
             "public counter schema cannot represent soul counters".into(),
         ));
     }
+    public_card_v2_non_soul_fields(state, id, text_mode)
+}
+
+/// Only the V51 card wrapper may use this omission explicitly: it publishes
+/// mandatory exact soul, wide counter and damage fields alongside this base.
+/// Legacy observation paths continue through `public_card_v2` and its refusal.
+pub(crate) fn public_card_v51_base(state: &GameState, id: ObjectId) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::FullArtifact)
+}
+
+fn public_card_v2_non_soul_fields(
+    state: &GameState,
+    id: ObjectId,
+    text_mode: ObservationTextModeV2,
+) -> Result<CardPublicV2> {
+    let object = state
+        .objects
+        .try_get(id)
+        .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {

@@ -78,6 +78,24 @@ pub struct FactsV51 {
     pub activations: Vec<ActivationV51>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardV51 {
+    pub card: crate::rl::CardPublicV2,
+    /// Exact values supersede the base schema's narrow placeholder slots.
+    /// These fields are mandatory even at zero.
+    pub marked_damage: u32,
+    pub plus_one_counters: i32,
+    pub soul: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BattlefieldV51 {
+    pub facts: FactsV51,
+    pub cards: [Vec<CardV51>; 2],
+}
+
 pub fn producer_sha256() -> String {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| {
@@ -203,7 +221,10 @@ pub fn capture(state: &GameState) -> Result<FactsV51, RlContractError> {
     let mut soul_counts = Vec::new();
     for player in &state.players {
         for object in &player.battlefield {
-            let live = state.objects.get(*object);
+            let live = state
+                .objects
+                .try_get(*object)
+                .ok_or_else(|| RlContractError("Amulet public battlefield object absent".into()))?;
             if live.zone != Zone::Battlefield || live.counters.soul < 0 {
                 return Err(RlContractError(
                     "Amulet public counter roster invalid".into(),
@@ -283,6 +304,51 @@ pub fn validate(state: &GameState, value: &FactsV51) -> Result<(), RlContractErr
     } else {
         Err(RlContractError(
             "Amulet public facts differ from current state".into(),
+        ))
+    }
+}
+
+pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError> {
+    let facts = capture(state)?;
+    let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
+    let mut seen = Vec::new();
+    for (seat, player) in state.players.iter().enumerate() {
+        for id in &player.battlefield {
+            let live = state
+                .objects
+                .try_get(*id)
+                .ok_or_else(|| RlContractError("Amulet public battlefield object absent".into()))?;
+            if seen.contains(id)
+                || live.zone != Zone::Battlefield
+                || live.controller.index() != seat
+                || live.counters.plus1_plus1 < 0
+                || live.counters.soul < 0
+            {
+                return Err(RlContractError(
+                    "Amulet public battlefield roster/count invalid".into(),
+                ));
+            }
+            seen.push(*id);
+            cards[seat].push(CardV51 {
+                card: crate::rl::public_card_v51_base(state, *id)?,
+                marked_damage: live.damage,
+                plus_one_counters: live.counters.plus1_plus1,
+                soul: live.counters.soul,
+            });
+        }
+    }
+    Ok(BattlefieldV51 { facts, cards })
+}
+
+pub fn validate_battlefield(
+    state: &GameState,
+    value: &BattlefieldV51,
+) -> Result<(), RlContractError> {
+    if battlefield(state)? == *value {
+        Ok(())
+    } else {
+        Err(RlContractError(
+            "Amulet public battlefield differs from current state".into(),
         ))
     }
 }

@@ -75,6 +75,14 @@ JSON restore, changed-facts refusal and hidden-library-content noninterference.
 This is a standalone public projection, with observation/backend/Human and
 model admission still pending. It has not been compiled or executed.
 
+The V51 battlefield card wrapper preserves the existing public card fields
+with mandatory exact soul, wide +1/+1 and marked-damage values. Existing V1/V2
+observation entry points retain their soul refusal; only the new wrapper uses
+the shared non-soul field projector. Its roster checks reject absent, duplicate
+or miscontrolled objects. Paid fixtures check complete card-view restore,
+changed soul refusal, absent roster refusal and private-content noninterference.
+No new executable session or model consumes this wrapper yet.
+
 Remaining: native qualification and cross-family original-world validation of
 the new lifecycle and observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
