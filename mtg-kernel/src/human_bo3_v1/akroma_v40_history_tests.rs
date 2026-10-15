@@ -30,6 +30,14 @@ type AnnouncedWithFishing = (
     Option<(ObjectId, ObjectId)>,
 );
 fn announced_with_fishing(actor: PlayerId, memorial: bool, fishing: bool) -> AnnouncedWithFishing {
+    announced_with_static_operand(actor, memorial, fishing, false)
+}
+fn announced_with_static_operand(
+    actor: PlayerId,
+    memorial: bool,
+    fishing: bool,
+    tyrant: bool,
+) -> AnnouncedWithFishing {
     let mut state = ready_state_for(actor);
     for owner in [actor, actor.opponent()] {
         put(&mut state, owner, "Forest", Zone::Hand);
@@ -62,6 +70,16 @@ fn announced_with_fishing(actor: PlayerId, memorial: bool, fishing: bool) -> Ann
         assert_eq!(state.objects.get(pole).v4.attached_to.unwrap().object, host);
         (host, pole)
     });
+    if tyrant {
+        // The creature is cast at genuine sorcery timing before the later
+        // copied activation is announced, then remains its static operand.
+        let source = put(&mut state, actor, "Twinflame Tyrant", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        resolve(&mut state, source);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+    }
     let donor = put(&mut state, actor, "Heartfire Immolator", Zone::Hand);
     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
@@ -598,20 +616,25 @@ fn real_fishing_and_copied_heartfire_rows_keep_independent_original_sources_and_
 fn actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_both_seats() {
     use crate::akroma_family_public_v40::{FamilyFactsV40, FamilyProjectionV40};
     for actor in [PlayerId::P0, PlayerId::P1] {
-        let (mut state, source, target, generation) = announced(actor, false);
+        let (mut state, source, target, generation) =
+            announced_with_static_operand(actor, false, false, true).0;
         put(&mut state, actor, "Mountain", Zone::Battlefield);
         for seat in [actor, actor.opponent()] {
             for _ in 0..8 {
                 put(&mut state, seat, "Forest", Zone::Library);
             }
         }
-        // Cast the real Tyrant above the already paid copied activation. Its
-        // actual entry precedes damage preparation, without replacing journals.
-        let tyrant = put(&mut state, actor, "Twinflame Tyrant", Zone::Hand);
-        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
-        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
-        engine::step(&mut state, Action::CastSpell(tyrant)).unwrap();
-        resolve(&mut state, tyrant);
+        let tyrant = state
+            .objects
+            .iter()
+            .find_map(|(id, object)| {
+                (object.controller == actor
+                    && object.zone == Zone::Battlefield
+                    && object.card_def
+                        == crate::card_def::card_id_by_name("Twinflame Tyrant").unwrap())
+                .then_some(id)
+            })
+            .unwrap();
         assert_eq!(state.objects.get(tyrant).zone, Zone::Battlefield);
         event::propose_and_commit(
             &mut state,

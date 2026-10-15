@@ -129,8 +129,9 @@ pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(),
     Ok(())
 }
 
-/// 704.5: detach protected Equipment; bestow ceases being an Aura.
-pub(crate) fn detach_protected_nonauras(state: &mut GameState) -> bool {
+/// 704.5: detach Equipment from noncreatures or protected hosts; bestow
+/// ceases being an Aura when its creature attachment becomes illegal.
+pub(crate) fn detach_illegal_nonauras(state: &mut GameState) -> bool {
     if !enabled() {
         return false;
     }
@@ -147,11 +148,15 @@ pub(crate) fn detach_protected_nonauras(state: &mut GameState) -> bool {
                         && host.zone_change_count == link.zone_change_count
                         && host.attachments.contains(&id)
                 })
-                && protects_from_colors(
+                && (!crate::engine::object_has_type(
+                    state,
+                    link.object,
+                    crate::card_def::CardType::Creature,
+                ) || protects_from_colors(
                     state,
                     link.object,
                     crate::engine::object_color_mask(state, id),
-                ))
+                )))
             .then_some((id, link))
         })
         .collect();

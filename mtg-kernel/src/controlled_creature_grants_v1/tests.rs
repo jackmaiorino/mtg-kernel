@@ -15,7 +15,7 @@ fn registered_absence_preserves_state_hash_observation_and_restore_both_seats() 
         assert!(!grants_keyword(&state, elf, Keywords::FLYING));
         assert_eq!(color_protection(&state, elf), 0);
         require_legacy_consumer_supported(&state).unwrap();
-        assert!(!detach_protected_nonauras(&mut state));
+        assert!(!detach_illegal_nonauras(&mut state));
         assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
         assert_eq!(state.diagnostic_state_hash(), hash);
         let restored: GameState = serde_json::from_slice(&bytes).unwrap();

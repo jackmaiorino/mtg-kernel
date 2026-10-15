@@ -846,6 +846,29 @@ fn original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_
                 hidden_by: None,
                 hidden_by_source: None,
             });
+            if !disguised {
+                // A hidden card with no creature characteristics cannot
+                // retain an Equipment grant or pay its creature tap cost.
+                assert!(!engine::object_has_type(
+                    &state,
+                    host,
+                    card_def::CardType::Creature
+                ));
+                assert!(grants(&state, host).is_empty());
+                assert!(cost_candidates(&state, actor, host).is_empty());
+                let decision = next(&mut state);
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { ref activatable_abilities, .. }
+                    if !activatable_abilities.iter().any(|(id, _)| *id == host))
+                );
+                assert!(state.objects.get(pole).v4.attached_to.is_none());
+                assert!(!state.objects.get(host).attachments.contains(&pole));
+                assert_eq!(state.objects.get(pole).zone, Zone::Battlefield);
+                assert_eq!(state.objects.get(pole).counters.bait, 0);
+                assert_eq!(fish(&state, actor), 0);
+                assert_eq!(state, snapshot(&state));
+                continue;
+            }
             add(&mut state, actor, host, pole);
             let item = state.stack.last().unwrap().clone();
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(host, Zone::Hand));
