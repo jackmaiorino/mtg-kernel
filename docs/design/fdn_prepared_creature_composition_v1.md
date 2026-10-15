@@ -3,8 +3,8 @@
 This isolated source contains Ravenous through `883639db716137146b788064beafd60ac2cfcedf`,
 Elenda public/observation/backend/Human V52, schema-4 transport from `15faddf602`,
 the mixed numeric V52 prerequisite from `058b4e81ec`, and the seven printing
-implementations below. Native155 owns a separate immutable Ravenous
-source/target. This composition establishes no Rust compilation, runtime,
+implementations below. Native155 separately passed the Ravenous parent;
+this composition establishes no Rust compilation, runtime,
 Full promotion, model, search or default-branch acceptance.
 
 | Printing | Original isolated source | Composed ID | Capability |
@@ -58,8 +58,20 @@ operations. Retained independent inputs still dictate complete loss batches,
 observers, captures and ownership; arbitrary erasure of an entire original input
 and all dependent records is outside that existing trusted-input boundary.
 
-Remaining consumer work includes Phoenix/Spinner/Quandary
-projections and all successor model/search qualification. Drake's
+Standalone Phoenix V56 and Spinner/Quandary V54/V55 meaning and public facts
+are now composed from `f22e8bfef5` / `2cfa4d3f92`. The Phoenix `240cf4b333`
+and Spinner `760df53c8c` repairs distinguish genuine equipment-hosted grants
+from each printed trigger after generic validation. Quandary `f9f6173b2d`
+requires an empty live selected prefix and every original hand candidate's
+exact object binding, rejecting malformed rows before mutation. Their paid
+both-seat, restore, grant and refusal fixtures remain uncompiled and unrun.
+Pinned formatting/diff and the same 102 Python cases pass on the composition.
+
+The shared observation/backend/Human/schema-5 Prepared V57 successor is under
+development in separate owned trees. No combined transport or runtime pass
+is claimed here. Conqueror/Season ordinary-printing model supplements from
+`3dc65d167a` are composed; broader covered-ID completeness and all successor
+model/search qualification remain open. Drake's
 effective power/toughness projection refuses its explicit checked-overflow
 boundary; the engine's later unchecked modifiers still need a concrete repair
 before relying on extreme arithmetic cases. Original source notes retain their
