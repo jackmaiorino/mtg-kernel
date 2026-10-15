@@ -3,6 +3,22 @@ use crate::expanded_deck_training_v1::tests::checkpoint_fixture_v1;
 
 const LR: f32 = LEARNING_RATE;
 
+/// The screen's frozen recipe (no cell options).
+fn frozen_recipe() -> RecipeV1 {
+    recipe_v1(ArchiveDistillationArmV1::Uniform, None).unwrap()
+}
+
+fn cell(label: &str) -> ArchiveDistillationOptionsV1 {
+    ArchiveDistillationOptionsV1 {
+        cell: label.into(),
+        learning_rate: None,
+        anchor_coefficient: None,
+        min_edge_backups: None,
+        count_control: None,
+        checkpoint_steps: None,
+    }
+}
+
 fn temp_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "archive-distillation-{label}-{}-{}",
@@ -91,6 +107,7 @@ fn provenance(
         learning_rate_bits: LR.to_bits(),
         phase1_state_sha256: "2".repeat(64),
         runtime_commit: "test".into(),
+        cell: None,
     }
 }
 
@@ -276,6 +293,15 @@ fn archive_distillation_commands_keep_their_wire_shape() {
     rerun["dry_run"] = json!(true);
     let command: ExpandedTrainingCommandV1 = serde_json::from_value(rerun.clone()).unwrap();
     assert_eq!(serde_json::to_value(&command).unwrap(), rerun);
+    let mut celled = phase1.clone();
+    celled["arm"] = json!("uniform");
+    celled["options"] = json!({"cell":"U-s32","min_edge_backups":32,
+        "checkpoint_steps":[8, 16, 32]});
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(celled.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), celled);
+    let mut wrong = celled;
+    wrong["options"]["anchor"] = json!(4);
+    assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(wrong).is_err());
     let mut unknown = phase1;
     unknown["learning_rate"] = json!(0.001);
     assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(unknown).is_err());
@@ -386,6 +412,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
+        None,
     )
     .unwrap();
     assert_eq!(plan.epoch_steps, 3);
@@ -420,6 +447,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
+        None,
     )
     .unwrap();
     assert!(plan
@@ -433,6 +461,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         &anchor,
         "r2",
         ArchiveDistillationArmV1::Uniform,
+        None,
     )
     .unwrap();
     assert_ne!(plan.steps[0].archive, other.steps[0].archive);
@@ -485,6 +514,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::LineDecisions,
+        None,
     )
     .unwrap();
     assert_eq!(plan.checkpoints, LINE_STEPS.to_vec());
@@ -504,6 +534,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
             &anchor,
             "r1",
             ArchiveDistillationArmV1::LineDecisions,
+            None,
         )
         .unwrap();
         assert_eq!(plan.epoch_steps, 2);
@@ -518,15 +549,320 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         assert!(plan.steps.iter().all(|s| s.denominator == s.archive.len()));
     }
     // No rows, or an anchor smaller than one batch, refuse.
-    assert!(plan_v1(&rows, &[], &anchor, "r1", ArchiveDistillationArmV1::Uniform).is_err());
+    assert!(plan_v1(
+        &rows,
+        &[],
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::Uniform,
+        None
+    )
+    .is_err());
     assert!(plan_v1(
         &rows,
         &selected,
         &anchor_rows(255),
         "r1",
-        ArchiveDistillationArmV1::Uniform
+        ArchiveDistillationArmV1::Uniform,
+        None
     )
     .is_err());
+}
+
+#[test]
+fn cell_options_resolve_to_one_recorded_recipe_and_refuse_anything_else() {
+    let frozen = frozen_recipe();
+    assert_eq!(frozen.learning_rate.to_bits(), LEARNING_RATE.to_bits());
+    assert_eq!(
+        frozen.anchor_coefficient.to_bits(),
+        ANCHOR_COEFFICIENT.to_bits()
+    );
+    assert!(frozen.checkpoint_steps.is_none() && frozen.cell.is_none());
+    let mut options = cell("U-a4");
+    options.learning_rate = Some(2.5e-5);
+    options.anchor_coefficient = Some(4.0);
+    options.checkpoint_steps = Some(vec![8, 16, 32, 189]);
+    let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&options)).unwrap();
+    assert_eq!(recipe.learning_rate.to_bits(), 2.5e-5_f32.to_bits());
+    assert_eq!(recipe.anchor_coefficient, 4.0);
+    assert_eq!(recipe.checkpoint_steps, Some(vec![8, 16, 32, 189]));
+    assert_eq!(
+        recipe.cell,
+        Some(ArchiveDistillationCellV1 {
+            cell: "U-a4".into(),
+            anchor_coefficient_bits: 4.0_f64.to_bits(),
+            min_edge_backups: None,
+            count_control: None,
+            checkpoint_steps: vec![8, 16, 32, 189],
+        })
+    );
+    // A label alone keeps every frozen value and the epoch schedule.
+    let plain = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell("U0"))).unwrap();
+    assert_eq!(plain.learning_rate.to_bits(), LEARNING_RATE.to_bits());
+    assert_eq!(plain.anchor_coefficient, ANCHOR_COEFFICIENT);
+    assert!(plain.checkpoint_steps.is_none());
+    assert_eq!(plain.cell.unwrap().checkpoint_steps, Vec::<u64>::new());
+    type Case = (
+        &'static str,
+        &'static str,
+        fn(&mut ArchiveDistillationOptionsV1),
+    );
+    let cases: [Case; 11] = [
+        ("empty label", "cell label", |o| o.cell = String::new()),
+        ("label with a space", "cell label", |o| {
+            o.cell = "U a4".into()
+        }),
+        ("long label", "cell label", |o| o.cell = "U".repeat(33)),
+        ("zero step size", "step size", |o| {
+            o.learning_rate = Some(0.0)
+        }),
+        ("NaN step size", "step size", |o| {
+            o.learning_rate = Some(f32::NAN)
+        }),
+        ("negative anchor", "anchor coefficient", |o| {
+            o.anchor_coefficient = Some(-1.0)
+        }),
+        ("infinite anchor", "anchor coefficient", |o| {
+            o.anchor_coefficient = Some(f64::INFINITY)
+        }),
+        ("two row rules", "one rule", |o| {
+            o.min_edge_backups = Some(32);
+            o.count_control = Some(10)
+        }),
+        ("empty count control", "at least one row", |o| {
+            o.count_control = Some(0)
+        }),
+        ("unordered checkpoints", "strictly increasing", |o| {
+            o.checkpoint_steps = Some(vec![8, 64, 32])
+        }),
+        ("short schedule", "reproduction step", |o| {
+            o.checkpoint_steps = Some(vec![8, 16])
+        }),
+    ];
+    for (name, expected, mutate) in cases {
+        let mut options = cell("U-x");
+        mutate(&mut options);
+        let error = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&options))
+            .err()
+            .unwrap_or_else(|| panic!("{name} accepted"));
+        assert!(error.contains(expected), "{name}: {error}");
+    }
+    let error = recipe_v1(ArchiveDistillationArmV1::LineDecisions, Some(&cell("L0")))
+        .err()
+        .unwrap();
+    assert!(error.contains("arm U only"), "{error}");
+}
+
+#[test]
+fn cell_rows_keep_a_support_floor_or_a_label_free_count() {
+    let mut rows = bank_rows(200);
+    for (index, (row, _)) in rows.iter_mut().enumerate() {
+        row.edge_backups = Some(8 + (index as u64 * 37) % 400);
+    }
+    let all: Vec<usize> = (0..200).collect();
+    let none = select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", None).unwrap();
+    assert_eq!(none, all);
+    assert_eq!(
+        select_rows_v1(&rows, ArchiveDistillationArmV1::LineDecisions, "r1", None).unwrap(),
+        vec![5, 40, 41]
+    );
+    // A support floor keeps exactly the rows at or above it, in bank order.
+    let mut floor = cell("U-s32");
+    floor.min_edge_backups = Some(32);
+    let kept =
+        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&floor)).unwrap();
+    let expected: Vec<usize> = all
+        .iter()
+        .copied()
+        .filter(|&i| rows[i].0.edge_backups.unwrap() >= 32)
+        .collect();
+    assert_eq!(kept, expected);
+    assert!(kept.len() < 200 && !kept.is_empty());
+    // A count control keeps n rows in bank order, the same n every time,
+    // whatever the rows' labels and counts.
+    let mut count = cell("U-c32");
+    count.count_control = Some(kept.len());
+    let control =
+        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&count)).unwrap();
+    assert_eq!(control.len(), kept.len());
+    assert!(control.windows(2).all(|w| w[0] < w[1]));
+    assert_ne!(control, kept);
+    let mut relabeled = rows.clone();
+    for (row, _) in relabeled.iter_mut() {
+        row.edge_backups = Some(9);
+        row.line = line(true, true, false, false);
+        row.target = 0;
+    }
+    assert_eq!(
+        select_rows_v1(
+            &relabeled,
+            ArchiveDistillationArmV1::Uniform,
+            "r1",
+            Some(&count)
+        )
+        .unwrap(),
+        control
+    );
+    assert_ne!(
+        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r2", Some(&count)).unwrap(),
+        control
+    );
+    count.count_control = Some(201);
+    assert!(
+        select_rows_v1(&rows, ArchiveDistillationArmV1::Uniform, "r1", Some(&count))
+            .unwrap_err()
+            .contains("more rows than the arm has")
+    );
+}
+
+#[test]
+fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
+    let rows = bank_rows(70);
+    let all: Vec<usize> = (0..70).collect();
+    let anchor = anchor_rows(300);
+    let frozen = plan_v1(
+        &rows,
+        &all,
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::Uniform,
+        None,
+    )
+    .unwrap();
+    // Own checkpoint steps, past the frozen schedule's end: the same
+    // archive and anchor batches at every shared step.
+    let steps = [8, 16, 32, 50, 128];
+    let cell_plan = plan_v1(
+        &rows,
+        &all,
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::Uniform,
+        Some(&steps),
+    )
+    .unwrap();
+    assert_eq!(cell_plan.checkpoints, steps.to_vec());
+    assert_eq!(cell_plan.steps.len(), 128);
+    assert_eq!(cell_plan.epoch_steps, frozen.epoch_steps);
+    assert!(frozen
+        .steps
+        .iter()
+        .zip(&cell_plan.steps)
+        .all(|(a, b)| a.archive == b.archive
+            && a.denominator == b.denominator
+            && a.anchor == b.anchor));
+    // A subset's epochs keep U's relative order and the shared anchor order.
+    let subset: Vec<usize> = all.iter().copied().filter(|i| i % 3 != 0).collect();
+    let sub = plan_v1(
+        &rows,
+        &subset,
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::Uniform,
+        Some(&steps),
+    )
+    .unwrap();
+    assert_eq!(sub.epoch_steps, (subset.len() as u64).div_ceil(32));
+    for epoch in 0..3usize {
+        let per = frozen.epoch_steps as usize;
+        let full: Vec<usize> = frozen.steps[epoch * per..(epoch + 1) * per]
+            .iter()
+            .flat_map(|s| s.archive.clone())
+            .filter(|i| subset.contains(i))
+            .collect();
+        let per = sub.epoch_steps as usize;
+        let kept: Vec<usize> = sub.steps[epoch * per..(epoch + 1) * per]
+            .iter()
+            .flat_map(|s| s.archive.clone())
+            .collect();
+        assert_eq!(kept, full, "epoch {epoch}");
+    }
+    assert!(sub
+        .steps
+        .iter()
+        .zip(&cell_plan.steps)
+        .all(|(a, b)| a.anchor == b.anchor));
+    // Arm L takes no cell schedule; unordered steps refuse.
+    assert!(plan_v1(
+        &rows,
+        &[5, 40, 41],
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::LineDecisions,
+        Some(&steps)
+    )
+    .is_err());
+    assert!(plan_v1(
+        &rows,
+        &all,
+        &anchor,
+        "r1",
+        ArchiveDistillationArmV1::Uniform,
+        Some(&[32, 16])
+    )
+    .is_err());
+}
+
+#[test]
+fn a_cell_checkpoint_loads_only_at_its_recorded_step_size_on_arm_u() {
+    let root = temp_root("checkpoint-cell");
+    let (mut policy, model, parent, file) = parent_fixture(&root);
+    let template = model.parameter_snapshot_v1();
+    let parameters = distilled(&parent, &template);
+    let mut record = provenance(&parent, &file);
+    record.learning_rate_bits = 2.5e-5_f32.to_bits();
+    record.cell = Some(ArchiveDistillationCellV1 {
+        cell: "U-lr".into(),
+        anchor_coefficient_bits: 1.0_f64.to_bits(),
+        min_edge_backups: None,
+        count_control: None,
+        checkpoint_steps: vec![8, 16, 32],
+    });
+    let saved = checkpoint_v1(&parent, &parameters, record.clone()).unwrap();
+    assert_eq!(saved.learning_rate_bits, 2.5e-5_f32.to_bits());
+    let restored = restore_checkpoint_state_v1(&saved, &mut policy, model.clone()).unwrap();
+    assert_eq!(
+        hex(&restored.state_sha256_v1().unwrap()),
+        saved.state_sha256
+    );
+    // The cell round-trips, and a checkpoint without one keeps its bytes.
+    let bytes = serde_json::to_vec(&saved).unwrap();
+    let reread: ExpandedCheckpointV1 = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        reread.archive_distillation.as_ref().unwrap().cell,
+        record.cell
+    );
+    let frozen = checkpoint_v1(&parent, &parameters, provenance(&parent, &file)).unwrap();
+    assert!(
+        serde_json::to_value(&frozen).unwrap()["archive_distillation"]
+            .get("cell")
+            .is_none()
+    );
+    type Case = (&'static str, fn(&mut ExpandedCheckpointV1));
+    let cases: [Case; 4] = [
+        ("saved step size differs", |s| {
+            s.learning_rate_bits = LEARNING_RATE.to_bits()
+        }),
+        ("recorded step size differs", |s| {
+            s.archive_distillation.as_mut().unwrap().learning_rate_bits = LEARNING_RATE.to_bits()
+        }),
+        ("cell on arm L", |s| {
+            s.archive_distillation.as_mut().unwrap().arm = ArchiveDistillationArmV1::LineDecisions
+        }),
+        ("cell removed", |s| {
+            s.archive_distillation.as_mut().unwrap().cell = None
+        }),
+    ];
+    for (name, mutate) in cases {
+        let mut changed = saved.clone();
+        mutate(&mut changed);
+        rehash(&mut changed, &template);
+        assert!(
+            restore_checkpoint_state_v1(&changed, &mut policy, model.clone()).is_err(),
+            "{name} accepted"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn deck(id: &str) -> ExpandedDeckListV1 {
@@ -639,7 +975,7 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
     let fresh = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
     let exact = anchor_targets_v1(&rows).unwrap();
     assert_eq!(
-        anchor_identity_preflight_v1(&fresh, generation, &rows, &exact),
+        anchor_identity_preflight_v1(&fresh, generation, &rows, &exact, &frozen_recipe()),
         Ok(3)
     );
     assert_eq!(fresh.adam_step_v1(), 0, "the pre-flight steps a copy");
@@ -656,7 +992,9 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         })
         .collect();
     for (name, targets) in [("deployed", &deployed), ("nudged", &nudged)] {
-        let error = anchor_identity_preflight_v1(&fresh, generation, &rows, targets).unwrap_err();
+        let error =
+            anchor_identity_preflight_v1(&fresh, generation, &rows, targets, &frozen_recipe())
+                .unwrap_err();
         assert!(error.contains("not exact"), "{name}: {error}");
     }
     let mut stepped = fresh.clone();
@@ -668,7 +1006,8 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         &stepped.model_v1().parameter_snapshot_v1(),
         &model.parameter_snapshot_v1()
     ));
-    let error = anchor_identity_preflight_v1(&stepped, generation, &rows, &exact).unwrap_err();
+    let error = anchor_identity_preflight_v1(&stepped, generation, &rows, &exact, &frozen_recipe())
+        .unwrap_err();
     assert!(error.contains("fresh phase-1 optimizer"), "{error}");
     // Why fresh moments: after one step toward a far target, an exact
     // anchor step still moves the parameters through momentum.
@@ -1153,6 +1492,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         anchor: world.anchor.clone(),
         stop_after_steps: None,
         dry_run: true,
+        options: None,
         output_directory: world.root.join("phase1-dry"),
     })
     .unwrap();
@@ -1275,6 +1615,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
             anchor: world.anchor.clone(),
             stop_after_steps,
             dry_run: false,
+            options: None,
             output_directory: world.root.join(name),
         })
     };
