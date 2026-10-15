@@ -376,6 +376,37 @@ mod tests {
         }
     }
     #[test]
+    fn bound_combat_trigger_authenticates_only_positive_materialization() {
+        let id = crate::card_def::card_id_by_name("Drake Hatcher").unwrap();
+        let template = combat_binder();
+        for amount in [1, 3, i32::MAX] {
+            let effect = EffectOp::IncubationFromCombatDamageV1 {
+                amount: Some(amount),
+            };
+            assert!(crate::trigger::source_bound_trigger_program_matches(
+                &template, &effect
+            ));
+            assert!(crate::trigger::trigger_effect_matches(id, &effect));
+            assert!(!crate::trigger::trigger_effect_matches(
+                crate::card_def::card_id_by_name("Forest").unwrap(),
+                &effect
+            ));
+        }
+        for amount in [0, -1] {
+            let effect = EffectOp::IncubationFromCombatDamageV1 {
+                amount: Some(amount),
+            };
+            assert!(!crate::trigger::source_bound_trigger_program_matches(
+                &template, &effect
+            ));
+            assert!(!crate::trigger::trigger_effect_matches(id, &effect));
+        }
+        assert!(!crate::trigger::source_bound_trigger_program_matches(
+            &template,
+            &create_drake()
+        ));
+    }
+    #[test]
     fn exact_partial_inventory_and_frozen_vector_refusal() {
         use crate::card_def::{card_id_by_name, CardCapability, CARD_DEFS};
         let id = card_id_by_name("Drake Hatcher").unwrap();

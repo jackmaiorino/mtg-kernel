@@ -1414,11 +1414,6 @@ pub enum CostComponent {
     /// `standard_cards_v1`'s per-incarnation state.
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
-    /// Remove an exact typed quantity from the ability source before stacking.
-    RemoveSourceCountersV1 {
-        kind: crate::drake_hatcher_v1::SourceCounterKindV1,
-        count: u16,
-    },
     /// Identifies one actual Pole grant and taps that payer-controlled Pole
     /// attached to this exact host. This is a named source cost, not a spell
     /// target or an unrestricted artifact-tap cost.
@@ -1427,6 +1422,11 @@ pub enum CostComponent {
     /// The mana branch contains exactly one Mana component; the other branch
     /// sacrifices one currently controlled creature, without targeting it.
     SacrificeCreatureOrPayMana(&'static [CostComponent]),
+    /// Remove an exact typed quantity from the ability source before stacking.
+    RemoveSourceCountersV1 {
+        kind: crate::drake_hatcher_v1::SourceCounterKindV1,
+        count: u16,
+    },
 }
 
 impl CostComponent {

@@ -4022,6 +4022,15 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        // The event binder saves only positive final combat damage. The caller
+        // still authenticates the definition/source and the source contract at
+        // resolution. Immutable historical amount custody needs a successor.
+        (
+            EffectOp::IncubationFromCombatDamageV1 { amount: None },
+            EffectOp::IncubationFromCombatDamageV1 {
+                amount: Some(amount),
+            },
+        ) => *amount > 0,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
         (

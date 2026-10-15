@@ -1714,10 +1714,6 @@ pub enum EffectOp {
     /// Appended to preserve every predecessor Hash discriminant. A departed
     /// or reentered ability source receives none; prior instructions remain.
     AddSoulCounterToAbilitySourceV1,
-    /// None is a printed binder, Some is the final positive combat event amount.
-    IncubationFromCombatDamageV1 {
-        amount: Option<i32>,
-    },
     /// Appended original-source soul count. Uses the current battlefield
     /// incarnation or exact departure LKI, never a later incarnation's count.
     LoseLifeEachOpponentEqualSourceSoulV1,
@@ -1733,6 +1729,10 @@ pub enum EffectOp {
     MayDiscardCardOtherwiseV1 {
         player: PlayerRef,
         unpaid: Box<EffectOp>,
+    },
+    /// None is a printed binder, Some is the final positive combat event amount.
+    IncubationFromCombatDamageV1 {
+        amount: Option<i32>,
     },
 }
 

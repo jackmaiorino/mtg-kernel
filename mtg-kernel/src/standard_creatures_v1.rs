@@ -1184,6 +1184,7 @@ mod doubling_season_transfer_tests_v48 {
                     net: 1,
                     bait: 1,
                     soul: 1,
+                    incubation: 1,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
@@ -1207,6 +1208,7 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.net, 2);
                 assert_eq!(o.counters.bait, 2);
                 assert_eq!(o.counters.soul, 2);
+                assert_eq!(o.counters.incubation, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);

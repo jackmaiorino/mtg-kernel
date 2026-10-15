@@ -43,7 +43,15 @@ new incarnation and checked overflow/underflow. Synthetic prevention and
 suppression setup exercises existing engine primitives, not new printed cards.
 
 Checks observed: `cargo +1.94.1 fmt --all`, `git diff --check`, small Python
-catalog/prefix/pin/hash assertions. Frozen 286 printings and 24 token dependencies,
+catalog/prefix/pin/hash assertions. The actual
+`python -m unittest python.tests.test_limited_decks_v1 python.tests.test_fdn_booster_pool_v1`
+suites passed all 67 tests. A complete balanced enum-body token check preserves
+all 230 EffectOp, 28 CostComponent and 152 subtype predecessor variants; each
+new variant is appended at its actual enum tail. Positive combat binder
+materializations now match the definition template, with source/incarnation
+checks retained and historical amount custody still deferred. The multikind
+transfer literal includes soul and incubation, with doubled expectations. The
+committed 40-card by-name reference deck remains refused by Full-only tooling. Frozen 286 printings and 24 token dependencies,
 profile constants, lockfiles and toolchain pins remain unchanged. No Rust check
 has passed. Successor work still needs compiled engine fixtures, complete exact
 public/transport/session/tensor/ordered-meaning consumers and adversarial restore
@@ -51,8 +59,8 @@ validation linking saved damage, trigger custody, payment and counter placement
 to immutable committed history. The plain effect amount and counter transfer
 are not claimed to establish that provenance. Full admission stays closed.
 
-Source digest: `ca609f10347afab86340e9e43b83a28f4c19dfafbfe9a9cf041249e5f84b83fc`.
-Algorithm: sorted changed source/catalog paths versus base, excluding this note;
+Source digest: `5b5d19da2b7ddcc6718d364ede6b2e66f40cd2fb35e7b92078a5cafea14cd470`.
+Algorithm: sorted changed source/catalog/test/reference paths versus base, excluding this note;
 SHA-256 over each UTF-8 path, NUL, then raw SHA-256 of LF-normalized file bytes.
 Catalog LF SHA-256: `e9677499904a105bc9a1c889740d91e6414007950b80a4728e58aa4603b2ded2`.
 
