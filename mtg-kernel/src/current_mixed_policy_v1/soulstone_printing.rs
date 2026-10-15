@@ -305,7 +305,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     validate_shape(id, d)?;
     let animation = d.animation.ok_or(Error::UnsupportedPrintedRoot(id))?;
     let activated_cost = match d.activated_abilities[0].cost {
-        [crate::card_def::CostComponent::Mana(cost)] => cost,
+        [crate::card_def::CostComponent::Mana(cost)] => *cost,
         _ => return Err(Error::UnsupportedPrintedRoot(id)),
     };
     let land_play = OrdinaryLandPlay {
@@ -352,7 +352,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
         summoning_sickness_rules_apply_normally: true,
     };
     Ok(Some(json!({"card_id":id,"registered_permanent_printing":{
-        "characteristics":{"types":d.types,"subtypes":d.subtypes,"supertypes":d.supertypes,
+        "characteristics":{"types":d.types,"subtypes":d.subtypes,"supertypes":[],
             "colors":d.colors,"mana_value":d.mana_value,"power":d.power,"toughness":d.toughness,
             "ordered_keywords":[],"minimum_blockers":d.minimum_blockers,"token":d.is_token,
             "land":d.is_land,"enters_tapped":d.enters_battlefield_tapped,

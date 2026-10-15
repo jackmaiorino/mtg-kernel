@@ -123,8 +123,8 @@ impl Choice {
         let packet = match self {
             Self::Fake(d) => &mut d.packet,
             Self::Ravenous(d) => &mut d.packet,
-            Self::Elenda(d) => &mut d.packet,
-            Self::Prepared(d) => &mut d.packet,
+            Self::Elenda(d) => d.fixture_packet_mut(),
+            Self::Prepared(d) => d.fixture_packet_mut(),
         };
         packet.state = NumericTree::encode(&json!({})).unwrap();
     }
@@ -489,7 +489,7 @@ fn genuine_paid_soulstone_land_play_colorless_mana_and_persistent_animation_all_
                 land,
                 crate::card_def::Keywords::VIGILANCE
             ));
-            for subtype in crate::card_def::Subtype::CREATURE_TYPES {
+            for &subtype in crate::card_def::Subtype::CREATURE_TYPES {
                 assert!(crate::engine::has_effective_subtype(
                     h.state(),
                     land,

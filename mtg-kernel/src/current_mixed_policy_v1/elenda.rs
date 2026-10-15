@@ -23,6 +23,14 @@ impl ElendaDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_packet_mut(&mut self) -> &mut Packet {
+        &mut self.packet
+    }
 }
 impl ElendaSession {
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {

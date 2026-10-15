@@ -91,7 +91,7 @@ fn finish_upgrade<O: Owner>(s: &mut O) {
 fn form<O: Owner>(s: &O, source: ObjectId, subtype: Subtype, pt: (i16, i16), double: bool) {
     assert_eq!(
         crate::engine::checked_effective_pt(s.world(), source).unwrap(),
-        pt
+        (i32::from(pt.0), i32::from(pt.1))
     );
     for required in [Subtype::Human, Subtype::Faerie, subtype] {
         assert!(crate::engine::has_effective_subtype(
