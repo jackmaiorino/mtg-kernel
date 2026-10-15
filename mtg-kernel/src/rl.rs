@@ -2013,8 +2013,8 @@ enum ObservationTextModeV2 {
     // Private construction mode. Only the distinct V51 DTO publishes this
     // storage, together with its mandatory exact battlefield card roster.
     RavenousV51Artifact,
-    PreparedV57Artifact,
     FlatForbiddenElided,
+    PreparedV57Artifact,
 }
 
 impl ObservationTextModeV2 {
@@ -2372,6 +2372,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_divine,
             accept_conqueror,
             accept_fake,
+            text_mode == ObservationTextModeV2::PreparedV57Artifact,
         )?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
@@ -2391,6 +2392,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 (true, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
             )?
         } else {
             engine_context_v2(
@@ -4829,6 +4831,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
@@ -4864,6 +4867,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                     (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                     accept_conqueror,
                     accept_fake,
+                    text_mode == ObservationTextModeV2::PreparedV57Artifact,
                 )?,
                 stack_item_kind: item.kind.into(),
             });
@@ -4894,6 +4898,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
+                text_mode == ObservationTextModeV2::PreparedV57Artifact,
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -9627,6 +9632,7 @@ fn engine_context_v2_conqueror_inner_v49(
         accepted_sources,
         accept_conqueror,
         false,
+        false,
     )
 }
 
@@ -9637,6 +9643,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
 ) -> Result<EngineContextV2> {
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
@@ -9864,6 +9871,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     (accept_inspiration, accept_fishing),
                     (true, accept_hunter, accept_panda),
                     accept_fake,
+                    accept_prepared,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -9901,6 +9909,11 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
+                let prepared_source = if accept_prepared {
+                    crate::prepared_observation_v57::pending_source_reference(state, p)?
+                } else {
+                    None
+                };
                 let fake_source = if accept_fake {
                     crate::fake_your_own_death_v50::public_v50::pending_source_reference(state, p)?
                 } else {
@@ -9917,7 +9930,10 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     None
                 };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if let Some(source) = fake_source.or(conqueror_source).or(panda_source)
+                    source: if let Some(source) = prepared_source
+                        .or(fake_source)
+                        .or(conqueror_source)
+                        .or(panda_source)
                     {
                         Some(source)
                     } else if accept_hunter
@@ -9986,6 +10002,7 @@ fn pending_effect_semantic_v4_akroma_inner(
         capabilities,
         accepted_sources,
         false,
+        false,
     )
 }
 
@@ -9996,6 +10013,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     capabilities: (bool, bool),
     accepted_sources: (bool, bool, bool),
     accept_fake: bool,
+    accept_prepared: bool,
 ) -> Result<PendingEffectSemanticV4> {
     let (accept_akroma, accept_hunter, accept_panda) = accepted_sources;
     let (accept_inspiration, accept_fishing) = capabilities;
@@ -10029,6 +10047,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                 (accept_akroma, false, accept_hunter, accept_panda),
                 false,
                 accept_fake,
+                accept_prepared,
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -10363,6 +10382,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
             (accept_akroma, false, accept_hunter, accept_panda),
             false,
             accept_fake,
+            accept_prepared,
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -10755,6 +10775,7 @@ fn stack_item_public_v1(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
@@ -10763,6 +10784,7 @@ fn stack_public_conqueror_v49_fake_v50(
     accept_divine: bool,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
@@ -10778,6 +10800,7 @@ fn stack_public_conqueror_v49_fake_v50(
                 accepted_sources,
                 (accept_divine, accept_conqueror),
                 accept_fake,
+                accept_prepared,
             )
         })
         .collect()
@@ -10793,6 +10816,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accepted_roots: (bool, bool),
     accept_fake: bool,
+    accept_prepared: bool,
 ) -> Result<StackItemPublicV2> {
     let (accept_divine, accept_conqueror) = accepted_roots;
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
@@ -10839,6 +10863,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
             accepted_sources,
             accept_conqueror,
             accept_fake,
+            accept_prepared,
         )?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
@@ -11098,6 +11123,7 @@ fn akroma_historical_source_ref_fake_scoped_v50(
             (true, false, false, false),
             false,
             true,
+            false,
         )
     } else {
         stack_source_ref_union_v40(state, item, true, (true, false, false, false))
@@ -11128,6 +11154,7 @@ fn stack_source_ref_conqueror_v49(
         accepted_sources,
         accept_conqueror,
         false,
+        false,
     )
 }
 
@@ -11138,7 +11165,14 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
+    accept_prepared: bool,
 ) -> Result<CardStableRefV1> {
+    if accept_prepared {
+        if let Some(source) = crate::prepared_observation_v57::stack_source_reference(state, item)?
+        {
+            return Ok(source);
+        }
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {

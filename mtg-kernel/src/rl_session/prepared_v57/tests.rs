@@ -371,3 +371,92 @@ fn paid_quandary_opposing_spell_binds_payer_not_source_controller_and_decline_re
         assert_eq!(gameplay(&session), result);
     }
 }
+
+#[test]
+fn simultaneous_identical_spinner_occurrences_keep_real_order_and_captured_source_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (paid, spinner) = cast_setup(actor, "Spinner of Souls");
+        let mut raw = state(&paid).clone();
+        let elves = [
+            put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield),
+            put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield),
+        ];
+        crate::event::propose_and_commit_batch(
+            &mut raw,
+            elves
+                .into_iter()
+                .map(|object| crate::event::ProposedEvent::zone_change(object, Zone::Graveyard))
+                .collect(),
+        );
+        let mut session = own(raw);
+        let decision = session.decision_v57().unwrap();
+        assert_eq!(decision.observation().spinner.held.len(), 2);
+        assert_eq!(
+            decision.observation().spinner.held[0],
+            decision.observation().spinner.held[1]
+        );
+        let order=decision.actions().iter().position(|action|matches!(action,ActionSemanticV1::OrderTriggers{order,..}if order==&vec![1,0])).unwrap();
+        let saved = session.snapshot_v57();
+        let mut reference = session.inner.clone();
+        let expected = decision.expected();
+        assert_eq!(
+            session.step_v57(&decision, order as u32).unwrap(),
+            reference
+                .step(expected.episode_id, expected.step, order as u32)
+                .unwrap()
+        );
+        assert_eq!(
+            gameplay(&session).0,
+            serde_json::to_vec(reference.prepared_fixture_state()).unwrap()
+        );
+        let after = gameplay(&session);
+        session.restore_v57(&saved).unwrap();
+        assert!(session.step_v57(&decision, order as u32).is_err());
+        let current = session.decision_v57().unwrap();
+        session.step_v57(&current, order as u32).unwrap();
+        assert_eq!(gameplay(&session), after);
+        let rows = &state(&session).stack;
+        assert_eq!(rows.len(), 2);
+        for item in rows {
+            let captured =
+                crate::prepared_observation_v57::stack_source_reference(state(&session), item)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(captured.arena_id, spinner.0);
+            assert_eq!(captured.zone, Zone::Battlefield);
+            let mut forged = item.clone();
+            forged.controller = actor.opponent();
+            assert!(crate::prepared_observation_v57::stack_source_reference(
+                state(&session),
+                &forged
+            )
+            .is_err());
+        }
+        // A real departure operand after publication keeps the original
+        // battlefield identity; no bounce spell or historical record is invented.
+        let mut moved = state(&session).clone();
+        crate::event::propose_and_commit(
+            &mut moved,
+            crate::event::ProposedEvent::zone_change(spinner, Zone::Hand),
+        );
+        let moved = own(moved);
+        assert!(moved
+            .decision_v57()
+            .unwrap()
+            .observation()
+            .spinner
+            .current
+            .is_empty());
+        for item in &state(&moved).stack {
+            let captured =
+                crate::prepared_observation_v57::stack_source_reference(state(&moved), item)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(captured.arena_id, spinner.0);
+            assert_eq!(captured.zone, Zone::Battlefield);
+            assert!(
+                captured.zone_change_count < state(&moved).objects.get(spinner).zone_change_count
+            );
+        }
+    }
+}

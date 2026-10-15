@@ -24,7 +24,14 @@ occurs once in the existing engine before stack publication and is not refunded.
 The initial source checkpoint includes paid targetless printing casts, actual
 Hatcher combat-commit/debit/token/counter paths, original ordered-step parity,
 exact widths, hidden-hand invariance, whole-binding forgeries, foreign/stale owner
-refusal, restore replay and a Quandary payer distinct from its source controller.
+refusal, restore replay a Quandary payer distinct from its source controller and two identical real Spinner
+death occurrences with complete original ordering.
+V57-only source helpers authenticate full actual live/resolving rows or exact held
+borrows before using captured original contracts, including copied sources after
+reversion. Concealed current incarnations keep the shared masking policy. Distinct
+identical pending occurrences remain distinct by actual roster position, not a
+value-unique approximation. Every predecessor helper passes the new bit false.
+
 Source capture/replay retains the existing independent original-input trust limit.
 Spinner/Quandary/Phoenix facts claim current/held/live stages, not fabricated
 completed historical journals. Native arithmetic refusals remain explicit.

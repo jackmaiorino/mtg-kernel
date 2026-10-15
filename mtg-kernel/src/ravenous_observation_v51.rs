@@ -455,6 +455,21 @@ impl RavenousObservationV51 {
         Ok(())
     }
     pub fn validate_artifact(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(SCHEMA, &producer_sha256())
+    }
+    /// A distinct Prepared compatibility contract. Never accepts this value as
+    /// a frozen V51 artifact; every inherited data/meaning check is shared.
+    pub(crate) fn validate_prepared_compatibility_v57(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::prepared_observation_v57::COMMON_SCHEMA,
+            &crate::prepared_observation_v57::producer_sha256(),
+        )
+    }
+    fn validate_artifact_identity(
+        &self,
+        schema: &str,
+        producer: &str,
+    ) -> Result<(), RlContractError> {
         self.validate_battlefield_artifact()?;
         if self.ravenous.schema != crate::ravenous_public_v51::SCHEMA
             || self.ravenous.producer_sha256 != crate::ravenous_public_v51::producer_sha256()
@@ -489,8 +504,8 @@ impl RavenousObservationV51 {
             || self.season.producer_sha256 != crate::doubling_season_public_v48::producer_sha256()
             || self.season.card_db_hash != self.card_db_hash
             || self.season.meanings != crate::doubling_season_public_v48::meanings()?
-            || self.schema != SCHEMA
-            || self.producer_sha256 != producer_sha256()
+            || self.schema != schema
+            || self.producer_sha256 != producer
             || self.kernel_version != crate::KERNEL_VERSION
             || self.roots != crate::akroma_public_v1::roots()?
             || self.divine.meanings != crate::divine_public_v44::meanings()?

@@ -182,6 +182,114 @@ fn annotation(
         countering_refunds_costs: false,
     }))
 }
+fn selected_source(source: crate::state::AbilitySourceContractV4) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(source.card_def))
+        .is_some_and(|d| {
+            matches!(
+                d.name,
+                "Drake Hatcher" | "Spinner of Souls" | "Painful Quandary" | "Flamewake Phoenix"
+            )
+        })
+}
+fn captured_reference(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> CardStableRefV1 {
+    CardStableRefV1 {
+        arena_id: source.source.0,
+        card_db_id: crate::rl::projected_captured_card_def(
+            state,
+            source.source,
+            source.zone_change_count,
+            source.zone,
+            source.card_def,
+        ),
+        owner: source.owner.into(),
+        controller: source.controller.into(),
+        zone: source.zone,
+        zone_change_count: source.zone_change_count,
+    }
+}
+pub(crate) fn stack_source_reference(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let source = if let Some(source) = item.v4.ability_source_contract {
+        source
+    } else if let Some(source) = item.v4.source_contract {
+        crate::state::AbilitySourceContractV4 {
+            source: source.source,
+            card_def: source.card_def,
+            owner: source.owner,
+            controller: source.controller,
+            zone: source.zone,
+            zone_change_count: source.zone_change_count,
+            attached_to: None,
+        }
+    } else {
+        return Ok(None);
+    };
+    if !selected_source(source) {
+        return Ok(None);
+    }
+    validate_state(state).map_err(RlContractError)?;
+    crate::engine::validated_stack_item_target_spec(item, state).map_err(RlContractError)?;
+    let live = state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        .collect::<Vec<_>>();
+    if !matches!(live.as_slice(),[row] if *row==item)
+        && !(live.is_empty()
+            && state
+                .engine
+                .pending_effect
+                .as_ref()
+                .is_some_and(|pending| pending.resolving_item == *item))
+    {
+        return Err(RlContractError(
+            "prepared source requires unique genuine live or resolving full row".into(),
+        ));
+    }
+    if item.source != source.source || item.controller != source.controller {
+        return Err(RlContractError(
+            "prepared original source/controller changed".into(),
+        ));
+    }
+    Ok(Some(captured_reference(state, source)))
+}
+pub(crate) fn pending_source_reference(
+    state: &GameState,
+    pending: &crate::trigger::PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    let Some(source) = pending.source_contract else {
+        return Ok(None);
+    };
+    if !selected_source(source) {
+        return Ok(None);
+    }
+    validate_state(state).map_err(RlContractError)?;
+    crate::engine::validate_pending_trigger_identity(state, pending).map_err(RlContractError)?;
+    let held = crate::optional_trigger_public_v1::held(state);
+    let actual = held
+        .iter()
+        .filter(|row| std::ptr::eq(**row, pending))
+        .count();
+    let matching = held.iter().filter(|row| **row == pending).count();
+    // Distinct simultaneous occurrences may have identical values. A direct
+    // held-row borrow is unambiguous; a detached value needs a unique match.
+    if !(actual == 1 || (actual == 0 && matching == 1))
+        || pending.source != source.source
+        || pending.controller != source.controller
+    {
+        return Err(RlContractError(
+            "prepared source requires unique genuine held trigger".into(),
+        ));
+    }
+    Ok(Some(captured_reference(state, source)))
+}
+
 pub fn observe_v57(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -245,6 +353,46 @@ pub(crate) fn observe_parts_v57(
 /// complete private binding authorizes an action or snapshot restore.
 pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContractError> {
     let inherited = &value.common.common;
+    inherited.validate_prepared_compatibility_v57()?;
+    crate::rules_meaning_elenda_v52::validate(&value.common.elenda.meaning)
+        .map_err(|e| RlContractError(format!("prepared Elenda meaning:{e:?}")))?;
+    crate::rules_meaning_spinner_v54::validate(&value.spinner.meaning).map_err(RlContractError)?;
+    crate::rules_meaning_quandary_v55::validate(&value.quandary.meaning)
+        .map_err(RlContractError)?;
+    crate::rules_meaning_phoenix_v56::validate(&value.phoenix.meaning).map_err(RlContractError)?;
+    for root in &value.drake.meanings {
+        crate::rules_meaning_drake_hatcher_v53::validate(root).map_err(RlContractError)?;
+    }
+    use crate::rules_meaning_drake_hatcher_v53::RootV53;
+    if value
+        .drake
+        .meanings
+        .iter()
+        .map(|root| root.root)
+        .collect::<Vec<_>>()
+        != vec![
+            RootV53::Prowess,
+            RootV53::CombatIncubation,
+            RootV53::RemoveIncubationForDrake,
+        ]
+        || value.drake.schema != crate::drake_public_v53::SCHEMA
+        || value.drake.producer_sha256 != crate::drake_public_v53::producer_sha256()
+        || value.common.elenda.schema != crate::elenda_public_v52::SCHEMA
+        || value.common.elenda.producer_sha256 != crate::elenda_public_v52::producer_sha256()
+        || value.common.elenda.card_db_hash != inherited.card_db_hash
+        || value.spinner.schema != crate::spinner_public_v54::SCHEMA
+        || value.spinner.producer_sha256 != crate::rules_meaning_spinner_v54::producer_sha256()
+        || value.quandary.schema != crate::quandary_public_v55::SCHEMA
+        || value.quandary.producer_sha256 != crate::rules_meaning_quandary_v55::producer_sha256()
+        || value.quandary.viewer != inherited.acting_player
+        || value.phoenix.schema != crate::phoenix_public_v56::SCHEMA
+        || value.phoenix.producer_sha256 != crate::phoenix_public_v56::producer_sha256()
+        || value.phoenix.card_db_hash != inherited.card_db_hash
+    {
+        return Err(RlContractError(
+            "prepared family artifact identity/root order changed".into(),
+        ));
+    }
     if value.schema != SCHEMA
         || value.producer_sha256 != producer_sha256()
         || value.projection_sha256 != commitment(value)?
@@ -274,6 +422,26 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
         for ((card, compat), base) in exact.iter().zip(narrow).zip(base) {
             let source = &card.reference;
             let reference = &base.stable;
+            let c = &card.counters;
+            if [
+                c.plus_one,
+                i32::from(c.minus_one),
+                i32::from(c.minus_toughness),
+                i32::from(c.stun),
+                i32::from(c.lore),
+                i32::from(c.oil),
+                c.charge,
+                c.net,
+                c.bait,
+                c.soul,
+                c.incubation,
+                i32::from(c.lifelink),
+            ]
+            .iter()
+            .any(|n| *n < 0)
+            {
+                return Err(RlContractError("prepared public counter underflow".into()));
+            }
             if !seen.insert(source.incarnation.object)
                 || source.incarnation.object != reference.arena_id
                 || source.incarnation.generation != reference.zone_change_count
