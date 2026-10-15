@@ -108,6 +108,7 @@ fn provenance(
         phase1_state_sha256: "2".repeat(64),
         runtime_commit: "test".into(),
         cell: None,
+        update_scope: ArchiveDistillationUpdateScopeV1::FullNetwork,
     }
 }
 
@@ -265,6 +266,52 @@ fn a_phase1_checkpoint_fails_closed_unless_its_named_parent_matches_bit_for_bit(
 }
 
 #[test]
+fn scorer_only_checkpoint_records_scope_and_refuses_frozen_parameter_changes() {
+    let root = temp_root("scorer-scope");
+    let (_, model, parent, file) = parent_fixture(&root);
+    let mut parameters =
+        restore_parameters(&parent.parameters, &model.parameter_snapshot_v1()).unwrap();
+    parameters
+        .iter_mut()
+        .find(|p| p.name == "scorer.0.weight")
+        .unwrap()
+        .values[0] += 0.125;
+    let mut record = provenance(&parent, &file);
+    assert!(serde_json::to_value(&record)
+        .unwrap()
+        .get("update_scope")
+        .is_none());
+    record.update_scope = ArchiveDistillationUpdateScopeV1::ScorerOnly;
+    let saved = checkpoint_v1(&parent, &parameters, record.clone()).unwrap();
+    validate_phase1_checkpoint_v1(&saved).unwrap();
+    assert_eq!(
+        serde_json::to_value(&saved).unwrap()["archive_distillation"]["update_scope"],
+        json!("scorer_only")
+    );
+    for name in [
+        "card_embedding.weight",
+        "state_encoder.0.weight",
+        "value_head.0.weight",
+    ] {
+        let mut altered = parameters.clone();
+        *altered
+            .iter_mut()
+            .find(|p| p.name == name)
+            .unwrap()
+            .values
+            .last_mut()
+            .unwrap() += 0.125;
+        let altered = checkpoint_v1(&parent, &altered, record.clone()).unwrap();
+        let result = validate_phase1_checkpoint_v1(&altered);
+        assert!(
+            result.unwrap_err().contains("changed a frozen parameter"),
+            "{name}"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn archive_distillation_commands_keep_their_wire_shape() {
     let source = json!({"play_import":{"path":"import.json","sha256":"a".repeat(64)},
         "feature_transfer":{"expected_feature_contract_digest":"b",
@@ -287,6 +334,16 @@ fn archive_distillation_commands_keep_their_wire_shape() {
     assert_eq!(*arm, ArchiveDistillationArmV1::LineDecisions);
     assert_eq!((*stop_after_steps, *dry_run), (None, false));
     // Defaults stay off the wire.
+    assert_eq!(serde_json::to_value(&command).unwrap(), phase1);
+    let mut scoped = phase1.clone();
+    scoped["update_scope"] = json!("scorer_only");
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(scoped.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&command).unwrap(), scoped);
+    scoped["update_scope"] = json!("heads");
+    assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(scoped).is_err());
+    let mut explicit_full = phase1.clone();
+    explicit_full["update_scope"] = json!("full_network");
+    let command: ExpandedTrainingCommandV1 = serde_json::from_value(explicit_full).unwrap();
     assert_eq!(serde_json::to_value(&command).unwrap(), phase1);
     let mut rerun = phase1.clone();
     rerun["stop_after_steps"] = json!(32);
@@ -983,7 +1040,14 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
     let fresh = NativePolicyValueTrainStateV1::new_v1(model.clone()).unwrap();
     let exact = anchor_targets_v1(&rows).unwrap();
     assert_eq!(
-        anchor_identity_preflight_v1(&fresh, generation, &rows, &exact, &frozen_recipe()),
+        anchor_identity_preflight_v1(
+            &fresh,
+            generation,
+            &rows,
+            &exact,
+            &frozen_recipe(),
+            ArchiveDistillationUpdateScopeV1::FullNetwork
+        ),
         Ok(3)
     );
     assert_eq!(fresh.adam_step_v1(), 0, "the pre-flight steps a copy");
@@ -1000,9 +1064,15 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         })
         .collect();
     for (name, targets) in [("deployed", &deployed), ("nudged", &nudged)] {
-        let error =
-            anchor_identity_preflight_v1(&fresh, generation, &rows, targets, &frozen_recipe())
-                .unwrap_err();
+        let error = anchor_identity_preflight_v1(
+            &fresh,
+            generation,
+            &rows,
+            targets,
+            &frozen_recipe(),
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+        )
+        .unwrap_err();
         assert!(error.contains("not exact"), "{name}: {error}");
     }
     let mut stepped = fresh.clone();
@@ -1014,8 +1084,15 @@ fn anchor_preflight_requires_exact_targets_on_fresh_moments() {
         &stepped.model_v1().parameter_snapshot_v1(),
         &model.parameter_snapshot_v1()
     ));
-    let error = anchor_identity_preflight_v1(&stepped, generation, &rows, &exact, &frozen_recipe())
-        .unwrap_err();
+    let error = anchor_identity_preflight_v1(
+        &stepped,
+        generation,
+        &rows,
+        &exact,
+        &frozen_recipe(),
+        ArchiveDistillationUpdateScopeV1::FullNetwork,
+    )
+    .unwrap_err();
     assert!(error.contains("fresh phase-1 optimizer"), "{error}");
     // Why fresh moments: after one step toward a far target, an exact
     // anchor step still moves the parameters through momentum.
@@ -1501,6 +1578,7 @@ fn commands_bank_dry_run_checkpoint_and_probe_on_a_real_parent() {
         stop_after_steps: None,
         dry_run: true,
         options: None,
+        update_scope: ArchiveDistillationUpdateScopeV1::FullNetwork,
         output_directory: world.root.join("phase1-dry"),
     })
     .unwrap();
@@ -1624,6 +1702,7 @@ fn phase1_runs_write_reloadable_checkpoints_and_reproduce_their_first_steps() {
             stop_after_steps,
             dry_run: false,
             options: None,
+            update_scope: ArchiveDistillationUpdateScopeV1::FullNetwork,
             output_directory: world.root.join(name),
         })
     };
