@@ -663,14 +663,9 @@ impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for Prepare
             crate::current_mixed_policy_v1::NumericTree::encode(&serde_json::json!({})).unwrap();
     }
     fn apply(&mut self, d: &Self::Decision, index: u32) -> Result<()> {
-        let mut reference = self.inner.clone();
-        let native = reference.decision_v57().unwrap();
+        let mut reference = native_reference(self);
         let actual = PreparedSession::apply(self, d, index)?;
-        assert_eq!(actual, reference.step_v57(&native, index).unwrap());
-        assert_eq!(
-            self.inner.fixture_state_v57(),
-            reference.fixture_state_v57()
-        );
+        reference.assert_step(self, actual, index);
         Ok(())
     }
     fn snapshot(&self) -> Self::Snapshot {
