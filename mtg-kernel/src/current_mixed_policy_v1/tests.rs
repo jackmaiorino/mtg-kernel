@@ -1540,4 +1540,257 @@ mod paid {
         run!(FakeSession, from_fake_v50_fixture_state);
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
+
+    #[test]
+    fn sower_closed_printing_supplies_normal_cast_and_exact_native_activation_cost() {
+        use crate::card_def::{
+            ActivationTargetFilter, CardType, CostComponent, Keywords, ModeDef, Subtype, TargetSpec,
+        };
+        use crate::mana::{Cost, ManaColor, Pip};
+        let id = crate::card_def::card_id_by_name("Sower of Chaos").unwrap();
+        let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
+        assert_eq!(
+            roots::sower_printing(id, &ordinary_recipe(id)).unwrap(),
+            Some(descriptor.clone())
+        );
+        let printing = &descriptor["registered_permanent_printing"];
+        let card = &printing["characteristics"];
+        assert_eq!(card["types"], json!(["Creature"]));
+        assert_eq!(card["subtypes"], json!(["Devil"]));
+        assert_eq!(card["supertypes"], json!([]));
+        assert_eq!(card["colors"], json!(["R"]));
+        assert_eq!(card["mana_value"], 4);
+        assert_eq!(card["power"], 4);
+        assert_eq!(card["toughness"], 3);
+        assert_eq!(card["ordered_keywords"], json!([]));
+        assert_eq!(card["minimum_blockers"], 1);
+        assert_eq!(card["printed_mana_abilities"], 0);
+        assert_eq!(card["printed_activated_abilities"], 1);
+        for field in ["token", "land", "enters_tapped"] {
+            assert_eq!(card[field], false);
+        }
+        let cast = &printing["ordered_cast_roots"][0];
+        assert_eq!(
+            cast["ordered_costs"],
+            json!([{"PrintedMana":{"generic":3,"pips":[{"Colored":"R"}],"x_count":0}}])
+        );
+        assert_eq!(cast["method"], "normal");
+        assert_eq!(cast["ordinary_route"], "Hand");
+        assert_eq!(cast["ordinary_origin"], "Hand");
+        assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+        assert_eq!(cast["targets"], "None");
+        assert_eq!(
+            cast["ordered_resolution"],
+            json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+        );
+        assert_eq!(
+            cast["physical_departure"],
+            "BattlefieldOnResolutionOtherwiseGraveyard"
+        );
+        assert_eq!(cast["zone_replacements_still_apply"], true);
+        let activation = &printing["ordered_activation_roots"][0];
+        assert_eq!(activation["ability_index"], 0);
+        assert_eq!(
+            activation["ordered_costs"],
+            json!([{"Mana":{"generic":2,"pips":[{"Colored":"R"}],"x_count":0}}])
+        );
+        assert_eq!(activation["timing"], "WithPriorityAtInstantSpeed");
+        assert_eq!(
+            activation["original_source_incarnation_bound_before_payment"],
+            true
+        );
+        assert_eq!(activation["payment_precedes_stack_publication"], true);
+        assert_eq!(
+            activation["countered_activation_never_refunds_payment"],
+            true
+        );
+        let original = crate::rules_meaning_sower_v1::meaning_v1(
+            &crate::rules_meaning_sower_v1::live_selector_v1().unwrap(),
+            id,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            activation["meaning"],
+            serde_json::to_value(&original).unwrap()
+        );
+        assert!(
+            !original.requires_tap
+                && !original.sorcery_speed_only
+                && original.exact_target_incarnation
+                && original.recheck_full_target_legality
+        );
+        assert_eq!(original.target_spec, TargetSpec::Creature);
+        assert!(!original.source_survival_required_after_payment);
+        macro_rules! reject {
+            ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::sower_printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};
+        }
+        reject!(
+            cost,
+            Cost {
+                generic: 2,
+                pips: &[Pip::Colored(ManaColor::R)],
+                x_count: 0
+            }
+        );
+        reject!(types, &[CardType::Enchantment]);
+        reject!(subtypes, &[Subtype::Goblin]);
+        reject!(power, Some(3));
+        reject!(toughness, Some(4));
+        reject!(keywords, Keywords::HASTE);
+        reject!(target_spec, TargetSpec::Creature);
+        reject!(
+            alt_cost,
+            Some(crate::card_def::AltCostDef {
+                components: &[],
+                condition: crate::card_def::AltCostCondition::Always
+            })
+        );
+        reject!(
+            mode2,
+            Some(ModeDef {
+                target_spec: TargetSpec::None,
+                effect: || crate::effect::EffectOp::Sequence(vec![])
+            })
+        );
+        reject!(spell_effect, || None);
+        reject!(activated_abilities, &[]);
+        reject!(
+            source_type_hexproof_v1,
+            Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+        );
+        reject!(other_controlled_nontoken_death_v1,Some(crate::card_def::OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom));
+        reject!(
+            combat_static_rules,
+            crate::card_def::CombatStaticRulesDef {
+                must_attack_each_combat: true,
+                cant_be_blocked_by_subtype: None
+            }
+        );
+        // Each native ability field is independently closed, including the
+        // face selector not represented by the historical activation-only body.
+        macro_rules! reject_ability {
+            ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);let mut ability=changed.activated_abilities[0];ability.$field=$value;
+                changed.activated_abilities=Box::leak(vec![ability].into_boxed_slice());
+                assert!(matches!(roots::sower_printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};
+        }
+        reject_ability!(cost, &[CostComponent::Mana(Cost::zero())]);
+        reject_ability!(target_spec, TargetSpec::AnyTarget);
+        reject_ability!(effect, || crate::effect::EffectOp::Sequence(vec![]));
+        reject_ability!(activation_zone, Zone::Hand);
+        reject_ability!(sorcery_speed_only, true);
+        reject_ability!(
+            activation_target_filter,
+            ActivationTargetFilter::CreatureSubtype(Subtype::Goblin)
+        );
+        reject_ability!(max_activations_per_turn, Some(1));
+        reject_ability!(face, Some(1));
+    }
+
+    #[test]
+    fn genuine_paid_sower_cast_and_target_bound_activation_restore_v50_v51_both_seats() {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident)=>{
+                for actor in [PlayerId::P0,PlayerId::P1] {
+                    let mut raw=state(actor);let source=put(&mut raw,actor,"Sower of Chaos",Zone::Hand);
+                    let target=put(&mut raw,actor.opponent(),"Llanowar Elves",Zone::Battlefield);
+                    let mountains=(0..2).map(|_|put(&mut raw,actor,"Mountain",Zone::Battlefield)).collect::<Vec<_>>();
+                    let forests=(0..5).map(|_|put(&mut raw,actor,"Forest",Zone::Battlefield)).collect::<Vec<_>>();
+                    let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                    let e=expected(&session.inner);let (public,_,_)=session.inner.$input(e,e.acting_player).unwrap();
+                    assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Sower(v)if v.roots.len()==1)));
+                    assert_eq!(numeric_field_count(session.encode(e).unwrap().packet.state(),"registered_permanent_printing"),1);
+                    for id in std::iter::once(&mountains[0]).chain(forests[..3].iter()) {act!(session,$input,|a|mana(a,*id));}
+                    act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source:card,..}if card.arena_id==source.0));
+                    assert_eq!(session.inner.$world().players[actor.index()].mana_pool,[0;6]);
+                    assert_eq!(session.inner.$world().objects.get(source).zone,Zone::Stack);
+                    let cast_paid=session.snapshot();let mut entry=None;
+                    for replay in 0..2 {
+                        if replay!=0 {session.restore(&cast_paid).unwrap();}
+                        for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                        assert_eq!(session.inner.$world().objects.get(source).zone,Zone::Battlefield);
+                        assert!(session.inner.$world().objects.get(source).summoning_sick);
+                        let result=(session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                        if let Some(previous)=&entry {assert_eq!(&result,previous);}else {entry=Some(result);}
+                    }
+                    for id in std::iter::once(&mountains[1]).chain(forests[3..].iter()) {act!(session,$input,|a|mana(a,*id));}
+                    act!(session,$input,|a|matches!(a,ActionSemanticV1::ActivateAbility{source:card,ability_index:0,granted_ability,..}if card.arena_id==source.0 && granted_ability.is_none()));
+                    // Target selection precedes native payment and publication.
+                    assert!(session.inner.$world().stack.is_empty());assert!(session.inner.$world().engine.pending_activation.is_some());
+                    assert_eq!(session.inner.$world().players[actor.index()].mana_pool.iter().copied().map(u32::from).sum::<u32>(),3);
+                    assert!(!session.inner.$world().objects.get(source).tapped);
+                    let e=expected(&session.inner);let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                    let target_index=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{source:card,target:crate::rl::TargetRefV1::Object{object},remaining:1,..}if card.arena_id==source.0 && object.arena_id==target.0 && object.zone==Zone::Battlefield)).unwrap();
+                    let original=session.encode(e).unwrap();assert_eq!(numeric_field_count(original.packet.state(),"registered_permanent_printing"),1);
+                    let pending=session.snapshot();let mut outcome=None;
+                    for replay in 0..2 {
+                        if replay!=0 {session.restore(&pending).unwrap();let before=session.inner.privileged_core_environment_hash();assert!(matches!(session.apply(&original,target_index as u32),Err(Error::StaleBinding)));assert_eq!(session.inner.privileged_core_environment_hash(),before);assert_eq!(session.encode(expected(&session.inner)).unwrap().packet,original.packet);}
+                        let e=expected(&session.inner);let decision=session.encode(e).unwrap();
+                        let mut erased=decision.clone();erased.packet.state=NumericTree::encode(&json!({})).unwrap();let before=session.inner.privileged_core_environment_hash();
+                        assert!(matches!(session.apply(&erased,target_index as u32),Err(Error::StaleBinding)));assert_eq!(session.inner.privileged_core_environment_hash(),before);
+                        let mut reference=session.inner.clone();let expected_reply=reference.step(e.episode_id,e.step,target_index as u32).unwrap();
+                        assert_eq!(session.apply(&decision,target_index as u32).unwrap(),expected_reply);assert_eq!(session.inner.$world(),reference.$world());
+                        let paid=session.inner.$world();assert_eq!(paid.players[actor.index()].mana_pool,[0;6]);assert!(!paid.objects.get(source).tapped);
+                        assert!(mountains.iter().chain(forests.iter()).all(|id|paid.objects.get(*id).tapped));
+                        assert_eq!(paid.stack.len(),1);let ability=&paid.stack[0];assert_eq!(ability.kind,crate::state::StackItemKind::ActivatedAbility);
+                        assert_eq!(ability.source,source);assert_eq!(ability.controller,actor);assert_eq!(ability.targets,vec![crate::state::Target::Object(target)]);
+                        let captured=ability.v4.ability_source_contract.unwrap();assert_eq!(captured.source,source);assert_eq!(captured.zone_change_count,paid.objects.get(source).zone_change_count);
+                        let paid_snapshot=session.snapshot();
+                        for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                        assert!(crate::sower_of_chaos_v1::cant_block(session.inner.$world(),target));
+                        let result=(session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                        session.restore(&paid_snapshot).unwrap();for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                        assert_eq!((session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count()),result);
+                        if let Some(previous)=&outcome {assert_eq!(&result,previous);}else {outcome=Some(result);}
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+    }
+
+    #[test]
+    fn sower_supplement_requires_actor_authorized_printing_without_hidden_hand_leak_v50_v51_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    for known in [false, true] {
+                        let mut raw = state(actor);
+                        if known {
+                            put(&mut raw, actor, "Sower of Chaos", Zone::Hand);
+                        }
+                        let hidden = put(&mut raw, actor.opponent(), "Sower of Chaos", Zone::Hand);
+                        let mut other = raw.clone();
+                        other.objects.get_mut(hidden).card_def =
+                            crate::card_def::card_id_by_name("Frenzied Goblin").unwrap();
+                        other.objects.get_mut(hidden).name = "Frenzied Goblin".into();
+                        let a = $session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        let b = $session::from_session(FastActorSessionV1::$from(other)).unwrap();
+                        let pa = a.encode(expected(&a.inner)).unwrap();
+                        let pb = b.encode(expected(&b.inner)).unwrap();
+                        assert_eq!(pa.packet, pb.packet);
+                        assert_eq!(
+                            numeric_field_count(pa.packet.state(), "registered_permanent_printing"),
+                            usize::from(known)
+                        );
+                    }
+                }
+            };
+        }
+        run!(FakeSession, from_fake_v50_fixture_state);
+        run!(RavenousSession, from_ravenous_v51_fixture_state);
+    }
 }

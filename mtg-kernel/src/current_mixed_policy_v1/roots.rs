@@ -609,6 +609,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
+        "Sower of Chaos" => return sower_printing(id, d),
         "Bloodthirsty Conqueror" => {
             if !crate::bloodthirsty_conqueror_v49::owns_definition(id) {
                 return Err(Error::UnsupportedPrintedRoot(id));
@@ -930,6 +931,177 @@ pub(super) fn attack_or_banner_printing(id: u16, d: &CardDef) -> Result<Option<V
             other_cast_permissions_require_current_candidate_authority:true,zone_replacements_still_apply:true,
         }],
         "ordered_entry_replacements":entries,"ordered_mana_roots":mana,
+    }})))
+}
+
+/// Sower's family record owns the exact target/restriction meaning. The
+/// mandatory ordinary supplement supplies its previously omitted printing and
+/// native mana operands, without turning either record into action authority.
+#[derive(serde::Serialize)]
+struct SowerPrintedActivation {
+    ability_index: u16,
+    ordered_costs: [PrintedActivationCost; 1],
+    timing: PrintedActivationTiming,
+    original_source_incarnation_bound_before_payment: bool,
+    payment_precedes_stack_publication: bool,
+    countered_activation_never_refunds_payment: bool,
+    meaning: crate::rules_meaning_sower_v1::MeaningV1,
+}
+#[derive(serde::Serialize)]
+enum PrintedActivationCost {
+    Mana(crate::mana::Cost),
+}
+#[derive(serde::Serialize)]
+enum PrintedActivationTiming {
+    WithPriorityAtInstantSpeed,
+}
+pub(super) fn sower_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{ActivationTargetFilter, CostComponent, Keywords, Subtype};
+    use crate::mana::{Cost, ManaColor, Pip};
+    if d.name != "Sower of Chaos" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 3,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    if d.object_name != d.name
+        || d.capability != CardCapability::Full
+        || d.cost != cost
+        || d.mana_value != 4
+        || d.types != [CardType::Creature]
+        || d.subtypes != [Subtype::Devil]
+        || d.colors != [ManaColor::R]
+        || !d.supertypes.is_empty()
+        || d.power != Some(4)
+        || d.toughness != Some(3)
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.minimum_blockers != 1
+        || d.target_spec != TargetSpec::None
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || d.activated_abilities.len() != 1
+        || d.generic_cost_reduction.is_some()
+        || d.ward_cost.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.equipment.is_some()
+        || d.attachment.is_some()
+        || d.starting_loyalty.is_some()
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
+        || d.game_outcome_protection_v1.is_some()
+        || d.alt_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.flashback.is_some()
+        || d.plot_cost.is_some()
+        || d.madness_cost.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.kicked_target_spec.is_some()
+        || d.escape.is_some()
+        || d.enters_battlefield_tapped
+        || d.mana_ability_def.is_some()
+        || d.omen.is_some()
+        || d.mana_ability_includes_chosen_color
+        || d.as_enters_choose_color_other_than.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.transform_face.is_some()
+        || d.saga.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.changeling
+        || d.bestow.is_some()
+        || d.delve
+        || d.adventure.is_some()
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.conditional_tap_yield.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || !d.additional_mana_ability_conditions.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || d.animation.is_some()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
+        || d.as_enters_color_choice_v1.is_some()
+        || d.chosen_color_creature_boost_v1.is_some()
+        || d.damage_replacement_v1.is_some()
+        || d.token_counter_replacement_v48.is_some()
+        || !d.starting_life_self_bonuses_v1.is_empty()
+        || d.source_type_hexproof_v1.is_some()
+        || d.other_controlled_nontoken_death_v1.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+
+    if !crate::trigger::triggers_for(id).is_empty() {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let ability = &d.activated_abilities[0];
+    let activation_cost = Cost {
+        generic: 2,
+        pips: &[Pip::Colored(ManaColor::R)],
+        x_count: 0,
+    };
+    if ability.cost != [CostComponent::Mana(activation_cost)]
+        || ability.target_spec != TargetSpec::Creature
+        || (ability.effect)() != (EffectOp::PreventTargetBlockingUntilEndOfTurn { target_index: 0 })
+        || ability.activation_zone != Zone::Battlefield
+        || ability.sorcery_speed_only
+        || ability.activation_target_filter != ActivationTargetFilter::TargetSpecOnly
+        || ability.max_activations_per_turn.is_some()
+        || ability.face.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    use crate::rules_meaning_sower_v1 as meaning;
+    let selector = meaning::live_selector_v1().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    let meaning =
+        meaning::meaning_v1(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    let characteristics = PermanentCharacteristics {
+        types: d.types.to_vec(),
+        subtypes: d.subtypes.to_vec(),
+        supertypes: Vec::new(),
+        colors: d.colors.to_vec(),
+        mana_value: d.mana_value,
+        power: d.power,
+        toughness: d.toughness,
+        ordered_keywords: Vec::new(),
+        minimum_blockers: d.minimum_blockers,
+        token: false,
+        land: false,
+        enters_tapped: false,
+        printed_mana_abilities: 0,
+        printed_activated_abilities: 1,
+    };
+    Ok(Some(json!({"card_id":id,"registered_permanent_printing":{
+        "characteristics":characteristics,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,zone_replacements_still_apply:true,
+        }],
+        "ordered_activation_roots":[SowerPrintedActivation {
+            ability_index:0,ordered_costs:[PrintedActivationCost::Mana(activation_cost)],
+            timing:PrintedActivationTiming::WithPriorityAtInstantSpeed,
+            original_source_incarnation_bound_before_payment:true,payment_precedes_stack_publication:true,
+            countered_activation_never_refunds_payment:true,meaning,
+        }],
     }})))
 }
 

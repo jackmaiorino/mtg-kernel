@@ -621,3 +621,173 @@ fn frenzied_banner_printing_supplements_do_not_disclose_independent_hidden_hands
         }
     }
 }
+
+#[test]
+fn genuine_paid_sower_cast_target_payment_and_restriction_restore_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = state(actor, "Lightning Bolt", 30);
+        let source = put(&mut raw, actor, "Sower of Chaos", Zone::Hand);
+        let target = put(
+            &mut raw,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let mountains = (0..2)
+            .map(|_| put(&mut raw, actor, "Mountain", Zone::Battlefield))
+            .collect::<Vec<_>>();
+        let forests = (0..5)
+            .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+            .collect::<Vec<_>>();
+        let mut session = own(raw);
+        let initial = session.inner.decision_v52().unwrap();
+        assert!(initial.observation().common.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Sower(v)if v.roots.len()==1)));
+        assert_eq!(
+            ordinary_printing_count(session.encode(initial.expected()).unwrap().packet()),
+            1
+        );
+        for id in std::iter::once(&mountains[0]).chain(forests[..3].iter()) {
+            mana(&mut session, *id);
+        }
+        cast(&mut session, source);
+        assert_eq!(
+            session.inner.fixture_state_v52().players[actor.index()].mana_pool,
+            [0; 6]
+        );
+        assert_eq!(
+            session.inner.fixture_state_v52().objects.get(source).zone,
+            Zone::Stack
+        );
+        let cast_paid = session.snapshot();
+        let mut entry = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                session.restore(&cast_paid).unwrap();
+            }
+            drain(&mut session);
+            assert_eq!(
+                session.inner.fixture_state_v52().objects.get(source).zone,
+                Zone::Battlefield
+            );
+            assert!(
+                session
+                    .inner
+                    .fixture_state_v52()
+                    .objects
+                    .get(source)
+                    .summoning_sick
+            );
+            let result = gameplay(&session);
+            if let Some(previous) = &entry {
+                assert_eq!(&result, previous);
+            } else {
+                entry = Some(result);
+            }
+        }
+        for id in std::iter::once(&mountains[1]).chain(forests[3..].iter()) {
+            mana(&mut session, *id);
+        }
+        act(
+            &mut session,
+            |a| matches!(a,ActionSemanticV1::ActivateAbility{source:card,ability_index:0,granted_ability,..}if card.arena_id==source.0 && granted_ability.is_none()),
+        );
+        let world = session.inner.fixture_state_v52();
+        assert!(world.stack.is_empty());
+        assert!(world.engine.pending_activation.is_some());
+        assert!(!world.objects.get(source).tapped);
+        assert_eq!(
+            world.players[actor.index()]
+                .mana_pool
+                .iter()
+                .copied()
+                .map(u32::from)
+                .sum::<u32>(),
+            3
+        );
+        let current = session.inner.decision_v52().unwrap();
+        let index=current.actions().iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{source:card,target:TargetRefV1::Object{object},remaining:1,..}if card.arena_id==source.0 && object.arena_id==target.0 && object.zone==Zone::Battlefield)).unwrap();
+        let original = session.encode(current.expected()).unwrap();
+        assert_eq!(ordinary_printing_count(original.packet()), 1);
+        let pending = session.snapshot();
+        let mut outcome = None;
+        for replay in 0..2 {
+            if replay != 0 {
+                session.restore(&pending).unwrap();
+                let before = gameplay(&session);
+                assert!(matches!(
+                    session.apply(&original, index as u32),
+                    Err(Error::StaleBinding)
+                ));
+                assert_eq!(gameplay(&session), before);
+                assert_eq!(
+                    session.encode(expected(&session)).unwrap().packet(),
+                    original.packet()
+                );
+            }
+            let current = session.encode(expected(&session)).unwrap();
+            let mut erased = current.clone();
+            erased.packet.state = super::super::NumericTree::encode(&json!({})).unwrap();
+            let before = gameplay(&session);
+            assert!(matches!(
+                session.apply(&erased, index as u32),
+                Err(Error::StaleBinding)
+            ));
+            assert_eq!(gameplay(&session), before);
+            session.apply(&current, index as u32).unwrap();
+            let paid = session.inner.fixture_state_v52();
+            assert_eq!(paid.players[actor.index()].mana_pool, [0; 6]);
+            assert!(!paid.objects.get(source).tapped);
+            assert!(mountains
+                .iter()
+                .chain(forests.iter())
+                .all(|id| paid.objects.get(*id).tapped));
+            assert_eq!(paid.stack.len(), 1);
+            let ability = &paid.stack[0];
+            assert_eq!(ability.kind, crate::state::StackItemKind::ActivatedAbility);
+            assert_eq!(ability.source, source);
+            assert_eq!(ability.controller, actor);
+            assert_eq!(ability.targets, vec![crate::state::Target::Object(target)]);
+            let captured = ability.v4.ability_source_contract.unwrap();
+            assert_eq!(captured.source, source);
+            assert_eq!(
+                captured.zone_change_count,
+                paid.objects.get(source).zone_change_count
+            );
+            let paid_snapshot = session.snapshot();
+            drain(&mut session);
+            assert!(crate::sower_of_chaos_v1::cant_block(
+                session.inner.fixture_state_v52(),
+                target
+            ));
+            let result = gameplay(&session);
+            session.restore(&paid_snapshot).unwrap();
+            drain(&mut session);
+            assert_eq!(gameplay(&session), result);
+            if let Some(previous) = &outcome {
+                assert_eq!(&result, previous);
+            } else {
+                outcome = Some(result);
+            }
+        }
+    }
+}
+#[test]
+fn sower_printing_supplement_preserves_independent_hidden_hand_invariance_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for known in [false, true] {
+            let make = |hidden| {
+                let mut raw = state(actor, hidden, 30);
+                if known {
+                    put(&mut raw, actor, "Sower of Chaos", Zone::Hand);
+                }
+                own(raw)
+            };
+            let a = make("Sower of Chaos");
+            let b = make("Frenzied Goblin");
+            let pa = a.encode(expected(&a)).unwrap();
+            let pb = b.encode(expected(&b)).unwrap();
+            assert_eq!(pa.packet(), pb.packet());
+            assert_eq!(ordinary_printing_count(pa.packet()), usize::from(known));
+        }
+    }
+}
