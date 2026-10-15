@@ -6043,3 +6043,165 @@ mod soul_placement_primitive_v1_tests {
         }
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod ravenous_amulet_paid_future_tests {
+    use super::*;
+    use crate::engine::{self, Action, Decision};
+    use crate::mana::ManaColor;
+    use crate::policy_observation_v6::tests::{advance_to_next_main_for, put, ready_state_for};
+    use crate::state::AbilitySourceContractV4;
+
+    fn paid_priority(state: &mut GameState, actor: PlayerId) {
+        assert!(matches!(engine::advance_until_decision(state),
+            Decision::CastSpellOrPass { player, .. } if player == actor));
+        assert!(state.engine.pending_cast.is_none());
+        assert!(state.engine.pending_activation.is_none());
+    }
+
+    fn finish(state: &mut GameState) {
+        for _ in 0..32 {
+            match engine::advance_until_decision(state) {
+                Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                other => panic!("genuine Amulet resolution: {other:?}"),
+            }
+        }
+        panic!("Amulet stack did not finish");
+    }
+
+    fn cast_amulet(actor: PlayerId) -> (GameState, ObjectId) {
+        let mut state = ready_state_for(actor);
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for _ in 0..8 {
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+        }
+        let amulet = put(&mut state, actor, "Ravenous Amulet", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(amulet)).unwrap();
+        finish(&mut state);
+        assert_eq!(state.objects.get(amulet).zone, Zone::Battlefield);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0
+        );
+        assert_eq!(state.objects.get(amulet).counters.soul, 0);
+        (state, amulet)
+    }
+
+    #[test]
+    #[ignore = "requires genuine Ravenous Amulet registration and paid-owner qualification"]
+    fn actual_paid_draw_soul_and_self_sacrifice_keep_original_count_after_reentry_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            let chosen = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            let hand = state.players[actor.index()].hand.len();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, remaining: 1, .. }
+                    if candidates.contains(&chosen) && candidates.contains(&spare)));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseCostTarget(chosen)).unwrap();
+                paid_priority(branch, actor);
+                assert_eq!(
+                    branch.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                    0
+                );
+                assert!(branch.objects.get(amulet).tapped);
+                assert_eq!(branch.objects.get(chosen).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(spare).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+                finish(branch);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+            }
+            assert_eq!(state, restored);
+
+            advance_to_next_main_for(&mut state, actor);
+            assert!(!state.objects.get(amulet).tapped);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            let original = AbilitySourceContractV4::capture(&state, amulet);
+            let life = state.players.each_ref().map(|p| p.life);
+            engine::step(&mut state, Action::ActivateAbility(amulet, 1)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(amulet).counters.soul, 0);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(1));
+            // Explicit zone-transition boundary after genuine paid self-sacrifice.
+            // This is not a claim of a printed artifact-return producer.
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(amulet, Zone::Battlefield),
+            );
+            assert_ne!(
+                state.objects.get(amulet).zone_change_count,
+                original.zone_change_count
+            );
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.players[actor.index()].life, life[actor.index()]);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    life[actor.opponent().index()] - 1
+                );
+                assert_eq!(branch.objects.get(amulet).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires genuine Ravenous Amulet registration and paid-owner qualification"]
+    fn actual_first_ability_refuses_nonempty_stack_while_zero_soul_second_ability_is_instant_speed_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 5;
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                4
+            );
+            let before = state.clone();
+            assert!(engine::step(&mut state, Action::ActivateAbility(amulet, 0)).is_err());
+            assert_eq!(state, before);
+            let original = AbilitySourceContractV4::capture(&state, amulet);
+            let life = state.players.each_ref().map(|p| p.life);
+            let hand = state.players[actor.index()].hand.len();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 1)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.stack.len(), 2);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(0));
+            finish(&mut state);
+            assert_eq!(state.players.each_ref().map(|p| p.life), life);
+            assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+        }
+    }
+}
