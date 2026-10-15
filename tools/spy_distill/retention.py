@@ -18,6 +18,10 @@ the panel rows; nothing is played or trained here.
   parent and D1L alone, read before the first dispatch;
 - ``x3``: X3 (the parent's readouts identical in every probe, D1L's equal to
   the screen's FIT.json ``L-step-1024``), first on the reference probe;
+- ``x4``: X4 alone, from the screen's own panels, before any new panel;
+- ``keep``: the files a run's pruning must keep for the probe (every file the
+  sources of its read updates pin, the endpoint's included), each checked
+  against its SHA-256;
 - ``exactness``: X1 (A-s0's endpoint state and Adam step against the screen's
   D2L checkpoint and, while the screen's update records are on disk, every
   update record's X1 fields against the screen's) and, given the lineage's
@@ -25,8 +29,9 @@ the panel rows; nothing is played or trained here.
   before any reading;
 - ``analyze``: the config gate on the production configs, X1's result, X3,
   each run bound to its role (its trace's completion, its manifest's episode
-  ids and seeds, its Spy learner episodes and its panels' endpoint), then the
-  paths, the traces and every panel, X4 first;
+  ids and seeds, its launcher receipt's config, its Spy learner episodes and
+  its panels' endpoint), every trace and probe bound to the build of the
+  given commit, then the paths, the traces and every panel, X4 first;
 - ``paths``: per run, the self path s(c) (the offer set's mean deployed
   self-target probability) and the Giant path g(c)
   (``archive.training.groups.giant_chosen.mean_deployed_probability``: the
@@ -58,20 +63,27 @@ CLI (JSON on stdout):
             (no --run: the reference probe, {lineage}-probe-ref)
   x3        --lineage r1 --screen-fit FIT.json --probe PROBE.json [--probe ...] --out X3.json
             (exits 1 when X3 fails)
+  x4        --screen-index INDEX.json --screen-result RESULT.json --out X4.json
+            (exits 1 when X4 fails)
+  keep      --role A-s0 --run RUN/completion.json --out KEEP.json
+            (exits 1 when a listed file is missing or differs from its pin)
   exactness --lineage r1 --rerun RUN/completion.json --d2l-checkpoint D2L.json
             [--screen SCREEN_RUN/completion.json]
             [--screen-fit FIT.json --probe PROBE.json [--probe ...]] --out X.json
             (exits 1 when X1, or X3 when probes are given, fails)
   analyze   --spec SPEC.json --out RESULT.json
 SPEC: {"screen_fit": FIT.json, "screen_index": INDEX.json, "screen_result": RESULT.json,
+       "head_commit": SHA,
        "r1": {"screen_config": SCREEN_D2L/CONFIG-prod.json,
               "configs": {"A-s0": RUN/CONFIG-prod.json, ...}, "x1": X.json,
-              "runs": {"A-s0": RUN/completion.json, ...}, "probes": [PROBE.json, ...],
+              "runs": {"A-s0": RUN/completion.json, ...},
+              "reports": {"A-s0": RUN/hot/prod-r1-A-s0/report.json, ...}, "probes": [PROBE.json, ...],
               "traces": {"A-s0": TRACE/trace.json, ...}, "panels": [PANEL_ENTRY, ...]},
        "r2": {...}}
-X.json is A-s0's ``exactness`` output. A PANEL_ENTRY is an analyzer index
-entry for checkpoint ``{lineage}-{role}``, one per opponent for every run but
-A-s0.
+SHA is the commit the trace and probe binary was built at. X.json is A-s0's
+``exactness`` output. A report is the launcher's production receipt for the
+run. A PANEL_ENTRY is an analyzer index entry for checkpoint
+``{lineage}-{role}``, one per opponent for every run but A-s0.
 """
 from __future__ import annotations
 
@@ -200,6 +212,23 @@ def run_candidates(role: str, completion: dict) -> list[dict]:
     chosen = set(read_updates(role))
     return [{"id": candidate_id(role, u["update"]), "source": u["source"]}
             for u in updates(completion) if u["update"] in chosen]
+
+
+def keep_list(role: str, completion: dict) -> dict:
+    """The files a run's pruning must keep for its probe: every file pinned
+    at the top of the sources of its read updates (each checkpoint, the
+    endpoint's included, and what it imports), with whether each is present
+    with its pinned SHA-256."""
+    files = {}
+    for candidate in run_candidates(role, completion):
+        for value in candidate["source"].values():
+            if isinstance(value, dict) and set(value) >= {"path", "sha256"}:
+                files[value["path"]] = value["sha256"]
+    listed = []
+    for path, sha in sorted(files.items()):
+        present = Path(path).is_file() and hashlib.sha256(Path(path).read_bytes()).hexdigest() == sha
+        listed.append({"path": path, "sha256": sha, "present": present})
+    return {"role": role, "files": listed, "pass": all(f["present"] for f in listed)}
 
 
 def chunks(candidates: list[dict]) -> list[list[dict]]:
@@ -359,7 +388,8 @@ def giant_path(readout: dict):
 def context(readout: dict) -> dict:
     """Readouts reported beside the paths, entering no reading."""
     held_out = readout["anchor_held_out"]
-    return {"giant_summed_mass": group_value(readout, "training", "giant_chosen", "mean_deployed_giant_probability"),
+    return {"raw_self_probability": readout["learner_offers"]["mean_raw_self_probability"],
+            "giant_summed_mass": group_value(readout, "training", "giant_chosen", "mean_deployed_giant_probability"),
             "g1_self": group_value(readout, "training", "self_chosen"),
             "completion_giant": group_value(readout, "completion", "giant_chosen"),
             "completion_self": group_value(readout, "completion", "self_chosen"),
@@ -590,18 +620,31 @@ def x4(ci: dict, pts: dict, screen_result: dict, lineages) -> dict:
     return {"compared": len(keys), "differing": differ, "pass": not differ}
 
 
-def panels(screen_index: dict, screen_result: dict, entries: dict) -> dict:
-    """X4, then each endpoint's direct contrast with D1L over the same panel
-    games, by the screen's analyzer: J and combo_resolved for the line, and
-    the Spy, eight-deck and nine-deck scores as win-rate effects."""
+def panel_statistics(screen_index: dict, entries: dict) -> tuple:
+    """The screen's D1L and D2L panels and the new ones, by the screen's
+    analyzer: its data, contrasts, intervals and points. The bootstrap draws
+    one index set per draw, so new panels leave the screen's contrasts as
+    they were."""
     allowed = set().union(*(panel_ids(lin) for lin in LINEAGES))
     reused = [p for p in screen_index["panels"] if p["checkpoint"].split("-", 1)[1] in (D1L, "D2L")]
     index = {"panels": reused + [e for lin in LINEAGES for e in entries.get(lin, [])]}
     data = analyze.load(index, allowed)
     present = {key[0].split("-", 1)[1] for key in data}
     todo = analyze.plan(data, panel_contrasts(present))
-    ci = analyze.bootstrap(data, todo, PANEL_METRICS)
-    pts = analyze.points(data, todo, PANEL_METRICS)
+    return data, todo, analyze.bootstrap(data, todo, PANEL_METRICS), analyze.points(data, todo, PANEL_METRICS)
+
+
+def screen_x4(screen_index: dict, screen_result: dict) -> dict:
+    """X4 from the screen's own panels alone, read before any new panel."""
+    _, _, ci, pts = panel_statistics(screen_index, {lin: [] for lin in LINEAGES})
+    return x4(ci, pts, screen_result, LINEAGES)
+
+
+def panels(screen_index: dict, screen_result: dict, entries: dict) -> dict:
+    """X4, then each endpoint's direct contrast with D1L over the same panel
+    games, by the screen's analyzer: J and combo_resolved for the line, and
+    the Spy, eight-deck and nine-deck scores as win-rate effects."""
+    data, todo, ci, pts = panel_statistics(screen_index, entries)
     lineages = [lin for lin in LINEAGES if lin in entries]
     exact = x4(ci, pts, screen_result, lineages)
     require(exact["pass"], f"X4 failed: {exact['differing']}")
@@ -801,6 +844,29 @@ def bind_run(role: str, completion_sha256: str, trace: tuple, config: dict, spy:
             f"{role}: the traced Spy learner episodes are not the run's")
 
 
+def bind_report(role: str, report: dict, trace: tuple, config_sha256: str) -> None:
+    """The launcher's production receipt ties what ran to its config: its run
+    pin is the manifest the trace read, and its request pins this config
+    file (the manifest omits fields at their defaults, so it cannot be
+    compared with the config directly)."""
+    require(report.get("complete") is True and report.get("qualification") is False,
+            f"{role}: the report is not a complete production receipt")
+    require(report["run"]["sha256"] == trace[0]["run"]["sha256"], f"{role}: the report is another run's")
+    require(read_pinned(report["request"])["config"]["sha256"] == config_sha256,
+            f"{role}: the run was given another config")
+
+
+def bind_build(head_commit: str, outputs: list[dict]) -> dict:
+    """Every trace and probe comes from the build of the given commit: one
+    commit and one tracked tree."""
+    require(re.fullmatch(r"[0-9a-f]{40}", head_commit or "") is not None, "head_commit must be a full commit SHA")
+    other = sorted({o["runtime_commit"] for o in outputs} - {head_commit})
+    require(not other, f"traces or probes from another build: {other}")
+    trees = sorted({o["runtime_tree"] for o in outputs})
+    require(len(trees) == 1, f"traces and probes disagree on the build's tree: {trees}")
+    return {"commit": head_commit, "tree": trees[0], "outputs": len(outputs)}
+
+
 def bind_x1(lineage: str, result: dict, completion_sha256: str) -> dict:
     """A-s0 takes D2L's panels only once X1 holds for this A-s0 run."""
     require(result.get("lineage") == lineage and (result.get("rerun") or {}).get("sha256") == completion_sha256,
@@ -830,13 +896,15 @@ def analyze_spec(spec: dict, decks: list[dict] | None = None) -> dict:
     spy = (decks if decks is not None else pilot.load_decks())[pilot.SPY]
     result = {"schema": "spy-line-retention-v1/result", "lineages": {}}
     panel_entries = {}
+    built = []
     for lineage in LINEAGES:
         if lineage not in spec:
             continue
         part = spec[lineage]
-        for field in ("configs", "runs", "traces"):
+        for field in ("configs", "runs", "reports", "traces"):
             require(set(part[field]) == set(RUNS), f"{lineage}: every run's {field} are required")
-        cfgs = {role: read_json(path) for role, path in part["configs"].items()}
+        cfg_files = {role: read_with_sha256(path) for role, path in part["configs"].items()}
+        cfgs = {role: value for role, (value, _) in cfg_files.items()}
         gate = configs(lineage, read_json(part["screen_config"]), cfgs, decks)
         require(gate["pass"], f"{lineage}: the config gate failed")
         loaded = {role: read_with_sha256(path) for role, path in part["runs"].items()}
@@ -845,8 +913,10 @@ def analyze_spec(spec: dict, decks: list[dict] | None = None) -> dict:
         traces = {role: read_trace(path) for role, path in part["traces"].items()}
         for role in RUNS:
             bind_run(role, loaded[role][1], traces[role], cfgs[role], spy)
+            bind_report(role, read_json(part["reports"][role]), traces[role], cfg_files[role][1])
         bind_panels(lineage, part["panels"], runs)
         probes = [read_json(p) for p in part["probes"]]
+        built += [traces[role][0] for role in RUNS] + probes
         x3_result = x3(lineage, probes, screen_fit)
         require(x3_result["pass"], f"{lineage}: X3 failed")
         p = paths(lineage, probes, runs)
@@ -867,6 +937,7 @@ def analyze_spec(spec: dict, decks: list[dict] | None = None) -> dict:
                                                     ("attempts", attempts_statement))},
                          "explanations": READING3_EXPLANATIONS, "raw_explanations": READING3_RAW_EXPLANATIONS}}
         panel_entries[lineage] = part["panels"]
+    result["build"] = bind_build(spec.get("head_commit"), built)
     panel_result = panels(read_json(spec["screen_index"]), read_json(spec["screen_result"]), panel_entries)
     result["x4"] = panel_result["x4"]
     for lineage, entry in result["lineages"].items():
@@ -906,6 +977,14 @@ def main(argv=None) -> int:
     r.add_argument("--screen-fit", type=Path, required=True)
     r.add_argument("--probe", type=Path, action="append", required=True)
     r.add_argument("--out", type=Path, required=True)
+    f = sub.add_parser("x4")
+    f.add_argument("--screen-index", type=Path, required=True)
+    f.add_argument("--screen-result", type=Path, required=True)
+    f.add_argument("--out", type=Path, required=True)
+    k = sub.add_parser("keep")
+    k.add_argument("--role", required=True, choices=RUNS)
+    k.add_argument("--run", type=Path, required=True)
+    k.add_argument("--out", type=Path, required=True)
     t = sub.add_parser("trace-command")
     t.add_argument("--run-directory", type=Path, required=True)
     t.add_argument("--output-directory", required=True)
@@ -953,6 +1032,16 @@ def main(argv=None) -> int:
                   "x3": x3(a.lineage, [read_json(p) for p in a.probe], read_json(a.screen_fit))}
         result["pass"] = result["x3"]["pass"]
         print(json.dumps(write_json(a.out, result)))
+        return 0 if result["pass"] else 1
+    if a.op == "x4":
+        result = {"screen_index": pin(a.screen_index), "screen_result": pin(a.screen_result),
+                  "x4": screen_x4(read_json(a.screen_index), read_json(a.screen_result))}
+        result["pass"] = result["x4"]["pass"]
+        print(json.dumps(write_json(a.out, result)))
+        return 0 if result["pass"] else 1
+    if a.op == "keep":
+        result = {"run": pin(a.run), **keep_list(a.role, read_json(a.run))}
+        print(json.dumps({**write_json(a.out, result), "files": len(result["files"]), "pass": result["pass"]}))
         return 0 if result["pass"] else 1
     if a.op == "exactness":
         require(bool(a.probe) == bool(a.screen_fit), "X3 takes the probes and the screen's FIT.json together")

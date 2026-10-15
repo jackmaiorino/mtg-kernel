@@ -14,6 +14,7 @@ from tools.spy_distill import analyze, phase2, retention  # noqa: E402
 from tools.spy_distill import distill_common as common  # noqa: E402
 
 UPDATES = retention.UPDATES
+HEAD, TREE = "c" * 40, "t" * 64
 
 
 def write(path: Path, value) -> dict:
@@ -42,7 +43,8 @@ def readout(cid, state, adam, self_p=0.2, giant_p=0.8, self_rows_p=0.9):
     return {"id": cid, "state_sha256": state, "adam_step": adam,
             "archive": {"training": {"groups": training}, "completion": {"groups": completion}},
             "anchor_held_out": {"mean_kl_from_parent_non_spy": 0.01, "non_spy_top_agreement": 0.95},
-            "learner_offers": {"offers": 223, "mean_deployed_self_probability": self_p}}
+            "learner_offers": {"offers": 223, "mean_deployed_self_probability": self_p,
+                               "mean_raw_self_probability": self_p / 2}}
 
 
 def trace_row(chosen, won, normalized, raw=None, decision="self", iteration=0):
@@ -101,7 +103,8 @@ def probe_of(lineage: str, runs: dict, value, d1l_state: str = "d") -> dict:
                 s, g = value(role, u["update"])
                 candidates.append(readout(retention.candidate_id(role, u["update"]), u["state_sha256"],
                                           u["adam_step"], self_p=s, giant_p=g))
-    return {"schema": retention.PROBE_SCHEMA, "complete": True, "lineage": lineage, "candidates": candidates}
+    return {"schema": retention.PROBE_SCHEMA, "complete": True, "lineage": lineage, "candidates": candidates,
+            "runtime_commit": HEAD, "runtime_tree": TREE}
 
 
 class Temp(unittest.TestCase):
@@ -200,6 +203,28 @@ class Probes(Temp):
         write(run / "completion.json", dict(record, completed_iterations=161))
         with self.assertRaisesRegex(ValueError, "complete 162-update"):
             retention.trace_command(run, str(self.root / "trace" / "r1-A-s1"))
+
+
+class Keep(Temp):
+    def test_the_keep_list_holds_every_file_the_read_updates_pin_and_checks_it(self):
+        imported = write(self.root / "import.json", {"import": 1})
+        record = self.run_record("A-s1", first={**source("d1l"), "play_import": imported})
+        completion = write(self.root / "A-s1-completion.json", record)
+        out = self.root / "keep.json"
+        args = ["keep", "--role", "A-s1", "--run", completion["path"], "--out", str(out)]
+        with mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 0)
+        kept = json.loads(out.read_text())
+        self.assertTrue(kept["pass"])
+        # Updates 18, 36, ..., 162: the checkpoints after updates 18 to 162 (the
+        # endpoint's included), and the file they import.
+        expected = [str(self.root / "A-s1" / f"ck-{n - 1}.json") for n in range(18, UPDATES + 1, 18)]
+        self.assertEqual(sorted(f["path"] for f in kept["files"]), sorted(expected + [imported["path"]]))
+        self.assertEqual(record["source"]["checkpoint"]["path"], expected[-1])
+        Path(expected[3]).unlink()
+        with mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 1)
+        self.assertEqual([f["path"] for f in json.loads(out.read_text())["files"] if not f["present"]], [expected[3]])
 
 
 class Configs(unittest.TestCase):
@@ -358,7 +383,9 @@ class Paths(Temp):
         self.assertEqual(out["d1l"], {"self": 0.2, "giant": 0.8})
         self.assertAlmostEqual(out["d1l_context"]["giant_summed_mass"], 0.9)
         self.assertAlmostEqual(out["d1l_context"]["completion_giant"], 0.4)
+        self.assertAlmostEqual(out["d1l_context"]["raw_self_probability"], 0.1)
         a0, a1 = out["runs"]["A-s0"], out["runs"]["A-s1"]
+        self.assertAlmostEqual(a1["series"][0]["context"]["raw_self_probability"], 0.03)
         self.assertEqual(len(a0["series"]), 27)
         self.assertEqual(len(a1["series"]), 9)
         self.assertEqual(a0["class"], {"self": "lost", "giant": "kept"})
@@ -521,6 +548,29 @@ class Panels(panels_fixture.Fixture):
             with self.assertRaisesRegex(ValueError, f"X4 failed: \\['{key}'\\]"):
                 retention.panels(screen, changed, entries)
 
+    def test_x4_alone_reads_the_screens_own_panels_of_both_lineages(self):
+        half = lambda o, t, k, s: o == analyze.SPY and k < 6  # noqa: E731
+        never = lambda o, t, k, s: False  # noqa: E731
+        screen = {"panels": [panels_fixture.panel(self.root, f"{lin}-{role}", opp, panels_fixture.constant(
+            lambda o, t, k, s: 1, half if role == "D1L" else never))
+            for lin in ("r1", "r2") for role in ("D1L", "D2L", "parent") for opp in ("T1", "H")]}
+        patcher = mock.patch.object(retention.analyze, "DRAWS", panels_fixture.DRAWS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        index, result, out = self.root / "index.json", self.root / "result.json", self.root / "x4.json"
+        index.write_text(json.dumps(screen))
+        screen_result = retention.analyze.analyze(screen, None)
+        result.write_text(json.dumps(screen_result))
+        args = ["x4", "--screen-index", str(index), "--screen-result", str(result), "--out", str(out)]
+        with mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 0)
+        self.assertEqual(json.loads(out.read_text())["x4"], {"compared": 60, "differing": [], "pass": True})
+        screen_result["contrasts"]["r1/D2L-D1L/J/T1/best"]["point"] += 1e-9
+        result.write_text(json.dumps(screen_result))
+        with mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 1)
+        self.assertEqual(json.loads(out.read_text())["x4"]["differing"], ["r1/D2L-D1L/J/T1/best"])
+
 
 def write_lines(path: Path, items) -> dict:
     path.write_bytes("".join(json.dumps(item) + "\n" for item in items).encode())
@@ -556,6 +606,8 @@ class Analysis(unittest.TestCase):
         cls.runs = {role: run_record(root, role) for role in retention.RUNS}
         part["runs"] = {role: cls.json(f"{role}-completion.json", run) for role, run in cls.runs.items()}
         part["traces"] = {role: cls.trace(role, part["runs"][role]) for role in retention.RUNS}
+        part["reports"] = {role: cls.report(role, part["traces"][role], part["configs"][role])
+                           for role in retention.RUNS}
         part["x1"] = cls.x1_result(part["runs"]["A-s0"], True)
 
         def value(role, n):
@@ -578,7 +630,8 @@ class Analysis(unittest.TestCase):
         part["panels"] = [panel(f"r1-{role}", opp, combo, cls.runs[role]["source"]["checkpoint"]["sha256"])
                           for role, combo in combos.items() for opp in ("T1", "H")]
         cls.spec = {"screen_fit": cls.json("fit.json", fit), "screen_index": cls.json("index.json", screen),
-                    "screen_result": cls.json("result.json", retention.analyze.analyze(screen, None)), "r1": part}
+                    "screen_result": cls.json("result.json", retention.analyze.analyze(screen, None)),
+                    "head_commit": HEAD, "r1": part}
 
     @classmethod
     def tearDownClass(cls):
@@ -607,8 +660,18 @@ class Analysis(unittest.TestCase):
                  "completion": {"path": completion, "sha256": sha256(completion)},
                  "iterations": empty_trace(push=0.01)["iterations"],
                  "rows": write_lines(directory / "rows.jsonl", rows),
-                 "episodes": write_lines(directory / "episodes.jsonl", episodes), "spy_learner_episodes": len(ids)}
+                 "episodes": write_lines(directory / "episodes.jsonl", episodes), "spy_learner_episodes": len(ids),
+                 "runtime_commit": HEAD, "runtime_tree": TREE}
         return cls.json(f"trace-{role}{name}.json", trace)
+
+    @classmethod
+    def report(cls, role: str, trace: str, config: str, name: str = "") -> str:
+        """The launcher's production receipt: the run the trace read, from a
+        request that pins the config file."""
+        request = cls.json(f"request-{role}{name}.json", {"config": {"path": config, "sha256": sha256(config)}})
+        return cls.json(f"report-{role}{name}.json",
+                        {"complete": True, "qualification": False, "run": json.loads(Path(trace).read_text())["run"],
+                         "request": {"path": request, "sha256": sha256(request)}})
 
     @classmethod
     def x1_result(cls, rerun: str, passed: bool, name: str = "x1.json") -> str:
@@ -625,6 +688,7 @@ class Analysis(unittest.TestCase):
         result = retention.analyze_spec(self.spec, tools_fixture.DECKS)
         out = result["lineages"]["r1"]
         self.assertEqual((out["configs"]["pass"], out["x1"]["pass"], out["x3"]["pass"]), (True, True, True))
+        self.assertEqual(result["build"], {"commit": HEAD, "tree": TREE, "outputs": 9})
         self.assertEqual(result["x4"], {"compared": 30, "differing": [], "pass": True})
         self.assertEqual(out["reading1"]["self"]["reading"], retention.READING1["reliably lost"])
         self.assertEqual(out["reading1"]["giant"]["reading"], retention.READING1["reliably kept"])
@@ -684,6 +748,36 @@ class Analysis(unittest.TestCase):
         a0 = entries + [dict(entries[0], checkpoint="r1-A-s0")]
         with self.assertRaisesRegex(ValueError, "r1-A-s0: not one of this lineage's new panels"):
             retention.analyze_spec(self.changed(panels=a0), tools_fixture.DECKS)
+
+    def test_the_launcher_receipt_binds_each_run_to_its_config_file(self):
+        part = self.spec["r1"]
+        reports = dict(part["reports"], **{"A-s1": part["reports"]["A-s2"]})
+        with self.assertRaisesRegex(ValueError, "A-s1: the report is another run's"):
+            retention.analyze_spec(self.changed(reports=reports), tools_fixture.DECKS)
+        # A config rewritten after its dispatch, here the same content in new
+        # bytes, passes the config gate but is not the one the run was given.
+        rewritten = self.json("A-s1-config-rewritten.json", None)
+        Path(rewritten).write_text(json.dumps(self.cfgs["A-s1"], indent=1))
+        configs = dict(part["configs"], **{"A-s1": rewritten})
+        with self.assertRaisesRegex(ValueError, "A-s1: the run was given another config"):
+            retention.analyze_spec(self.changed(configs=configs), tools_fixture.DECKS)
+        qualification = self.json("report-qual.json", {**json.loads(Path(part["reports"]["N-s0"]).read_text()),
+                                                       "qualification": True})
+        with self.assertRaisesRegex(ValueError, "N-s0: the report is not a complete production receipt"):
+            retention.analyze_spec(self.changed(reports=dict(part["reports"], **{"N-s0": qualification})),
+                                   tools_fixture.DECKS)
+
+    def test_every_trace_and_probe_comes_from_the_given_build(self):
+        with self.assertRaisesRegex(ValueError, "from another build"):
+            retention.analyze_spec({**self.spec, "head_commit": "d" * 40}, tools_fixture.DECKS)
+        with self.assertRaisesRegex(ValueError, "full commit SHA"):
+            retention.analyze_spec({key: v for key, v in self.spec.items() if key != "head_commit"},
+                                   tools_fixture.DECKS)
+        part = self.spec["r1"]
+        other = self.json("trace-N-s1-tree.json", {**json.loads(Path(part["traces"]["N-s1"]).read_text()),
+                                                    "runtime_tree": "u" * 64})
+        with self.assertRaisesRegex(ValueError, "disagree on the build's tree"):
+            retention.analyze_spec(self.changed(traces=dict(part["traces"], **{"N-s1": other})), tools_fixture.DECKS)
 
     def test_the_config_gate_runs_on_the_production_configs(self):
         configs = dict(self.spec["r1"]["configs"], **{"A-s2": self.spec["r1"]["configs"]["A-s1"]})
