@@ -56,7 +56,10 @@ fn native_reference(s: &PreparedSession) -> NativeReference {
     let (_, actions, _) = session
         .prepared_current_decision_input_v57(current, current.acting_player)
         .unwrap();
-    assert_eq!(actions.as_slice(), s.inner.decision_v57().unwrap().actions());
+    assert_eq!(
+        actions.as_slice(),
+        s.inner.decision_v57().unwrap().actions()
+    );
     assert_eq!(
         (
             current.episode_id,
