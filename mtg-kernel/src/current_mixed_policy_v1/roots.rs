@@ -1,7 +1,7 @@
 //! Exact small baseline printing descriptors. Other missing typed roots refuse.
 use super::{Error, Result};
-use crate::card_def::{CardCapability, CardType, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectOp, ObjectRef, PlayerRef};
+use crate::card_def::{CardCapability, CardDef, CardType, TargetSpec, CARD_DEFS};
+use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
@@ -72,6 +72,217 @@ fn think_twice_cast_roots() -> [ThinkTwiceCastRoot; 2] {
             physical_stack_departure: BaselineDeparture::ExileInsteadOfAnyOtherDeparture,
         },
     ]
+}
+
+#[derive(serde::Serialize)]
+enum CounterGuard {
+    BoundSpellCanBeCountered,
+    BoundTargetInStackLegacy,
+}
+#[derive(serde::Serialize)]
+enum CounterTargetFilter {
+    AnySpell,
+    CreatureSpell,
+    NoncreatureSpell,
+}
+#[derive(serde::Serialize)]
+enum CounterInstruction {
+    CounterBoundSpell {
+        target_slot: u8,
+        guard: CounterGuard,
+        normal_physical_departure_proposal: Zone,
+        flashback_replaces_departure_with: Zone,
+        other_zone_replacements_still_apply: bool,
+        virtual_copy_ceases: bool,
+        failed_guard_is_noop: bool,
+        already_paid_costs_are_not_refunded: bool,
+    },
+    DrawController(u32),
+    DiscardController {
+        requested_count: u32,
+        clamp_to_available_hand: bool,
+        private_choice_by_controller: bool,
+        is_payment: bool,
+    },
+    CounterThenReward {
+        target_slot: u8,
+        counter: Box<CounterInstruction>,
+        sample_target_spell_controller_before_counter: bool,
+        reward_independent_of_counter_success: bool,
+        token_count: u32,
+        token_printing: Value,
+    },
+}
+#[derive(serde::Serialize)]
+struct CounterCastRoot {
+    method: crate::state::CastMethodV4,
+    route: crate::state::SpellCastRouteV4,
+    origin: Zone,
+    timing: BaselineTiming,
+    ordered_costs: [BaselineManaCost; 1],
+    target_count: u8,
+    target_filter: CounterTargetFilter,
+    target_may_be_own_or_opposing: bool,
+    target_requires_exact_live_spell_stack_incarnation: bool,
+    all_targets_illegal_skips_entire_resolution: bool,
+    ordered_resolution: Vec<CounterInstruction>,
+    physical_stack_departure: BaselineDeparture,
+    virtual_spell_copy_ceases: bool,
+}
+
+/// Closed exact recipes only. Refute's loot and Offer's controller reward
+/// remain distinct ordered operations, never approximations of a bare counter.
+fn counter_cast_root(id: u16, d: &CardDef) -> Result<Option<CounterCastRoot>> {
+    use crate::mana::{Cost, ManaColor, Pip};
+    let (cost, target, filter) = match d.name {
+        "Counterspell" => (
+            Cost {
+                pips: &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)],
+                generic: 0,
+                x_count: 0,
+            },
+            TargetSpec::AnySpellOnStack,
+            CounterTargetFilter::AnySpell,
+        ),
+        "Essence Scatter" => (
+            THINK_TWICE_NORMAL,
+            TargetSpec::CreatureSpellOnStack,
+            CounterTargetFilter::CreatureSpell,
+        ),
+        "Refute" => (
+            Cost {
+                pips: &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::U)],
+                generic: 1,
+                x_count: 0,
+            },
+            TargetSpec::AnySpellOnStack,
+            CounterTargetFilter::AnySpell,
+        ),
+        "An Offer You Can't Refuse" => (
+            Cost {
+                pips: &[Pip::Colored(ManaColor::U)],
+                generic: 0,
+                x_count: 0,
+            },
+            TargetSpec::NoncreatureSpellOnStack,
+            CounterTargetFilter::NoncreatureSpell,
+        ),
+        _ => return Ok(None),
+    };
+    if d.is_token
+        || d.is_land
+        || d.types != [CardType::Instant]
+        || !d.subtypes.is_empty()
+        || !d.supertypes.is_empty()
+        || d.colors != [ManaColor::U]
+        || d.cost != cost
+        || usize::from(d.mana_value) != usize::from(cost.generic) + cost.pips.len()
+        || d.target_spec != target
+        || d.power.is_some()
+        || d.toughness.is_some()
+        || d.keywords != crate::card_def::Keywords::NONE
+        || !d.produces_mana.is_empty()
+        || !d.mana_ability_choices.is_empty()
+        || (d.mana_ability)().is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let condition = if cfg!(feature = "limited-fdn-fixtures") {
+        EffectCond::TargetSpellCanBeCountered(0)
+    } else {
+        EffectCond::TargetInZone(0, Zone::Stack)
+    };
+    let counter = EffectOp::Conditional {
+        cond: condition,
+        then: Box::new(EffectOp::MoveObject {
+            object: ObjectRef::Target(0),
+            to_zone: Zone::Graveyard,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    };
+    let typed_counter = || CounterInstruction::CounterBoundSpell {
+        target_slot: 0,
+        guard: if cfg!(feature = "limited-fdn-fixtures") {
+            CounterGuard::BoundSpellCanBeCountered
+        } else {
+            CounterGuard::BoundTargetInStackLegacy
+        },
+        normal_physical_departure_proposal: Zone::Graveyard,
+        flashback_replaces_departure_with: Zone::Exile,
+        other_zone_replacements_still_apply: true,
+        virtual_copy_ceases: true,
+        failed_guard_is_noop: true,
+        already_paid_costs_are_not_refunded: true,
+    };
+    let (program, instructions) = match d.name {
+        "Refute" => (
+            EffectOp::Sequence(vec![
+                counter,
+                EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+                EffectOp::DiscardCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+            ]),
+            vec![
+                typed_counter(),
+                CounterInstruction::DrawController(1),
+                CounterInstruction::DiscardController {
+                    requested_count: 1,
+                    clamp_to_available_hand: true,
+                    private_choice_by_controller: true,
+                    is_payment: false,
+                },
+            ],
+        ),
+        "An Offer You Can't Refuse" => {
+            let token_def = crate::card_def::card_id_by_name("Treasure Token")
+                .ok_or(Error::UnsupportedPrintedRoot(id))?;
+            // This compound operation's counter always uses the protected-spell
+            // guard, even in catalogs whose older simple counters only test zone.
+            let mut counter = typed_counter();
+            if let CounterInstruction::CounterBoundSpell { guard, .. } = &mut counter {
+                *guard = CounterGuard::BoundSpellCanBeCountered;
+            }
+            (
+                EffectOp::CounterTargetSpellThenCreateTokens {
+                    target_index: 0,
+                    token_def,
+                    count: 2,
+                },
+                vec![CounterInstruction::CounterThenReward {
+                    target_slot: 0,
+                    counter: Box::new(counter),
+                    sample_target_spell_controller_before_counter: true,
+                    reward_independent_of_counter_success: true,
+                    token_count: 2,
+                    token_printing: baseline(token_def)?,
+                }],
+            )
+        }
+        _ => (counter, vec![typed_counter()]),
+    };
+    if (d.spell_effect)() != Some(program) {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(Some(CounterCastRoot {
+        method: crate::state::CastMethodV4::Normal,
+        route: crate::state::SpellCastRouteV4::Hand,
+        origin: Zone::Hand,
+        timing: BaselineTiming::InstantWithPriority,
+        ordered_costs: [BaselineManaCost::PrintedMana(cost)],
+        target_count: 1,
+        target_filter: filter,
+        target_may_be_own_or_opposing: true,
+        target_requires_exact_live_spell_stack_incarnation: true,
+        all_targets_illegal_skips_entire_resolution: true,
+        ordered_resolution: instructions,
+        physical_stack_departure: BaselineDeparture::GraveyardAfterResolutionOrCounter,
+        virtual_spell_copy_ceases: true,
+    }))
 }
 
 pub(super) fn baseline(id: u16) -> Result<Value> {
@@ -206,6 +417,14 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
             json!({"card_id":id,"primitive_printing":{"token":true,"types":["Artifact"],"subtypes":["Treasure"],
             "ordered_mana_costs":["TapSelf","SacrificeSelf"],"mana_recipient":"Controller","mana_amount":1,"color_choices":d.mana_ability_choices}}),
         );
+    }
+    if let Some(root) = counter_cast_root(id, d)? {
+        return Ok(json!({"card_id":id,"primitive_printing":{
+            "cost":d.cost,"types":d.types.iter().map(|v|*v as u8).collect::<Vec<_>>(),
+            "subtypes":[],"supertypes":[],"colors":d.colors,"power":d.power,
+            "toughness":d.toughness,"keywords":d.keywords.0,"mana_value":d.mana_value,
+            "token":false,"ordered_cast_roots":[root]
+        }}));
     }
     let mana = match (d.mana_ability)() {
         None if d.produces_mana.is_empty() && d.mana_ability_choices.is_empty() => None,

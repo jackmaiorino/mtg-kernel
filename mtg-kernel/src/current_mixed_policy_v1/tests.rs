@@ -40,7 +40,7 @@ fn numeric_tree_has_no_scalar_width_loss_and_keeps_every_ordered_member() {
 
 #[test]
 fn unknown_printed_program_refuses_instead_of_using_name_or_digest() {
-    let id = crate::card_def::card_id_by_name("Counterspell").unwrap();
+    let id = crate::card_def::card_id_by_name("Brainstorm").unwrap();
     assert!(matches!(roots::baseline(id),Err(Error::UnsupportedPrintedRoot(actual))if actual==id));
 }
 
@@ -131,6 +131,243 @@ mod paid {
         assert_ne!(
             NumericTree::encode(&roots[0]).unwrap(),
             NumericTree::encode(&roots[1]).unwrap()
+        );
+    }
+
+    #[test]
+    fn closed_counter_roots_preserve_target_filter_guard_loot_and_controller_reward_order() {
+        let root = |name| {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            roots::baseline(id).unwrap()["primitive_printing"]["ordered_cast_roots"][0].clone()
+        };
+        let ordinary = root("Counterspell");
+        assert_eq!(ordinary["target_filter"], "AnySpell");
+        assert_eq!(
+            ordinary["ordered_costs"][0]["PrintedMana"],
+            json!({"pips":[{"Colored":"U"},{"Colored":"U"}],"generic":0,"x_count":0})
+        );
+        let guard = &ordinary["ordered_resolution"][0]["CounterBoundSpell"];
+        assert_eq!(guard["guard"], "BoundSpellCanBeCountered");
+        assert_eq!(
+            guard["normal_physical_departure_proposal"],
+            json!(Zone::Graveyard)
+        );
+        assert_eq!(
+            guard["flashback_replaces_departure_with"],
+            json!(Zone::Exile)
+        );
+        assert_eq!(guard["other_zone_replacements_still_apply"], true);
+        assert_eq!(guard["virtual_copy_ceases"], true);
+        assert_eq!(root("Essence Scatter")["target_filter"], "CreatureSpell");
+        let refute = root("Refute");
+        let instructions = refute["ordered_resolution"].as_array().unwrap();
+        assert_eq!(instructions.len(), 3);
+        assert_eq!(instructions[0], ordinary["ordered_resolution"][0]);
+        assert_eq!(instructions[1], json!({"DrawController":1}));
+        assert_eq!(instructions[2]["DiscardController"]["requested_count"], 1);
+        assert_eq!(instructions[2]["DiscardController"]["is_payment"], false);
+        let offer = root("An Offer You Can't Refuse");
+        assert_eq!(offer["target_filter"], "NoncreatureSpell");
+        let reward = &offer["ordered_resolution"][0]["CounterThenReward"];
+        assert_eq!(offer["ordered_resolution"].as_array().unwrap().len(), 1);
+        assert_eq!(reward["token_count"], 2);
+        assert_eq!(
+            reward["sample_target_spell_controller_before_counter"],
+            true
+        );
+        assert_eq!(reward["reward_independent_of_counter_success"], true);
+        assert_eq!(
+            reward["token_printing"]["primitive_printing"]["ordered_mana_costs"],
+            json!(["TapSelf", "SacrificeSelf"])
+        );
+        assert_ne!(
+            NumericTree::encode(&refute).unwrap(),
+            NumericTree::encode(&ordinary).unwrap()
+        );
+        assert_ne!(
+            NumericTree::encode(&offer).unwrap(),
+            NumericTree::encode(&ordinary).unwrap()
+        );
+        // Other filters and payment/mode recipes never enter this closed
+        // subset by sharing a printed keyword or a familiar name.
+        for name in ["Force Spike", "Dispel", "Annul"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert!(
+                matches!(roots::baseline(id),Err(Error::UnsupportedPrintedRoot(actual))if actual==id)
+            );
+        }
+    }
+
+    #[test]
+    fn genuine_paid_counter_recipes_keep_target_binding_controller_order_and_restore_in_both_owners_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident) => {
+                for actor in [PlayerId::P0,PlayerId::P1] {
+                    for own_target in [false,true] {
+                        let target_controller=if own_target {actor} else {actor.opponent()};
+                        for (name,flashback) in [("Counterspell",false),("Counterspell",true),("Essence Scatter",false),("Refute",false),("An Offer You Can't Refuse",false),("An Offer You Can't Refuse",true)] {
+                            let mut raw=state(target_controller);
+                            let discard=raw.players[actor.index()].hand[0];
+                            let counter=put(&mut raw,actor,name,Zone::Hand);
+                            let target=put(&mut raw,target_controller,if name=="Essence Scatter" {"Llanowar Elves"} else {"Think Twice"},if flashback {Zone::Graveyard} else {Zone::Hand});
+                            let destination=if flashback {Zone::Exile} else {Zone::Graveyard};
+                            let target_lands=if name=="Essence Scatter" {vec![put(&mut raw,target_controller,"Forest",Zone::Battlefield)]} else {(0..if flashback {3} else {2}).map(|_|put(&mut raw,target_controller,"Island",Zone::Battlefield)).collect::<Vec<_>>()};
+                            let cost=match name {"Refute"=>3,"An Offer You Can't Refuse"=>1,_=>2};
+                            let counter_lands=(0..cost).map(|_|put(&mut raw,actor,"Island",Zone::Battlefield)).collect::<Vec<_>>();
+                            let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                            for id in &target_lands {act!(session,$input,|a|mana(a,*id));}
+                            act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==target.0));
+                            assert_eq!(session.inner.$world().stack.len(),1);
+                            assert_eq!(session.inner.$world().stack[0].is_flashback,flashback);
+                            if !own_target {act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                            assert_eq!(expected(&session.inner).acting_player,actor.into());
+                            for id in &counter_lands {act!(session,$input,|a|mana(a,*id));}
+                            act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==counter.0));
+                            let e=expected(&session.inner);
+                            let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                            // Existing spell target semantics name the genuine
+                            // physical Stack incarnation, not an invented ID.
+                            let target_index=actions.iter().position(|a|matches!(a,ActionSemanticV1::ChooseTarget{source,target:crate::rl::TargetRefV1::Object{object},remaining:1,..}if source.arena_id==counter.0 && object.arena_id==target.0 && object.zone==Zone::Stack)).unwrap();
+                            let decision=session.encode(e).unwrap();
+                            assert_eq!(decision.packet.actions.len(),actions.len());
+                            let mut forged=decision.clone();
+                            forged.packet.actions.push(forged.packet.actions[0].clone());
+                            let unchanged=session.inner.privileged_core_environment_hash();
+                            assert!(matches!(session.apply(&forged,target_index as u32),Err(Error::StaleBinding)));
+                            assert_eq!(session.inner.privileged_core_environment_hash(),unchanged);
+                            let saved=session.snapshot();
+                            let mut complete=None;
+                            for replay in 0..2 {
+                                if replay!=0 {
+                                    session.restore(&saved).unwrap();
+                                    assert!(expected(&session.inner).environment_revision>e.environment_revision);
+                                    assert!(matches!(session.apply(&decision,target_index as u32),Err(Error::StaleBinding)));
+                                    assert_eq!(session.encode(expected(&session.inner)).unwrap().packet,decision.packet);
+                                }
+                                let current=session.encode(expected(&session.inner)).unwrap();
+                                // Execute the selected original index through
+                                // both the bound owner and an actual backend clone.
+                                let mut reference=session.inner.clone();
+                                let now=expected(&reference);
+                                let expected_reply=reference.step(now.episode_id,now.step,target_index as u32).unwrap();
+                                assert_eq!(session.apply(&current,target_index as u32).unwrap(),expected_reply);
+                                assert_eq!(session.inner.$world(),reference.$world());
+                                let raw=session.inner.$world();
+                                assert!(raw.engine.pending_cast.is_none());
+                                assert_eq!(raw.stack.len(),2);
+                                assert_eq!(raw.players[actor.index()].mana_pool,[0;6]);
+                                assert!(counter_lands.iter().chain(&target_lands).all(|id|raw.objects.get(*id).tapped));
+                                let row=raw.stack.last().unwrap();
+                                assert_eq!(row.source,counter);
+                                assert_eq!(row.controller,actor);
+                                assert_eq!(row.targets,vec![crate::state::Target::Object(target)]);
+                                assert_eq!(row.v4.target_contracts.len(),1);
+                                let start=raw.engine.event_history.len();
+                                let library_before=raw.players[actor.index()].library.len();
+                                for _ in 0..24 {
+                                    let raw=session.inner.$world();
+                                    if raw.stack.is_empty() && raw.engine.pending_discard.is_none() && raw.engine.pending_effect.is_none() {break;}
+                                    let now=expected(&session.inner);
+                                    let (_,actions,_)=session.inner.$input(now,now.acting_player).unwrap();
+                                    if actions.iter().any(|a|matches!(a,ActionSemanticV1::Discard{..})) {
+                                        assert_eq!(name,"Refute");
+                                        // Draw happened and countered spell left
+                                        // before the mandatory private discard.
+                                        assert_eq!(raw.objects.get(target).zone,destination);
+                                        assert_eq!(raw.players[actor.index()].library.len(),library_before-1);
+                                        act!(session,$input,|a|matches!(a,ActionSemanticV1::Discard{cards,..}if cards.len()==1 && cards[0].arena_id==discard.0));
+                                    } else {act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                                }
+                                let raw=session.inner.$world();
+                                assert!(raw.stack.is_empty());
+                                assert!(raw.engine.pending_discard.is_none());
+                                assert_eq!(raw.objects.get(counter).zone,Zone::Graveyard);
+                                assert_eq!(raw.objects.get(target).zone,destination);
+                                assert_eq!(raw.players[actor.index()].mana_pool,[0;6]);
+                                let events=&raw.engine.event_history[start..];
+                                let target_left=events.iter().position(|event|matches!(event,crate::event::CommittedEvent::ZoneChange{object,to,..}if *object==target && *to==destination)).unwrap();
+                                let draws=events.iter().filter(|event|matches!(event,crate::event::CommittedEvent::Draw{player,object:Some(_)}if *player==actor)).count();
+                                assert_eq!(draws,usize::from(name=="Refute"));
+                                if name=="Refute" {
+                                    let draw=events.iter().position(|event|matches!(event,crate::event::CommittedEvent::Draw{player,..}if *player==actor)).unwrap();
+                                    let discarded=events.iter().position(|event|matches!(event,crate::event::CommittedEvent::ZoneChange{object,to:Zone::Graveyard,..}if *object==discard)).unwrap();
+                                    assert!(target_left<draw && draw<discarded);
+                                }
+                                let tokens=raw.objects.iter().filter(|(_,object)|object.zone==Zone::Battlefield && object.card_def==crate::card_def::card_id_by_name("Treasure Token").unwrap()).map(|(_,object)|object).collect::<Vec<_>>();
+                                assert_eq!(tokens.len(),if name=="An Offer You Can't Refuse" {2} else {0});
+                                assert!(tokens.iter().all(|token|token.controller==target_controller && token.owner==target_controller));
+                                if name=="An Offer You Can't Refuse" {
+                                    let first_token=events.iter().position(|event|matches!(event,crate::event::CommittedEvent::CreateToken{..})).unwrap();
+                                    assert!(target_left<first_token);
+                                }
+                                let outcome=(serde_json::to_vec(raw).unwrap(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                                if let Some(prior)=&complete {assert_eq!(&outcome,prior);} else {complete=Some(outcome);}
+                            }
+                        }
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+    }
+
+    #[test]
+    fn counter_target_restrictions_and_unknown_hand_invariance_are_preserved_by_both_owners() {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident) => {
+                for actor in [PlayerId::P0,PlayerId::P1] {
+                    for (counter_name,target_name) in [("Essence Scatter","Think Twice"),("An Offer You Can't Refuse","Llanowar Elves")] {
+                        let mut raw=state(actor);
+                        let counter=put(&mut raw,actor,counter_name,Zone::Hand);
+                        let target=put(&mut raw,actor,target_name,Zone::Hand);
+                        let target_lands=if target_name=="Think Twice" {(0..2).map(|_|put(&mut raw,actor,"Island",Zone::Battlefield)).collect::<Vec<_>>()} else {vec![put(&mut raw,actor,"Forest",Zone::Battlefield)]};
+                        let counter_lands=(0..2).map(|_|put(&mut raw,actor,"Island",Zone::Battlefield)).collect::<Vec<_>>();
+                        let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        for id in target_lands {act!(session,$input,|a|mana(a,id));}
+                        act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==target.0));
+                        for id in counter_lands {act!(session,$input,|a|mana(a,id));}
+                        let e=expected(&session.inner);
+                        let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                        assert!(!actions.iter().any(|a|matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==counter.0)));
+                        // An otherwise affordable counter with the wrong
+                        // target kind must remain absent from the real menu.
+                        assert!(session.encode(e).is_ok());
+                    }
+                    for name in ["Counterspell","Essence Scatter","Refute","An Offer You Can't Refuse"] {
+                        let mut raw=state(actor);
+                        put(&mut raw,actor,name,Zone::Hand);
+                        let hidden=put(&mut raw,actor.opponent(),"Brainstorm",Zone::Hand);
+                        let mut alternative=raw.clone();
+                        alternative.objects.get_mut(hidden).card_def=crate::card_def::card_id_by_name("Refute").unwrap();
+                        alternative.objects.get_mut(hidden).name="Refute".into();
+                        let a=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        let b=$session::from_session(FastActorSessionV1::$from(alternative)).unwrap();
+                        assert_eq!(a.encode(expected(&a.inner)).unwrap().packet,b.encode(expected(&b.inner)).unwrap().packet);
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51
         );
     }
 
