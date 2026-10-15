@@ -18,6 +18,7 @@ fn ready(actor: PlayerId) -> GameState {
     state.step = Step::Main1;
     for owner in [actor, actor.opponent()] {
         put(&mut state, owner, "Forest", Zone::Battlefield);
+        put(&mut state, owner, "Forest", Zone::Hand);
     }
     put(&mut state, actor, "Forest", Zone::Library);
     state

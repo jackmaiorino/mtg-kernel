@@ -1728,6 +1728,30 @@ pub(super) fn label_fishing_pole_v39(
             return Ok(format!("Begin casting {} (printed cost {{1}}): Equipment with equip {{2}}, a granted bait ability, and mandatory untap Fish trigger",handles.name(source)?));
         }
     }
+    if let A::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && grant.is_none()
+            && observation.roots.iter().any(|root| {
+                root.card_id == source.card_db_id
+                    && root.root
+                        == crate::rules_meaning_fishing_pole_v39::RootV39::PrintedEquip {
+                            ability_index: u16::from(*ability_index),
+                        }
+            })
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Activate {} equip (printed cost {{2}}): attach this Equipment to target creature you control", handles.name(source)?));
+        }
+    }
     if let A::ActivateAbility { actor, source, .. } = action {
         if let Some(grant) = grant {
             if *actor != human {

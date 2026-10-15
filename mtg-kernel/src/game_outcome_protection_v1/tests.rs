@@ -327,8 +327,12 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
         assert!(before_public.sources[0].printed_rules_active);
         let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
-        assert!(matches!(engine::advance_until_decision(&mut state),
-            Decision::CastSpellOrPass { ref castable_spells, .. } if castable_spells.contains(&witness)));
+        let decision = engine::advance_until_decision(&mut state);
+        assert!(
+            matches!(&decision,
+            Decision::CastSpellOrPass { castable_spells, .. } if castable_spells.contains(&witness)),
+            "actual Witness cast menu: {decision:?}"
+        );
         engine::step(&mut state, Action::CastSpell(witness)).unwrap();
         assert!(matches!(engine::advance_until_decision(&mut state),
             Decision::ChooseTargets { ref legal_targets, .. }
@@ -486,6 +490,20 @@ fn actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore(
                     serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
                 for branch in [&mut state, &mut replay] {
                     engine::step(branch, Action::ChooseLegendPermanent(first)).unwrap();
+                    // The action records the kept legend; actual advancement
+                    // commits the simultaneous departure/SBA pass.
+                    let decision = engine::advance_until_decision(branch);
+                    if lethal && cause != 2 {
+                        assert!(
+                            matches!(decision, Decision::GameOver { .. }),
+                            "actual post-legend loss: {decision:?}"
+                        );
+                    } else {
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "actual post-legend priority: {decision:?}"
+                        );
+                    }
                     crate::trigger::sba_fixed_point(branch);
                     assert_eq!(branch.objects.get(first).zone, Zone::Battlefield);
                     assert_eq!(branch.objects.get(second).zone, Zone::Graveyard);

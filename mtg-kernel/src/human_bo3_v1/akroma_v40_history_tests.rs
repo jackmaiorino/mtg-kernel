@@ -31,8 +31,14 @@ type AnnouncedWithFishing = (
 );
 fn announced_with_fishing(actor: PlayerId, memorial: bool, fishing: bool) -> AnnouncedWithFishing {
     let mut state = ready_state_for(actor);
+    for owner in [actor, actor.opponent()] {
+        put(&mut state, owner, "Forest", Zone::Hand);
+        for _ in 0..12 {
+            put(&mut state, owner, "Forest", Zone::Library);
+        }
+    }
     put(&mut state, actor, "Lightning Bolt", Zone::Hand);
-    put(&mut state, actor.opponent(), "Forest", Zone::Hand);
+    put(&mut state, actor.opponent(), "Island", Zone::Hand);
     if memorial {
         let m = put(&mut state, actor, "Akroma's Memorial", Zone::Hand);
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 7;
@@ -176,7 +182,7 @@ fn check(memorial: bool) {
             "source_contract",
             "private_snapshot_json",
             "event_history",
-            "Forest",
+            "Island",
         ] {
             assert!(!json.contains(private), "{private}");
         }

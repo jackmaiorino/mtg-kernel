@@ -308,6 +308,7 @@ mod future_printed {
         state.step = Step::Main1;
         for seat in [actor, actor.opponent()] {
             put(&mut state, seat, "Forest", Zone::Battlefield);
+            put(&mut state, seat, "Forest", Zone::Hand);
         }
         put(&mut state, actor.opponent(), hidden, Zone::Hand);
         let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
