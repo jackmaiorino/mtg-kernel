@@ -172,7 +172,8 @@ class Probes(Temp):
         self.assertEqual(ids[1][2:11], [f"A-s1-u{n:03d}" for n in range(18, 163, 18)])
         self.assertEqual(ids[1][-1], "N-s3-u162")
         self.assertEqual([b["role"] for b in commands[0]["banks"]], ["training", "completion"])
-        self.assertEqual(commands[1]["output_directory"], "/rt1/probe/r1-probe-1")
+        # Output directories are absolute, so "/rt1" takes the drive on Windows.
+        self.assertEqual(commands[1]["output_directory"], common.absolute("/rt1/probe/r1-probe-1"))
         alone = retention.probe_commands("r1", source("parent"), source("d1l"), games, bank, (c_games, bank), {},
                                          [], {"A-s0": runs["A-s0"]}, "/rt1/probe")
         self.assertEqual([len(c["candidates"]) for c in alone], [29])
@@ -180,7 +181,7 @@ class Probes(Temp):
         reference = retention.probe_commands("r1", source("parent"), source("d1l"), games, bank, (c_games, bank),
                                              {}, [], {}, "/rt1/probe")
         self.assertEqual([[c["id"] for c in command["candidates"]] for command in reference], [["parent", "D1L"]])
-        self.assertEqual(reference[0]["output_directory"], "/rt1/probe/r1-probe-ref")
+        self.assertEqual(reference[0]["output_directory"], common.absolute("/rt1/probe/r1-probe-ref"))
         with self.assertRaisesRegex(ValueError, "parent"):
             retention.probe_commands("r1", source("d1l"), source("d1l"), games, bank, (c_games, bank), {}, [],
                                      runs, "d")
