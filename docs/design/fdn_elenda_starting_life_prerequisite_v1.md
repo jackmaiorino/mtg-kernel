@@ -81,5 +81,17 @@ Observed local checks: pinned `cargo +1.94.1 fmt --all`, JSON/registry/protected
 prefix static checks and `git diff --check`. **All Rust compilation, gameplay
 tests and generated catalog execution remain unrun** under the no-heavy-local
 constraint. Qualification and any runtime-discovered repairs remain necessary.
-Old rules-vector extraction refuses these descriptors pending a precise meaning
-successor. Existing profile/export identities are deliberately unchanged.
+Frozen rules-vector extraction still refuses these descriptors. The separate
+`rules_meaning_elenda_v52` successor authenticates ordered immutable printed
+facts: lifelink, opponent Instant-source protection at selection and resolution,
+then +1/+1 and menace at starting +1 and additional +5/+5 at +10. It retains
+current-controller/current-world evaluation, printed-ability suppression, the
+fixed supported starting life20, additive bonuses and effective selected/copy/
+original-source type semantics. It exports no runtime source capsule, object,
+private-world operand or executable index; `model_admitted` remains false.
+V52 is reserved after root's Ravenous V51 integration. The standalone module
+adds no shared dispatch variant, so no local ordinal collision is introduced.
+Narrow source tests cover exact ordered facts, descriptor omission and altered
+threshold/keyword/protection/admission refusal, closed schema, actual Limited
+source forms and Default/Standard refusal. These Rust tests remain unrun.
+Existing registry, provisional ID443 and profile/export identities are unchanged.
