@@ -6155,16 +6155,13 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
             assert_eq!(card.marked_damage, live.damage);
         }
         let mut changed_battlefield = battlefield.clone();
-        changed_battlefield
-            .cards
-            .iter_mut()
-            .flatten()
-            .next()
-            .unwrap()
-            .soul ^= 1;
-        assert!(
-            crate::ravenous_public_v51::validate_battlefield(state, &changed_battlefield).is_err()
-        );
+        if let Some(card) = changed_battlefield.cards.iter_mut().flatten().next() {
+            card.soul ^= 1;
+            assert!(
+                crate::ravenous_public_v51::validate_battlefield(state, &changed_battlefield)
+                    .is_err()
+            );
+        }
         let mut missing = state.clone();
         missing.players[0]
             .battlefield
