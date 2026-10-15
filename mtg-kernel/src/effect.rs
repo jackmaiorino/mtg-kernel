@@ -1750,6 +1750,8 @@ pub enum EffectOp {
         choice: nonland_copy_v1::CopyChoiceV1,
         host: EffectObjectBinding,
     },
+    /// Bound departed source returns with actual entry counters and Demon subtype.
+    ReturnSourceAsDemonWithTwoCountersV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17591,6 +17593,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     event::ProposedEvent::life_gain(ctx.controller, creatures),
                 );
             }
+        }
+        EffectOp::ReturnSourceAsDemonWithTwoCountersV1 => {
+            crate::infernal_vessel_v1::resolve(state, ctx);
         }
         EffectOp::ReturnSourceAsEnduringEnchantment => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {

@@ -431,8 +431,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
             .any(|t| matches!(
                 (t.effect)(),
                 EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                    | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
             )),
-        "nonland token copy with Aura entry choice requires its precise successor"
+        "nonland token copy or departed-subtype death return requires its precise successor"
     );
     let def: &CardDef = &CARD_DEFS[usize::from(card_id)];
     assert!(!def.activated_abilities.iter().any(|a| a.cost.iter().any(|c| matches!(c, crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }))), "rules-vector-v1 cannot represent exact typed source-counter costs or saved combat-damage incubation; successor required");

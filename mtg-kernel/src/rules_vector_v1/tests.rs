@@ -66,6 +66,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
                 matches!(
                     (t.effect)(),
                     EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
                 )
             }) {
                 return true;

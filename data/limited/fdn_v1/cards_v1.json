@@ -7819,6 +7819,39 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/e/ExtravagantReplication.java",
       "is_token": false
+    },
+    {
+      "name": "Infernal Vessel",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Cleric"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_infernal_vessel_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "dies_if_departed_incarnation_not_demon",
+        "owner_return_with_two_plus_one_counters",
+        "add_demon_to_new_incarnation"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/i/InfernalVessel.java",
+      "is_token": false
     }
   ]
 }

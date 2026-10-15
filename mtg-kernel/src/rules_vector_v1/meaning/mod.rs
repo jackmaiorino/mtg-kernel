@@ -329,6 +329,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::CounterTargetSpellThenCreateTokens { .. }
         | EffectOp::ExileGraveyardTargetsDrainPerCreature { .. }
         | EffectOp::RemoveTimeCounterFromSource
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ReturnSourceAsEnduringEnchantment => effect_h::effect_op(op, env, out),
         EffectOp::GainControlOfTargetCreatureUntilEndOfTurn { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ExileSingleGraveyardTargetsThenDrainTwoV1 => {
