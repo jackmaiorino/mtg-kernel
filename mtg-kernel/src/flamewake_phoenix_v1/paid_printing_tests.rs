@@ -108,7 +108,10 @@ fn ready(actor: PlayerId) -> GameState {
 }
 
 fn paid(actor: PlayerId) -> (GameState, ObjectId) {
-    let mut state = ready(actor);
+    paid_in(ready(actor), actor)
+}
+
+fn paid_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
     let phoenix = put(&mut state, actor, "Flamewake Phoenix", Zone::Hand);
     let definition = &CARD_DEFS[usize::from(state.objects.get(phoenix).card_def)];
     assert_eq!(definition.capability, CardCapability::Partial);
@@ -142,6 +145,11 @@ fn paid(actor: PlayerId) -> (GameState, ObjectId) {
         3
     );
     engine::step(&mut state, Action::CastSpell(phoenix)).unwrap();
+    let public = phoenix_v56(&state);
+    assert_eq!(public.spells.len(), 1);
+    assert_eq!(public.spells[0].source.object, phoenix.0);
+    assert_eq!(public.spells[0].source.zone, Zone::Stack);
+    assert!(!public.spells[0].is_copy);
     settle(&mut state);
     assert_eq!(state.objects.get(phoenix).zone, Zone::Battlefield);
     assert_eq!(
@@ -155,7 +163,10 @@ fn paid(actor: PlayerId) -> (GameState, ObjectId) {
 }
 
 fn paid_and_dead(actor: PlayerId) -> (GameState, ObjectId) {
-    let (mut state, phoenix) = paid(actor);
+    dead_in(paid(actor), actor)
+}
+
+fn dead_in((mut state, phoenix): (GameState, ObjectId), actor: PlayerId) -> (GameState, ObjectId) {
     let opponent = actor.opponent();
     let bolt = state.players[opponent.index()]
         .hand
@@ -359,6 +370,12 @@ fn ferocious_needs_own_board_at_capture_and_again_before_any_payment_both_seats(
                     &mut state,
                     ProposedEvent::zone_change(four.unwrap(), Zone::Hand),
                 );
+                let facts = phoenix_v56(&state);
+                assert!(!facts.ferocious_now[actor.index()]);
+                assert_eq!(
+                    facts.triggers[0].stage,
+                    crate::phoenix_public_v56::StageV56::Published
+                );
             }
             let before = untapped_mountains(&state, actor);
             let mut replay = restore(&state);
@@ -367,6 +384,7 @@ fn ferocious_needs_own_board_at_capture_and_again_before_any_payment_both_seats(
                 assert_eq!(branch.objects.get(phoenix).zone, Zone::Graveyard);
                 assert_eq!(untapped_mountains(branch, actor), before);
                 assert!(!branch.stack.iter().any(|item| item.source == phoenix));
+                assert!(phoenix_v56(branch).triggers.is_empty());
             }
             same(&state, &replay);
         }
@@ -910,6 +928,14 @@ fn two_real_paid_phoenixes_order_in_the_active_apnap_group_and_restore_both_seat
                 Decision::OrderTriggers { player, pending } => {
                     assert_eq!(player, actor);
                     assert_eq!(pending.len(), 2);
+                    let facts = phoenix_v56(&state);
+                    assert_eq!(facts.triggers.len(), 2);
+                    assert!(facts.triggers.iter().all(|row| matches!(
+                        row.stage,
+                        crate::phoenix_public_v56::StageV56::Held {
+                            placement_ordered: false
+                        }
+                    )));
                     assert!(state
                         .engine
                         .pending_triggers
@@ -981,9 +1007,26 @@ fn real_paid_control_suppression_and_token_copy_do_not_change_graveyard_owner_bo
                 );
             }
             cast_owned(&mut state, caster, spell, Some(Target::Object(phoenix)));
+            let public = crate::phoenix_public_v56::capture(&state).unwrap();
+            crate::phoenix_public_v56::validate(&state, &public).unwrap();
+            let current = public
+                .current
+                .iter()
+                .find(|row| row.source.object == phoenix.0)
+                .unwrap();
             if mode == 0 {
                 assert_eq!(state.objects.get(phoenix).controller, other);
+                assert_eq!(current.source.controller, other.into());
+                assert_eq!(current.source.owner, actor.into());
+                assert!(current.flying && current.haste && current.attacks_each_combat_if_able);
             } else if mode == 1 {
+                assert!(
+                    !current.printed_abilities_active
+                        && !current.flying
+                        && !current.haste
+                        && !current.attacks_each_combat_if_able
+                );
+                assert_eq!((current.power, current.toughness), (Some(1), Some(1)));
                 assert!(
                     !crate::continuous_characteristics_v1::printed_abilities_active(
                         &state, phoenix
@@ -1009,6 +1052,17 @@ fn real_paid_control_suppression_and_token_copy_do_not_change_graveyard_owner_bo
                         live.card_def == state.objects.get(phoenix).card_def && live.v4.is_token
                     })
                     .unwrap();
+                let copy_row = public
+                    .current
+                    .iter()
+                    .find(|row| row.source.object == copy.0)
+                    .unwrap();
+                assert!(
+                    copy_row.token
+                        && copy_row.flying
+                        && copy_row.haste
+                        && copy_row.attacks_each_combat_if_able
+                );
                 assert!(engine::has_effective_keyword(
                     &state,
                     copy,
@@ -1082,5 +1136,256 @@ fn real_paid_control_suppression_and_token_copy_do_not_change_graveyard_owner_bo
             }
             same(&state, &replay);
         }
+    }
+}
+
+fn phoenix_v56(state: &GameState) -> crate::phoenix_public_v56::FactsV56 {
+    let before = serde_json::to_vec(state).unwrap();
+    let facts = crate::phoenix_public_v56::capture(state).unwrap();
+    crate::phoenix_public_v56::validate(state, &facts).unwrap();
+    assert_eq!(
+        crate::phoenix_public_v56::capture(&restore(state)).unwrap(),
+        facts
+    );
+    assert_eq!(serde_json::to_vec(state).unwrap(), before);
+    let text = serde_json::to_string(&facts).unwrap();
+    for private in [
+        "EffectOp",
+        "private_snapshot",
+        "event_history",
+        "operation_world",
+        "canonical_path",
+        "stack_item_id",
+        "source_contract",
+        "answered_choice_guard",
+    ] {
+        assert!(!text.contains(private), "private field {private}");
+    }
+    facts
+}
+#[test]
+fn v56_paid_current_published_payment_answer_and_completed_absence_restore_both_seats() {
+    use crate::phoenix_public_v56::StageV56;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for accept in [false, true] {
+            let (mut state, phoenix) = paid_and_dead(actor);
+            put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+            let initial = phoenix_v56(&state);
+            assert!(initial.ferocious_now[actor.index()]);
+            assert!(initial.triggers.is_empty());
+            assert!(initial
+                .current
+                .iter()
+                .any(|r| r.source.object == phoenix.0 && r.graveyard_ability_functions_here));
+            combat_trigger(&mut state, phoenix);
+            let published = phoenix_v56(&state);
+            assert_eq!(published.triggers.len(), 1);
+            assert_eq!(published.triggers[0].stage, StageV56::Published);
+            assert_eq!(published.triggers[0].original_actor, actor.into());
+            payment(&mut state, actor, phoenix);
+            let offered = phoenix_v56(&state);
+            assert_eq!(
+                offered.triggers[0].stage,
+                StageV56::PaymentOffered { can_pay: true }
+            );
+            let before = untapped_mountains(&state, actor);
+            let mut replay = restore(&state);
+            for branch in [&mut state, &mut replay] {
+                engine::step(branch, Action::ChooseEffectBoolean(accept)).unwrap();
+                let answered = phoenix_v56(branch);
+                assert_eq!(
+                    answered.triggers[0].stage,
+                    if accept {
+                        StageV56::AcceptedAwaitingPayment
+                    } else {
+                        StageV56::DeclinedAwaitingCompletion
+                    }
+                );
+                assert_eq!(untapped_mountains(branch, actor), before);
+                assert_eq!(branch.objects.get(phoenix).zone, Zone::Graveyard);
+            }
+            same(&state, &replay);
+            replay = restore(&state);
+            for branch in [&mut state, &mut replay] {
+                settle(branch);
+                let public = phoenix_v56(branch);
+                // The current API does not invent a completed return occurrence.
+                assert!(public.triggers.is_empty());
+                let row = public
+                    .current
+                    .iter()
+                    .find(|r| r.source.object == phoenix.0)
+                    .unwrap();
+                assert_eq!(
+                    row.source.zone,
+                    if accept {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+                assert_eq!(row.source.controller, actor.into());
+                assert_eq!(
+                    untapped_mountains(branch, actor),
+                    before - usize::from(accept)
+                );
+                assert_eq!(row.attacks_each_combat_if_able, accept);
+            }
+            same(&state, &replay);
+        }
+    }
+}
+#[test]
+fn v56_offered_payment_keeps_original_incarnation_and_does_not_recheck_ferocious_both_seats() {
+    use crate::phoenix_public_v56::StageV56;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid_and_dead(actor);
+        let four = put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+        combat_trigger(&mut state, phoenix);
+        payment(&mut state, actor, phoenix);
+        let original = phoenix_v56(&state).triggers[0].original_source.clone();
+        // Primitive zone operands at a held payment boundary. This does not
+        // claim that a spell response can occur in the middle of resolution.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(four, Zone::Hand));
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(phoenix, Zone::Exile));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(phoenix, Zone::Graveyard),
+        );
+        let offered = phoenix_v56(&state);
+        assert!(!offered.ferocious_now[actor.index()]);
+        assert_eq!(offered.triggers[0].original_source, original);
+        assert!(offered.triggers[0].current_original_source.is_none());
+        assert_eq!(
+            offered.triggers[0].stage,
+            StageV56::PaymentOffered { can_pay: true }
+        );
+        let before = untapped_mountains(&state, actor);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            engine::step(branch, Action::ChooseEffectBoolean(true)).unwrap();
+            assert_eq!(
+                phoenix_v56(branch).triggers[0].stage,
+                StageV56::AcceptedAwaitingPayment
+            );
+            settle(branch);
+            assert_eq!(branch.objects.get(phoenix).zone, Zone::Graveyard);
+            assert_eq!(untapped_mountains(branch, actor), before - 1);
+            assert!(phoenix_v56(branch).triggers.is_empty());
+        }
+        same(&state, &replay);
+    }
+}
+#[test]
+fn v56_genuine_paid_prompt_and_answer_forgeries_refuse_before_publication_both_seats() {
+    use crate::phoenix_public_v56::{self as public, StageV56};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid_and_dead(actor);
+        put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+        combat_trigger(&mut state, phoenix);
+        payment(&mut state, actor, phoenix);
+        let real = phoenix_v56(&state);
+        let original = serde_json::to_vec(&state).unwrap();
+        for change in 0..5 {
+            let mut bad = restore(&state);
+            let pending = bad.engine.pending_effect.as_mut().unwrap();
+            match change {
+                0 => pending.choice = None,
+                1 => pending.ctx.controller = actor.opponent(),
+                2 => pending.resolving_item.inline_effect = Some(EffectOp::Sequence(vec![])),
+                3 => {
+                    let Some(PendingEffectChoice::ChooseBoolean { path, .. }) = &mut pending.choice
+                    else {
+                        unreachable!()
+                    };
+                    path.clear();
+                }
+                _ => {
+                    let Some(PendingEffectChoice::ChooseBoolean {
+                        purpose: EffectBooleanChoicePurpose::PayManaThen { generic, .. },
+                        ..
+                    }) = &mut pending.choice
+                    else {
+                        unreachable!()
+                    };
+                    *generic = 1;
+                }
+            }
+            let bytes = serde_json::to_vec(&bad).unwrap();
+            assert!(public::capture(&bad).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            assert_eq!(serde_json::to_vec(&state).unwrap(), original);
+        }
+        let mut changed = real;
+        changed.triggers[0].stage = StageV56::Published;
+        assert!(public::validate(&state, &changed).is_err());
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        let mut erased = restore(&state);
+        erased
+            .engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .answered_choice_guard = None;
+        let bytes = serde_json::to_vec(&erased).unwrap();
+        assert!(public::capture(&erased).is_err());
+        assert_eq!(serde_json::to_vec(&erased).unwrap(), bytes);
+        let mut changed = phoenix_v56(&state);
+        changed.triggers[0].original_source.generation += 1;
+        assert!(public::validate(&state, &changed).is_err());
+        let value = serde_json::to_value(phoenix_v56(&state)).unwrap();
+        let mut injected = value.clone();
+        injected["private_snapshot"] = value;
+        assert!(serde_json::from_value::<public::FactsV56>(injected).is_err());
+    }
+}
+#[test]
+fn v56_independent_hidden_printings_and_face_down_forms_preserve_paid_payment_facts_both_seats() {
+    use crate::state::FaceDownV1;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let build = |printing: &str| {
+            let mut initial = ready(actor);
+            put(&mut initial, actor.opponent(), printing, Zone::Hand);
+            put(&mut initial, actor.opponent(), printing, Zone::Library);
+            // A concealed 2/2 initial permanent is a primitive fixture input.
+            let face = put(&mut initial, actor.opponent(), printing, Zone::Battlefield);
+            initial.objects.get_mut(face).v4.face_down_v1 = Some(FaceDownV1 {
+                disguised: true,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            let (mut state, phoenix) = dead_in(paid_in(initial, actor), actor);
+            put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+            combat_trigger(&mut state, phoenix);
+            payment(&mut state, actor, phoenix);
+            let facts = phoenix_v56(&state);
+            assert!(!facts.current.iter().any(|r| r.source.object == face.0));
+            (facts, serde_json::to_vec(&state).unwrap())
+        };
+        let a = build("Flamewake Phoenix");
+        let b = build("Llanowar Elves");
+        assert_eq!(a.0, b.0);
+        assert_ne!(a.1, b.1);
+    }
+}
+
+#[test]
+fn v56_native_width_public_power_and_overflow_refusal_preserve_primitive_input_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid(actor);
+        // Exact counter values are primitive inputs, not printed payment outcomes.
+        state.objects.get_mut(phoenix).counters.plus1_plus1 = 65537;
+        let facts = phoenix_v56(&state);
+        let row = facts
+            .current
+            .iter()
+            .find(|r| r.source.object == phoenix.0)
+            .unwrap();
+        assert_eq!((row.power, row.toughness), (Some(65539), Some(65539)));
+        state.objects.get_mut(phoenix).counters.plus1_plus1 = i32::MAX;
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::phoenix_public_v56::capture(&state).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }
