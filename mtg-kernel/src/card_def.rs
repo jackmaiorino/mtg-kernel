@@ -2769,7 +2769,8 @@ mod tests {
             assert_eq!(CARD_DEFS[215].capability, CardCapability::Full);
             assert_eq!(card_id_by_name("Fake Your Own Death"), Some(442));
             assert_eq!(card_id_by_name("Ravenous Amulet"), Some(443));
-            assert_eq!(card_id_by_name("Spinner of Souls"), Some(444));
+            assert_eq!(card_id_by_name("Spinner of Souls"), Some(446));
+            assert_eq!(card_id_by_name("Painful Quandary"), Some(447));
         }
     }
 
