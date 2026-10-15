@@ -10620,7 +10620,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         };
     let crystal_owner = match effect::crystal_prevention_v1::acquire_owner(state, &item, false) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Crystal resume acquire failed: {_error}");
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return None;
@@ -10701,7 +10703,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             } else {
                 finish_resolved_stack_item(state, completed.as_ref())
             };
-            if finished.is_err() {
+            if let Err(_error) = finished {
+                #[cfg(test)]
+                eprintln!("Owned effect final departure failed: {_error}");
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
@@ -10714,7 +10718,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         Ok(effect::ResumableProgress::Suspended) => {
             resolution_cast_v1::restore_parent(state, item);
         }
-        Err(_) => {
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Owned effect resume progress failed: {_error}");
             state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
