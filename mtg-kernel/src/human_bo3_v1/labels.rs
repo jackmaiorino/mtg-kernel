@@ -2393,6 +2393,58 @@ mod next_five_native_label_tests {
         (state, source, target)
     }
 
+    fn paid_infernal_pair(actor: PlayerId) -> (crate::state::GameState, [crate::ids::ObjectId; 2]) {
+        use crate::engine::{self, Action, Decision};
+        let mut state = ready(actor);
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+        for _ in 0..12 {
+            put(&mut state, actor, "Swamp", Zone::Battlefield);
+        }
+        let mut vessels = Vec::new();
+        for _ in 0..2 {
+            let vessel = put(&mut state, actor, "Infernal Vessel", Zone::Hand);
+            let mana_value = crate::card_def::CARD_DEFS
+                [usize::from(state.objects.get(vessel).card_def)]
+            .mana_value;
+            let tapped_before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == actor && castable_spells.contains(&vessel)
+            ));
+            engine::step(&mut state, Action::CastSpell(vessel)).unwrap();
+            let mut resolved = false;
+            for _ in 0..32 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.objects.get(vessel).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                {
+                    resolved = true;
+                    break;
+                }
+                quiet_actual_step(&mut state, decision);
+            }
+            assert!(resolved, "paid Infernal Vessel did not resolve");
+            let tapped_after = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert_eq!(tapped_after - tapped_before, usize::from(mana_value));
+            vessels.push(vessel);
+        }
+        let [first, second] = vessels.as_slice() else {
+            unreachable!("exactly two paid Vessels were cast")
+        };
+        (state, [*first, *second])
+    }
+
     #[test]
     fn restricted_giada_white_mana_labels_actual_paid_rows_and_restore_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -2752,6 +2804,135 @@ mod next_five_native_label_tests {
                 host_label.is_some(),
                 "native Replication Aura-host choice absent"
             );
+        }
+    }
+
+    #[test]
+    fn infernal_death_order_labels_two_paid_native_triggers_and_restores_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            event::{self, ProposedEvent},
+        };
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, vessels) = paid_infernal_pair(actor);
+            for vessel in vessels {
+                let object = state.objects.get(vessel);
+                assert_eq!(object.owner, actor);
+                assert_eq!(object.controller, actor);
+                assert_eq!(object.zone, Zone::Battlefield);
+            }
+
+            event::propose_and_commit_batch(
+                &mut state,
+                vessels
+                    .into_iter()
+                    .map(|vessel| ProposedEvent::zone_change(vessel, Zone::Graveyard))
+                    .collect(),
+            );
+            assert!(vessels
+                .iter()
+                .all(|vessel| state.objects.get(*vessel).zone == Zone::Graveyard));
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::OrderTriggers { player, pending } if player == actor && pending.len() == 2
+            ));
+
+            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
+            let (observation, decision, actions) = fake_rows(&session);
+            let facts = crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            let held = facts
+                .triggers
+                .iter()
+                .filter(|row| {
+                    row.family == crate::rules_meaning_next_five_v59::FamilyV59::Infernal
+                        && row.stage == crate::next_five_public_v59::TriggerStageV59::Held
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(held.len(), 2);
+            for vessel in vessels {
+                let trigger = held
+                    .iter()
+                    .find(|row| row.source.original_source.object == vessel.0)
+                    .expect("actual Infernal death produced a held source-bound trigger");
+                assert_eq!(trigger.source.captured_controller, actor.into());
+                let death = facts
+                    .infernal_deaths
+                    .iter()
+                    .find(|row| row.source.original_source.object == vessel.0)
+                    .expect("actual Infernal death public fact");
+                assert!(death.captured_not_demon && death.collection_completed);
+                assert!(death.return_incarnation_available_now);
+                assert_eq!(death.owner_on_return, actor.into());
+                assert_eq!(death.source.original_source.owner, actor.into());
+            }
+
+            let order_index = actions
+                .iter()
+                .position(|action| matches!(action,
+                    A::OrderTriggers { actor: chooser, pending_sources, order }
+                    if *chooser == actor.into()
+                        && pending_sources.len() == 2
+                        && pending_sources.iter().map(|source| source.arena_id).collect::<Vec<_>>()
+                            == vessels.iter().map(|vessel| vessel.0).collect::<Vec<_>>()
+                        && order == &[0, 1]
+                ))
+                .expect("authentic native Infernal trigger-order action");
+            let label = human_label_v59(
+                &observation,
+                &actions[order_index],
+                decision.acting_player,
+                &facts,
+            )
+            .unwrap();
+            assert!(label.contains("bottom to top"), "{label}");
+            assert_eq!(
+                label.matches("Infernal Vessel trigger:").count(),
+                2,
+                "{label}"
+            );
+            assert!(label.contains("under its owner's control"), "{label}");
+
+            let saved = session.snapshot_v1();
+            session
+                .step(decision.episode_id, decision.step, order_index as u32)
+                .unwrap();
+            let placed = crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            assert_eq!(placed.triggers.len(), 2);
+            assert!(placed.triggers.iter().all(|row| row.family
+                == crate::rules_meaning_next_five_v59::FamilyV59::Infernal
+                && row.stage == crate::next_five_public_v59::TriggerStageV59::Published
+                && row.placement_ordered
+                && row.source.captured_controller == actor.into()));
+
+            session.restore_v1(&saved);
+            let (restored_observation, restored_decision, restored_actions) = fake_rows(&session);
+            let restored_facts =
+                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            let restored_index = restored_actions
+                .iter()
+                .position(|action| action == &actions[order_index])
+                .expect("restored native Infernal order action");
+            assert_eq!(
+                human_label_v59(
+                    &restored_observation,
+                    &restored_actions[restored_index],
+                    restored_decision.acting_player,
+                    &restored_facts,
+                )
+                .unwrap(),
+                label
+            );
+            session
+                .step(
+                    restored_decision.episode_id,
+                    restored_decision.step,
+                    restored_index as u32,
+                )
+                .unwrap();
+            let restored_placed =
+                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            assert_eq!(restored_placed.triggers, placed.triggers);
         }
     }
 }
