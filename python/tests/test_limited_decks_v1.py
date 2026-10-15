@@ -847,8 +847,8 @@ class LimitedDeckTest(unittest.TestCase):
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
         self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 238)
-        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 8)
-        self.assertEqual(sum(card["status"] == "missing" for card in report["cards"]), 40)
+        self.assertEqual(sum(card["status"] == "partial" for card in report["cards"]), 9)
+        self.assertEqual(sum(card["status"] == "missing" for card in report["cards"]), 39)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

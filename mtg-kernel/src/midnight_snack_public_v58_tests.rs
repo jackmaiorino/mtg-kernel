@@ -40,6 +40,71 @@ fn roundtrip(s: &GameState, viewer: PlayerId) -> FactsV58 {
     facts
 }
 #[test]
+fn checked_snack_food_forms_keep_absence_wide_cancellation_and_overflow_refusal_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, snack) = paid(actor);
+        // These are current-projection operands on a genuinely paid Snack world,
+        // not a claim that Snack's Raid or a printed animation issued them.
+        let food = put(&mut s, actor, "Food Token", Zone::Battlefield);
+        s.objects.get_mut(snack).counters.plus1_plus1 = i32::MAX;
+        let ordinary = roundtrip(&s, actor);
+        assert_eq!(ordinary.current[0].form.base_power, None);
+        assert_eq!(ordinary.current[0].form.power, None);
+        assert_eq!(ordinary.current[0].form.toughness, None);
+        assert_eq!(ordinary.current[0].counters.plus_one, i32::MAX);
+        assert_eq!(ordinary.current_food[0].form.power, None);
+        let source = put(&mut s, actor, "Llanowar Elves", Zone::Battlefield);
+        let mut ctx = crate::effect::ExecCtx::no_targets(source, actor);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&s, source));
+        ctx.targets.push(Target::Object(food));
+        ctx.target_contracts
+            .push(crate::state::StackTargetContractV4::capture(
+                &s,
+                Target::Object(food),
+            ));
+        crate::standard_creatures_v1::execute(
+            crate::standard_creatures_v1::CreatureEffectV1::ToughCookieAnimate,
+            &ctx,
+            &mut s,
+        );
+        assert_eq!(engine::checked_effective_pt(&s, food).unwrap(), (4, 4));
+        s.objects.get_mut(food).counters.plus1_plus1 = i32::MAX;
+        let binding = crate::effect::EffectObjectBinding {
+            object: food,
+            expected_zone: Zone::Battlefield,
+            expected_zone_change_count: s.objects.get(food).zone_change_count,
+        };
+        crate::effect::install_temporary_boost(
+            &mut s,
+            binding,
+            -4,
+            -4,
+            crate::card_def::Keywords::NONE,
+        );
+        assert!(s.engine.halted.is_none());
+        assert_eq!(
+            engine::checked_effective_pt(&s, food).unwrap(),
+            (i32::MAX, i32::MAX)
+        );
+        let before = serde_json::to_vec(&s).unwrap();
+        let facts = roundtrip(&s, actor);
+        assert_eq!(facts.current_food[0].form.base_power, Some(4));
+        assert_eq!(facts.current_food[0].form.power, Some(i32::MAX));
+        assert_eq!(facts.current_food[0].form.toughness, Some(i32::MAX));
+        assert_eq!(facts.current_food[0].counters.plus_one, i32::MAX);
+        // The frozen prefix helper retains its original conservative refusal.
+        assert!(public::current(&s, facts.meaning.food.card_id).is_err());
+        assert_eq!(serde_json::to_vec(&s).unwrap(), before);
+        let mut overflow = s.clone();
+        overflow.engine.until_end_of_turn.clear();
+        let before = serde_json::to_vec(&overflow).unwrap();
+        let restored: GameState = serde_json::from_slice(&before).unwrap();
+        assert!(capture(&overflow, actor).is_err());
+        assert!(capture(&restored, actor).is_err());
+        assert_eq!(serde_json::to_vec(&overflow).unwrap(), before);
+    }
+}
+#[test]
 fn exact_ordered_meaning_selector_characteristics_native_costs_food_and_tamper_refuse() {
     let id = crate::card_def::card_id_by_name("Midnight Snack").unwrap();
     let m = meaning::printed_meaning(id).unwrap();

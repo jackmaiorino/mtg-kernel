@@ -101,7 +101,7 @@ fn turn_inputs(state: &GameState) -> Result<([bool; 2], [i32; 2]), String> {
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV58, String> {
     let id = crate::card_def::card_id_by_name("Midnight Snack").ok_or("Snack printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
-    public::validate_state(state)?;
+    public::validate_state_checked(state)?;
     let (attacked_this_turn, gained_this_turn) = turn_inputs(state)?;
     let mut authorized_printings = vec![];
     for (object, _) in state.objects.iter() {
@@ -253,8 +253,8 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV58, String> 
     }) {
         return Err("Snack has no standalone suspended printed resolution stage".into());
     }
-    let current = public::current(state, id)?;
-    let current_food = public::current(state, meaning.food.card_id)?;
+    let current = public::current_checked(state, id)?;
+    let current_food = public::current_checked(state, meaning.food.card_id)?;
     Ok(FactsV58 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),

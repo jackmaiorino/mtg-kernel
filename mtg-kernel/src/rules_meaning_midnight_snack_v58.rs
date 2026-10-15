@@ -353,7 +353,7 @@ fn food_definition(d: &CardDef) -> bool {
         && d.other_controlled_nontoken_death_v1.is_none()
         && food_activation(d)
         && d.token_counter_replacement_v48.is_none()
-        && (d.spell_effect)() == None
+        && (d.spell_effect)().is_none()
         && crate::trigger::triggers_for(crate::card_def::card_id_by_name("Food Token").unwrap())
             .is_empty()
 }

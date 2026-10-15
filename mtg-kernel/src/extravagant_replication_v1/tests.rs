@@ -170,7 +170,7 @@ fn publish(s: &mut GameState, source: ObjectId, target: ObjectId) {
 #[test]
 fn exact_partial_printing_and_native_target_contract_remain_unadmitted() {
     let id = card_def::card_id_by_name("Extravagant Replication").unwrap();
-    assert_eq!(id, 452);
+    assert_eq!(id, 453);
     let d = &card_def::CARD_DEFS[id as usize];
     assert_eq!(d.capability, CardCapability::Partial);
     assert!(!d.has_full_support());
