@@ -28,6 +28,9 @@ Actual illegal-target fizzle and counter removal never evaluate the aggregate;
 the original engine-computed legality is bound into the nonserialized loan.
 The real paid Trickster/Crystal response fixture retains an overflowing committed
 gain input while the original and restored Snack ability fizzles without a halt.
+Paid Herald protects genuine committed negative-life inputs: with gain total4,
+target life `i32::MIN+3` refuses before pop/history/life changes, while
+`i32::MIN+4` resolves to the exact minimum in both original and restored worlds.
 Untap resets
 through the existing turn mechanism. Old serialized/hash prefixes and toolchain
 pins remain fixed; the new effect variant is appended.

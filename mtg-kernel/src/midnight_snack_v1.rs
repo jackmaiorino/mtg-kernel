@@ -175,6 +175,27 @@ pub(crate) struct ResolutionOwner {
     item: StackItem,
     targets_legal: bool,
 }
+
+/// Pure preflight for the only legal original player target. Herald can keep
+/// a player at negative life, so a representable gain total alone is not enough.
+fn legal_loss(
+    state: &GameState,
+    controller: PlayerId,
+    targets: &[crate::state::Target],
+) -> Result<(PlayerId, i32), String> {
+    let [crate::state::Target::Player(target)] = targets else {
+        return Err("Midnight Snack lost original opponent target".into());
+    };
+    if *target != controller.opponent() {
+        return Err("Midnight Snack target changed".into());
+    }
+    let total = gained_this_turn(state, controller)?;
+    state.players[target.index()]
+        .life
+        .checked_sub(total)
+        .ok_or("Midnight Snack life-total overflow")?;
+    Ok((*target, total))
+}
 pub(crate) fn acquire(
     state: &GameState,
     item: &StackItem,
@@ -198,7 +219,7 @@ pub(crate) fn acquire(
     // 608.2b ends an ability whose only target is illegal before its effect
     // evaluates X. Only a live legal effect needs an amount preflight.
     if targets_legal {
-        gained_this_turn(state, item.controller)?;
+        legal_loss(state, item.controller, &item.targets)?;
     }
     Ok(Some(ResolutionOwner {
         item: item.clone(),
@@ -228,18 +249,8 @@ pub(crate) fn resolve(
     if !legal {
         return Ok(());
     }
-    let [crate::state::Target::Player(target)] = ctx.targets.as_slice() else {
-        return Err("Midnight Snack lost original opponent target".into());
-    };
-    if *target != ctx.controller.opponent() {
-        return Err("Midnight Snack target changed".into());
-    }
-    let total = gained_this_turn(state, ctx.controller)?;
-    state.players[target.index()]
-        .life
-        .checked_sub(total)
-        .ok_or("Midnight Snack life-total overflow")?;
-    event::propose_and_commit(state, ProposedEvent::life_loss(*target, total));
+    let (target, total) = legal_loss(state, ctx.controller, &ctx.targets)?;
+    event::propose_and_commit(state, ProposedEvent::life_loss(target, total));
     Ok(())
 }
 

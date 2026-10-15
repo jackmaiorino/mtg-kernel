@@ -268,21 +268,38 @@ fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_def::CardDef 
         alt_cost: d.alt_cost,
         kicker_cost: d.kicker_cost,
         additional_cost: d.additional_cost,
-        flashback: d.flashback,
+        flashback: d
+            .flashback
+            .as_ref()
+            .map(|v| crate::card_def::FlashbackDef { cost: v.cost }),
         activated_abilities: d.activated_abilities,
         plot_cost: d.plot_cost,
         madness_cost: d.madness_cost,
-        mode2: d.mode2,
-        mode3: d.mode3,
+        mode2: d.mode2.as_ref().map(|v| crate::card_def::ModeDef {
+            target_spec: v.target_spec,
+            effect: v.effect,
+        }),
+        mode3: d.mode3.as_ref().map(|v| crate::card_def::ModeDef {
+            target_spec: v.target_spec,
+            effect: v.effect,
+        }),
         additional_modes: d.additional_modes,
         kicked_target_spec: d.kicked_target_spec,
         is_token: d.is_token,
-        escape: d.escape,
+        escape: d
+            .escape
+            .as_ref()
+            .map(|v| crate::card_def::EscapeDef { cost: v.cost }),
         mana_ability_choices: d.mana_ability_choices,
         enters_battlefield_tapped: d.enters_battlefield_tapped,
         mana_ability_def: d.mana_ability_def,
         minimum_blockers: d.minimum_blockers,
-        omen: d.omen,
+        omen: d.omen.as_ref().map(|v| crate::card_def::OmenDef {
+            cost: v.cost,
+            types: v.types,
+            target_spec: v.target_spec,
+            effect: v.effect,
+        }),
         mana_value: d.mana_value,
         mana_ability_includes_chosen_color: d.mana_ability_includes_chosen_color,
         as_enters_choose_color_other_than: d.as_enters_choose_color_other_than,
@@ -290,13 +307,35 @@ fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_def::CardDef 
         object_name: d.object_name,
         enters_battlefield_tapped_unless: d.enters_battlefield_tapped_unless,
         attachment: d.attachment,
-        transform_face: d.transform_face,
-        saga: d.saga,
+        transform_face: d
+            .transform_face
+            .as_ref()
+            .map(|v| crate::card_def::TransformFaceDef {
+                name: v.name,
+                types: v.types,
+                subtypes: v.subtypes,
+                colors: v.colors,
+                power: v.power,
+                toughness: v.toughness,
+                keywords: v.keywords,
+            }),
+        saga: d.saga.as_ref().map(|v| crate::card_def::SagaDef {
+            chapter_effects: v.chapter_effects,
+        }),
         optional_additional_cost: d.optional_additional_cost,
         changeling: d.changeling,
-        bestow: d.bestow,
+        bestow: d.bestow.as_ref().map(|v| crate::card_def::BestowDef {
+            cost: v.cost,
+            target_spec: v.target_spec,
+        }),
         delve: d.delve,
-        adventure: d.adventure,
+        adventure: d.adventure.as_ref().map(|v| crate::card_def::AdventureDef {
+            name: v.name,
+            cost: v.cost,
+            types: v.types,
+            target_spec: v.target_spec,
+            effect: v.effect,
+        }),
         cant_be_blocked_by_monarchs_creatures: d.cant_be_blocked_by_monarchs_creatures,
         conditional_tap_yield: d.conditional_tap_yield,
         enters_tapped_unless_controller: d.enters_tapped_unless_controller,
@@ -480,6 +519,75 @@ fn paid_crystal_response_fizzles_without_evaluating_overflowed_turn_total_both_s
             serde_json::to_vec(&s).unwrap(),
             serde_json::to_vec(&restored).unwrap()
         );
+    }
+}
+
+#[test]
+fn paid_herald_negative_life_boundary_preflights_before_snack_removal_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for underflow in [false, true] {
+            let (mut s, source) = paid(actor);
+            let target = actor.opponent();
+            let herald = put(&mut s, target, "Herald of Eternal Dawn", Zone::Hand);
+            assert_eq!(s.objects.get(herald).card_def, 432);
+            mana(&mut s, target, "Plains", 7);
+            engine::step(&mut s, Action::CastSpell(herald)).unwrap();
+            engine::advance_until_decision(&mut s);
+            drain(&mut s);
+            assert_eq!(s.objects.get(herald).zone, Zone::Battlefield);
+            assert!(crate::game_outcome_protection_v1::cannot_lose(&s, target));
+            // Genuine committed life input primitive. Herald protects the
+            // negative life state; neither subtraction overflows here.
+            event::propose_and_commit(&mut s, ProposedEvent::life_loss(target, i32::MAX));
+            event::propose_and_commit(
+                &mut s,
+                ProposedEvent::life_loss(target, if underflow { 18 } else { 17 }),
+            );
+            event::propose_and_commit(&mut s, ProposedEvent::life_gain(actor, 4));
+            let target_life = i32::MIN + if underflow { 3 } else { 4 };
+            assert_eq!(s.players[target.index()].life, target_life);
+            assert_eq!(gained_this_turn(&s, actor).unwrap(), 4);
+            activate_paid(&mut s, actor, source);
+            let stack = s.stack.clone();
+            let history = s.engine.event_history.clone();
+            let public_log = s.engine.event_log.clone();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+            for game in [&mut s, &mut restored] {
+                if underflow {
+                    for _ in 0..4 {
+                        let decision = engine::advance_until_decision(game);
+                        if game.engine.halted.is_some() {
+                            break;
+                        }
+                        assert!(
+                            matches!(decision, Decision::CastSpellOrPass { .. }),
+                            "{decision:?}"
+                        );
+                        engine::step(game, Action::Pass).unwrap();
+                    }
+                    assert!(game.engine.halted.is_some());
+                    assert_eq!(game.stack, stack);
+                    assert_eq!(game.players[target.index()].life, target_life);
+                    assert_eq!(game.engine.event_history, history);
+                    assert_eq!(game.engine.event_log, public_log);
+                } else {
+                    drain(game);
+                    assert!(game.engine.halted.is_none());
+                    assert!(game.stack.is_empty());
+                    assert_eq!(game.players[target.index()].life, i32::MIN);
+                    assert!(game.engine.event_history.iter().skip(history.len()).any(
+                        |e| matches!(e,CommittedEvent::LifeLoss{player,amount:4} if *player==target)
+                    ));
+                    assert!(!game.players[target.index()].has_lost);
+                }
+                assert!(crate::game_outcome_protection_v1::cannot_lose(game, target));
+            }
+            assert_eq!(
+                serde_json::to_vec(&s).unwrap(),
+                serde_json::to_vec(&restored).unwrap()
+            );
+        }
     }
 }
 
