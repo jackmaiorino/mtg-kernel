@@ -74,6 +74,9 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/numeric.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
+            include_str!("current_mixed_policy_v1/legendary_printing.rs"),
+            include_str!("arahbo_v1.rs"),
+            include_str!("zul_ashur_v1.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),
             include_str!("current_mixed_policy_v1/elenda.rs"),
             include_str!("current_mixed_policy_v1/prepared.rs"),
@@ -322,3 +325,10 @@ session!(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod legendary_tests;

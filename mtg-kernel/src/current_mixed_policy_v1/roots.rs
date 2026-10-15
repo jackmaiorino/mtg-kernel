@@ -5,6 +5,9 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "legendary_printing.rs"]
+mod legendary_printing;
+
 /// A printing-owned route, not a cast permission or a quoted payment plan.
 /// The current typed candidate/source zone and cast state select the route;
 /// the owning backend still authenticates and pays it before execution.
@@ -610,6 +613,9 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {
+            return legendary_printing::printing(id, d)
+        }
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Sower of Chaos" => return sower_printing(id, d),
         "Wildwood Scourge" => return wildwood_printing(id, d),
