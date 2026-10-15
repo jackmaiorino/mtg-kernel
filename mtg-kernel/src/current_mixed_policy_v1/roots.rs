@@ -11,6 +11,8 @@ pub(super) mod crystal_printing;
 pub(super) mod early_activation_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
+#[path = "tyrant_herald_printing.rs"]
+pub(super) mod tyrant_herald_printing;
 
 /// A printing-owned route, not a cast permission or a quoted payment plan.
 /// The current typed candidate/source zone and cast state select the route;
@@ -307,6 +309,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     if d.name == "Crystal Barricade" {
         return crystal_printing::baseline(id, d);
     }
+    if matches!(d.name, "Twinflame Tyrant" | "Herald of Eternal Dawn") {
+        return tyrant_herald_printing::baseline(id, d);
+    }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
     let think_twice = d.name == "Think Twice"
@@ -540,6 +545,7 @@ struct OrdinaryPermanentCastRoot {
 #[derive(serde::Serialize)]
 enum PermanentTiming {
     CasterMainPhaseEmptyStackWithPriority,
+    InstantWithPriorityIncludingOpponentsTurnAndNonemptyStack,
 }
 #[derive(serde::Serialize)]
 enum PermanentTargets {
@@ -618,6 +624,7 @@ enum PermanentKeyword {
     Deathtouch,
     Trample,
     Defender,
+    Flash,
 }
 
 /// Mandatory even when one or all family meanings already marked this ID
@@ -630,6 +637,9 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
         "Crystal Barricade" => return crystal_printing::printing(id, d),
+        "Twinflame Tyrant" | "Herald of Eternal Dawn" => {
+            return tyrant_herald_printing::printing(id, d)
+        }
         "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
             return early_activation_printing::printing(id, d)
         }

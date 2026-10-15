@@ -10,6 +10,7 @@ mod crystal;
 mod early_activation;
 mod entry_attack;
 mod memorial_panda;
+mod tyrant_herald;
 
 pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
     entry_attack::paid::<O>();
@@ -20,6 +21,10 @@ pub(in crate::current_mixed_policy_v1) fn paid_memorial_panda<O: Owner>() {
 pub(in crate::current_mixed_policy_v1) fn paid_crystal<O: Owner>() {
     crystal::paid::<O>();
     crystal::privacy::<O>();
+}
+pub(in crate::current_mixed_policy_v1) fn paid_tyrant_herald<O: Owner>() {
+    tyrant_herald::paid::<O>();
+    tyrant_herald::privacy::<O>();
 }
 
 pub(in crate::current_mixed_policy_v1) fn paid_early_activation<O: Owner>() {
@@ -479,4 +484,13 @@ fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_fake_both_seats
 #[test]
 fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_ravenous_both_seats() {
     paid_crystal::<RavenousSession>();
+}
+
+#[test]
+fn tyrant_herald_paid_cast_damage_flash_restore_privacy_fake_both_seats() {
+    paid_tyrant_herald::<FakeSession>();
+}
+#[test]
+fn tyrant_herald_paid_cast_damage_flash_restore_privacy_ravenous_both_seats() {
+    paid_tyrant_herald::<RavenousSession>();
 }

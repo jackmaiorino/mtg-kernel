@@ -1046,3 +1046,8 @@ fn early_printings_paid_ordinary_activations_and_restore_elenda_both_seats() {
 fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_elendasession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_crystal::<ElendaSession>();
 }
+
+#[test]
+fn tyrant_herald_paid_cast_damage_flash_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_tyrant_herald::<ElendaSession>();
+}
