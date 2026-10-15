@@ -186,12 +186,15 @@ pub(super) fn label_printed_equip_v40(
         actor,
         source,
         ability_index,
-        granted_ability: None,
+        granted_ability,
         ..
     } = action
     else {
         return Ok(None);
     };
+    if !granted_ability.is_none() {
+        return Ok(None);
+    }
     let def = definition(source)?;
     let Some(ability) = def.activated_abilities.get(usize::from(*ability_index)) else {
         return Ok(None);
