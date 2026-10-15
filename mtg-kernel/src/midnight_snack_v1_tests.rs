@@ -235,14 +235,94 @@ fn raid_requires_attack_and_rechecks_original_controller_after_source_leaves_bot
     }
 }
 
+// An explicit complete definition fixture keeps foreign-field selector tests
+// independent of any production Clone implementation. New fields must be
+// supplied here rather than silently inherited by struct update syntax.
+fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_def::CardDef {
+    crate::card_def::CardDef {
+        name: d.name,
+        capability: d.capability,
+        cost: d.cost,
+        generic_cost_reduction: d.generic_cost_reduction,
+        ward_cost: d.ward_cost,
+        spell_cannot_be_countered: d.spell_cannot_be_countered,
+        records_mana_spent: d.records_mana_spent,
+        equipment: d.equipment,
+        types: d.types,
+        subtypes: d.subtypes,
+        supertypes: d.supertypes,
+        power: d.power,
+        toughness: d.toughness,
+        starting_loyalty: d.starting_loyalty,
+        enters_with_plus_one_counters: d.enters_with_plus_one_counters,
+        controlled_counter_keyword: d.controlled_counter_keyword,
+        game_outcome_protection_v1: d.game_outcome_protection_v1,
+        controlled_creature_grant: d.controlled_creature_grant,
+        is_land: d.is_land,
+        produces_mana: d.produces_mana,
+        colors: d.colors,
+        target_spec: d.target_spec,
+        keywords: d.keywords,
+        spell_effect: d.spell_effect,
+        mana_ability: d.mana_ability,
+        alt_cost: d.alt_cost,
+        kicker_cost: d.kicker_cost,
+        additional_cost: d.additional_cost,
+        flashback: d.flashback,
+        activated_abilities: d.activated_abilities,
+        plot_cost: d.plot_cost,
+        madness_cost: d.madness_cost,
+        mode2: d.mode2,
+        mode3: d.mode3,
+        additional_modes: d.additional_modes,
+        kicked_target_spec: d.kicked_target_spec,
+        is_token: d.is_token,
+        escape: d.escape,
+        mana_ability_choices: d.mana_ability_choices,
+        enters_battlefield_tapped: d.enters_battlefield_tapped,
+        mana_ability_def: d.mana_ability_def,
+        minimum_blockers: d.minimum_blockers,
+        omen: d.omen,
+        mana_value: d.mana_value,
+        mana_ability_includes_chosen_color: d.mana_ability_includes_chosen_color,
+        as_enters_choose_color_other_than: d.as_enters_choose_color_other_than,
+        additional_mana_abilities: d.additional_mana_abilities,
+        object_name: d.object_name,
+        enters_battlefield_tapped_unless: d.enters_battlefield_tapped_unless,
+        attachment: d.attachment,
+        transform_face: d.transform_face,
+        saga: d.saga,
+        optional_additional_cost: d.optional_additional_cost,
+        changeling: d.changeling,
+        bestow: d.bestow,
+        delve: d.delve,
+        adventure: d.adventure,
+        cant_be_blocked_by_monarchs_creatures: d.cant_be_blocked_by_monarchs_creatures,
+        conditional_tap_yield: d.conditional_tap_yield,
+        enters_tapped_unless_controller: d.enters_tapped_unless_controller,
+        additional_mana_ability_conditions: d.additional_mana_ability_conditions,
+        restricted_mana_abilities: d.restricted_mana_abilities,
+        animation: d.animation,
+        activated_ability_generic_reductions: d.activated_ability_generic_reductions,
+        combat_static_rules: d.combat_static_rules,
+        as_enters_color_choice_v1: d.as_enters_color_choice_v1,
+        chosen_color_creature_boost_v1: d.chosen_color_creature_boost_v1,
+        damage_replacement_v1: d.damage_replacement_v1,
+        token_counter_replacement_v48: d.token_counter_replacement_v48,
+        starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
+        source_type_hexproof_v1: d.source_type_hexproof_v1,
+        other_controlled_nontoken_death_v1: d.other_controlled_nontoken_death_v1,
+    }
+}
+
 #[test]
 fn exact_selector_and_unowned_execution_refuse_without_life_mutation() {
     let (mut s, source) = paid(PlayerId::P0);
-    let d = CARD_DEFS[452].clone();
-    let mut full = d.clone();
+    let d = &CARD_DEFS[452];
+    let mut full = definition_fixture(d);
     full.capability = CardCapability::Full;
     assert!(exact_definition(&full));
-    let mut changed = d.clone();
+    let mut changed = definition_fixture(d);
     changed.flashback = Some(crate::card_def::FlashbackDef { cost: &[] });
     assert!(!exact_definition(&changed));
     let before = s.players[1].life;
