@@ -346,3 +346,58 @@ fn genuine_elenda_own_instant_target_keeps_original_action_order_and_restore_bot
         assert_eq!(gameplay(&session), complete);
     }
 }
+
+#[test]
+fn genuine_paid_conqueror_and_season_inherit_mandatory_printing_roots_in_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (name, land) in [
+            ("Bloodthirsty Conqueror", "Swamp"),
+            ("Doubling Season", "Forest"),
+        ] {
+            let mut raw = state(actor, "Lightning Bolt", 30);
+            let spell = put(&mut raw, actor, name, Zone::Hand);
+            let lands = (0..5)
+                .map(|_| put(&mut raw, actor, land, Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let mut session = own(raw);
+            for id in lands {
+                mana(&mut session, id);
+            }
+            let original = session.encode(expected(&session)).unwrap();
+            let saved = session.snapshot();
+            session.restore(&saved).unwrap();
+            assert!(matches!(
+                session.apply(&original, 0),
+                Err(Error::StaleBinding)
+            ));
+            assert_eq!(
+                session.encode(expected(&session)).unwrap().packet(),
+                original.packet()
+            );
+            cast(&mut session, spell);
+            assert_eq!(
+                session.inner.fixture_state_v52().players[actor.index()].mana_pool,
+                [0; 6]
+            );
+            let paid = session.snapshot();
+            drain(&mut session);
+            assert_eq!(
+                session.inner.fixture_state_v52().objects.get(spell).zone,
+                Zone::Battlefield
+            );
+            assert_eq!(
+                session
+                    .inner
+                    .fixture_state_v52()
+                    .objects
+                    .get(spell)
+                    .controller,
+                actor
+            );
+            let result = gameplay(&session);
+            session.restore(&paid).unwrap();
+            drain(&mut session);
+            assert_eq!(gameplay(&session), result);
+        }
+    }
+}

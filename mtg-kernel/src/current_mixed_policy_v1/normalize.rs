@@ -250,6 +250,14 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     for id in cards.difference(&covered) {
         meanings.push(roots::baseline(*id)?);
     }
+    // A family fact/root is not a complete ordinary printing descriptor.
+    // These mandatory supplements are independent of `covered`, including
+    // when the public catalog already supplied every trigger/replacement root.
+    for id in &cards {
+        if let Some(printing) = roots::registered_permanent_printing(*id)? {
+            meanings.push(printing);
+        }
+    }
     // V52's existing typed meaning covers the static rules. Preserve its
     // complete ordered body and add the immutable ordinary spell route only
     // for an actually actor-authorized referenced printing.

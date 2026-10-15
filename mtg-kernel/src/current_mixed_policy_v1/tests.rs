@@ -937,4 +937,217 @@ mod paid {
             ));
         }
     }
+
+    #[test]
+    fn conqueror_and_season_exact_printing_roots_keep_cost_characteristics_and_entry() {
+        for (name, color, generic, pips, types, power, keywords) in [
+            (
+                "Bloodthirsty Conqueror",
+                "B",
+                3,
+                2,
+                "Creature",
+                Some(5),
+                vec!["Flying", "Deathtouch"],
+            ),
+            ("Doubling Season", "G", 4, 1, "Enchantment", None, vec![]),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert_eq!(
+                crate::card_def::CARD_DEFS[usize::from(id)].capability,
+                crate::card_def::CardCapability::Partial
+            );
+            let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let printing = &descriptor["registered_permanent_printing"];
+            let card = &printing["characteristics"];
+            assert_eq!(card["types"], json!([types]));
+            assert_eq!(card["colors"], json!([color]));
+            assert_eq!(card["mana_value"], 5);
+            assert_eq!(card["power"], json!(power));
+            assert_eq!(card["toughness"], json!(power));
+            assert_eq!(card["ordered_keywords"], json!(keywords));
+            assert_eq!(
+                card["subtypes"],
+                if power.is_some() {
+                    json!(["Vampire", "Knight"])
+                } else {
+                    json!([])
+                }
+            );
+            assert_eq!(card["supertypes"], json!([]));
+            for key in ["token", "land", "enters_tapped"] {
+                assert_eq!(card[key], false);
+            }
+            assert_eq!(card["printed_mana_abilities"], 0);
+            assert_eq!(card["printed_activated_abilities"], 0);
+            assert_eq!(card["minimum_blockers"], 1);
+            let cast = &printing["ordered_cast_roots"][0];
+            assert_eq!(printing["ordered_cast_roots"].as_array().unwrap().len(), 1);
+            assert_eq!(cast["method"], "normal");
+            assert_eq!(cast["ordinary_route"], "Hand");
+            assert_eq!(cast["ordinary_origin"], json!(Zone::Hand));
+            assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+            assert_eq!(cast["targets"], "None");
+            assert_eq!(
+                cast["ordered_costs"],
+                json!([{"PrintedMana":{"generic":generic,"x_count":0,"pips":(0..pips).map(|_|json!({"Colored":color})).collect::<Vec<_>>()}}])
+            );
+            assert_eq!(
+                cast["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            assert_eq!(
+                cast["physical_departure"],
+                "BattlefieldOnResolutionOtherwiseGraveyard"
+            );
+            assert_eq!(cast["zone_replacements_still_apply"], true);
+            assert_eq!(
+                cast["other_cast_permissions_require_current_candidate_authority"],
+                true
+            );
+        }
+        let forest = crate::card_def::card_id_by_name("Forest").unwrap();
+        assert!(roots::registered_permanent_printing(forest)
+            .unwrap()
+            .is_none());
+        assert!(matches!(
+            roots::registered_permanent_printing(u16::MAX),
+            Err(Error::UnsupportedPrintedRoot(_))
+        ));
+        // Family semantics remain independent of the new ordinary cast roots.
+        let conq = crate::conqueror_public_v49::meanings().unwrap();
+        assert_eq!(conq.len(), 2);
+        assert!(conq[1]
+            .ordered_facts
+            .iter()
+            .any(|fact| fact == "gain_saved_actual_amount_for_original_controller"));
+        let season = crate::doubling_season_public_v48::meanings().unwrap();
+        assert_eq!(season.len(), 3);
+        assert!(season[1].positive_effect_token_creation_only);
+        assert!(season[2].counters_of_each_kind_doubled);
+        assert!(season[2].other_replacement_can_make_cost_or_rule_counter_event_eligible);
+    }
+
+    // Inspect the public lossless packet's schema fields, never sealed bindings.
+    fn numeric_field_count(tree: &NumericTree, field: &str) -> usize {
+        let rows = tree.rows();
+        rows.iter()
+            .enumerate()
+            .filter(|(at, row)| {
+                row[0] == 9
+                    && rows.get(at + 1..at + 1 + field.len()).is_some_and(|bytes| {
+                        bytes
+                            .iter()
+                            .zip(field.bytes())
+                            .all(|(row, byte)| row[0] == 8 && row[1] == u16::from(byte))
+                    })
+            })
+            .count()
+    }
+
+    #[test]
+    fn genuine_paid_conqueror_season_roots_bind_ordered_cast_and_restore_in_separate_owners_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident) => {
+                for actor in [PlayerId::P0,PlayerId::P1] {
+                    for (name,land) in [("Bloodthirsty Conqueror","Swamp"),("Doubling Season","Forest")] {
+                        let mut raw=state(actor);
+                        let spell=put(&mut raw,actor,name,Zone::Hand);
+                        put(&mut raw,actor,if name=="Doubling Season" {"Bloodthirsty Conqueror"} else {"Doubling Season"},Zone::Hand);
+                        let lands=(0..5).map(|_|put(&mut raw,actor,land,Zone::Battlefield)).collect::<Vec<_>>();
+                        let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        for id in lands {act!(session,$input,|a|mana(a,id));}
+                        let e=expected(&session.inner);
+                        let (public,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                        // All registered family meanings already exist, so this
+                        // specifically exercises the former covered-ID bypass.
+                        assert_eq!(public.conqueror.meanings.len(),2);
+                        assert_eq!(public.season.meanings.len(),3);
+                        let decision=session.encode(e).unwrap();
+                        assert_eq!(numeric_field_count(&decision.packet.state,"registered_permanent_printing"),2);
+                        assert_eq!(decision.packet.actions.len(),actions.len());
+                        let index=actions.iter().position(|action|matches!(action,ActionSemanticV1::CastSpell{source,..}if source.arena_id==spell.0)).unwrap();
+                        let saved=session.snapshot();
+                        session.restore(&saved).unwrap();
+                        assert!(expected(&session.inner).environment_revision>e.environment_revision);
+                        assert!(matches!(session.apply(&decision,index as u32),Err(Error::StaleBinding)));
+                        let current=session.encode(expected(&session.inner)).unwrap();
+                        assert_eq!(current.packet,decision.packet);
+                        let mut reference=session.inner.clone();
+                        let e=expected(&session.inner);
+                        let (_,current_actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                        assert_eq!(current_actions,actions);
+                        let response=session.apply(&current,index as u32).unwrap();
+                        assert_eq!(response,reference.step(e.episode_id,e.step,index as u32).unwrap());
+                        assert_eq!(session.inner.$world(),reference.$world());
+                        assert_eq!(session.inner.policy_step_count(),reference.policy_step_count());
+                        assert_eq!(session.inner.physical_decision_count(),reference.physical_decision_count());
+                        assert_eq!(session.inner.$world().players[actor.index()].mana_pool,[0;6]);
+                        assert_eq!(session.inner.$world().objects.get(spell).zone,Zone::Stack);
+                        let paid=session.snapshot();
+                        for _ in 0..16 {
+                            if session.inner.$world().stack.is_empty(){break;}
+                            act!(session,$input,|action|matches!(action,ActionSemanticV1::Pass{..}));
+                        }
+                        assert!(session.inner.$world().stack.is_empty());
+                        assert_eq!(session.inner.$world().objects.get(spell).zone,Zone::Battlefield);
+                        assert_eq!(session.inner.$world().objects.get(spell).controller,actor);
+                        let outcome=(session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count());
+                        session.restore(&paid).unwrap();
+                        for _ in 0..16 {
+                            if session.inner.$world().stack.is_empty(){break;}
+                            act!(session,$input,|action|matches!(action,ActionSemanticV1::Pass{..}));
+                        }
+                        assert_eq!((session.inner.$world().clone(),session.inner.policy_step_count(),session.inner.physical_decision_count()),outcome);
+                    }
+                }
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+    }
+
+    #[test]
+    fn ordinary_permanent_supplements_preserve_initial_hidden_hand_invariance_both_owners_both_seats(
+    ) {
+        macro_rules! run {
+            ($session:ident,$from:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    let mut initial = state(actor);
+                    put(&mut initial, actor, "Bloodthirsty Conqueror", Zone::Hand);
+                    put(&mut initial, actor, "Doubling Season", Zone::Hand);
+                    let hidden = put(
+                        &mut initial,
+                        actor.opponent(),
+                        "Bloodthirsty Conqueror",
+                        Zone::Hand,
+                    );
+                    let mut other = initial.clone();
+                    other.objects.get_mut(hidden).card_def =
+                        crate::card_def::card_id_by_name("Doubling Season").unwrap();
+                    other.objects.get_mut(hidden).name = "Doubling Season".into();
+                    // Distinct initial information sets, no retained input or history is edited.
+                    let a = $session::from_session(FastActorSessionV1::$from(initial)).unwrap();
+                    let b = $session::from_session(FastActorSessionV1::$from(other)).unwrap();
+                    assert_eq!(
+                        a.encode(expected(&a.inner)).unwrap().packet,
+                        b.encode(expected(&b.inner)).unwrap().packet
+                    );
+                }
+            };
+        }
+        run!(FakeSession, from_fake_v50_fixture_state);
+        run!(RavenousSession, from_ravenous_v51_fixture_state);
+    }
 }

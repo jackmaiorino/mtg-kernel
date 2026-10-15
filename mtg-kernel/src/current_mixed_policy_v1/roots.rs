@@ -507,32 +507,32 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
 }
 
 #[derive(serde::Serialize)]
-struct ElendaCastRoot {
+struct OrdinaryPermanentCastRoot {
     method: crate::state::CastMethodV4,
     ordinary_route: crate::state::SpellCastRouteV4,
     ordinary_origin: Zone,
-    timing: ElendaTiming,
-    targets: ElendaTargets,
+    timing: PermanentTiming,
+    targets: PermanentTargets,
     ordered_costs: [BaselineManaCost; 1],
-    ordered_resolution: [ElendaEntry; 1],
-    physical_departure: ElendaDeparture,
+    ordered_resolution: [PermanentEntry; 1],
+    physical_departure: PermanentDeparture,
     other_cast_permissions_require_current_candidate_authority: bool,
     zone_replacements_still_apply: bool,
 }
 #[derive(serde::Serialize)]
-enum ElendaTiming {
+enum PermanentTiming {
     CasterMainPhaseEmptyStackWithPriority,
 }
 #[derive(serde::Serialize)]
-enum ElendaTargets {
+enum PermanentTargets {
     None,
 }
 #[derive(serde::Serialize)]
-enum ElendaEntry {
+enum PermanentEntry {
     MoveOriginalSpellFromStackToBattlefieldUnderCasterControl,
 }
 #[derive(serde::Serialize)]
-enum ElendaDeparture {
+enum PermanentDeparture {
     BattlefieldOnResolutionOtherwiseGraveyard,
 }
 /// Supplement the actual typed static root with the exact ordinary cast route.
@@ -558,19 +558,114 @@ pub(super) fn elenda_printing(id: u16) -> Result<Value> {
     }
     Ok(json!({"card_id":id,"elenda_printing":{
         "meaning":meaning,
-        "ordered_cast_roots":[ElendaCastRoot {
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
             method:crate::state::CastMethodV4::Normal,
             ordinary_route:crate::state::SpellCastRouteV4::Hand,
             ordinary_origin:Zone::Hand,
-            timing:ElendaTiming::CasterMainPhaseEmptyStackWithPriority,
-            targets:ElendaTargets::None,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
             ordered_costs:[BaselineManaCost::PrintedMana(d.cost)],
-            ordered_resolution:[ElendaEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
-            physical_departure:ElendaDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
             other_cast_permissions_require_current_candidate_authority:true,
             zone_replacements_still_apply:true,
         }]
     }}))
+}
+
+/// The static printing, distinct from live effective characteristics or cast permission.
+/// Supertypes are empty in this exact subset; their historical discriminants are
+/// retained explicitly rather than serializing an unsupported executable definition.
+#[derive(serde::Serialize)]
+struct PermanentCharacteristics {
+    types: Vec<crate::card_def::CardType>,
+    subtypes: Vec<crate::card_def::Subtype>,
+    supertypes: Vec<u8>,
+    colors: Vec<crate::mana::ManaColor>,
+    mana_value: u16,
+    power: Option<i16>,
+    toughness: Option<i16>,
+    ordered_keywords: Vec<PermanentKeyword>,
+    minimum_blockers: u8,
+    token: bool,
+    land: bool,
+    enters_tapped: bool,
+    printed_mana_abilities: u8,
+    printed_activated_abilities: u8,
+}
+#[derive(serde::Serialize)]
+enum PermanentKeyword {
+    Flying,
+    Deathtouch,
+}
+
+/// Mandatory even when one or all family meanings already marked this ID
+/// covered. Only actor-authorized referenced cards reach this dispatch.
+/// A changed printing with either name must refuse rather than use its old
+/// public family facts as permission to omit the new/unsupported rule.
+pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let keywords = match d.name {
+        "Bloodthirsty Conqueror" => {
+            if !crate::bloodthirsty_conqueror_v49::owns_definition(id) {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+            vec![PermanentKeyword::Flying, PermanentKeyword::Deathtouch]
+        }
+        "Doubling Season" => {
+            if !crate::doubling_season_v48::owns_definition(id) {
+                return Err(Error::UnsupportedPrintedRoot(id));
+            }
+            Vec::new()
+        }
+        _ => return Ok(None),
+    };
+    // Both complete 72-field family selectors authenticate this exact ordinary
+    // program and reject alternate casts, foreign static rules or activations.
+    // Check the mapped leaf here as well: no raw EffectOp enters the packet.
+    if d.target_spec != TargetSpec::None
+        || !d.activated_abilities.is_empty()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let characteristics = PermanentCharacteristics {
+        types: d.types.to_vec(),
+        subtypes: d.subtypes.to_vec(),
+        supertypes: d.supertypes.iter().map(|value| *value as u8).collect(),
+        colors: d.colors.to_vec(),
+        mana_value: d.mana_value,
+        power: d.power,
+        toughness: d.toughness,
+        ordered_keywords: keywords,
+        minimum_blockers: d.minimum_blockers,
+        token: d.is_token,
+        land: d.is_land,
+        enters_tapped: d.enters_battlefield_tapped,
+        printed_mana_abilities: 0,
+        printed_activated_abilities: 0,
+    };
+    Ok(Some(json!({"card_id":id,"registered_permanent_printing":{
+        "characteristics":characteristics,
+        "ordered_cast_roots":[OrdinaryPermanentCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:PermanentTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(d.cost)],
+            ordered_resolution:[PermanentEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }]
+    }})))
 }
 
 pub(super) fn expand_thin(record: &serde_json::Map<String, Value>) -> Result<Value> {

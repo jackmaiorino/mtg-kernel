@@ -22,7 +22,8 @@ chronological ranks. Names, text, opaque handles, authority and provenance hashe
 are omitted. Unknown reference shapes refuse. This is a typed-value visitor,
 not JSON byte/hash features, and no raw EffectOp or private world enters tensors.
 
-Existing typed family producers expand root references with full ordered meaning.
+Existing typed family producers expand root references into their ordered meaning.
+A family root alone does not establish complete printing coverage.
 Exact baseline descriptors cover intrinsic land mana, vanilla/keyword creatures,
 Llanowar mana, Bolt and Treasure. Think Twice retains normal Hand `{1}{U}` and
 own Graveyard flashback `{2}{U}`, Draw1 order and flashback exile replacement.
@@ -40,6 +41,17 @@ caster. Authenticated current facts retain effective form, controller, threshold
 conditions and applied bonuses. Baseline selectors preserve the old 69 CardDef
 checks and explicitly exclude starting-life bonuses, source-type protection and
 Spinner's death descriptor. The Elenda root authenticates these separately.
+
+Conqueror and Season now receive mandatory ordinary-printing supplements for
+actually actor-authorized referenced cards, independently of the generic
+covered-ID set. Exact 72-field selectors validate numeric printed mana costs,
+card types/subtypes/colors/stats/ordered keywords and the ordinary Hand cast,
+sorcery timing, no targets, entry under the caster and physical departure.
+Existing trigger/replacement meanings and actual custody facts are preserved;
+unsupported changed shapes refuse. No permission or executable is encoded.
+The broader generic covered-by-card-ID rule still needs a separate audit:
+other family producers may describe only some roots. This narrow supplement
+is not evidence that every prior family or the complete pool is represented.
 
 The distinct network has explicit input20/hidden16 dimensions, ordered tree
 recurrence and state/action/product readout. Its source/catalog feature identity
@@ -60,6 +72,9 @@ wide V51 values and genuine 260-target Divine with restore at255. Five V52 group
 add paid Elenda/Amulet coexistence, exact wide noncreature values, finite forward,
 ordered candidate parity, forged packet refusal, repeated owning restore,
 independent hidden worlds and paid own-Bolt targeting with full replay parity.
-All Rust remains **uncompiled and unrun**. Verification is pinned formatting,
+Four further groups assert exact Conqueror/Season printing semantics, genuine
+paid casts through V50/V51 and inherited V52 owners with ordered-index/gameplay restore
+parity, mandatory supplements despite catalog meanings and initial hidden-hand
+invariance. All Rust remains **uncompiled and unrun**. Verification is pinned formatting,
 small static Python, source/API inspection and diff checks. Parent owns runtime
 qualification; no public push or PR is authorized for this prerequisite yet.
