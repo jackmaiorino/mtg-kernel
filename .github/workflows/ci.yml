@@ -404,7 +404,7 @@ jobs:
       - name: Validate FDN profiles under the native Store feature
         if: matrix.group == 'limited-store'
         run: |
-          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips fdn_dual_full_batch dual_engine_full_inventory_preserves_printing_ids fdn_ravenous_partial_batch_remains_readable_but_is_not_live effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
 
       - name: Validate new FDN family cores and owned consumers
         if: ${{ !cancelled() && matrix.group == 'limited' }}
