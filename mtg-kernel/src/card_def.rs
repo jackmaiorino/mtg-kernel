@@ -3147,9 +3147,30 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len(),
-            "the Limited Ajani reference now uses its full loyalty owner"
+            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the registered Partial Fake printing may remain outside Full"
         );
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            let non_full: Vec<_> = CARD_DEFS
+                .iter()
+                .enumerate()
+                .filter(|(_, def)| def.capability != CardCapability::Full)
+                .map(|(id, def)| (id, def.name, def.capability))
+                .collect();
+            assert_eq!(
+                non_full,
+                vec![(442, "Fake Your Own Death", CardCapability::Partial)]
+            );
+            assert!(matches!(
+                preflight_fully_supported_deck(&[442]),
+                Err(DeckPreflightError::NotFullySupported {
+                    index: 0,
+                    capability: CardCapability::Partial,
+                    ..
+                })
+            ));
+        }
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[
             card_id_by_name("Dwynen, Gilt-Leaf Daen").unwrap()
