@@ -240,7 +240,9 @@ def o_config(lineage="r1"):
 class PhaseTwo(Temp):
     def test_the_named_parent_resolves_to_the_same_source_as_os_initial_opponent(self):
         recorded = o_config()
-        distilled = {**source("r1"), "checkpoint": {"path": "p1/checkpoint-step-1024.json", "sha256": "7" * 64}}
+        saved = self.root / "checkpoint-step-1024.json"
+        saved.write_text(json.dumps({"archive_distillation": {"method": "spy-archive-distillation-phase1-v1"}}))
+        distilled = {**source("r1"), "checkpoint": {"path": str(saved), "sha256": "7" * 64}}
         for start in (None, distilled):
             value = phase2.config("r1", recorded, start, 4, "D:/p2", DECKS)
             self.assertEqual(value["initial_source"], start or recorded["initial_source"])

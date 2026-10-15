@@ -38,7 +38,16 @@ fn step(reply: &LimitedCommonReplyV2, id: &str, text: &str) -> LimitedCommonRequ
         .actions
         .iter()
         .find(|action| action.label.starts_with(text))
-        .expect(text);
+        .unwrap_or_else(|| {
+            panic!(
+                "missing {text}; actor={:?}; offered={:?}",
+                menu.actor,
+                menu.actions
+                    .iter()
+                    .map(|action| &action.label)
+                    .collect::<Vec<_>>()
+            )
+        });
     LimitedCommonRequestV2::Step {
         schema_version: SCHEMA_VERSION,
         request_id: id.into(),
@@ -259,8 +268,11 @@ fn paid_fake_and_bolt_return_treasure_safe_facts_restore_retry_both_seats() {
                 .2
                 .actions
                 .iter()
-                .find(|action| action.label.contains(": target Llanowar Elves ["))
-                .unwrap()
+                .find(|action| {
+                    action.label.starts_with("Target Llanowar Elves [")
+                        && action.label.contains(" with Lightning Bolt [")
+                })
+                .unwrap_or_else(|| panic!("Bolt target labels: {:?}", decision(&reply).2.actions))
                 .label
                 .clone();
             reply = server.handle_request(step(&reply, "bolt_target", &label));
@@ -435,7 +447,22 @@ fn real_paid_angel_panda_trigger_safe_menu_owning_restore_and_complete_outcome_b
                 .zone,
             Zone::Battlefield
         );
-        reply = server.handle_request(step(&reply, "cast_panda", "Begin casting Fiendish Panda"));
+        assert_eq!(decision(&reply).2.actor, PlayerSeatV1::from(actor));
+        let state = server.active.as_ref().unwrap().core.fake_fixture_state();
+        assert_eq!(state.step, crate::state::Step::Main1);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()],
+            1
+        );
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::B.pool_index()],
+            1
+        );
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            2
+        );
+        reply = server.handle_request(step(&reply, "cast_panda", "Cast Fiendish Panda ["));
         for index in 0..40 {
             if server
                 .active

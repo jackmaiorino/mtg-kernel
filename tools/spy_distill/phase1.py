@@ -6,9 +6,15 @@ anchor pre-flight, no step), the full run through its six checkpoints, and
 the G3 rerun of the first 32 steps in a fresh directory. One probe per
 lineage then reads the parent, O-final and every phase-1 checkpoint offline.
 
+A U collapse diagnostic cell (collab LANES/spy-u-collapse-20261014) is arm U
+with ``--cell`` and the options it changes; its checkpoints become candidates
+``CELL-step-N``.
+
 CLI (JSON on stdout):
   phase1 --lineage r1 --arm U|L --parent P.json --games GAMES.jsonl --bank BANK.json
          --anchor ANCHOR.json --output-directory DIR --out CMD.json [--dry-run | --rerun]
+         [--cell U-a4 [--learning-rate X] [--anchor-coefficient X]
+          [--min-edge-backups N | --count-control N] [--checkpoint-steps 8,16,...]]
   probe  --lineage r1 --parent P.json --o-final O.json --games GAMES.jsonl --bank BANK.json
          [--completion-games GAMES.jsonl --completion-bank BANK.json]
          --anchor ANCHOR.json --offers OFFERS.json --phase1 PHASE1.json [PHASE1.json ...]
@@ -34,18 +40,41 @@ MAX_CANDIDATES = 64
 
 
 def phase1_command(lineage: str, arm: str, parent: dict, games: Path, bank: Path, anchor: dict,
-                   output_directory: str, dry_run: bool = False, rerun: bool = False) -> dict:
+                   output_directory: str, dry_run: bool = False, rerun: bool = False,
+                   options: dict | None = None) -> dict:
     check_parent(lineage, parent)
     require(arm in ARMS, f"unknown arm {arm!r}")
     require(not (dry_run and rerun), "a dry run takes no step")
+    require(options is None or (arm == "U" and options.get("cell")), "a cell is arm U with a label")
     command = {"mode": "archive_distillation_phase1", "parent": parent, "lineage": lineage, "arm": ARMS[arm],
                "games": pin(Path(games).resolve()), "bank": pin(Path(bank).resolve()), "anchor": anchor}
     if rerun:
         command["stop_after_steps"] = REPRODUCTION_STEP
     if dry_run:
         command["dry_run"] = True
+    if options is not None:
+        command["options"] = options
     command["output_directory"] = absolute(output_directory)
     return command
+
+
+def cell_options(cell: str | None, learning_rate: float | None = None, anchor_coefficient: float | None = None,
+                 min_edge_backups: int | None = None, count_control: int | None = None,
+                 checkpoint_steps: list[int] | None = None) -> dict | None:
+    """The command's ``options``: the cell label and only the fields it changes."""
+    fields = {"learning_rate": learning_rate, "anchor_coefficient": anchor_coefficient,
+              "min_edge_backups": min_edge_backups, "count_control": count_control,
+              "checkpoint_steps": checkpoint_steps}
+    if cell is None:
+        require(all(v is None for v in fields.values()), "phase-1 options need --cell")
+        return None
+    return {"cell": cell, **{k: v for k, v in fields.items() if v is not None}}
+
+
+def candidate_label(record: dict) -> str:
+    """A run's candidate prefix: its cell label, or the screen's arm letter."""
+    options = (record["identity"].get("recipe") or {}).get("options")
+    return options["cell"] if options else ARM_LETTERS[record["identity"]["arm"]]
 
 
 def checkpoint_candidates(record: dict, lineage: str) -> list[dict]:
@@ -55,13 +84,13 @@ def checkpoint_candidates(record: dict, lineage: str) -> list[dict]:
             "a probe reads complete full phase-1 runs")
     identity = record["identity"]
     require(identity["lineage"] == lineage, "phase-1 run from another lineage")
-    letter = ARM_LETTERS[identity["arm"]]
+    label = candidate_label(record)
     out = []
     for checkpoint in record["checkpoints"]:
         source = read_json(checkpoint["source"]["path"])
         require(pin(checkpoint["source"]["path"])["sha256"] == checkpoint["source"]["sha256"],
                 "phase-1 source differs from its receipt")
-        out.append({"id": f"{letter}-step-{checkpoint['step']}", "source": source})
+        out.append({"id": f"{label}-step-{checkpoint['step']}", "source": source})
     return out
 
 
@@ -94,6 +123,13 @@ def main(argv=None) -> int:
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--rerun", action="store_true")
+    p.add_argument("--cell")
+    p.add_argument("--learning-rate", type=float)
+    p.add_argument("--anchor-coefficient", type=float)
+    rows = p.add_mutually_exclusive_group()
+    rows.add_argument("--min-edge-backups", type=int)
+    rows.add_argument("--count-control", type=int)
+    p.add_argument("--checkpoint-steps", type=lambda v: [int(x) for x in v.split(",")])
     q = sub.add_parser("probe")
     q.add_argument("--o-final", type=Path, required=True)
     q.add_argument("--offers", type=Path, required=True)
@@ -111,8 +147,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     parent, anchor = read_json(a.parent), read_json(a.anchor)
     if a.op == "phase1":
+        options = cell_options(a.cell, a.learning_rate, a.anchor_coefficient, a.min_edge_backups,
+                               a.count_control, a.checkpoint_steps)
         command = phase1_command(a.lineage, a.arm, parent, a.games, a.bank, anchor, a.output_directory,
-                                 a.dry_run, a.rerun)
+                                 a.dry_run, a.rerun, options)
     else:
         require((a.completion_games is None) == (a.completion_bank is None),
                 "a completion bank needs its games and its bank")

@@ -21,6 +21,10 @@
 //!   state bit for bit, so ordinary training resumes exactly the parent's
 //!   optimizer and distilled parameters never pass as ordinary ones.
 //! - The probe reads candidates offline, with forward passes only.
+//! - Phase-1 options run one cell of the U collapse diagnostic (collab
+//!   LANES/spy-u-collapse-20261014): arm U with one change to its step size,
+//!   anchor coefficient, rows or checkpoint steps. Absent, phase 1 is the
+//!   screen's frozen recipe exactly.
 //!
 //! No policy plays a game here, and no outcome is ever a label or a readout.
 
@@ -35,6 +39,8 @@ use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 
 pub const ARCHIVE_DISTILLATION_NAMESPACE_V1: &str = "spy-archive-distillation-v1";
+/// The U collapse diagnostic's namespace (its count-control subsets).
+pub const U_COLLAPSE_NAMESPACE_V1: &str = "spy-u-collapse-v1";
 /// The loss identity of a phase-1 checkpoint: the parameters came from
 /// archive distillation steps, not from the ordinary loss.
 pub const PHASE1_LOSS_IDENTITY_V1: &str = "archive_distillation_phase1/v1";
@@ -229,6 +235,160 @@ impl ArchiveDistillationArmV1 {
     }
 }
 
+/// One cell of the U collapse diagnostic (collab
+/// LANES/spy-u-collapse-20261014): arm U's frozen recipe with the fields
+/// given here replaced. Only arm U takes options, and at most one row rule.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveDistillationOptionsV1 {
+    /// The cell's label (ASCII letters, digits and `-`), recorded in the
+    /// recipe and in every checkpoint's provenance.
+    pub cell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_rate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_coefficient: Option<f64>,
+    /// Keeps the rows whose executed edge had at least this many backups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_edge_backups: Option<u64>,
+    /// Keeps this many rows: the lowest by a hash of each row's game and
+    /// step, which reads no label, outcome or count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_control: Option<usize>,
+    /// Checkpoint steps, strictly increasing, in place of the epoch
+    /// schedule; the last is the run's length.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_steps: Option<Vec<u64>>,
+}
+
+/// A cell as its checkpoints record it: the resolved recipe, in bits. The
+/// step size is the provenance's own `learning_rate_bits`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveDistillationCellV1 {
+    pub cell: String,
+    pub anchor_coefficient_bits: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_edge_backups: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count_control: Option<u64>,
+    pub checkpoint_steps: Vec<u64>,
+}
+
+/// The phase-1 recipe values a run uses: the frozen ones, or a cell's.
+struct RecipeV1 {
+    learning_rate: f32,
+    anchor_coefficient: f64,
+    checkpoint_steps: Option<Vec<u64>>,
+    cell: Option<ArchiveDistillationCellV1>,
+}
+
+fn recipe_v1(
+    arm: ArchiveDistillationArmV1,
+    options: Option<&ArchiveDistillationOptionsV1>,
+) -> Result<RecipeV1, String> {
+    let Some(options) = options else {
+        return Ok(RecipeV1 {
+            learning_rate: LEARNING_RATE,
+            anchor_coefficient: ANCHOR_COEFFICIENT,
+            checkpoint_steps: None,
+            cell: None,
+        });
+    };
+    ensure(
+        arm == ArchiveDistillationArmV1::Uniform,
+        "phase-1 options are for arm U only",
+    )?;
+    ensure(
+        !options.cell.is_empty()
+            && options.cell.len() <= 32
+            && options
+                .cell
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        "a cell label is 1 to 32 ASCII letters, digits or '-'",
+    )?;
+    let learning_rate = options.learning_rate.unwrap_or(LEARNING_RATE);
+    let anchor_coefficient = options.anchor_coefficient.unwrap_or(ANCHOR_COEFFICIENT);
+    ensure(
+        learning_rate.is_finite() && learning_rate > 0.0,
+        "the step size is a positive finite number",
+    )?;
+    ensure(
+        anchor_coefficient.is_finite() && anchor_coefficient > 0.0,
+        "the anchor coefficient is a positive finite number",
+    )?;
+    ensure(
+        options.min_edge_backups.is_none() || options.count_control.is_none(),
+        "a cell keeps rows by one rule at most",
+    )?;
+    ensure(
+        options.count_control.is_none_or(|n| n > 0),
+        "a count control keeps at least one row",
+    )?;
+    if let Some(steps) = &options.checkpoint_steps {
+        ensure(
+            steps.first().is_some_and(|&s| s > 0)
+                && steps.windows(2).all(|w| w[0] < w[1])
+                && steps.last().is_some_and(|&s| s >= REPRODUCTION_STEP),
+            "checkpoint steps are positive, strictly increasing and reach the reproduction step",
+        )?;
+    }
+    Ok(RecipeV1 {
+        learning_rate,
+        anchor_coefficient,
+        checkpoint_steps: options.checkpoint_steps.clone(),
+        cell: Some(ArchiveDistillationCellV1 {
+            cell: options.cell.clone(),
+            anchor_coefficient_bits: anchor_coefficient.to_bits(),
+            min_edge_backups: options.min_edge_backups,
+            count_control: options.count_control.map(|n| n as u64),
+            checkpoint_steps: options.checkpoint_steps.clone().unwrap_or_default(),
+        }),
+    })
+}
+
+/// The arm's rows, then a cell's row rule: a support floor on the executed
+/// edge's backups, or a count control ranked by
+/// `[U_COLLAPSE_NAMESPACE_V1, lineage, "count-control", n, game, step]`.
+/// The result is in bank order; the plan orders each epoch itself.
+fn select_rows_v1(
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+    arm: ArchiveDistillationArmV1,
+    lineage: &str,
+    options: Option<&ArchiveDistillationOptionsV1>,
+) -> Result<Vec<usize>, String> {
+    let mut selected: Vec<usize> = (0..rows.len())
+        .filter(|&i| arm.admits(&rows[i].0))
+        .collect();
+    if let Some(floor) = options.and_then(|o| o.min_edge_backups) {
+        selected.retain(|&i| rows[i].0.edge_backups.is_some_and(|b| b >= floor));
+    }
+    if let Some(n) = options.and_then(|o| o.count_control) {
+        ensure(
+            n <= selected.len(),
+            "a count control keeps more rows than the arm has",
+        )?;
+        selected.sort_by_cached_key(|&i| {
+            let row = &rows[i].0;
+            (
+                key_hash(json!([
+                    U_COLLAPSE_NAMESPACE_V1,
+                    lineage,
+                    "count-control",
+                    n,
+                    row.game,
+                    row.step
+                ])),
+                i,
+            )
+        });
+        selected.truncate(n);
+        selected.sort_unstable();
+    }
+    Ok(selected)
+}
+
 /// The parent's own ordinary play, split by unit before collection (design
 /// section 3): `training` feeds the anchor term, `held_out` the collapse
 /// probe.
@@ -264,6 +424,10 @@ pub struct ArchiveDistillationProvenanceV1 {
     /// with its fresh-moment Adam), for audit against the phase-1 record.
     pub phase1_state_sha256: String,
     pub runtime_commit: String,
+    /// The U collapse diagnostic's cell, when phase 1 ran with options;
+    /// absent for the screen's frozen recipe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell: Option<ArchiveDistillationCellV1>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -283,11 +447,11 @@ pub struct ArchiveDistillationProbeBankV1 {
 }
 
 /// A phase-1 checkpoint loads only as itself: its identity and provenance
-/// come together; its scalars are phase 1's (learning rate 1e-4, and a zero
-/// value coefficient because phase 1 has no value term); it has no GAE
-/// scalars or update inputs; and its named parent holds exactly its
-/// optimizer state (moments, Adam step and gauge anchor) and feature
-/// identity. Any other checkpoint carries no provenance.
+/// come together; its scalars are phase 1's (learning rate 1e-4, or a cell's
+/// recorded one on arm U, and a zero value coefficient because phase 1 has
+/// no value term); it has no GAE scalars or update inputs; and its named
+/// parent holds exactly its optimizer state (moments, Adam step and gauge
+/// anchor) and feature identity. Any other checkpoint carries no provenance.
 pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
     let is_phase1 = saved.loss_identity == PHASE1_LOSS_IDENTITY_V1;
     ensure(
@@ -297,10 +461,22 @@ pub(super) fn validate_phase1_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Res
     let Some(provenance) = &saved.archive_distillation else {
         return Ok(());
     };
+    let learning_rate_bits = match &provenance.cell {
+        None => LEARNING_RATE.to_bits(),
+        Some(_) => {
+            ensure(
+                provenance.arm == ArchiveDistillationArmV1::Uniform
+                    && f32::from_bits(provenance.learning_rate_bits).is_finite()
+                    && f32::from_bits(provenance.learning_rate_bits) > 0.0,
+                "a phase-1 cell is arm U at a positive finite step size",
+            )?;
+            provenance.learning_rate_bits
+        }
+    };
     ensure(
         provenance.method == METHOD
-            && provenance.learning_rate_bits == LEARNING_RATE.to_bits()
-            && saved.learning_rate_bits == LEARNING_RATE.to_bits()
+            && provenance.learning_rate_bits == learning_rate_bits
+            && saved.learning_rate_bits == learning_rate_bits
             && saved.value_coefficient_bits == 0.0_f32.to_bits()
             && saved.trajectories.is_empty()
             && saved.e_supported.is_none()
@@ -935,6 +1111,7 @@ fn anchor_identity_preflight_v1(
     generation: FreshLineageGenerationV1,
     rows: &[AnchorRowV1],
     targets: &[LineBSoftmaxV1],
+    recipe: &RecipeV1,
 ) -> Result<usize, String> {
     ensure(
         fresh.adam_step_v1() == 0,
@@ -944,7 +1121,7 @@ fn anchor_identity_preflight_v1(
     let before = copy.model_v1().parameter_snapshot_v1();
     let input = ExternalAuxiliaryInputV1 {
         direction: LineBDivergenceV1::Forward,
-        coefficient: ANCHOR_COEFFICIENT,
+        coefficient: recipe.anchor_coefficient,
         denominator: rows.len(),
         rows: rows
             .iter()
@@ -955,7 +1132,7 @@ fn anchor_identity_preflight_v1(
             })
             .collect(),
     };
-    copy.train_step_auxiliary_only_v1(generation, LEARNING_RATE, &[&input])
+    copy.train_step_auxiliary_only_v1(generation, recipe.learning_rate, &[&input])
         .map_err(|e| format!("anchor pre-flight step: {e:?}"))?;
     let after = copy.model_v1().parameter_snapshot_v1();
     ensure(
@@ -1020,6 +1197,7 @@ fn plan_v1(
     anchor: &[AnchorRowV1],
     lineage: &str,
     arm: ArchiveDistillationArmV1,
+    checkpoint_steps: Option<&[u64]>,
 ) -> Result<PlanV1, String> {
     let n = selected.len();
     ensure(n > 0, "the arm has no archive rows")?;
@@ -1028,14 +1206,25 @@ fn plan_v1(
         "anchor training split is smaller than one batch",
     )?;
     let epoch_steps = n.div_ceil(ARCHIVE_BATCH) as u64;
-    let (checkpoints, all_rows_each_step): (Vec<u64>, bool) = match arm {
-        ArchiveDistillationArmV1::Uniform => (
+    let (checkpoints, all_rows_each_step): (Vec<u64>, bool) = match (arm, checkpoint_steps) {
+        // A cell's own steps (arm U only), still drawn in U's epochs.
+        (ArchiveDistillationArmV1::Uniform, Some(steps)) => (steps.to_vec(), false),
+        (ArchiveDistillationArmV1::Uniform, None) => (
             UNIFORM_EPOCHS.iter().map(|e| e * epoch_steps).collect(),
             false,
         ),
-        ArchiveDistillationArmV1::LineDecisions => (LINE_STEPS.to_vec(), n <= ARCHIVE_BATCH),
+        (ArchiveDistillationArmV1::LineDecisions, None) => {
+            (LINE_STEPS.to_vec(), n <= ARCHIVE_BATCH)
+        }
+        (ArchiveDistillationArmV1::LineDecisions, Some(_)) => {
+            return Err("phase-1 options are for arm U only".into())
+        }
     };
-    let total = *checkpoints.last().expect("six checkpoints");
+    ensure(
+        checkpoints.first().is_some_and(|&s| s > 0) && checkpoints.windows(2).all(|w| w[0] < w[1]),
+        "checkpoint steps are positive and strictly increasing",
+    )?;
+    let total = *checkpoints.last().expect("at least one checkpoint");
     let mut archive: Vec<(Vec<usize>, usize)> = Vec::with_capacity(total as usize);
     let mut epoch = 0;
     while (archive.len() as u64) < total {
@@ -1173,7 +1362,7 @@ fn checkpoint_v1(
     checkpoint.gae_lambda_bits = None;
     checkpoint.entropy_coefficient_bits = None;
     checkpoint.exploration = None;
-    checkpoint.learning_rate_bits = LEARNING_RATE.to_bits();
+    checkpoint.learning_rate_bits = provenance.learning_rate_bits;
     // Phase 1 has no value term, so its value coefficient is zero.
     checkpoint.value_coefficient_bits = 0.0_f32.to_bits();
     checkpoint.archive_distillation = Some(provenance);
@@ -1235,6 +1424,7 @@ pub(super) fn phase1_v1(
     anchor: ArchiveDistillationAnchorV1,
     stop_after_steps: Option<u64>,
     dry_run: bool,
+    options: Option<ArchiveDistillationOptionsV1>,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
@@ -1242,6 +1432,7 @@ pub(super) fn phase1_v1(
         !output_directory.exists(),
         "phase-1 output directory must be fresh",
     )?;
+    let recipe_values = recipe_v1(arm, options.as_ref())?;
     ensure(
         stop_after_steps.is_none_or(|n| n == REPRODUCTION_STEP),
         "a reproduction run stops after the reproduction step",
@@ -1251,9 +1442,7 @@ pub(super) fn phase1_v1(
     let parent_pin = parent.checkpoint.clone().expect("checked by load");
     let parent_checkpoint = read_ordinary_checkpoint_v1(&parent_pin, inputs.policy.identity_v1())?;
     let (bank_record, rows) = reproduce_bank_v1(&inputs, &parent, &lineage, &games, &bank)?;
-    let selected: Vec<usize> = (0..rows.len())
-        .filter(|&i| arm.admits(&rows[i].0))
-        .collect();
+    let selected = select_rows_v1(&rows, arm, &lineage, options.as_ref())?;
     let mut ids = BTreeSet::new();
     let anchor_train = load_anchor_split_v1(
         &anchor.training,
@@ -1280,28 +1469,52 @@ pub(super) fn phase1_v1(
                     .map(|row| (&row.tensor, row.logits.as_slice(), row.value)),
             ),
     )?;
-    let plan = plan_v1(&rows, &selected, &anchor_train, &lineage, arm)?;
+    let plan = plan_v1(
+        &rows,
+        &selected,
+        &anchor_train,
+        &lineage,
+        arm,
+        recipe_values.checkpoint_steps.as_deref(),
+    )?;
     let archive_targets = rows
         .iter()
         .map(|(row, _)| one_hot_target_v1(row.k as usize, row.target as usize).map_err(err))
         .collect::<Result<Vec<_>, _>>()?;
     let anchor_targets = anchor_targets_v1(&anchor_train)?;
     let anchor_sha256 = sha(&serde_json::to_vec(&anchor).map_err(err)?);
-    let recipe = json!({"method":METHOD,"namespace":ARCHIVE_DISTILLATION_NAMESPACE_V1,
-        "learning_rate":LEARNING_RATE,"archive_batch":ARCHIVE_BATCH,"anchor_batch":ANCHOR_BATCH,
+    let mut recipe = json!({"method":METHOD,"namespace":ARCHIVE_DISTILLATION_NAMESPACE_V1,
+        "learning_rate":recipe_values.learning_rate,"archive_batch":ARCHIVE_BATCH,
+        "anchor_batch":ANCHOR_BATCH,
         "archive_batching":"each epoch's row order cut into ceil(n/32) consecutive batches \
             whose sizes differ by at most one (L with at most 32 rows: every row each step); \
             the archive term is the mean over its batch",
-        "archive_coefficient":ARCHIVE_COEFFICIENT,"anchor_coefficient":ANCHOR_COEFFICIENT,
+        "archive_coefficient":ARCHIVE_COEFFICIENT,
+        "anchor_coefficient":recipe_values.anchor_coefficient,
         "direction":"forward","adam":"fresh moments, betas 0.9 and 0.999, epsilon 1e-8",
         "checkpoints":plan.checkpoints,"epoch_steps":plan.epoch_steps});
+    if let Some(options) = &options {
+        recipe["options"] = json!(options);
+    }
     let arm_rows: Vec<ArchiveRowV1> = selected.iter().map(|&i| rows[i].0.clone()).collect();
-    let census = json!({"bank":bank_census_v1(&bank_record.game_status, &bank_record.rows),
+    let mut census = json!({"bank":bank_census_v1(&bank_record.game_status, &bank_record.rows),
         "arm":bank_census_v1(&[], &arm_rows),
         "anchor_training_episodes":anchor.training.len(),"anchor_training_rows":anchor_train.len(),
         "anchor_held_out_episodes":anchor.held_out.len(),"anchor_held_out_rows":held_out_rows,
         "verified_parent_outputs":verified,
         "exposure":exposure_v1(&plan, &rows, &selected, anchor_train.len())});
+    if options.is_some() {
+        // A cell's kept line rows, so a reading can split the bank's line
+        // rows into kept and dropped ones.
+        census["kept_line_rows"] = json!(arm_rows
+            .iter()
+            .filter(|r| r.line.line_offered())
+            .map(
+                |r| json!({"game":r.game,"step":r.step,"edge_backups":r.edge_backups,
+                "line":r.line})
+            )
+            .collect::<Vec<_>>());
+    }
     let identity = json!({"lineage":lineage,"arm":arm,"parent":parent,
         "parent_state_sha256":inputs.state_sha256,"games":games,"bank":bank,
         "anchor":anchor,"anchor_sha256":anchor_sha256,"recipe":recipe,
@@ -1314,8 +1527,13 @@ pub(super) fn phase1_v1(
         state.scorer_bias_anchor_f32_bits_v1() == parent_checkpoint.scorer_bias_anchor_bits,
         "the parent's scorer bias differs from its gauge anchor",
     )?;
-    let preflight_rows =
-        anchor_identity_preflight_v1(&state, generation, &anchor_train, &anchor_targets)?;
+    let preflight_rows = anchor_identity_preflight_v1(
+        &state,
+        generation,
+        &anchor_train,
+        &anchor_targets,
+        &recipe_values,
+    )?;
     if dry_run {
         let result = json!({"schema":PHASE1_SCHEMA,"dry_run":true,"identity":identity,
             "census":census,"anchor_preflight_rows":preflight_rows});
@@ -1330,7 +1548,7 @@ pub(super) fn phase1_v1(
         let number = index as u64 + 1;
         let anchor_input = ExternalAuxiliaryInputV1 {
             direction: LineBDivergenceV1::Forward,
-            coefficient: ANCHOR_COEFFICIENT,
+            coefficient: recipe_values.anchor_coefficient,
             denominator: ANCHOR_BATCH,
             rows: step
                 .anchor
@@ -1357,7 +1575,7 @@ pub(super) fn phase1_v1(
         let (terms, gauge) = state
             .train_step_auxiliary_only_v1(
                 generation,
-                LEARNING_RATE,
+                recipe_values.learning_rate,
                 &[&anchor_input, &archive_input],
             )
             .map_err(|e| format!("phase-1 step {number}: {e:?}"))?;
@@ -1399,9 +1617,10 @@ pub(super) fn phase1_v1(
                 bank_rows_sha256: bank_record.rows_sha256.clone(),
                 anchor_sha256: anchor_sha256.clone(),
                 steps: number,
-                learning_rate_bits: LEARNING_RATE.to_bits(),
+                learning_rate_bits: recipe_values.learning_rate.to_bits(),
                 phase1_state_sha256: phase1_state.clone(),
                 runtime_commit: env!("MTG_KERNEL_BUILD_GIT_HEAD").into(),
+                cell: recipe_values.cell.clone(),
             };
             let (checkpoint_pin, source_pin, state_sha256) = write_checkpoint_v1(
                 &output_directory,
