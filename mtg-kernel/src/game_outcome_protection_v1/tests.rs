@@ -326,7 +326,7 @@ fn actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_lo
             crate::game_outcome_protection_public_v1::capture(&state, &selector).unwrap();
         assert!(before_public.sources[0].printed_rules_active);
         let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
-        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
         let decision = engine::advance_until_decision(&mut state);
         assert!(
             matches!(&decision,

@@ -14127,7 +14127,8 @@ fn validated_stack_item_target_metadata(
     if state.engine.pending_cast.as_ref().is_some_and(|pending| {
         item.kind == StackItemKind::Spell
             && item.v4.source_contract == Some(pending.source_contract)
-    }) {
+    }) || mandatory_cast_cost_v1::linked_placeholder(state, item)?
+    {
         if item.kind != StackItemKind::Spell
             || item.inline_effect.is_some()
             || item.madness_offer

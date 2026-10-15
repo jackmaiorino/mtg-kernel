@@ -10345,6 +10345,11 @@ fn stack_item_public_conqueror_v49(
     } else {
         stack_target_refs(state, item)?
     };
+    // Reuse the authenticated announced targets. Rebuilding generic targets
+    // would incorrectly consult a newer hidden incarnation even when this
+    // stack root has no counter distribution.
+    let counter_distribution =
+        public_counter_distribution(item.inline_effect.as_ref(), targets.clone());
     Ok(StackItemPublicV2 {
         stack_index,
         source: stack_source_ref_conqueror_v49(
@@ -10375,10 +10380,7 @@ fn stack_item_public_conqueror_v49(
             item.inline_effect.as_ref(),
             item.v4.ability_source_contract,
         ),
-        counter_distribution: public_counter_distribution(
-            item.inline_effect.as_ref(),
-            stack_target_refs(state, item)?,
-        ),
+        counter_distribution,
     })
 }
 

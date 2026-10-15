@@ -476,10 +476,20 @@ mod future_printed {
                     finish(branch);
                     assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
                     for fighter in fighters {
-                        assert_eq!(
-                            branch.objects.get(fighter).damage,
-                            if double_first { 5 } else { 0 }
-                        );
+                        let dealt = branch
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|event| match event {
+                                CommittedEvent::Damage { target, amount, .. }
+                                    if *target == Target::Object(fighter) =>
+                                {
+                                    Some(*amount)
+                                }
+                                _ => None,
+                            })
+                            .sum::<i32>();
+                        assert_eq!(dealt, if double_first { 5 } else { 0 });
                         assert_eq!(
                             branch.objects.get(fighter).zone,
                             if double_first {
@@ -488,6 +498,9 @@ mod future_printed {
                                 Zone::Battlefield
                             }
                         );
+                        // Lethal damage moves a fighter to a new graveyard
+                        // incarnation, whose damage marks are cleared.
+                        assert_eq!(branch.objects.get(fighter).damage, 0);
                     }
                     for player in [actor, actor.opponent()] {
                         assert_eq!(

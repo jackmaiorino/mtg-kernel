@@ -581,7 +581,7 @@ fn actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_bo
         add(&mut state, actor, host, pole);
         finish(&mut state);
         let witness = put(&mut state, actor, "Witness Protection", Zone::Hand);
-        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
         engine::step(&mut state, Action::CastSpell(witness)).unwrap();
         assert!(matches!(next(&mut state), Decision::ChooseTargets { .. }));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
