@@ -2696,7 +2696,7 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 443 (Partial Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 443 (Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
@@ -2716,7 +2716,7 @@ mod tests {
             assert_eq!(fake, 442);
             assert_eq!(
                 CARD_DEFS[usize::from(fake)].capability,
-                CardCapability::Partial
+                CardCapability::Full
             );
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
@@ -2896,8 +2896,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v86_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x69ed_c2fb_ec6b_9070;
+    fn card_db_hash_v87_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x68f2_13db_0a5e_f38c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3147,8 +3147,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - 2 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the registered Partial Fake and Ravenous printings may remain outside Full"
+            CARD_DEFS.len(),
+            "every registered definition is engine Full"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3158,22 +3158,10 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert_eq!(
-                non_full,
-                vec![
-                    (442, "Fake Your Own Death", CardCapability::Partial),
-                    (443, "Ravenous Amulet", CardCapability::Partial),
-                ]
-            );
-            for id in [442, 443] {
-                assert!(matches!(
-                    preflight_fully_supported_deck(&[id]),
-                    Err(DeckPreflightError::NotFullySupported {
-                        index: 0,
-                        capability: CardCapability::Partial,
-                        ..
-                    })
-                ));
+            assert!(non_full.is_empty());
+            for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
+                assert_eq!(card_id_by_name(name), Some(id));
+                assert!(preflight_fully_supported_deck(&[id]).is_ok());
             }
         }
         #[cfg(feature = "limited-fdn-fixtures")]

@@ -90,10 +90,14 @@ impl PrimitiveGrantV50 {
 /// Caller already owns the effect input and target legality. This narrower
 /// primitive still refuses a missing, stale or noncreature recipient before
 /// changing the state or consuming a timestamp. Each call installs one grant.
-pub fn primitive_install_grant_v50(
-    state: &mut GameState,
+pub(crate) fn preflight_install_grant_v50(
+    state: &GameState,
     recipient: EffectObjectBinding,
-) -> Result<PrimitiveGrantV50, String> {
+) -> Result<(), String> {
+    if state.engine.halted.is_some() {
+        return Err("Fake primitive grant cannot install after halt".into());
+    }
+
     let object = state
         .objects
         .try_get(recipient.object)
@@ -108,6 +112,20 @@ pub fn primitive_install_grant_v50(
     {
         return Err("Fake primitive grant recipient changed incarnation or creature type".into());
     }
+    crate::engine::checked_effective_pt_with_boost(state, recipient.object, (2, 0))?;
+    state
+        .engine
+        .next_effect_timestamp
+        .checked_add(1)
+        .ok_or("Fake primitive grant timestamp overflow")?;
+    Ok(())
+}
+
+pub fn primitive_install_grant_v50(
+    state: &mut GameState,
+    recipient: EffectObjectBinding,
+) -> Result<PrimitiveGrantV50, String> {
+    preflight_install_grant_v50(state, recipient)?;
     let timestamp = state.engine.next_effect_timestamp;
     timestamp
         .checked_add(1)
@@ -120,6 +138,9 @@ pub fn primitive_install_grant_v50(
         timestamp,
     };
     crate::effect::install_temporary_boost(state, recipient, 2, 0, crate::card_def::Keywords::NONE);
+    if state.engine.halted.is_some() || !grant.temporary_modifier_retained(state)? {
+        return Err("Fake primitive grant did not install its exact modifier".into());
+    }
     Ok(grant)
 }
 

@@ -255,17 +255,24 @@ fn v51_complete_binding_counter_values_candidates_and_restore_owners_refuse_read
 }
 
 #[test]
-fn partial_amulet_reset_and_legacy_visible_modes_refuse_both_seats() {
+fn full_amulet_keeps_legacy_visible_model_and_search_refusals_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (session, amulet, _, _) = fixture(actor);
         let definition = session.state.objects.get(amulet).card_def;
         assert_eq!(
             crate::card_def::CARD_DEFS[definition as usize].capability,
-            crate::card_def::CardCapability::Partial
+            crate::card_def::CardCapability::Full
         );
-        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_ok());
         let before = serde_json::to_vec(&session.state).unwrap();
         assert!(session.clone().into_fake_v50().is_err());
+        let e = expected(&session);
+        assert!(session.flat_policy_observation_v1(e).is_err());
+        assert!(session.flat_policy_observation_v2(e).is_err());
+        assert!(session.flat_policy_observation_v3(e).is_err());
+        assert!(session.flat_policy_observation_v4(e).is_err());
+        assert!(session.flat_policy_observation_v5(e).is_err());
+        assert!(session.kernel_search_redeterminized_clone_v4(1).is_err());
         assert!(crate::rl::observe_v1(&session.state, actor, 0).is_err());
         assert!(
             crate::rl::observe_v2(&session.state, session.surface.harness_surface(), actor, 0)

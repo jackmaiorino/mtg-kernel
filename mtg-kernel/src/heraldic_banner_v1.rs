@@ -351,7 +351,7 @@ pub(crate) fn authenticated_color(
     }
     Ok(rows[0].color)
 }
-pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i128, i128) {
     let Some(target) = state.objects.try_get(recipient) else {
         return (0, 0);
     };
@@ -382,8 +382,8 @@ pub(crate) fn controlled_boost(state: &GameState, recipient: ObjectId) -> (i32, 
         let boost = CARD_DEFS[object.card_def as usize]
             .chosen_color_creature_boost_v1
             .unwrap();
-        power += i32::from(boost.power);
-        toughness += i32::from(boost.toughness);
+        power += i128::from(boost.power);
+        toughness += i128::from(boost.toughness);
     }
     (power, toughness)
 }
