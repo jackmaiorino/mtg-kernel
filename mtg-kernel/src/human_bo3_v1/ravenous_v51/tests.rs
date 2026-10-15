@@ -134,7 +134,8 @@ fn draw_cost(session: &mut HumanRavenousSessionV51, projector: &mut HumanRavenou
 }
 fn pay_creature(session: &mut HumanRavenousSessionV51, projector: &mut HumanRavenousProjectorV51) {
     submit(session, projector, |label| {
-        label.contains("activation cost: sacrifice Llanowar Elves")
+        label.starts_with("Sacrifice Llanowar Elves")
+            && label.contains(" to pay for Ravenous Amulet ")
     });
 }
 fn assert_safe(value: &HumanDecisionRavenousV51) {
@@ -466,7 +467,8 @@ fn human_v51_paid_fake_coexistence_return_and_exact_wide_values_both_seats() {
             .clone();
         assert!(!target.is_empty());
         submit(&mut session, &mut projector, |label| {
-            label.contains("activation cost: sacrifice Llanowar Elves")
+            label.starts_with("Sacrifice Llanowar Elves")
+                && label.contains(" to pay for Ravenous Amulet ")
                 && label.contains(&format!("[{name}]"))
         });
         let snapshot = session.snapshot_v51();
@@ -541,15 +543,16 @@ fn actual_paid_human_sacrifice_facts_omit_underlying_face_down_printing_both_sea
         let mut projector = HumanRavenousProjectorV51::new(actor.into());
         draw_cost(&mut session, &mut projector);
         let cost = menu(&session, &mut projector);
-        assert!(cost.actions.iter().any(|row| row
-            .label
-            .contains("activation cost: sacrifice Face-down creature")));
+        assert!(cost
+            .actions
+            .iter()
+            .any(|row| row.label.starts_with("Sacrifice Face-down creature")));
         assert!(!cost
             .actions
             .iter()
-            .any(|row| row.label.contains("activation cost: sacrifice Mountain")));
+            .any(|row| row.label.starts_with("Sacrifice Mountain")));
         submit(&mut session, &mut projector, |label| {
-            label.contains("activation cost: sacrifice Face-down creature")
+            label.starts_with("Sacrifice Face-down creature")
         });
         let snapshot = session.snapshot_v51();
         let finished = drain(&mut session, &mut projector);
@@ -672,7 +675,7 @@ fn paid_pole_and_longbow_grants_on_paid_animated_amulet_keep_their_own_labels_an
         assert!(!cost
             .actions
             .iter()
-            .any(|row| row.label.contains("activation cost: sacrifice")));
+            .any(|row| row.label.starts_with("Sacrifice ")));
         let snapshot = session.snapshot_v51();
         submit(&mut session, &mut projector, |label| {
             label.starts_with("Tap Fishing Pole")
