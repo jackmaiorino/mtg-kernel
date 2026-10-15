@@ -15660,7 +15660,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
-    let midnight_owner = match crate::midnight_snack_v1::acquire(state, &current) {
+    let midnight_owner = match crate::midnight_snack_v1::acquire(state, &current, targets_legal) {
         Ok(owner) => owner,
         Err(_) => {
             state.engine.halted = Some((

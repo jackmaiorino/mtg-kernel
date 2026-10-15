@@ -173,10 +173,12 @@ pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<i3
 /// Generic activation validation owns payment/source/targets and restore.
 pub(crate) struct ResolutionOwner {
     item: StackItem,
+    targets_legal: bool,
 }
 pub(crate) fn acquire(
     state: &GameState,
     item: &StackItem,
+    targets_legal: bool,
 ) -> Result<Option<ResolutionOwner>, String> {
     if item.inline_effect != Some(activation()) {
         return Ok(None);
@@ -193,8 +195,15 @@ pub(crate) fn acquire(
     {
         return Err("Midnight Snack activation lost original definition/source/row".into());
     }
-    gained_this_turn(state, item.controller)?;
-    Ok(Some(ResolutionOwner { item: item.clone() }))
+    // 608.2b ends an ability whose only target is illegal before its effect
+    // evaluates X. Only a live legal effect needs an amount preflight.
+    if targets_legal {
+        gained_this_turn(state, item.controller)?;
+    }
+    Ok(Some(ResolutionOwner {
+        item: item.clone(),
+        targets_legal,
+    }))
 }
 pub(crate) fn resolve(
     state: &mut GameState,
@@ -203,7 +212,8 @@ pub(crate) fn resolve(
     legal: bool,
 ) -> Result<(), String> {
     let item = owner.item;
-    if ctx.source != item.source
+    if owner.targets_legal != legal
+        || ctx.source != item.source
         || ctx.controller != item.controller
         || ctx.stack_item_id != Some(item.v4.stack_item_id)
         || ctx.targets != item.targets

@@ -384,13 +384,102 @@ fn committed_gain_sum_overflow_refuses_before_resolved_loss_with_original_histor
         assert!(gained_this_turn(&s, actor).is_err());
         activate_paid(&mut s, actor, source);
         let item = s.stack.last().unwrap();
-        assert!(acquire(&s, item).is_err());
+        assert!(acquire(&s, item, true).is_err());
         let before = s.players[actor.opponent().index()].life;
         let journal = s.engine.event_history.clone();
-        let restored: GameState = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
-        assert!(acquire(&restored, restored.stack.last().unwrap()).is_err());
-        assert_eq!(restored.players[actor.opponent().index()].life, before);
-        assert_eq!(restored.engine.event_history, journal);
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+        assert!(acquire(&restored, restored.stack.last().unwrap(), true).is_err());
+        let original = s.stack.last().unwrap().clone();
+        for game in [&mut s, &mut restored] {
+            for _ in 0..4 {
+                let decision = engine::advance_until_decision(game);
+                if game.engine.halted.is_some() {
+                    break;
+                }
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { .. }),
+                    "{decision:?}"
+                );
+                engine::step(game, Action::Pass).unwrap();
+            }
+            assert!(game.engine.halted.is_some());
+            assert_eq!(game.stack.last(), Some(&original));
+            assert_eq!(game.players[actor.opponent().index()].life, before);
+            assert_eq!(game.engine.event_history, journal);
+        }
+    }
+}
+
+#[test]
+fn paid_crystal_response_fizzles_without_evaluating_overflowed_turn_total_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, source) = paid(actor);
+        let opponent = actor.opponent();
+        // Pay the genuine flash creature first. It grants the actual timing
+        // permission needed to cast Crystal in response to the Snack ability.
+        let trickster = put(&mut s, opponent, "High Fae Trickster", Zone::Hand);
+        mana(&mut s, opponent, "Island", 4);
+        engine::step(&mut s, Action::CastSpell(trickster)).unwrap();
+        engine::advance_until_decision(&mut s);
+        drain(&mut s);
+        assert_eq!(s.objects.get(trickster).zone, Zone::Battlefield);
+        // Legitimate committed gain/loss input primitive: individual amounts
+        // and life totals fit while their positive turn aggregate exceeds i32.
+        for n in 0..3 {
+            event::propose_and_commit(&mut s, ProposedEvent::life_gain(actor, 1_000_000_000));
+            if n < 2 {
+                event::propose_and_commit(&mut s, ProposedEvent::life_loss(actor, 1_000_000_000));
+            }
+        }
+        activate_paid(&mut s, actor, source);
+        let original_ability = s.stack.last().unwrap().v4.stack_item_id;
+        let mut countered = s.clone();
+        let mut countered_restore: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&countered).unwrap()).unwrap();
+        // Existing generic counter operation on the actual finalized paid row;
+        // no fictitious counterspell, activation or removal loan is supplied.
+        for game in [&mut countered, &mut countered_restore] {
+            assert!(engine::counter_stack_item_by_id(game, original_ability)
+                .unwrap()
+                .is_some());
+            drain(game);
+            assert!(game.engine.halted.is_none());
+            assert!(gained_this_turn(game, actor).is_err());
+            assert_eq!(game.players[opponent.index()].life, 20);
+        }
+        assert_eq!(countered.state_hash(), countered_restore.state_hash());
+        let crystal = put(&mut s, opponent, "Crystal Barricade", Zone::Hand);
+        mana(&mut s, opponent, "Plains", 2);
+        engine::step(&mut s, Action::CastSpell(crystal)).unwrap();
+        engine::advance_until_decision(&mut s);
+        assert_eq!(s.objects.get(crystal).zone, Zone::Stack);
+        assert!(s
+            .stack
+            .iter()
+            .any(|i| i.v4.stack_item_id == original_ability));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+        for game in [&mut s, &mut restored] {
+            drain(game);
+            assert_eq!(game.objects.get(crystal).zone, Zone::Battlefield);
+            assert!(crate::crystal_barricade_v1::controller_has_hexproof(
+                game, opponent
+            ));
+            assert!(gained_this_turn(game, actor).is_err());
+            assert!(game.engine.halted.is_none());
+            assert!(game.stack.is_empty());
+            assert_eq!(game.players[opponent.index()].life, 20);
+            assert!(!game
+                .engine
+                .event_history
+                .iter()
+                .any(|e| matches!(e,CommittedEvent::LifeLoss{player,..} if *player==opponent)));
+        }
+        assert_eq!(
+            serde_json::to_vec(&s).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
     }
 }
 

@@ -23,7 +23,12 @@ The existing authenticated `LifeLossTurnBeganV1` turn boundary and committed
 first-gain capture is introduced. The existing turn observer is enabled by this
 exact printing if needed in a reduced catalog; the parent Limited catalog already
 enables it. Default/Standard absence remains inert. Checked i32 accumulation and
-subtraction refuse unrepresentable results before changing life. Untap resets
+subtraction refuse unrepresentable legal effects before removal/changing life.
+Actual illegal-target fizzle and counter removal never evaluate the aggregate;
+the original engine-computed legality is bound into the nonserialized loan.
+The real paid Trickster/Crystal response fixture retains an overflowing committed
+gain input while the original and restored Snack ability fizzles without a halt.
+Untap resets
 through the existing turn mechanism. Old serialized/hash prefixes and toolchain
 pins remain fixed; the new effect variant is appended.
 
