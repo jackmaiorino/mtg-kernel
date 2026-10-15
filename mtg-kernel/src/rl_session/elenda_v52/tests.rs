@@ -679,3 +679,172 @@ fn genuine_opponent_instant_target_menu_refuses_elenda_and_pays_for_actual_legal
         assert_eq!(drain_to(&mut session, 0), public);
     }
 }
+
+#[test]
+fn frozen_candidate_constructors_refuse_visible_revealed_and_preserve_hidden_hand_invariance_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let check = |state: GameState, refuse: bool| {
+            let session = own(state);
+            let current = session.inner.current.as_ref().unwrap();
+            let origin = &current.origin_decision;
+            assert_eq!(
+                crate::rl::legal_action_candidates_v5(origin, &session.inner.state).is_err(),
+                refuse
+            );
+            assert_eq!(
+                crate::rl::policy_legal_action_candidates_v5(
+                    origin,
+                    &session.inner.surface,
+                    &session.inner.state
+                )
+                .is_err(),
+                refuse
+            );
+            let PolicyDecisionV5::Surface(surface) = origin else {
+                panic!("genuine ordinary cast decision")
+            };
+            assert_eq!(
+                crate::rl::legal_action_candidates_v1(surface, &session.inner.state).is_err(),
+                refuse
+            );
+            session
+        };
+        let mut state = raw(actor, 20);
+        put(&mut state, actor, ELENDA, Zone::Hand);
+        check(state, true);
+        let hidden = |name: &str, revealed: bool| {
+            let mut state = raw(actor, 20);
+            let card = put(&mut state, actor.opponent(), name, Zone::Hand);
+            if revealed {
+                state
+                    .reveal_hand_card(actor, actor.opponent(), card)
+                    .unwrap();
+            }
+            state
+        };
+        let a = check(hidden(ELENDA, false), false);
+        let b = check(hidden("Forest", false), false);
+        let a_origin = &a.inner.current.as_ref().unwrap().origin_decision;
+        let b_origin = &b.inner.current.as_ref().unwrap().origin_decision;
+        assert_eq!(
+            crate::rl::legal_action_candidates_v5(a_origin, &a.inner.state).unwrap(),
+            crate::rl::legal_action_candidates_v5(b_origin, &b.inner.state).unwrap()
+        );
+        assert_eq!(
+            crate::rl::policy_legal_action_candidates_v5(
+                a_origin,
+                &a.inner.surface,
+                &a.inner.state
+            )
+            .unwrap(),
+            crate::rl::policy_legal_action_candidates_v5(
+                b_origin,
+                &b.inner.surface,
+                &b.inner.state
+            )
+            .unwrap()
+        );
+        let (PolicyDecisionV5::Surface(a_surface), PolicyDecisionV5::Surface(b_surface)) =
+            (a_origin, b_origin)
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            crate::rl::legal_action_candidates_v1(a_surface, &a.inner.state).unwrap(),
+            crate::rl::legal_action_candidates_v1(b_surface, &b.inner.state).unwrap()
+        );
+        check(hidden(ELENDA, true), true);
+    }
+}
+#[test]
+fn genuine_opposite_owner_aura_prompt_uses_actual_chooser_for_hidden_hand_boundary_both_seats() {
+    use crate::{
+        engine::{self, Action, Decision},
+        state::Target,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let build = |hidden: &str| {
+            let mut state = raw(actor, 20);
+            // Independent worlds start with the hidden card before any journal.
+            put(&mut state, actor, hidden, Zone::Hand);
+            let host = put(
+                &mut state,
+                actor.opponent(),
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let aura = put(
+                &mut state,
+                actor.opponent(),
+                "Twinblade Blessing",
+                Zone::Battlefield,
+            );
+            state.attach_object_exact(aura, 0, host, 0).unwrap();
+            let banishing = put(&mut state, actor, "Banishing Light", Zone::Hand);
+            let wings = put(&mut state, actor, "Broken Wings", Zone::Hand);
+            let advance = |state: &mut GameState| engine::advance_until_decision(state);
+            assert!(
+                matches!(advance(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            engine::step(&mut state, Action::CastSpell(banishing)).unwrap();
+            // Pay the genuine spell, then choose the genuine ETB Aura target.
+            for _ in 0..16 {
+                match advance(&mut state) {
+                    Decision::ChooseTargets {
+                        ref legal_targets, ..
+                    } => {
+                        assert!(legal_targets.contains(&Target::Object(aura)));
+                        engine::step(&mut state, Action::ChooseTarget(Target::Object(aura)))
+                            .unwrap();
+                    }
+                    Decision::CastSpellOrPass { player, .. }
+                        if state.stack.is_empty()
+                            && state.engine.pending_triggers.is_empty()
+                            && player == actor =>
+                    {
+                        break
+                    }
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    other => panic!("genuine Banishing setup:{other:?}"),
+                }
+            }
+            assert_eq!(state.objects.get(aura).zone, Zone::Exile);
+            engine::step(&mut state, Action::CastSpell(wings)).unwrap();
+            assert!(
+                matches!(advance(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(banishing)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(banishing))).unwrap();
+            for _ in 0..16 {
+                match advance(&mut state) {
+                    Decision::ChooseEffectTargets { player, source, .. } => {
+                        assert_eq!(player, actor.opponent());
+                        assert_eq!(source, aura);
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    other => panic!("genuine held Aura choice:{other:?}"),
+                }
+            }
+            assert_ne!(state.priority_player, actor.opponent());
+            assert!(crate::linked_aura_operation_v1::has_pending(&state));
+            // Read-only construction preserves the authentic held operation.
+            let before = serde_json::to_vec(&state).unwrap();
+            let session = FastActorSessionV1::from_ravenous_v51_fixture_state(state);
+            let FastActorResponseV1::Decision(current) = session.current_response() else {
+                panic!("actual chooser saw foreign hidden card")
+            };
+            assert_eq!(current.acting_player, actor.opponent().into());
+            assert_eq!(serde_json::to_vec(&session.state).unwrap(), before);
+            let public = session
+                .ravenous_current_decision_input_v51(current, current.acting_player)
+                .unwrap();
+            (public.0, public.1)
+        };
+        assert_eq!(build(ELENDA), build("Forest"));
+    }
+}

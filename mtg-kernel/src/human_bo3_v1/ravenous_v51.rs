@@ -856,7 +856,7 @@ pub(super) fn project_base_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectionWithHandles, Error> {
-    project_with_handles(observation, actions, human, families, true)
+    project_with_handles(observation, actions, human, families, true, None)
 }
 
 /// Shared by fixed-seat Human and actor-facing V3 transport. The complete
@@ -881,6 +881,29 @@ pub(super) fn project_exact_base_with_handles(
     Ok((state, actions, indexes, handles))
 }
 
+/// Complete safe inherited fields with V52 semantic traits participating in
+/// prompt-local canonical handles. This is private field reuse, not V51 admission.
+pub(super) fn project_elenda_base_with_handles(
+    observation: &RavenousObservationV51,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+    elenda: &crate::elenda_public_v52::FactsV52,
+) -> Result<
+    (
+        HumanVisibleStateRavenousV51,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) =
+        project_with_handles(observation, actions, human, families, true, Some(elenda))?;
+    let state = exact_state::project(state, observation, &handles)?;
+    Ok((state, actions, indexes, handles))
+}
+
 type ProjectionWithHandles = (
     HumanVisibleStateV1<HumanRavenousExtensionsV51>,
     Vec<HumanLegalActionV1>,
@@ -894,6 +917,7 @@ fn project_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
     limited: bool,
+    elenda: Option<&crate::elenda_public_v52::FactsV52>,
 ) -> Result<ProjectionWithHandles, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -1180,6 +1204,9 @@ fn project_with_handles(
     fake_facts::unary(&initial.extensions.fake, &mut unary)?;
     ravenous_facts::unary(&initial.extensions.ravenous, &mut unary)?;
     exact_state::unary(observation, &handles, &mut unary)?;
+    if let Some(elenda) = elenda {
+        super::elenda_v52::unary(elenda, &handles, &mut unary)?;
+    }
     for rows in unary.values_mut() {
         rows.sort();
         rows.dedup();

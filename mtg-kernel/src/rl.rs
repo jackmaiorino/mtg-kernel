@@ -5161,6 +5161,8 @@ pub(crate) fn core_policy_action_candidates_v5(
     decision: &PolicyDecisionV5,
     state: &GameState,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::elenda_public_v52::require_legacy_visible(state, decision.actor(state))
+        .map_err(RlContractError)?;
     core_policy_action_candidates_hunter_scoped_v45(decision, state, false)
 }
 /// Distinct V51 entry point. Prior consumer entry points retain their modes.
@@ -5458,6 +5460,11 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::elenda_public_v52::require_legacy_visible(
+        state,
+        PolicyDecisionV5::Surface(decision.clone()).actor(state),
+    )
+    .map_err(RlContractError)?;
     core_surface_action_candidates_hunter_scoped_v45(decision, state, false)
 }
 fn core_surface_action_candidates_hunter_scoped_v45(

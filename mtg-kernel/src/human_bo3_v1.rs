@@ -63,6 +63,7 @@ pub use visible::*;
 
 pub mod conqueror_v49;
 pub mod eaten_v46;
+pub mod elenda_v52;
 pub mod fake_v50;
 pub mod panda_v47;
 pub mod ravenous_v51;

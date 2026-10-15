@@ -701,6 +701,11 @@ impl ElendaDecisionV52 {
     pub fn expected(&self) -> FastActorDecisionV1 {
         self.expected
     }
+    pub(crate) fn family_projections_v52(
+        &self,
+    ) -> &[crate::akroma_family_public_v40::FamilyProjectionV40] {
+        &self.binding.families
+    }
 }
 impl ElendaSessionV52 {
     /// Explicit opt-in consumes the original stream and preserves any terminal.
@@ -736,6 +741,25 @@ impl ElendaSessionV52 {
     }
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn fixture_state_v52(&self) -> &GameState {
+        &self.inner.state
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn fixture_counts_v52(&self) -> (u64, u64) {
+        (
+            self.inner.policy_step_count(),
+            self.inner.physical_decision_count(),
+        )
     }
     pub fn snapshot_v52(&self) -> ElendaSnapshotV52 {
         ElendaSnapshotV52 {

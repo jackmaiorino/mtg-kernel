@@ -161,6 +161,8 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_elenda_v52.rs"),
             include_str!("elenda_public_v52.rs"),
             include_str!("elenda_observation_v52.rs"),
+            include_str!("human_bo3_v1/elenda_v52.rs"),
+            include_str!("human_bo3_v1/ravenous_v51.rs"),
             include_str!("rl_session/elenda_v52.rs"),
             include_str!("rl_session.rs"),
             include_str!("rl_session/limited_common_v1.rs"),

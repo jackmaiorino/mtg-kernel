@@ -7447,11 +7447,8 @@ impl FastActorSessionV1 {
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
         if self.flat_action_contract_mode != FlatActionContractModeV1::ElendaV52 {
-            let actor = self
-                .current
-                .as_ref()
-                .map_or(self.state.priority_player, |current| current.actor);
-            crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor)).map_err(
+            let actor = self.current.as_ref().map(|current| current.actor);
+            crate::elenda_public_v52::require_legacy_visible(&self.state, actor).map_err(
                 |error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error),
             )?;
         }
@@ -7720,12 +7717,11 @@ impl FastActorSessionV1 {
 
     fn advance_to_decision_or_terminal(&mut self) {
         if self.flat_action_contract_mode != FlatActionContractModeV1::ElendaV52 {
-            let actor = self
-                .current
-                .as_ref()
-                .map_or(self.state.priority_player, |current| current.actor);
-            if let Err(error) =
-                crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
+            // Before advancement the priority player need not be the actual
+            // chooser (for example a foreign-owned Aura's host choice). Only
+            // public board identities may select this prework refusal. The
+            // actor-aware knowledge check runs below after actual publication.
+            if let Err(error) = crate::elenda_public_v52::require_legacy_visible(&self.state, None)
             {
                 self.current = None;
                 self.terminal = Some(halted_terminal(
