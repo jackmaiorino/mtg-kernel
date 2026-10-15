@@ -20,6 +20,8 @@ pub use facts::{HumanPandaFactsV47, HumanPandaOccurrenceV47};
 pub use season_facts::HumanSeasonFactsV48;
 use season_facts::{project_season, register_season};
 type Error = HumanDecisionErrorV1;
+// Family helpers share field projection, never artifact admission.
+type MixedObservation = FakeObservationV50;
 
 // Backend-only authority survives owning restore. Snapshots never capture it.
 #[derive(Clone)]

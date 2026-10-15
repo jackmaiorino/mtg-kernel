@@ -84,7 +84,9 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
-        EffectOp::ConquerorGainFromCaptureV49 { .. }
+        EffectOp::AddSoulCounterToAbilitySourceV1
+        | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
+        | EffectOp::ConquerorGainFromCaptureV49 { .. }
         | EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::KrenkoCreateGoblinsV1
@@ -351,6 +353,8 @@ mod standard_completion_tests {
     #[test]
     fn private_limited_roots_keep_exact_programs_opaque_without_dispatch_panics() {
         for op in [
+            EffectOp::AddSoulCounterToAbilitySourceV1,
+            EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
             EffectOp::FakeInstallGrantV50,
             EffectOp::FakeDeathFromCaptureV50 { capture: 17 },
             EffectOp::KrenkoCreateGoblinsV1,

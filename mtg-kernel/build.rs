@@ -3210,6 +3210,7 @@ enum PermanentFilterRecipe {
     Artifact,
     ArtifactOrCreature,
     AnotherArtifact,
+    Creature,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -5730,6 +5731,43 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Ravenous Amulet" => &[
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::Mana { colored: None, generic: 1 },
+                    AbilityCostRecipe::Tap,
+                    AbilityCostRecipe::SacrificeControlled {
+                        count: 1,
+                        filter: PermanentFilterRecipe::Creature,
+                    },
+                ],
+                effect: AbilityEffectRecipe::Program {
+                    name: "ravenous_amulet_draw_then_soul_v1",
+                    effect: "crate::ravenous_amulet_v1::draw_program()",
+                },
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::Mana { colored: None, generic: 4 },
+                    AbilityCostRecipe::Tap,
+                    AbilityCostRecipe::SacrificeSelf,
+                ],
+                effect: AbilityEffectRecipe::Program {
+                    name: "ravenous_amulet_original_soul_loss_v1",
+                    effect: "crate::ravenous_amulet_v1::loss_program()",
+                },
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         "Fishing Pole" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
@@ -6166,6 +6204,7 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Token => "PermanentFilter::Token",
         PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
         PermanentFilterRecipe::AnotherArtifact => "PermanentFilter::AnotherArtifact",
+        PermanentFilterRecipe::Creature => "PermanentFilter::Creature",
     }
 }
 
@@ -6175,6 +6214,7 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::Token => "token",
         PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
         PermanentFilterRecipe::AnotherArtifact => "another_artifact",
+        PermanentFilterRecipe::Creature => "creature",
     }
 }
 

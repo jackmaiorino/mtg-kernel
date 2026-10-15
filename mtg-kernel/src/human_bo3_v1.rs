@@ -65,6 +65,7 @@ pub mod conqueror_v49;
 pub mod eaten_v46;
 pub mod fake_v50;
 pub mod panda_v47;
+pub mod ravenous_v51;
 pub mod season_v48;
 pub use panda_v47::{
     HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,
@@ -319,6 +320,7 @@ mod game_outcome_family_v40;
 mod game_outcome_v41;
 mod limited_common_v1;
 mod limited_common_v2;
+mod limited_common_v3;
 pub use akroma_families_v40::HumanFamilyV40;
 pub use akroma_v40::{
     HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
@@ -333,6 +335,8 @@ pub(crate) use limited_common_v1::project_limited_common_v1;
 pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
 pub(crate) use limited_common_v2::project_limited_common_v2;
 pub use limited_common_v2::LimitedCommonDecisionV2;
+pub(crate) use limited_common_v3::project_limited_common_v3;
+pub use limited_common_v3::LimitedCommonDecisionV3;
 
 pub mod ajani_v42;
 pub use ajani_v42::{

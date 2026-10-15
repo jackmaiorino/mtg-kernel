@@ -61,7 +61,7 @@ pub(super) fn project(
     })
 }
 fn instruction(
-    observation: &FakeObservationV50,
+    observation: &MixedObservation,
     actor: PlayerSeatV1,
     position: usize,
     source: &crate::rl::CardStableRefV1,
@@ -101,7 +101,7 @@ fn instruction(
 }
 pub(super) fn label(
     action: &ActionSemanticV1,
-    observation: &FakeObservationV50,
+    observation: &MixedObservation,
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<Option<String>, Error> {

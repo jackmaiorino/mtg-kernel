@@ -497,6 +497,7 @@ pub(crate) fn parts_for_common_scope(
                         | crate::rl::CommonProjectionScopeV42::SeasonV48
                         | crate::rl::CommonProjectionScopeV42::ConquerorV49
                         | crate::rl::CommonProjectionScopeV42::FakeV50
+                        | crate::rl::CommonProjectionScopeV42::RavenousV51
                 ),
             ),
             Some(scope),
@@ -564,7 +565,13 @@ fn observe_inner_scoped(
     ),
 ) -> Result<TwinflameObservationV1, RlContractError> {
     let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope) = accepted_scope;
-    let accept_fake = explicit_scope == Some(crate::rl::CommonProjectionScopeV42::FakeV50);
+    let accept_fake = matches!(
+        explicit_scope,
+        Some(
+            crate::rl::CommonProjectionScopeV42::FakeV50
+                | crate::rl::CommonProjectionScopeV42::RavenousV51
+        )
+    );
     let (substep_index, substep_count) = substep;
     validate_projection_authority(state)?;
     // The union gives each real pending menu to its actual typed family. Do not

@@ -1449,6 +1449,31 @@ pub enum CommittedEvent {
     FakeJournalV50 {
         journal: Box<crate::fake_your_own_death_v50::spell_custody::JournalV50>,
     },
+    /// Appended without changing predecessor Hash discriminants. Soul
+    /// placement retains the original source and recipient replacement inputs.
+    SoulCounterAddedV1 {
+        input_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+        player: PlayerId,
+        replacement: crate::doubling_season_v48::ReplacementInputV48,
+        before: i32,
+        count: i32,
+        after: i32,
+    },
+    /// Private source/actor/recipient world immediately before soul placement.
+    SoulCounterInputV1 {
+        input: Box<crate::soul_counters_v1::PlacementInputV1>,
+    },
+    /// Private finalized payment with its genuine pre-self-sacrifice count.
+    RavenousPaymentV1 {
+        paid: Box<crate::ravenous_amulet_v1::PaidV1>,
+    },
+    RavenousRemovedV1 {
+        removed: Box<crate::ravenous_amulet_v1::RemovedV1>,
+    },
+    RavenousCompletedV1 {
+        completed: Box<crate::ravenous_amulet_v1::CompletedV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1464,10 +1489,14 @@ pub struct HistoricalDamageSourceV1 {
 
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-#[cfg(feature = "standard-magezero-fixtures")]
 fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
-    if !crate::standard_statics_v1::reads_counter_lki(live.card_def) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let reads_standard = false;
+    let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
+    if !reads_standard && !reads_soul {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -1480,7 +1509,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         time: live.v4.time_counters_v1,
         finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
     };
-    if live.counters.any() || extras != Default::default() {
+    if reads_soul || live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
@@ -1491,6 +1520,27 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         });
     }
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
+}
+
+fn definition_reads_soul_lki_v1(card_def: u16) -> bool {
+    static READS: std::sync::OnceLock<Vec<bool>> = std::sync::OnceLock::new();
+    READS
+        .get_or_init(|| {
+            crate::card_def::CARD_DEFS
+                .iter()
+                .map(|def| {
+                    def.activated_abilities.iter().any(|ability| {
+                        matches!(
+                            (ability.effect)(),
+                            crate::effect::EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
+                        )
+                    })
+                })
+                .collect()
+        })
+        .get(usize::from(card_def))
+        .copied()
+        .unwrap_or(false)
 }
 
 fn initialize_entry_lore_v48(
@@ -1650,6 +1700,62 @@ pub(crate) fn add_plus_one_counters(
                 }),
             });
     }
+    Ok(())
+}
+
+/// Checked source-relative soul placement. The ability controller remains
+/// its placing actor; current control determines the recipient replacements.
+pub(crate) fn add_soul_counter_to_ability_source_v1(
+    state: &mut GameState,
+    ctx: &crate::effect::ExecCtx,
+) -> Result<(), String> {
+    let source = ctx
+        .ability_source_contract
+        .ok_or("soul placement lacks original source")?;
+    if source.source != ctx.source
+        || source.controller != ctx.controller
+        || source.zone != Zone::Battlefield
+    {
+        return Err("soul placement changed original source relation".into());
+    }
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("soul source missing")?;
+    if live.owner != source.owner {
+        return Err("soul placement changed physical source owner".into());
+    }
+    if live.zone_change_count < source.zone_change_count || live.counters.soul < 0 {
+        return Err("soul placement has invalid generation or counter count".into());
+    }
+    if live.zone != Zone::Battlefield || live.zone_change_count != source.zone_change_count {
+        return Ok(());
+    }
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller);
+    let scaled = crate::standard_cards_v1::scale_counters_checked_v48(state, ctx.controller, 1)?;
+    let count = replacement.replaced_count(scaled)?;
+    let before = live.counters.soul;
+    let after = before.checked_add(count).ok_or("soul counter overflow")?;
+    let input = crate::soul_counters_v1::PlacementInputV1::capture(state, source, ctx.controller)?;
+    let event = CommittedEvent::SoulCounterAddedV1 {
+        input_history_index: input.index,
+        source,
+        player: ctx.controller,
+        replacement,
+        before,
+        count,
+        after,
+    };
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::SoulCounterInputV1 {
+            input: Box::new(input),
+        });
+    state.objects.get_mut(source.source).counters.soul = after;
+    state.engine.event_log.push(event.clone());
+    state.engine.event_history.push(event);
     Ok(())
 }
 
@@ -3006,12 +3112,10 @@ fn commit_with_entry_batch_and_source_color(
                     state.engine.event_history.push(marker);
                 }
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
+                #[cfg(feature = "standard-magezero-fixtures")]
                 crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
-            }
-            if from == Zone::Battlefield {
                 crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
                 crate::gorehorn_damage_v1::before_departure(state, z.object);
@@ -5772,6 +5876,963 @@ mod season_time_entry_tests_v48 {
                 }
                 assert_eq!(state, restored);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod soul_placement_primitive_v1_tests {
+    use super::*;
+    use crate::effect::{self, EffectOp, ExecCtx, PlayerRef};
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::state::AbilitySourceContractV4;
+
+    fn context(state: &GameState, source: ObjectId, actor: PlayerId) -> ExecCtx {
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(state, source));
+        ctx
+    }
+
+    #[test]
+    fn draw_precedes_soul_and_departure_or_reentry_keeps_draw_without_counter_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for departure in 0..3 {
+                let mut state = ready_state_for(actor);
+                // Typed instruction operand, not a printed Forest activation.
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                put(&mut state, actor, "Forest", Zone::Library);
+                let ctx = context(&state, source, actor);
+                if departure > 0 {
+                    propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+                }
+                if departure == 2 {
+                    propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                }
+                let hand = state.players[actor.index()].hand.len();
+                let at = state.engine.event_history.len();
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    effect::execute(
+                        &EffectOp::Sequence(vec![
+                            EffectOp::DrawCards {
+                                player: PlayerRef::Controller,
+                                count: 1,
+                            },
+                            EffectOp::AddSoulCounterToAbilitySourceV1,
+                        ]),
+                        &ctx,
+                        branch,
+                    );
+                    assert!(branch.engine.halted.is_none());
+                    assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                    assert!(branch.players[actor.index()].library.is_empty());
+                    assert_eq!(
+                        branch.objects.get(source).counters.soul,
+                        i32::from(departure == 0)
+                    );
+                    let events = &branch.engine.event_history[at..];
+                    let draw = events.iter().position(|e| matches!(e, CommittedEvent::Draw { player, .. } if *player == actor)).unwrap();
+                    let soul = events
+                        .iter()
+                        .position(|e| matches!(e, CommittedEvent::SoulCounterAddedV1 { .. }));
+                    if departure == 0 {
+                        assert!(soul.unwrap() > draw);
+                    } else {
+                        assert!(soul.is_none());
+                    }
+                }
+                assert_eq!(state, restored);
+            }
+        }
+    }
+
+    #[test]
+    fn recipient_control_and_original_ability_controller_remain_distinct_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let ctx = context(&state, source, actor);
+            crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+            add_soul_counter_to_ability_source_v1(&mut state, &ctx).unwrap();
+            let Some(CommittedEvent::SoulCounterAddedV1 {
+                source: original,
+                player,
+                replacement,
+                before,
+                count,
+                after,
+                ..
+            }) = state.engine.event_history.last()
+            else {
+                panic!("actual soul placement")
+            };
+            assert_eq!(original.controller, actor);
+            assert_eq!(*player, actor);
+            assert_eq!(replacement.controller, actor.opponent());
+            assert_eq!((*before, *count, *after), (0, 1, 1));
+            assert_eq!(state.objects.get(source).controller, actor.opponent());
+        }
+    }
+
+    #[test]
+    fn malformed_source_negative_counter_and_overflow_refuse_before_mutation() {
+        let actor = PlayerId::P0;
+        for mutation in 0..8 {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let other = put(&mut state, actor, "Island", Zone::Battlefield);
+            let mut ctx = context(&state, source, actor);
+            match mutation {
+                0 => ctx.ability_source_contract = None,
+                1 => ctx.ability_source_contract.as_mut().unwrap().source = other,
+                2 => ctx.controller = actor.opponent(),
+                3 => ctx.ability_source_contract.as_mut().unwrap().zone = Zone::Hand,
+                4 => state.objects.get_mut(source).owner = actor.opponent(),
+                5 => {
+                    ctx.ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
+                6 => state.objects.get_mut(source).counters.soul = -1,
+                7 => state.objects.get_mut(source).counters.soul = i32::MAX,
+                _ => unreachable!(),
+            }
+            let before = state.clone();
+            assert!(add_soul_counter_to_ability_source_v1(&mut state, &ctx).is_err());
+            assert_eq!(state, before);
+        }
+    }
+
+    #[test]
+    fn untargeted_soul_loss_uses_original_departure_and_original_controller_after_reentry_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            // Typed source/LKI and control operands, no printed paid activation.
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            state.objects.get_mut(source).counters.soul = 5;
+            let ctx = context(&state, source, actor);
+            propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            state.objects.get_mut(source).counters.soul = 9;
+            crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+            let life = state.players.each_ref().map(|p| p.life);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    branch,
+                );
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.players[actor.index()].life, life[actor.index()]);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    life[actor.opponent().index()] - 5
+                );
+                assert_eq!(branch.objects.get(source).counters.soul, 9);
+                assert_eq!(branch.objects.get(source).controller, actor.opponent());
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn soul_loss_refuses_underflow_before_mutation_and_keeps_exact_boundary_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for (life, refuses) in [(-2, true), (-1, false)] {
+                let mut state = ready_state_for(actor);
+                // Arithmetic boundary operands, not a printed protection or paid activation.
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                state.objects.get_mut(source).counters.soul = i32::MAX;
+                state.players[actor.opponent().index()].life = life;
+                let ctx = context(&state, source, actor);
+                let before = state.clone();
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    &mut state,
+                );
+                if refuses {
+                    assert_eq!(
+                        state.engine.halted.take(),
+                        Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            source
+                        ))
+                    );
+                    assert_eq!(state, before);
+                } else {
+                    assert!(state.engine.halted.is_none());
+                    assert_eq!(state.players[actor.opponent().index()].life, i32::MIN);
+                    assert_eq!(
+                        state.players[actor.index()].life,
+                        before.players[actor.index()].life
+                    );
+                    assert!(
+                        matches!(state.engine.event_history.last(), Some(CommittedEvent::LifeLoss { player, amount }) if *player == actor.opponent() && *amount == i32::MAX)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn soul_loss_preserves_real_standard_modifier_and_refuses_inexact_quote_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for count in [3, i32::MAX] {
+                let mut state = ready_state_for(actor);
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                put(
+                    &mut state,
+                    actor,
+                    "Bloodletter of Aclazotz",
+                    Zone::Battlefield,
+                );
+                state.objects.get_mut(source).counters.soul = count;
+                let ctx = context(&state, source, actor);
+                let before = state.clone();
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    &mut state,
+                );
+                if count == i32::MAX {
+                    assert!(state.engine.halted.take().is_some());
+                    assert_eq!(state, before);
+                } else {
+                    assert!(state.engine.halted.is_none());
+                    assert_eq!(
+                        state.players[actor.opponent().index()].life,
+                        before.players[actor.opponent().index()].life - 6
+                    );
+                    assert!(
+                        matches!(state.engine.event_history.last(), Some(CommittedEvent::LifeLoss { player, amount }) if *player == actor.opponent() && *amount == 6)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod ravenous_amulet_paid_future_tests {
+    use super::*;
+    use crate::engine::{self, Action, Decision};
+    use crate::mana::ManaColor;
+    use crate::policy_observation_v6::tests::{advance_to_next_main_for, put, ready_state_for};
+    use crate::state::AbilitySourceContractV4;
+
+    fn public_facts(state: &GameState) -> crate::ravenous_public_v51::FactsV51 {
+        let facts = crate::ravenous_public_v51::capture(state).unwrap();
+        crate::ravenous_public_v51::validate(state, &facts).unwrap();
+        let battlefield = crate::ravenous_public_v51::battlefield(state).unwrap();
+        assert_eq!(battlefield.facts, facts);
+        let restored_battlefield =
+            serde_json::from_slice(&serde_json::to_vec(&battlefield).unwrap()).unwrap();
+        assert_eq!(battlefield, restored_battlefield);
+        crate::ravenous_public_v51::validate_battlefield(state, &restored_battlefield).unwrap();
+        for card in battlefield.cards.iter().flatten() {
+            let live = state
+                .objects
+                .get(crate::ids::ObjectId(card.card.stable.arena_id));
+            assert_eq!(card.soul, live.counters.soul);
+            assert_eq!(card.plus_one_counters, live.counters.plus1_plus1);
+            assert_eq!(card.marked_damage, live.damage);
+        }
+        let mut changed_battlefield = battlefield.clone();
+        if let Some(card) = changed_battlefield.cards.iter_mut().flatten().next() {
+            card.soul ^= 1;
+            assert!(
+                crate::ravenous_public_v51::validate_battlefield(state, &changed_battlefield)
+                    .is_err()
+            );
+        }
+        let mut missing = state.clone();
+        missing.players[0]
+            .battlefield
+            .push(crate::ids::ObjectId(u32::MAX));
+        assert!(crate::ravenous_public_v51::battlefield(&missing).is_err());
+        let bytes = serde_json::to_vec(&facts).unwrap();
+        let restored = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(facts, restored);
+        crate::ravenous_public_v51::validate(state, &restored).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        for forbidden in [
+            "paid_cost_refs",
+            "payment_history_start",
+            "input_history_index",
+            "inline_effect",
+            "stack_item_id",
+            "original_world",
+            "event_history",
+        ] {
+            assert!(!text.contains(forbidden), "private field {forbidden}");
+        }
+        let mut private_variant = state.clone();
+        let hidden = private_variant.players[0].library.last().copied().unwrap();
+        private_variant.objects.get_mut(hidden).card_def =
+            crate::card_def::card_id_by_name("Lightning Bolt").unwrap();
+        // Projection-only private-content perturbation. This is not sampler
+        // admission for a retained original-world history.
+        assert_eq!(
+            crate::ravenous_public_v51::capture(&private_variant).unwrap(),
+            facts
+        );
+        assert_eq!(
+            crate::ravenous_public_v51::battlefield(&private_variant).unwrap(),
+            battlefield
+        );
+        let mut changed = facts.clone();
+        changed.card_db_hash ^= 1;
+        let before = state.clone();
+        assert!(crate::ravenous_public_v51::validate(state, &changed).is_err());
+        assert_eq!(state, &before);
+        facts
+    }
+
+    fn completed_refusals(state: &GameState, id: crate::ids::StackItemId) {
+        crate::doubling_season_v48::validate_token_journals(state).unwrap();
+        let facts = public_facts(state);
+        assert!(facts
+            .activations
+            .iter()
+            .any(|activation| activation.outcome
+                != crate::ravenous_public_v51::OutcomeV51::Published));
+        for case in 0..11 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let (paid_index, item) = branch
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid }
+                        if paid.item.v4.stack_item_id == id =>
+                    {
+                        Some((paid.index, paid.item.as_ref().clone()))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let removed_at = branch.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid_index)).unwrap();
+            let completed_at = branch.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::RavenousCompletedV1 { completed } if completed.removed == removed_at as u64)).unwrap();
+            match case {
+                0 => branch.stack.push(item),
+                1 => branch
+                    .engine
+                    .event_history
+                    .push(branch.engine.event_history[completed_at].clone()),
+                2 => {
+                    branch.engine.event_history.remove(completed_at);
+                }
+                3 => {
+                    let CommittedEvent::RavenousRemovedV1 { removed } =
+                        &mut branch.engine.event_history[removed_at]
+                    else {
+                        unreachable!()
+                    };
+                    removed.kind = match removed.kind {
+                        crate::ravenous_amulet_v1::RemovalKindV1::Resolving => {
+                            crate::ravenous_amulet_v1::RemovalKindV1::Countered
+                        }
+                        crate::ravenous_amulet_v1::RemovalKindV1::Countered => {
+                            crate::ravenous_amulet_v1::RemovalKindV1::Resolving
+                        }
+                    };
+                }
+                4 => branch
+                    .engine
+                    .event_log
+                    .push(branch.engine.event_history[removed_at].clone()),
+                5 | 6 => {
+                    let CommittedEvent::RavenousCompletedV1 { completed } =
+                        &mut branch.engine.event_history[completed_at]
+                    else {
+                        unreachable!()
+                    };
+                    if case == 5 {
+                        completed.operation =
+                            crate::ravenous_amulet_v1::OperationV1::Loss { event: paid_index };
+                    } else {
+                        completed.removed = paid_index;
+                    }
+                }
+                7 | 9 | 10 => {
+                    let CommittedEvent::RavenousRemovedV1 { removed } =
+                        &mut branch.engine.event_history[removed_at]
+                    else {
+                        unreachable!()
+                    };
+                    if case == 7 {
+                        removed.original_world.stack.clear();
+                    } else if case == 9 {
+                        removed
+                            .original_world
+                            .engine
+                            .event_log
+                            .push(CommittedEvent::LifeLoss {
+                                player: PlayerId::P0,
+                                amount: 0,
+                            });
+                    } else {
+                        removed.replay_borrow = if removed.replay_borrow.is_some() {
+                            None
+                        } else {
+                            Some(
+                                serde_json::from_value(serde_json::json!({"enclosing": null}))
+                                    .unwrap(),
+                            )
+                        };
+                    }
+                }
+                8 => {
+                    let CommittedEvent::RavenousCompletedV1 { completed } =
+                        &mut branch.engine.event_history[completed_at]
+                    else {
+                        unreachable!()
+                    };
+                    completed.output_world.players[0].life += 1;
+                }
+                _ => unreachable!(),
+            }
+            let before = branch.clone();
+            assert!(
+                crate::doubling_season_v48::validate_token_journals(&branch).is_err(),
+                "completion case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
+    fn cross_family_original_world_refusals(
+        state: &GameState,
+        actor: PlayerId,
+        returned: crate::ids::ObjectId,
+    ) {
+        for case in 0..5 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let paid_item = branch
+                .engine
+                .event_history
+                .iter()
+                .find_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.item.as_ref().clone()),
+                    _ => None,
+                })
+                .unwrap();
+            if case < 3 {
+                let input = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::SoulCounterInputV1 { input } => Some(input),
+                        _ => None,
+                    })
+                    .unwrap();
+                match case {
+                    0 => input.world.objects.get_mut(returned).tapped = false,
+                    1 => {
+                        assert!(input.world.players[actor.index()].hand.len() > 1);
+                        input.world.players[actor.index()].hand.reverse();
+                    }
+                    2 => input.world.stack.push(paid_item),
+                    _ => unreachable!(),
+                }
+            } else if case == 3 {
+                let removed = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousRemovedV1 { removed } => Some(removed),
+                        _ => None,
+                    })
+                    .unwrap();
+                removed.original_world.objects.get_mut(returned).tapped = false;
+            } else {
+                let completed = branch
+                    .engine
+                    .event_history
+                    .iter_mut()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousCompletedV1 { completed } => Some(completed),
+                        _ => None,
+                    })
+                    .unwrap();
+                completed.output_world.objects.get_mut(returned).tapped = false;
+            }
+            // Only nested operation worlds changed. The actual returned Fake
+            // creature and the outer paid/capture/return journals remain intact.
+            assert!(branch.objects.get(returned).tapped);
+            let before = branch.clone();
+            assert!(
+                crate::doubling_season_v48::validate_token_journals(&branch).is_err(),
+                "cross-family operation world case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
+    fn payment_receipt_refusals(state: &GameState) {
+        crate::ravenous_amulet_v1::validate_state(state).unwrap();
+        let facts = public_facts(state);
+        assert_eq!(
+            facts.activations.last().unwrap().outcome,
+            crate::ravenous_public_v51::OutcomeV51::Published
+        );
+        for case in 0..10 {
+            let mut branch: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            let index = branch
+                .engine
+                .event_history
+                .iter()
+                .rposition(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { .. }))
+                .unwrap();
+            let original = branch.engine.event_history[index].clone();
+            if case == 6 {
+                branch.engine.event_history.push(original);
+            } else if case == 7 {
+                branch.engine.event_log.push(original);
+            } else if case == 8 {
+                let CommittedEvent::RavenousPaymentV1 { paid } =
+                    &branch.engine.event_history[index]
+                else {
+                    unreachable!()
+                };
+                let id = paid.item.v4.stack_item_id;
+                branch
+                    .stack
+                    .iter_mut()
+                    .find(|item| item.v4.stack_item_id == id)
+                    .unwrap()
+                    .v4
+                    .x_value = 1;
+            } else {
+                let CommittedEvent::RavenousPaymentV1 { paid } =
+                    &mut branch.engine.event_history[index]
+                else {
+                    unreachable!()
+                };
+                match case {
+                    0 => paid.index += 1,
+                    1 => paid.tap_history_index = paid.index,
+                    2 => {
+                        paid.original_source.controller = paid.original_source.controller.opponent()
+                    }
+                    3 => {
+                        if paid.original_sacrifice.source == paid.original_source.source {
+                            let owner = paid.original_sacrifice.owner.opponent();
+                            let id = paid.item.v4.stack_item_id;
+                            paid.original_sacrifice.owner = owner;
+                            paid.item.v4.paid_cost_refs[0].owner = owner;
+                            branch
+                                .stack
+                                .iter_mut()
+                                .find(|item| item.v4.stack_item_id == id)
+                                .unwrap()
+                                .v4
+                                .paid_cost_refs[0]
+                                .owner = owner;
+                        } else {
+                            paid.original_sacrifice.zone_change_count += 1;
+                        }
+                    }
+                    4 => paid.item.is_copy = true,
+                    5 => paid.item.v4.paid_cost_refs.clear(),
+                    9 => {
+                        paid.original_soul_count = Some(paid.original_soul_count.unwrap_or(0) + 1);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let before = branch.clone();
+            assert!(
+                crate::ravenous_amulet_v1::validate_state(&branch).is_err(),
+                "payment case {case}"
+            );
+            assert_eq!(branch, before);
+        }
+    }
+
+    pub(crate) fn paid_priority(state: &mut GameState, actor: PlayerId) {
+        assert!(matches!(engine::advance_until_decision(state),
+            Decision::CastSpellOrPass { player, .. } if player == actor));
+        assert!(state.engine.pending_cast.is_none());
+        assert!(state.engine.pending_activation.is_none());
+    }
+
+    pub(crate) fn finish(state: &mut GameState) {
+        for _ in 0..32 {
+            match engine::advance_until_decision(state) {
+                Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                other => panic!("genuine Amulet resolution: {other:?}"),
+            }
+        }
+        panic!("Amulet stack did not finish");
+    }
+
+    pub(crate) fn cast_amulet(actor: PlayerId) -> (GameState, ObjectId) {
+        cast_amulet_in(ready_state_for(actor), actor)
+    }
+
+    fn cast_amulet_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            for _ in 0..8 {
+                put(&mut state, player, "Forest", Zone::Library);
+            }
+        }
+        let amulet = put(&mut state, actor, "Ravenous Amulet", Zone::Hand);
+        let definition = state.objects.get(amulet).card_def;
+        assert_eq!(
+            crate::card_def::CARD_DEFS[usize::from(definition)].capability,
+            crate::card_def::CardCapability::Partial
+        );
+        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+        for root in [
+            crate::rules_meaning_ravenous_amulet_v51::RootV51::DrawAndSoul,
+            crate::rules_meaning_ravenous_amulet_v51::RootV51::SoulLoss,
+        ] {
+            let meaning =
+                crate::rules_meaning_ravenous_amulet_v51::printed_meaning(definition, root)
+                    .unwrap();
+            let restored = serde_json::from_slice(&serde_json::to_vec(&meaning).unwrap()).unwrap();
+            assert_eq!(meaning, restored);
+            crate::rules_meaning_ravenous_amulet_v51::validate(&restored).unwrap();
+            assert!(!meaning.model_admitted);
+            let mut changed = meaning.clone();
+            changed.sorcery_speed_only = !changed.sorcery_speed_only;
+            assert!(crate::rules_meaning_ravenous_amulet_v51::validate(&changed).is_err());
+        }
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        engine::step(&mut state, Action::CastSpell(amulet)).unwrap();
+        finish(&mut state);
+        assert_eq!(state.objects.get(amulet).zone, Zone::Battlefield);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0
+        );
+        assert_eq!(state.objects.get(amulet).counters.soul, 0);
+        (state, amulet)
+    }
+
+    #[test]
+    fn actual_paid_draw_soul_and_self_sacrifice_keep_original_count_after_reentry_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            let chosen = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            let hand = state.players[actor.index()].hand.len();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, remaining: 1, .. }
+                    if candidates.contains(&chosen) && candidates.contains(&spare)));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                engine::step(branch, Action::ChooseCostTarget(chosen)).unwrap();
+                paid_priority(branch, actor);
+                assert_eq!(
+                    branch.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                    0
+                );
+                assert!(branch.objects.get(amulet).tapped);
+                assert_eq!(branch.objects.get(chosen).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(spare).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+                let payments = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(payments.len(), 1);
+                assert_eq!(payments[0].original_soul_count, None);
+                assert_eq!(payments[0].original_sacrifice.source, chosen);
+                assert_eq!(payments[0].item.v4.activated_ability_index, Some(0));
+                payment_receipt_refusals(branch);
+                let id = branch.stack.last().unwrap().v4.stack_item_id;
+                // Actual engine counter removal of the genuinely paid row;
+                // no printed counterspell producer is claimed by this boundary.
+                let mut countered = branch.clone();
+                assert!(engine::counter_stack_item_by_id(&mut countered, id)
+                    .unwrap()
+                    .is_some());
+                assert_eq!(countered.players[actor.index()].hand.len(), hand);
+                assert_eq!(countered.objects.get(amulet).counters.soul, 0);
+                assert_eq!(countered.objects.get(chosen).zone, Zone::Graveyard);
+                assert!(countered.objects.get(amulet).tapped);
+                completed_refusals(&countered, id);
+                finish(branch);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                completed_refusals(branch, id);
+            }
+            assert_eq!(state, restored);
+
+            advance_to_next_main_for(&mut state, actor);
+            // Another accepted soul-placement primitive responds while the
+            // second genuinely paid draw activation is pending. This does not
+            // claim a registered Zimone producer; it checks the resolution
+            // boundary that its printed counter-doubling ability will require.
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            engine::step(&mut state, Action::ChooseCostTarget(spare)).unwrap();
+            paid_priority(&mut state, actor);
+            let response_source = AbilitySourceContractV4::capture(&state, amulet);
+            let mut response = crate::effect::ExecCtx::no_targets(amulet, actor);
+            response.ability_source_contract = Some(response_source);
+            crate::effect::execute(
+                &crate::effect::EffectOp::AddSoulCounterToAbilitySourceV1,
+                &response,
+                &mut state,
+            );
+            assert_eq!(state.objects.get(amulet).counters.soul, 2);
+            finish(&mut state);
+            assert_eq!(state.objects.get(amulet).counters.soul, 3);
+            advance_to_next_main_for(&mut state, actor);
+            assert!(!state.objects.get(amulet).tapped);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            let original = AbilitySourceContractV4::capture(&state, amulet);
+            let life = state.players.each_ref().map(|p| p.life);
+            engine::step(&mut state, Action::ActivateAbility(amulet, 1)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(amulet).counters.soul, 0);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(3));
+            let payments = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(payments.len(), 3);
+            assert_eq!(payments[1].original_soul_count, None);
+            assert_eq!(payments[2].original_source, original);
+            assert_eq!(payments[2].original_sacrifice, original);
+            assert_eq!(payments[2].original_soul_count, Some(3));
+            assert_eq!(payments[2].item.v4.activated_ability_index, Some(1));
+            payment_receipt_refusals(&state);
+            let loss_id = state.stack.last().unwrap().v4.stack_item_id;
+            // Explicit zone-transition boundary after genuine paid self-sacrifice.
+            // This is not a claim of a printed artifact-return producer.
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(amulet, Zone::Battlefield),
+            );
+            assert_ne!(
+                state.objects.get(amulet).zone_change_count,
+                original.zone_change_count
+            );
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.players[actor.index()].life, life[actor.index()]);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    life[actor.opponent().index()] - 3
+                );
+                assert_eq!(branch.objects.get(amulet).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+                completed_refusals(branch, loss_id);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn actual_paid_amulet_sacrifice_coexists_with_paid_fake_return_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            put(&mut state, actor, "Island", Zone::Hand);
+            let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let fake = put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
+            for _ in 0..2 {
+                let swamp = put(&mut state, actor, "Swamp", Zone::Battlefield);
+                paid_priority(&mut state, actor);
+                engine::step(&mut state, Action::ActivateManaAbility(swamp)).unwrap();
+            }
+            engine::step(&mut state, Action::CastSpell(fake)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { ref legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(creature))));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(fake).zone, Zone::Graveyard);
+            assert_eq!(engine::effective_power(&state, creature), 3);
+            let forest = put(&mut state, actor, "Forest", Zone::Battlefield);
+            paid_priority(&mut state, actor);
+            engine::step(&mut state, Action::ActivateManaAbility(forest)).unwrap();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, .. }
+                    if candidates.contains(&creature) && candidates.contains(&spare)));
+            engine::step(&mut state, Action::ChooseCostTarget(creature)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
+            crate::ravenous_observation_v51::tests::assert_current(&state);
+            let hand = state.players[actor.index()].hand.len();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(creature).zone, Zone::Battlefield);
+                assert!(branch.objects.get(creature).tapped);
+                assert_eq!(engine::effective_power(branch, creature), 1);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                assert_eq!(
+                    branch.players[actor.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|object| {
+                            let live = branch.objects.get(**object);
+                            live.card_def == treasure && live.v4.is_token
+                        })
+                        .count(),
+                    1
+                );
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(
+                    branch,
+                )
+                .unwrap();
+                crate::ravenous_observation_v51::tests::assert_current(branch);
+                cross_family_original_world_refusals(branch, actor, creature);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn actual_paid_amulet_keeps_genuine_banishing_aura_link_and_enclosing_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            // This existing helper owns the genuine ETB/exile/capture path.
+            // Its permanent entry is a fixture operand, not a paid Banishing cast.
+            let (linked, banishing, aura, host) =
+                crate::banishing_light_v1::tests::linked_aura(actor);
+            let (mut state, amulet) = cast_amulet_in(linked, actor);
+            let chosen = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let forest = put(&mut state, actor, "Forest", Zone::Battlefield);
+            paid_priority(&mut state, actor);
+            engine::step(&mut state, Action::ActivateManaAbility(forest)).unwrap();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, .. }
+                    if candidates.contains(&chosen) && candidates.contains(&spare)));
+            engine::step(&mut state, Action::ChooseCostTarget(chosen)).unwrap();
+            paid_priority(&mut state, actor);
+            let hand = state.players[actor.index()].hand.len();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(chosen).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(banishing).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(aura).zone, Zone::Exile);
+                assert_eq!(branch.objects.get(host).zone, Zone::Battlefield);
+                crate::banishing_light_v1::validate_state(branch).unwrap();
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                let removed = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .find_map(|event| match event {
+                        CommittedEvent::RavenousRemovedV1 { removed } => Some(removed),
+                        _ => None,
+                    })
+                    .unwrap();
+                let borrow = serde_json::to_value(removed.replay_borrow.as_ref().unwrap()).unwrap();
+                assert!(borrow["enclosing"].is_object());
+                completed_refusals(branch, removed.item.v4.stack_item_id);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn actual_first_ability_refuses_nonempty_stack_while_zero_soul_second_ability_is_instant_speed_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 5;
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                4
+            );
+            let before = state.clone();
+            assert!(engine::step(&mut state, Action::ActivateAbility(amulet, 0)).is_err());
+            assert_eq!(state, before);
+            let original = AbilitySourceContractV4::capture(&state, amulet);
+            let life = state.players.each_ref().map(|p| p.life);
+            let hand = state.players[actor.index()].hand.len();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 1)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.stack.len(), 2);
+            assert_eq!(
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+                0
+            );
+            assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(0));
+            let payments = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(payments.len(), 1);
+            assert_eq!(payments[0].original_source, original);
+            assert_eq!(payments[0].original_soul_count, Some(0));
+            assert_eq!(payments[0].item.v4.activated_ability_index, Some(1));
+            finish(&mut state);
+            assert_eq!(state.players.each_ref().map(|p| p.life), life);
+            assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
         }
     }
 }

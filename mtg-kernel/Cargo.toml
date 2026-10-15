@@ -64,6 +64,11 @@ path = "src/bin/kernel_limited_common_env_v2.rs"
 required-features = ["limited-fdn-fixtures"]
 
 [[bin]]
+name = "kernel_limited_common_env_v3"
+path = "src/bin/kernel_limited_common_env_v3.rs"
+required-features = ["limited-fdn-fixtures"]
+
+[[bin]]
 name = "mtg-kernel-native"
 path = "src/bin/mtg-kernel-native.rs"
 required-features = ["native-training-store-v2-production"]

@@ -10345,7 +10345,15 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                     Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
                 return;
             };
-            let frozen = freeze_activation_source(state, &p, ability);
+            let mut frozen = freeze_activation_source(state, &p, ability);
+            frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &p) {
+                Ok(owner) => owner,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                    return;
+                }
+            };
             // Keep the state-changing payment outside `debug_assert!`: the
             // macro (including its argument) is compiled out in release
             // builds, but costs must be paid in every profile. The complete
@@ -14115,6 +14123,7 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::ravenous_amulet_v1::validate_item(state, item)?;
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
     crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
@@ -14734,6 +14743,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ajani_counter_owner = crate::ajani_full_v42::lifecycle::acquire(state, &item)?;
     let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
+    let ravenous_counter_owner = crate::ravenous_amulet_v1::acquire(state, &item)?;
     let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
@@ -14763,6 +14773,7 @@ pub(crate) fn counter_stack_item_by_id(
         krenko_counter_owner.as_ref(),
         crate::krenko_v1::RemovalV1::Countered,
     )?;
+    crate::ravenous_amulet_v1::countered(state, ravenous_counter_owner)?;
     if let Some(owner) = arahbo_counter_owner {
         crate::arahbo_v1::record_counter_input(state, &owner)?;
         crate::arahbo_v1::counter_removed(state, owner)?;
@@ -15394,6 +15405,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -15518,6 +15539,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = ravenous_owner {
+        if crate::ravenous_amulet_v1::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = fake_death_owner {
         if crate::fake_your_own_death_v50::death_custody::resolve_owned(state, owner, &item, &ctx)
             .is_err()
@@ -21910,6 +21939,16 @@ fn finalize_activation(state: &mut GameState) {
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let mut frozen = freeze_activation_source(state, &pending, ability);
+    frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &pending) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     frozen.ajani_payment_owner = ajani_payment_owner;
     let ability = &ability;
     let mut discarded = Vec::new();
@@ -22023,6 +22062,7 @@ struct FrozenActivationSource {
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
+    ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
 }
 
 fn freeze_activation_source(
@@ -22060,6 +22100,7 @@ fn freeze_activation_source(
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
+        ravenous_payment: None,
     }
 }
 
@@ -22189,6 +22230,8 @@ fn push_paid_activation(
             frozen.fishing_ability_index,
         )
         .is_err()
+        || crate::ravenous_amulet_v1::record_paid(state, stack_item_id, frozen.ravenous_payment)
+            .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
         state.engine.halted = Some((

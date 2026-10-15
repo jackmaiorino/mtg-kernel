@@ -640,6 +640,8 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::PutPlusOnePlusOneCounterOnTriggerEventObject { .. }
         | EffectOp::AddPlusOnePlusOneCounters { .. }
         | EffectOp::AddPlusOneCounterToAbilitySource
+        | EffectOp::AddSoulCounterToAbilitySourceV1
+        | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
         | EffectOp::PumpControlled { .. }
         | EffectOp::PumpTargetUntilEndOfTurnDynamic { .. }
         | EffectOp::PumpTargetByControlledSubtypeCount { .. }

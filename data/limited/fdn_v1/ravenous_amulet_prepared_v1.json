@@ -1,0 +1,31 @@
+{
+  "schema": "mtg-kernel/fdn/ravenous-amulet-prepared-source/v1",
+  "status": "unregistered-source-preparation-not-qualified",
+  "source_base": "b83616b5cde5d428ba325eeaef86a12ee90d6dd7",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "source_sha256": {
+    "Mage.Sets/src/mage/cards/r/RavenousAmulet.java": "e89ec45785f01de0ef55d485fdcfbc34fb6f8deb71601511b214d43043b39d74",
+    "Mage/src/main/java/mage/abilities/dynamicvalue/common/CountersSourceCount.java": "00add2937bf1f70a9877114d432b9f87f6e65d18e106d7366319e2fcc80233d4"
+  },
+  "cards": [
+    {
+      "name": "Ravenous Amulet",
+      "engine_capability": "partial",
+      "mana_cost": "{2}",
+      "mana_value": 2,
+      "colors": [],
+      "types": ["Artifact"],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": ["activated_sacrifice", "soul_counter", "original_source_counter_lki"],
+      "java_file": "Mage.Sets/src/mage/cards/r/RavenousAmulet.java"
+    }
+  ]
+}
