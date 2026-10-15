@@ -133,7 +133,7 @@ fn paid_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
         .objects
         .get(phoenix)
         .card_def])
-    .is_err());
+    .is_ok());
     for _ in 0..3 {
         let mountain = put(&mut state, actor, "Mountain", Zone::Battlefield);
         priority(&mut state, actor);

@@ -427,14 +427,14 @@ mod tests {
         }
     }
     #[test]
-    fn exact_partial_inventory_and_frozen_vector_refusal() {
+    fn exact_full_candidate_inventory_and_frozen_vector_refusal() {
         use crate::card_def::{card_id_by_name, CardCapability, CARD_DEFS};
         let id = card_id_by_name("Drake Hatcher").unwrap();
         assert_eq!(id, 448);
         assert_eq!(card_id_by_name("Drake Token"), Some(449));
-        assert_eq!(CARD_DEFS.len(), 450);
+        assert_eq!(CARD_DEFS.len(), 452);
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
-        assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_err());
+        assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
         assert!(
             std::panic::catch_unwind(|| crate::rules_vector_v1::sources::card_rules(id)).is_err()
         );

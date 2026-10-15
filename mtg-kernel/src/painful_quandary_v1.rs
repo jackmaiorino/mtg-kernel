@@ -51,9 +51,9 @@ fn paid_quandary(actor: PlayerId) -> (GameState, ObjectId) {
     let definition = state.objects.get(source).card_def;
     assert_eq!(
         CARD_DEFS[usize::from(definition)].capability,
-        CardCapability::Partial
+        CardCapability::Full
     );
-    assert!(card_def::preflight_fully_supported_deck(&[definition]).is_err());
+    assert!(card_def::preflight_fully_supported_deck(&[definition]).is_ok());
     for _ in 0..5 {
         let land = put(&mut state, actor, "Swamp", Zone::Battlefield);
         priority(&mut state, actor);

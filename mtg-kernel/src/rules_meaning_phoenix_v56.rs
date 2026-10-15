@@ -401,7 +401,7 @@ pub fn meaning(selector: &SelectorV56, card_id: u16) -> Result<MeaningV56, Strin
                 ],
             },
         ],
-        full_engine_admitted: false,
+        full_engine_admitted: d.capability == CardCapability::Full,
         model_admitted: false,
         sampler_admitted: false,
         fair_search_admitted: false,

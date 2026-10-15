@@ -986,3 +986,5 @@ fn v5_paid_spinner_eight_identical_staged_occurrences_bind_real_prefix_and_resto
         assert_eq!(wire.menu()["state"], public);
     }
 }
+
+mod full_reference;

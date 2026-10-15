@@ -42,12 +42,11 @@ fn genuine_printed_cost_intervening_checks_and_irreversible_payment_order() {
         real.battlefield_entry,
         EntryV56::UntappedByDefaultSubjectToEntryReplacements
     );
-    assert!(
-        !real.full_engine_admitted
-            && !real.model_admitted
-            && !real.sampler_admitted
-            && !real.fair_search_admitted
+    assert_eq!(
+        real.full_engine_admitted,
+        real.capability == CardCapability::Full
     );
+    assert!(!real.model_admitted && !real.sampler_admitted && !real.fair_search_admitted);
     assert_eq!(
         &real.ordered_rules[..4],
         &[
