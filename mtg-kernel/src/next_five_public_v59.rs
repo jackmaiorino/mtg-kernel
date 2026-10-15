@@ -136,6 +136,63 @@ pub struct FactsV59 {
 pub fn producer_sha256() -> String {
     meaning::producer_sha256()
 }
+/// Frozen consumers cannot authorize rules they do not project. Unknown private
+/// identities do not select a refusal; retained originally public roots do.
+pub(crate) fn require_legacy_visible(
+    state: &GameState,
+    viewer: Option<PlayerId>,
+) -> Result<(), String> {
+    let ids = FamilyV59::ALL
+        .into_iter()
+        .filter_map(|f| card_def::card_id_by_name(f.name()))
+        .collect::<std::collections::BTreeSet<_>>();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let visible = state.objects.iter().any(|(id, _)| {
+        public::reference(state, id, viewer).is_some_and(
+            |r| matches!(r.identity,public::IdentityV1::Known{card_id}if ids.contains(&card_id)),
+        )
+    });
+    let item_selected = |item: &crate::state::StackItem| {
+        item.v4
+            .ability_source_contract
+            .is_some_and(|s| ids.contains(&s.card_def))
+            || item
+                .v4
+                .source_contract
+                .is_some_and(|s| ids.contains(&s.card_def))
+    };
+    let retained = state.stack.iter().any(item_selected)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| item_selected(&p.resolving_item))
+        || public::held(state)
+            .iter()
+            .any(|p| p.source_contract.is_some_and(|s| ids.contains(&s.card_def)))
+        || state.players.iter().any(|p| {
+            p.restricted_mana_pool
+                .0
+                .iter()
+                .any(|m| ids.contains(&m.source_card_def))
+        })
+        || state.engine.event_history.iter().any(|e| match e {
+            crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. } => {
+                ids.contains(&source.card_def)
+            }
+            crate::event::CommittedEvent::CrystalExecutionV1 { execution } => {
+                execution.steps.iter().any(|s| s.excess_capture.is_some())
+            }
+            _ => false,
+        });
+    if visible || retained {
+        Err("next-five rules require the distinct V59 consumer".into())
+    } else {
+        Ok(())
+    }
+}
 fn family(id: u16, ids: &[(FamilyV59, u16)]) -> Option<FamilyV59> {
     ids.iter().find_map(|(f, i)| (*i == id).then_some(*f))
 }
@@ -568,4 +625,4 @@ pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV59) -> Result
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests;
+pub(crate) mod tests;

@@ -2015,23 +2015,34 @@ enum ObservationTextModeV2 {
     RavenousV51Artifact,
     FlatForbiddenElided,
     PreparedV57Artifact,
+    NextFiveV59Artifact,
 }
 
 impl ObservationTextModeV2 {
+    fn complete_source_scope(self) -> Option<CommonProjectionScopeV42> {
+        match self {
+            Self::PreparedV57Artifact => Some(CommonProjectionScopeV42::PreparedV57),
+            Self::NextFiveV59Artifact => Some(CommonProjectionScopeV42::NextFiveV59),
+            _ => None,
+        }
+    }
+
     fn kernel_version(self) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
-                KERNEL_VERSION.to_string()
-            }
+            Self::FullArtifact
+            | Self::RavenousV51Artifact
+            | Self::PreparedV57Artifact
+            | Self::NextFiveV59Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
 
     fn card_name(self, card_id: u16) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
-                card_name(card_id)
-            }
+            Self::FullArtifact
+            | Self::RavenousV51Artifact
+            | Self::PreparedV57Artifact
+            | Self::NextFiveV59Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2180,9 +2191,16 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
 ) -> Result<ObservationV2> {
+    if text_mode != ObservationTextModeV2::NextFiveV59Artifact {
+        crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+
     if !matches!(
         text_mode,
-        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ObservationTextModeV2::RavenousV51Artifact
+            | ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2372,7 +2390,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             accept_divine,
             accept_conqueror,
             accept_fake,
-            text_mode == ObservationTextModeV2::PreparedV57Artifact,
+            text_mode.complete_source_scope(),
         )?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
@@ -2392,7 +2410,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
                 (true, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
             )?
         } else {
             engine_context_v2(
@@ -3567,6 +3585,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     FakeV50,
     RavenousV51,
     PreparedV57,
+    NextFiveV59,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3596,6 +3615,9 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
+        CommonProjectionScopeV42::NextFiveV59 => {
+            crate::next_five_observation_v59::validate_state(state)
+        }
         CommonProjectionScopeV42::PreparedV57 => {
             crate::prepared_observation_v57::validate_state(state)
         }
@@ -3624,6 +3646,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::FakeV50
             | CommonProjectionScopeV42::RavenousV51
             | CommonProjectionScopeV42::PreparedV57
+            | CommonProjectionScopeV42::NextFiveV59
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3635,7 +3658,9 @@ pub(crate) fn common_family_observation_storage_scoped(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::PreparedV57 {
+                text_mode: if scope == CommonProjectionScopeV42::NextFiveV59 {
+                    ObservationTextModeV2::NextFiveV59Artifact
+                } else if scope == CommonProjectionScopeV42::PreparedV57 {
                     ObservationTextModeV2::PreparedV57Artifact
                 } else if scope == CommonProjectionScopeV42::RavenousV51 {
                     ObservationTextModeV2::RavenousV51Artifact
@@ -3659,6 +3684,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
                     ),
                     matches!(
                         scope,
@@ -3670,6 +3696,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
                     ),
                     matches!(
                         scope,
@@ -3680,6 +3707,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
                     ),
                     matches!(
                         scope,
@@ -3689,6 +3717,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
                     ),
                     matches!(
                         scope,
@@ -3697,6 +3726,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
                             | CommonProjectionScopeV42::PreparedV57
+                            | CommonProjectionScopeV42::NextFiveV59
                     ),
                 ),
                 matches!(
@@ -3705,6 +3735,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                         | CommonProjectionScopeV42::FakeV50
                         | CommonProjectionScopeV42::RavenousV51
                         | CommonProjectionScopeV42::PreparedV57
+                        | CommonProjectionScopeV42::NextFiveV59
                 ),
             ),
         ),
@@ -3725,6 +3756,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             CommonProjectionScopeV42::FakeV50
                 | CommonProjectionScopeV42::RavenousV51
                 | CommonProjectionScopeV42::PreparedV57
+                | CommonProjectionScopeV42::NextFiveV59
         ),
     )
 }
@@ -4129,6 +4161,14 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     accepted_statics: FamilyCapabilitiesWithFishingV40,
     accept_fake: bool,
 ) -> Result<PolicyObservationStorageV6> {
+    if request.0.text_mode != ObservationTextModeV2::NextFiveV59Artifact {
+        crate::next_five_public_v59::require_legacy_visible(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(request.0.state)?;
     } else {
@@ -4676,9 +4716,16 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
+    if text_mode != ObservationTextModeV2::NextFiveV59Artifact {
+        crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
+
     if !matches!(
         text_mode,
-        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ObservationTextModeV2::RavenousV51Artifact
+            | ObservationTextModeV2::PreparedV57Artifact
+            | ObservationTextModeV2::NextFiveV59Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -4831,7 +4878,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
@@ -4867,7 +4914,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                     (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                     accept_conqueror,
                     accept_fake,
-                    text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                    text_mode.complete_source_scope(),
                 )?,
                 stack_item_kind: item.kind.into(),
             });
@@ -4898,7 +4945,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
                 accept_fake,
-                text_mode == ObservationTextModeV2::PreparedV57Artifact,
+                text_mode.complete_source_scope(),
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -4952,6 +4999,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                 text_mode,
                                 ObservationTextModeV2::RavenousV51Artifact
                                     | ObservationTextModeV2::PreparedV57Artifact
+                                    | ObservationTextModeV2::NextFiveV59Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -5308,6 +5356,29 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        accept_hunter,
+        accept_panda,
+        accept_conqueror,
+        accept_fake,
+        false,
+    )
+}
+fn core_policy_action_candidates_next_five_scoped_v59(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+    accept_fake: bool,
+    accept_next_five: bool,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    if !accept_next_five {
+        crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
+            .map_err(RlContractError)?;
+    }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
     } else {
@@ -8546,7 +8617,9 @@ fn public_card_v2(
     if object.counters.soul != 0
         && !(matches!(
             text_mode,
-            ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+            ObservationTextModeV2::RavenousV51Artifact
+                | ObservationTextModeV2::PreparedV57Artifact
+                | ObservationTextModeV2::NextFiveV59Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -8594,12 +8667,41 @@ pub(crate) fn core_policy_action_candidates_prepared_v57(
     core_policy_action_candidates_fake_scoped_v50(decision, state, true, true, true, true)
 }
 
+pub(crate) fn policy_observation_extensions_next_five_v59(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::NextFiveV59Artifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+    )
+}
+pub(crate) fn core_policy_action_candidates_next_five_v59(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision, state, true, true, true, true, true,
+    )
+}
+
 fn public_card_v2_non_soul_fields(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
-    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::PreparedV57Artifact | ObservationTextModeV2::NextFiveV59Artifact
+    ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
     let object = state
@@ -8615,6 +8717,7 @@ fn public_card_v2_non_soul_fields(
             ObservationTextModeV2::FullArtifact
                 | ObservationTextModeV2::RavenousV51Artifact
                 | ObservationTextModeV2::PreparedV57Artifact
+                | ObservationTextModeV2::NextFiveV59Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -8691,7 +8794,10 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     // Callers have already selected an actor-authorized identity: own hand,
     // known hand/library, or a visible choice. Do not scan concealed zones.
-    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::PreparedV57Artifact | ObservationTextModeV2::NextFiveV59Artifact
+    ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
     let object = state
@@ -9632,7 +9738,7 @@ fn engine_context_v2_conqueror_inner_v49(
         accepted_sources,
         accept_conqueror,
         false,
-        false,
+        None,
     )
 }
 
@@ -9643,7 +9749,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
 ) -> Result<EngineContextV2> {
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;
@@ -9871,7 +9977,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     (accept_inspiration, accept_fishing),
                     (true, accept_hunter, accept_panda),
                     accept_fake,
-                    accept_prepared,
+                    prepared_scope,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -9909,10 +10015,14 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
-                let prepared_source = if accept_prepared {
-                    crate::prepared_observation_v57::pending_source_reference(state, p)?
-                } else {
-                    None
+                let prepared_source = match prepared_scope {
+                    Some(CommonProjectionScopeV42::NextFiveV59) => {
+                        crate::next_five_observation_v59::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::PreparedV57) => {
+                        crate::prepared_observation_v57::pending_source_reference(state, p)?
+                    }
+                    _ => None,
                 };
                 let fake_source = if accept_fake {
                     crate::fake_your_own_death_v50::public_v50::pending_source_reference(state, p)?
@@ -10002,7 +10112,7 @@ fn pending_effect_semantic_v4_akroma_inner(
         capabilities,
         accepted_sources,
         false,
-        false,
+        None,
     )
 }
 
@@ -10013,7 +10123,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     capabilities: (bool, bool),
     accepted_sources: (bool, bool, bool),
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
 ) -> Result<PendingEffectSemanticV4> {
     let (accept_akroma, accept_hunter, accept_panda) = accepted_sources;
     let (accept_inspiration, accept_fishing) = capabilities;
@@ -10047,7 +10157,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                 (accept_akroma, false, accept_hunter, accept_panda),
                 false,
                 accept_fake,
-                accept_prepared,
+                prepared_scope,
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -10383,7 +10493,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
             (accept_akroma, false, accept_hunter, accept_panda),
             false,
             accept_fake,
-            accept_prepared,
+            prepared_scope,
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -10785,7 +10895,7 @@ fn stack_public_conqueror_v49_fake_v50(
     accept_divine: bool,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
@@ -10801,7 +10911,7 @@ fn stack_public_conqueror_v49_fake_v50(
                 accepted_sources,
                 (accept_divine, accept_conqueror),
                 accept_fake,
-                accept_prepared,
+                prepared_scope,
             )
         })
         .collect()
@@ -10817,7 +10927,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accepted_roots: (bool, bool),
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
 ) -> Result<StackItemPublicV2> {
     let (accept_divine, accept_conqueror) = accepted_roots;
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
@@ -10864,7 +10974,7 @@ fn stack_item_public_conqueror_v49_fake_v50(
             accepted_sources,
             accept_conqueror,
             accept_fake,
-            accept_prepared,
+            prepared_scope,
         )?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
@@ -11124,7 +11234,7 @@ fn akroma_historical_source_ref_fake_scoped_v50(
             (true, false, false, false),
             false,
             true,
-            false,
+            None,
         )
     } else {
         stack_source_ref_union_v40(state, item, true, (true, false, false, false))
@@ -11155,7 +11265,7 @@ fn stack_source_ref_conqueror_v49(
         accepted_sources,
         accept_conqueror,
         false,
-        false,
+        None,
     )
 }
 
@@ -11166,13 +11276,19 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_prepared: bool,
+    prepared_scope: Option<CommonProjectionScopeV42>,
 ) -> Result<CardStableRefV1> {
-    if accept_prepared {
-        if let Some(source) = crate::prepared_observation_v57::stack_source_reference(state, item)?
-        {
-            return Ok(source);
+    let prepared_source = match prepared_scope {
+        Some(CommonProjectionScopeV42::NextFiveV59) => {
+            crate::next_five_observation_v59::stack_source_reference(state, item)?
         }
+        Some(CommonProjectionScopeV42::PreparedV57) => {
+            crate::prepared_observation_v57::stack_source_reference(state, item)?
+        }
+        _ => None,
+    };
+    if let Some(source) = prepared_source {
+        return Ok(source);
     }
     if accept_fake {
         crate::fake_your_own_death_v50::public_v50::capture(state)?;

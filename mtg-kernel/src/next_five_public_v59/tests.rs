@@ -7,7 +7,7 @@ use crate::{
     policy_observation_v6::tests::put,
     state::Step,
 };
-fn ready(actor: PlayerId) -> GameState {
+pub(crate) fn ready(actor: PlayerId) -> GameState {
     let mut s = crate::extra_turn_v1::tests::ready(actor);
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
     for p in [actor, actor.opponent()] {
@@ -22,12 +22,12 @@ fn ready(actor: PlayerId) -> GameState {
     );
     s
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(s.engine.halted.is_none(), "{d:?}");
     d
 }
-fn quiet(s: &mut GameState, d: Decision) {
+pub(crate) fn quiet(s: &mut GameState, d: Decision) {
     let a = match d {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::OrderTriggers { pending, .. } => {
@@ -40,7 +40,7 @@ fn quiet(s: &mut GameState, d: Decision) {
     };
     engine::step(s, a).unwrap();
 }
-fn settle(s: &mut GameState) {
+pub(crate) fn settle(s: &mut GameState) {
     for _ in 0..150 {
         let d = next(s);
         if s.stack.is_empty()
@@ -56,7 +56,7 @@ fn settle(s: &mut GameState) {
     }
     panic!("native resolution did not settle");
 }
-fn cast(
+pub(crate) fn cast(
     s: &mut GameState,
     actor: PlayerId,
     name: &str,
