@@ -210,7 +210,11 @@ impl FastActorSessionV1 {
         Self::from_akroma_v40_fixture_state_with_surface(state, PolicySurfaceV5::new_for_session())
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn from_akroma_v40_engine_priority_fixture(state: GameState) -> Self {
         Self::from_akroma_v40_fixture_state_with_surface(
             state,
