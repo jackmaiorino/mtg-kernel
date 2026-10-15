@@ -53,6 +53,8 @@ impl Scan<'_> {
         use EffectOp::*;
         match op {
             AjaniLoyaltyV42 { .. }
+            | DrakeIncubationFromCaptureV1 { .. }
+            | DrakeCreateTokenFromPaidV1
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
@@ -982,7 +984,15 @@ pub(super) fn conflicts(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
     // Retained original-world mechanisms require their qualified sampler.
-    if crate::bloodthirsty_conqueror_v49::has_history(state)
+    if crate::drake_hatcher_v1::custody::relevant(state)
+        || state.engine.event_history.iter().any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::DrakeJournalV1 { .. }
+                    | crate::event::CommittedEvent::DrakeHistoryRefV1 { .. }
+            )
+        })
+        || crate::bloodthirsty_conqueror_v49::has_history(state)
         || crate::doubling_season_v48::requires_successor(state)
         || crate::soul_counters_v1::has_history(state)
     {

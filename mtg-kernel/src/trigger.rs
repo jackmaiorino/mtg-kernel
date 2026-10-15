@@ -501,16 +501,6 @@ fn materialize_trigger_event_effect(
             };
         }
     }
-    if matches!(
-        (trigger.effect)(),
-        EffectOp::IncubationFromCombatDamageV1 { amount: None }
-    ) {
-        if let CommittedEvent::CombatDamageToPlayer { amount, .. } = event {
-            return EffectOp::IncubationFromCombatDamageV1 {
-                amount: Some(*amount),
-            };
-        }
-    }
     materialize_trigger_effect(trigger, source, state)
 }
 
@@ -4022,15 +4012,12 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
-        // The event binder saves only positive final combat damage. The caller
-        // still authenticates the definition/source and the source contract at
-        // resolution. Immutable historical amount custody needs a successor.
+        // The actual row validator authenticates this capture's complete
+        // enclosing combat operation and original source incarnation.
         (
             EffectOp::IncubationFromCombatDamageV1 { amount: None },
-            EffectOp::IncubationFromCombatDamageV1 {
-                amount: Some(amount),
-            },
-        ) => *amount > 0,
+            EffectOp::DrakeIncubationFromCaptureV1 { .. },
+        ) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootAttackBoostV1 { .. }) => true,
         (EffectOp::BindAshrootAttackBoostV1, EffectOp::AshrootBoostFromCaptureV2 { .. }) => true,
         (
@@ -4942,6 +4929,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::drake_hatcher_v1::custody::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::ashroot_dispatch_v2::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5289,6 +5286,11 @@ fn triggers_from_events(
                 if crate::standard_creatures_v1::grants_combat_impulse(obj.card_def)
                     && (def.effect)() == kellan_impulse_effect()
                 {
+                    continue;
+                }
+                if (def.effect)() == crate::drake_hatcher_v1::combat_binder() {
+                    // Exact positive final damage and original source were captured
+                    // before this batch's later membership/controller changes.
                     continue;
                 }
                 // These abilities were captured at the actual life-gain commit,

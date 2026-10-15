@@ -5,6 +5,7 @@ use crate::{
     state::{GameState, Zone},
 };
 use serde::{Deserialize, Serialize};
+pub mod custody;
 
 /// Exact source counter family, separate from net/charge and distributed costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,7 +39,9 @@ pub(crate) fn pay(
     if !can_pay(state, source, kind, amount) {
         return None;
     }
-    let after = count(state, source, kind)?.checked_sub(i32::from(amount))?;
+    let before = count(state, source, kind)?;
+    let after = before.checked_sub(i32::from(amount))?;
+    custody::debit(state, source, kind, amount, before, after).ok()?;
     match kind {
         SourceCounterKindV1::Incubation => {
             state.objects.get_mut(source).counters.incubation = after
@@ -50,10 +53,7 @@ pub fn combat_binder() -> EffectOp {
     EffectOp::IncubationFromCombatDamageV1 { amount: None }
 }
 pub fn create_drake() -> EffectOp {
-    EffectOp::CreateToken {
-        token_def: crate::card_def::card_id_by_name("Drake Token").expect("genuine Drake token"),
-        count: 1,
-    }
+    EffectOp::DrakeCreateTokenFromPaidV1
 }
 /// The trigger freezes the final committed event amount. The source contract
 /// prevents counters crossing a leave/reenter boundary. Replacement applies in
@@ -105,13 +105,15 @@ pub(crate) fn place(
 }
 /// Frozen public schemas have no incubation field. Refuse before omission.
 pub(crate) fn require_public_counter(state: &GameState, id: ObjectId) -> Result<(), String> {
-    if state.objects.try_get(id).is_some_and(|o| {
-        o.counters.incubation != 0
-            || (o.v4.face_down_v1.is_none()
-                && crate::card_def::CARD_DEFS
-                    .get(usize::from(o.card_def))
-                    .is_some_and(|d| d.name == "Drake Hatcher"))
-    }) {
+    if !state.engine.drake_ledger_v1.is_empty()
+        || state.objects.try_get(id).is_some_and(|o| {
+            o.counters.incubation != 0
+                || (o.v4.face_down_v1.is_none()
+                    && crate::card_def::CARD_DEFS
+                        .get(usize::from(o.card_def))
+                        .is_some_and(|d| d.name == "Drake Hatcher"))
+        })
+    {
         Err("public counter schema cannot represent exact incubation counters; Drake successor required".into())
     } else {
         Ok(())
@@ -137,6 +139,11 @@ mod tests {
     fn finish(state: &mut GameState) {
         for _ in 0..32 {
             match engine::advance_until_decision(state) {
+                Decision::OrderTriggers { pending, .. } => engine::step(
+                    state,
+                    Action::OrderTriggers((0..pending.len()).rev().collect()),
+                )
+                .unwrap(),
                 Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
                 Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
                 other => panic!("Drake stack: {other:?}"),
@@ -214,6 +221,24 @@ mod tests {
                     .objects
                     .iter()
                     .any(|(_, o)| o.name == "Drake Token"));
+                let mut reentered = branch.clone();
+                event::propose_and_commit(
+                    &mut reentered,
+                    ProposedEvent::zone_change(drake, Zone::Hand),
+                );
+                event::propose_and_commit(
+                    &mut reentered,
+                    ProposedEvent::zone_change(drake, Zone::Battlefield),
+                );
+                finish(&mut reentered);
+                custody::validate(&reentered).unwrap();
+                assert_eq!(reentered.objects.get(drake).counters.incubation, 0);
+                assert!(reentered
+                    .objects
+                    .iter()
+                    .any(|(_, o)| o.zone == Zone::Battlefield
+                        && o.name == "Drake Token"
+                        && o.controller == actor));
                 // Source departure never refunds costs and does not prevent the
                 // independent token effect resolving for its original controller.
                 event::propose_and_commit(branch, ProposedEvent::zone_change(drake, Zone::Hand));
@@ -376,35 +401,30 @@ mod tests {
         }
     }
     #[test]
-    fn bound_combat_trigger_authenticates_only_positive_materialization() {
+    fn only_original_capture_root_matches_printed_combat_binder() {
         let id = crate::card_def::card_id_by_name("Drake Hatcher").unwrap();
-        let template = combat_binder();
-        for amount in [1, 3, i32::MAX] {
-            let effect = EffectOp::IncubationFromCombatDamageV1 {
-                amount: Some(amount),
-            };
-            assert!(crate::trigger::source_bound_trigger_program_matches(
-                &template, &effect
-            ));
-            assert!(crate::trigger::trigger_effect_matches(id, &effect));
-            assert!(!crate::trigger::trigger_effect_matches(
-                crate::card_def::card_id_by_name("Forest").unwrap(),
-                &effect
-            ));
-        }
-        for amount in [0, -1] {
-            let effect = EffectOp::IncubationFromCombatDamageV1 {
-                amount: Some(amount),
-            };
-            assert!(!crate::trigger::source_bound_trigger_program_matches(
-                &template, &effect
-            ));
-            assert!(!crate::trigger::trigger_effect_matches(id, &effect));
-        }
-        assert!(!crate::trigger::source_bound_trigger_program_matches(
-            &template,
-            &create_drake()
+        let bound = EffectOp::DrakeIncubationFromCaptureV1 { capture: 9 };
+        assert!(crate::trigger::trigger_effect_matches(id, &bound));
+        assert!(!crate::trigger::trigger_effect_matches(
+            crate::card_def::card_id_by_name("Forest").unwrap(),
+            &bound
         ));
+        // A numeric amount is description, never historical authority.
+        for amount in [None, Some(-1), Some(0), Some(3), Some(i32::MAX)] {
+            let effect = EffectOp::IncubationFromCombatDamageV1 { amount };
+            if amount.is_some() {
+                assert!(!crate::trigger::source_bound_trigger_program_matches(
+                    &combat_binder(),
+                    &effect
+                ));
+            }
+            let (mut state, drake) = cast(PlayerId::P0);
+            let mut ctx = ExecCtx::no_targets(drake, PlayerId::P0);
+            ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&state, drake));
+            crate::effect::execute(&effect, &ctx, &mut state);
+            assert!(state.engine.halted.is_some());
+            assert_eq!(state.objects.get(drake).counters.incubation, 0);
+        }
     }
     #[test]
     fn exact_partial_inventory_and_frozen_vector_refusal() {
@@ -463,6 +483,412 @@ mod tests {
             assert_eq!(state.objects.get(drake).counters.incubation, 0);
             place(&mut state, &ctx, Some(3)).unwrap();
             assert_eq!(state.objects.get(drake).counters.incubation, 0);
+        }
+    }
+    fn restored(state: &GameState) -> GameState {
+        serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+    }
+    fn reject_readonly(mut state: GameState) {
+        let bytes = serde_json::to_vec(&state).unwrap();
+        assert!(engine::step(&mut state, Action::Pass).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+    }
+    fn damage_three(state: &mut GameState, drake: ObjectId, actor: PlayerId) {
+        engine::commit_combat_damage_events(
+            state,
+            vec![ProposedEvent::damage(
+                drake,
+                Target::Player(actor.opponent()),
+                3,
+            )],
+        );
+    }
+    #[test]
+    fn original_damage_collection_publication_removal_and_payment_tamper_both_seats() {
+        use custody::{journal, JournalV1 as J};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, drake) = cast(actor);
+            damage_three(&mut state, drake, actor);
+            let _ = engine::advance_until_decision(&mut state);
+            custody::validate(&state).unwrap();
+            let original = restored(&state);
+            // Genuine collected and published capture survives owning restore.
+            let capture = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(journal)
+                .find_map(|r| {
+                    if let J::Captured { amount, source, .. } = &r.value {
+                        assert_eq!(*amount, 3);
+                        assert_eq!(source.controller, actor);
+                        Some(r.index)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            for mode in 0..8 {
+                let mut bad = original.clone();
+                match mode {
+                    0 => bad.engine.event_history.retain(|e| {
+                        journal(e).is_none_or(|r| !matches!(r.value, J::Captured { .. }))
+                    }),
+                    1 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| {
+                                if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                    matches!(record.value, J::Captured { .. }).then_some(record)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap();
+                        if let J::Captured { amount, .. } = &mut row.value {
+                            *amount = 1;
+                        }
+                    }
+                    2 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| {
+                                if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                    matches!(record.value, J::Captured { .. }).then_some(record)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap();
+                        if let J::Captured { source, .. } = &mut row.value {
+                            source.controller = actor.opponent();
+                        }
+                    }
+                    3 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .find_map(|e| {
+                                if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                    matches!(record.value, J::Captured { .. }).then_some(record)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap();
+                        if let J::Captured { source, .. } = &mut row.value {
+                            source.zone_change_count += 1;
+                        }
+                    }
+                    4 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter()
+                            .find(|e| {
+                                journal(e).is_some_and(|r| matches!(r.value, J::Captured { .. }))
+                            })
+                            .unwrap()
+                            .clone();
+                        bad.engine.event_history.push(row);
+                        bad.engine.drake_ledger_v1.issued += 1;
+                    }
+                    5 => bad.engine.event_history.retain(|e| {
+                        journal(e).is_none_or(|r| !matches!(r.value, J::Collected { .. }))
+                    }),
+                    6 => bad.engine.event_history.retain(|e| {
+                        journal(e).is_none_or(|r| !matches!(r.value, J::Enclosing { .. }))
+                    }),
+                    _ => {
+                        bad.stack.last_mut().unwrap().inline_effect =
+                            Some(EffectOp::DrakeIncubationFromCaptureV1 {
+                                capture: capture + 1,
+                            })
+                    }
+                }
+                reject_readonly(restored(&bad));
+            }
+            finish(&mut state);
+            assert_eq!(state.objects.get(drake).counters.incubation, 3);
+            custody::validate(&state).unwrap();
+            state.priority_player = actor;
+            engine::step(&mut state, Action::ActivateAbility(drake, 0)).unwrap();
+            let _ = engine::advance_until_decision(&mut state);
+            assert_eq!(state.objects.get(drake).counters.incubation, 0);
+            custody::validate(&state).unwrap();
+            for mode in 0..6 {
+                let mut bad = restored(&state);
+                match mode {
+                    0 => bad
+                        .engine
+                        .event_history
+                        .retain(|e| journal(e).is_none_or(|r| !matches!(r.value, J::Debit { .. }))),
+                    1 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .rev()
+                            .find_map(|e| {
+                                if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                    matches!(record.value, J::Debit { .. }).then_some(record)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap();
+                        if let J::Debit { count, .. } = &mut row.value {
+                            *count = 2;
+                        }
+                    }
+                    2 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter_mut()
+                            .rev()
+                            .find_map(|e| {
+                                if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                    matches!(record.value, J::Paid { .. }).then_some(record)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap();
+                        if let J::Paid { original, .. } = &mut row.value {
+                            original.objects.get_mut(drake).counters.incubation += 1;
+                        }
+                    }
+                    3 => bad
+                        .engine
+                        .event_history
+                        .retain(|e| journal(e).is_none_or(|r| !matches!(r.value, J::Paid { .. }))),
+                    4 => {
+                        let row = bad
+                            .engine
+                            .event_history
+                            .iter()
+                            .rev()
+                            .find(|e| journal(e).is_some_and(|r| matches!(r.value, J::Paid { .. })))
+                            .unwrap()
+                            .clone();
+                        bad.engine.event_history.push(row);
+                        bad.engine.drake_ledger_v1.issued += 1;
+                    }
+                    _ => bad.stack.last_mut().unwrap().controller = actor.opponent(),
+                }
+                reject_readonly(bad);
+            }
+            let paid = state.clone();
+            let id = state.stack.last().unwrap().v4.stack_item_id;
+            let mut countered = restored(&state);
+            engine::counter_stack_item_by_id(&mut countered, id).unwrap();
+            custody::validate(&countered).unwrap();
+            assert_eq!(countered.objects.get(drake).counters.incubation, 0);
+            let item = paid.stack.last().unwrap().clone();
+            countered.stack.push(item);
+            reject_readonly(countered);
+            finish(&mut state);
+            custody::validate(&state).unwrap();
+            let mut erased = restored(&state);
+            erased
+                .engine
+                .event_history
+                .retain(|e| journal(e).is_none_or(|r| !matches!(r.value, J::Completed { .. })));
+            reject_readonly(erased);
+            assert!(state
+                .objects
+                .iter()
+                .any(|(_, o)| o.name == "Drake Token" && o.controller == actor));
+        }
+    }
+    #[test]
+    fn genuine_apnap_capture_ownership_and_leave_reenter_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, drake) = cast(actor);
+            let own = put(&mut state, actor, "Drake Hatcher", Zone::Battlefield);
+            let other = put(
+                &mut state,
+                actor.opponent(),
+                "Drake Hatcher",
+                Zone::Battlefield,
+            );
+            engine::commit_combat_damage_events(
+                &mut state,
+                vec![
+                    ProposedEvent::damage(drake, Target::Player(actor.opponent()), 3),
+                    ProposedEvent::damage(own, Target::Player(actor.opponent()), 1),
+                    ProposedEvent::damage(other, Target::Player(actor), 2),
+                ],
+            );
+            let state = restored(&state);
+            custody::validate(&state).unwrap();
+            for mode in 0..2 {
+                let mut branch = state.clone();
+                if mode == 0 {
+                    event::propose_and_commit(
+                        &mut branch,
+                        ProposedEvent::zone_change(drake, Zone::Hand),
+                    );
+                    event::propose_and_commit(
+                        &mut branch,
+                        ProposedEvent::zone_change(drake, Zone::Battlefield),
+                    );
+                } else {
+                    // Intervening control fixture preserves the actual battlefield
+                    // roster as well as the object's current controller.
+                    branch.players[actor.index()]
+                        .battlefield
+                        .retain(|id| *id != drake);
+                    branch.players[actor.opponent().index()]
+                        .battlefield
+                        .push(drake);
+                    branch.objects.get_mut(drake).controller = actor.opponent();
+                }
+                finish(&mut branch);
+                custody::validate(&branch).unwrap();
+                assert_eq!(
+                    branch.objects.get(drake).counters.incubation,
+                    if mode == 0 { 0 } else { 3 }
+                );
+                assert_eq!(branch.objects.get(own).counters.incubation, 1);
+                assert_eq!(branch.objects.get(other).counters.incubation, 2);
+            }
+        }
+    }
+    #[test]
+    fn genuine_banner_checkpoint_nested_original_restore_erasure_and_shift_both_seats() {
+        use custody::{journal, JournalV1 as J};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, drake) = cast(actor);
+            damage_three(&mut state, drake, actor);
+            finish(&mut state);
+            state.priority_player = actor;
+            let banner = put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+            engine::step(&mut state, Action::CastSpell(banner)).unwrap();
+            let mut reached = false;
+            for _ in 0..24 {
+                match engine::advance_until_decision(&mut state) {
+                    Decision::ChooseEntryColorV36 { player, .. } => {
+                        assert_eq!(player, actor);
+                        reached = true;
+                        break;
+                    }
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap()
+                    }
+                    other => panic!("genuine Drake/Banner checkpoint: {other:?}"),
+                }
+            }
+            assert!(reached);
+            let mut original = restored(&state);
+            custody::validate(&original).unwrap();
+            for mode in 0..3 {
+                let mut bad = original.clone();
+                if mode < 2 {
+                    let nested = &mut bad
+                        .engine
+                        .linked_aura_operation_v1
+                        .pending_general_v36
+                        .as_mut()
+                        .unwrap()
+                        .original
+                        .engine
+                        .event_history;
+                    let position = nested.iter().position(|e| journal(e).is_some()).unwrap();
+                    if mode == 0 {
+                        nested.remove(position);
+                    } else {
+                        nested.swap(position, position + 1);
+                    }
+                } else {
+                    // Refuse erased original references inside the saved complete
+                    // sibling output, even when the live checkpoint is unchanged.
+                    let row = bad
+                        .engine
+                        .event_history
+                        .iter_mut()
+                        .rev()
+                        .find_map(|e| {
+                            if let event::CommittedEvent::DrakeJournalV1 { record } = e {
+                                matches!(record.value, J::Enclosing { .. }).then_some(record)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
+                    let J::Enclosing { output, .. } = &mut row.value else {
+                        unreachable!()
+                    };
+                    let nested = &mut output
+                        .engine
+                        .linked_aura_operation_v1
+                        .pending_general_v36
+                        .as_mut()
+                        .unwrap()
+                        .original
+                        .engine
+                        .event_history;
+                    let position = nested
+                        .iter()
+                        .position(|e| matches!(e, event::CommittedEvent::DrakeHistoryRefV1 { .. }))
+                        .unwrap();
+                    nested.remove(position);
+                }
+                let mut bad = restored(&bad);
+                let bytes = serde_json::to_vec(&bad).unwrap();
+                assert!(engine::step(&mut bad, Action::ChooseEffectOption(1)).is_err());
+                assert_eq!(serde_json::to_vec(&bad).unwrap(), bytes);
+            }
+            for branch in [&mut state, &mut original] {
+                engine::step(branch, Action::ChooseEffectOption(1)).unwrap();
+                finish(branch);
+                custody::validate(branch).unwrap();
+                assert_eq!(branch.objects.get(banner).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(drake).counters.incubation, 3);
+            }
+            assert_eq!(state, original);
+        }
+    }
+    #[test]
+    fn absent_owner_keeps_zero_ledger_json_hash_and_ordinary_steps() {
+        use std::hash::{Hash, Hasher};
+        #[derive(Default)]
+        struct Bytes(Vec<u8>);
+        impl Hasher for Bytes {
+            fn finish(&self) -> u64 {
+                0
+            }
+            fn write(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+        let mut bytes = Bytes::default();
+        custody::LedgerV1::default().hash(&mut bytes);
+        assert!(bytes.0.is_empty());
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let land = put(&mut state, actor, "Island", Zone::Hand);
+            let mut old = state.clone();
+            engine::step(&mut state, Action::PlayLand(land)).unwrap();
+            engine::step_without_linked_aura_v1(&mut old, Action::PlayLand(land)).unwrap();
+            assert_eq!(state, old);
+            assert!(state.engine.drake_ledger_v1.is_empty());
+            assert!(serde_json::to_value(&state.engine)
+                .unwrap()
+                .get("drake_ledger_v1")
+                .is_none());
+            assert!(state
+                .engine
+                .event_history
+                .iter()
+                .all(|e| custody::journal(e).is_none()));
         }
     }
 }

@@ -1,66 +1,74 @@
 # Drake Hatcher Partial source preparation
 
-Issue #110. Base `dce5617069369803e761e203e2a5a0c372bb1b4d`.
-This is unqualified source only. All added Rust and fixture bodies are
-uncompiled and unrun. No Full printing, model, sampling, strength or consumer
-admission is claimed. No Rust build, test, check or clippy was launched.
+Issue #110. Original base `dce5617069369803e761e203e2a5a0c372bb1b4d`;
+custody continuation starts at `2e0f7dcc94604a454d5a3aae5dae17dbadb083cd`.
+All added Rust and fixtures are uncompiled and unrun. No Full, public consumer,
+model, sampler, fair-search, strength or runtime qualification is claimed.
+No Rust build/test/check/clippy/native process, push or PR was launched.
 
-The frozen printing is FDN 35, Scryfall
-`bcaf4196-6bf3-47fa-b5c7-0e77f45cf820`, Oracle
-`4de0ccab-bb5d-4c7c-827e-36aa1d00b182`. The frozen required Drake token is
-`f4a73034-e20f-4e7e-ac15-3460b1e9c69b`. Its genuine pinned definition is
-2/2 blue Drake with flying. It was absent from the executable catalog, so
-Hatcher appends at local 444 and Drake Token at 445. This yields 446 total
-rows, 254 FDN rows and exactly three Partial printings: Fake Your Own Death,
-Ravenous Amulet and Drake Hatcher. IDs conflict with sibling source branches;
-the integrating owner must serially renumber before qualification.
+Frozen printing: FDN 35, Scryfall `bcaf4196-6bf3-47fa-b5c7-0e77f45cf820`,
+Oracle `4de0ccab-bb5d-4c7c-827e-36aa1d00b182`. Required Drake token:
+`f4a73034-e20f-4e7e-ac15-3460b1e9c69b`, genuine 2/2 blue Drake with flying.
+Provisional Hatcher444 remains Partial; Drake token445 stays a token blueprint: 446 definitions,
+254 FDN rows and exactly three Partial printings, Fake, Ravenous and Hatcher.
+Sibling IDs conflict. Root owns serial renumbering and qualification.
 
 XMage pin: `a5c90fe180021e70e2a644ade00eeab07f857a40`.
-Verified working files match the pinned blobs after CRLF normalization.
+Pinned blobs were rechecked by SHA-256:
 
-| Pinned source | Git-blob SHA-256 |
+| Source | SHA-256 |
 | --- | --- |
 | `Mage.Sets/src/mage/cards/d/DrakeHatcher.java` | `ec315e1a92b30ed008863fd2372f7d7dd958f6b3ed93ce4aecb9e625bf1dc75d` |
 | `Mage/src/main/java/mage/game/permanent/token/DrakeToken.java` | `e3e537fea71a435f8638b17dbe7a1848bfddc70779bf973bc3dafad9c89329e0` |
 
-The source registers actual 1U 1/3 Human Wizard, vigilance, existing prowess,
-and a combat trigger binding the positive final `CombatDamageToPlayer.amount`
-after prevention/replacement. Resolution uses the captured source incarnation
-and checked incubation placement. Typed source-counter payment removes three
-before stacking; it is distinct from net, charge and distributed +1/+1 costs.
-The independent token effect does not refund costs when countered. Counter
-storage, transfer and presence tests carry incubation; zero preserves earlier
-JSON/hash forms. Drake subtype appends, preserving all previous stable IDs.
-Frozen public card/human counter projections refuse unrepresentable incubation;
-card projections also refuse known Hatcher semantics. Frozen V1 inventory
-explicitly refuses the typed cost and its test-only supported subset excludes it.
+Genuine 1U 1/3 Human Wizard, vigilance/prowess, captures positive final committed
+combat damage after replacement/prevention. A private journal binds the actual
+pre-batch world, Damage/CombatDamageToPlayer positions, original source/controller/
+incarnation, collection, APNAP holding, publication, removal and completion.
+Plain numeric/binder inline effects cannot execute. Typed removal of three
+incubation counters records checked debit before mutation and a private original
+payment loan before stack publication. Countering never refunds it; token
+creation uses the paid original controller through the real CreateToken API.
 
-Fixture bodies cover both seats: paid cast and prowess; production combat
-commit with saved damage unlike current power; genuine attack/block assignment;
-full and partial prevention; suppression; first/double-strike waves; paid
-activation, serde restore, opponent refusal, countered activation, departure,
-new incarnation and checked overflow/underflow. Synthetic prevention and
-suppression setup exercises existing engine primitives, not new printed cards.
+Each enclosing original Step/Advance or typed direct combat/counter operation,
+with actual confirmed answers, must replay its complete output and history.
+Runtime ownership and disposable replay recursion control cannot be restored
+from JSON. Snapshot outer histories are absent. Nested sibling original histories
+retain exact lengths/positions and replace only prior Drake records by exact
+references to the actual outer prefix; missing/shifted references refuse.
+No sibling original or convenient later prefix is synthesized. This is original
+input replay custody, not cryptographic authenticity against rewriting an entire
+initial GameState/history. Ordinary worlds without a genuine Drake owner retain
+zero ledger bytes/hash contribution and their old serialized shape.
 
-Checks observed: `cargo +1.94.1 fmt --all`, `git diff --check`, small Python
-catalog/prefix/pin/hash assertions. The actual
-`python -m unittest python.tests.test_limited_decks_v1 python.tests.test_fdn_booster_pool_v1`
-suites passed all 67 tests. A complete balanced enum-body token check preserves
-all 230 EffectOp, 28 CostComponent and 152 subtype predecessor variants; each
-new variant is appended at its actual enum tail. Positive combat binder
-materializations now match the definition template, with source/incarnation
-checks retained and historical amount custody still deferred. The multikind
-transfer literal includes soul and incubation, with doubled expectations. The
-committed 40-card by-name reference deck remains refused by Full-only tooling. Frozen 286 printings and 24 token dependencies,
-profile constants, lockfiles and toolchain pins remain unchanged. No Rust check
-has passed. Successor work still needs compiled engine fixtures, complete exact
-public/transport/session/tensor/ordered-meaning consumers and adversarial restore
-validation linking saved damage, trigger custody, payment and counter placement
-to immutable committed history. The plain effect amount and counter transfer
-are not claimed to establish that provenance. Full admission stays closed.
+Source fixtures cover both seats: actual paid cast/prowess; real attack/block,
+prevention, suppression and first/double-strike waves; amount differing from power;
+APNAP multi-source capture, controller change, departure/reentry; exact paid
+activation, restore, counter/no-refund, independent original-controller token;
+forged/erased/replayed damage, collection, payment, publication and completion;
+genuine paid Banner checkpoint coexistence/restore with erased/shifted nested
+originals; counter overflow/underflow and absent-owner default compatibility.
+Synthetic prevention, suppression and intervening-control setup use existing
+fixture mechanisms. These bodies have not executed.
 
-Source digest: `5b5d19da2b7ddcc6718d364ede6b2e66f40cd2fb35e7b92078a5cafea14cd470`.
-Algorithm: sorted changed source/catalog/test/reference paths versus base, excluding this note;
-SHA-256 over each UTF-8 path, NUL, then raw SHA-256 of LF-normalized file bytes.
+Observed checks: pinned `cargo +1.94.1 fmt --all --check`, `git diff --check`,
+complete balanced enum-body and EngineState-prefix assertions, primary blob hashes,
+and the actual `python -m unittest python.tests.test_limited_decks_v1
+python.tests.test_fdn_booster_pool_v1` suites, all 67 passing. Relative to 2e0,
+all 231 EffectOp, 234 CommittedEvent and seven OperationV1 predecessors retain
+order/fields, with two variants appended at each true tail. All 29 CostComponent
+and 153 subtype variants are unchanged. Frozen 286 printings, 24 token dependencies,
+profile constants, toolchain pins and lockfiles remain unchanged. No successor
+catalog/profile hash is invented. Legacy projections refuse retained custody or
+incubation, ordered meaning remains opaque/refused, sampling explicitly refuses
+Drake custody, and the genuine 40-card reference remains refused by Full-only tools.
+
+Remaining work: review and compile this source, execute genuine/adversarial/restored
+engine fixtures, then implement exact public/transport/session/tensor/ordered
+meaning consumers and separately qualify model/sampler/search admission. Whole-world
+replay cost and sibling-family composition remain unmeasured. Full stays closed.
+
+Source digest: `706ceea161b44a3d10a46092ff9e7887a24de79c69583a4011dea63c05e635e4`.
+Algorithm: sorted changed source/catalog/test/reference paths versus original base,
+excluding this note; SHA-256 over UTF-8 path, NUL, raw SHA-256 of LF-normalized bytes.
 Catalog LF SHA-256: `e9677499904a105bc9a1c889740d91e6414007950b80a4728e58aa4603b2ded2`.
-

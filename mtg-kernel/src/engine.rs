@@ -305,6 +305,11 @@ pub struct EngineState {
         skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
     )]
     pub twinflame_combat_v38: crate::twinflame_tyrant_v1::combat::StateV38,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::drake_hatcher_v1::custody::LedgerV1::is_empty"
+    )]
+    pub drake_ledger_v1: crate::drake_hatcher_v1::custody::LedgerV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -9412,6 +9417,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::drake_hatcher_v1::custody::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)
         .is_err()
         || crate::bloodthirsty_conqueror_v49::validate(state).is_err()
@@ -10438,6 +10449,15 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 return;
             };
             let mut frozen = freeze_activation_source(state, &p, ability);
+            frozen.drake_payment =
+                match crate::drake_hatcher_v1::custody::capture_payment(state, &p) {
+                    Ok(owner) => owner,
+                    Err(_) => {
+                        state.engine.halted =
+                            Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                        return;
+                    }
+                };
             frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &p) {
                 Ok(owner) => owner,
                 Err(_) => {
@@ -13682,6 +13702,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::drake_hatcher_v1::custody::publish(state, &finalized)?;
     crate::fake_your_own_death_v50::death_custody::publish(state, &finalized)?;
     crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
     crate::garruks_uprising_v1::publish(state, &finalized)?;
@@ -14215,6 +14236,7 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::drake_hatcher_v1::custody::validate_item(state, item)?;
     crate::ravenous_amulet_v1::validate_item(state, item)?;
     crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
     crate::krenko_v1::validate_item(state, item)?;
@@ -14788,6 +14810,21 @@ pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
+    crate::drake_hatcher_v1::custody::validate(state)?;
+    if crate::drake_hatcher_v1::custody::relevant(state)
+        && !crate::linked_aura_operation_v1::locally_owned(state)
+    {
+        let item = state
+            .stack
+            .iter()
+            .find(|i| i.v4.stack_item_id == stack_item_id)
+            .cloned();
+        crate::linked_aura_operation_v1::run_drake_operation_v1(
+            state,
+            &crate::linked_aura_operation_v1::OperationV1::DrakeCounterStackV1 { stack_item_id },
+        )?;
+        return Ok(item);
+    }
     crate::ajani_full_v42::lifecycle::validate_state(state)?;
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
@@ -14837,6 +14874,7 @@ pub(crate) fn counter_stack_item_by_id(
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
     let ajani_counter_owner = crate::ajani_full_v42::lifecycle::acquire(state, &item)?;
     let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
+    let drake_counter_owner = crate::drake_hatcher_v1::custody::acquire(state, &item)?;
     let ravenous_counter_owner = crate::ravenous_amulet_v1::acquire(state, &item)?;
     let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
@@ -14867,6 +14905,7 @@ pub(crate) fn counter_stack_item_by_id(
         krenko_counter_owner.as_ref(),
         crate::krenko_v1::RemovalV1::Countered,
     )?;
+    crate::drake_hatcher_v1::custody::countered(state, drake_counter_owner)?;
     crate::ravenous_amulet_v1::countered(state, ravenous_counter_owner)?;
     if let Some(owner) = arahbo_counter_owner {
         crate::arahbo_v1::record_counter_input(state, &owner)?;
@@ -15499,6 +15538,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let drake_owner = match crate::drake_hatcher_v1::custody::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let ravenous_owner = match crate::ravenous_amulet_v1::acquire(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -15633,6 +15682,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = drake_owner {
+        if crate::drake_hatcher_v1::custody::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = ravenous_owner {
         if crate::ravenous_amulet_v1::resolve(state, owner, &ctx).is_err() {
             state.engine.halted =
@@ -18136,11 +18193,24 @@ pub(crate) fn resume_legacy_combat_normal_v38(state: &mut GameState) {
 pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
     commit_combat_damage_events_inner(state, events, false);
 }
-fn commit_combat_damage_events_inner(
+pub(crate) fn commit_combat_damage_events_inner(
     state: &mut GameState,
     events: Vec<ProposedEvent>,
     legacy_normal_after: bool,
 ) -> bool {
+    if crate::drake_hatcher_v1::custody::relevant(state)
+        && !crate::linked_aura_operation_v1::locally_owned(state)
+    {
+        let operation = crate::linked_aura_operation_v1::OperationV1::DrakeCombatBatchV1 {
+            events,
+            legacy_normal_after,
+        };
+        if crate::linked_aura_operation_v1::run_drake_operation_v1(state, &operation).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        }
+        return crate::twinflame_tyrant_v1::combat::has_pending(state);
+    }
     let event_start = state.engine.event_log.len();
     let events: Vec<ProposedEvent> = events
         .into_iter()
@@ -18151,6 +18221,10 @@ fn commit_combat_damage_events_inner(
             event
         })
         .collect();
+    if crate::drake_hatcher_v1::custody::begin_combat(state, &events).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return true;
+    }
     match crate::twinflame_tyrant_v1::combat::begin(state, &events, legacy_normal_after) {
         Ok(true) => return true,
         Ok(false) => {}
@@ -18174,7 +18248,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
                 amount,
             } if amount > 0 => Some((
                 source,
-                state.objects.get(source).zone_change_count,
+                crate::drake_hatcher_v1::custody::original_generation(state, source)
+                    .unwrap_or_else(|| state.objects.get(source).zone_change_count),
                 player,
                 amount,
             )),
@@ -18194,6 +18269,10 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
                 characteristics.toxic,
             );
         }
+    }
+    if crate::drake_hatcher_v1::custody::finish_combat(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return;
     }
     if let Some(holder) = state.initiative {
         let transfer_player = state.engine.event_log[event_start..]
@@ -18693,6 +18772,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::drake_hatcher_v1::custody::validate(state)?;
     crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)?;
     crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
@@ -18705,6 +18785,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::twinflame_tyrant_v1::combat::validate(state)?;
     if crate::twinflame_tyrant_v1::combat::has_pending(state) {
+        if crate::drake_hatcher_v1::custody::relevant(state) {
+            return crate::linked_aura_operation_v1::step(state, action);
+        }
         crate::heraldic_banner_v1::validate_state(state)?;
         event::validate_exile_if_dies_replacements(state).map_err(|source| {
             format!("invalid exile-if-dies replacement authority for {source:?}")
@@ -22060,6 +22143,17 @@ fn finalize_activation(state: &mut GameState) {
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let mut frozen = freeze_activation_source(state, &pending, ability);
+    frozen.drake_payment = match crate::drake_hatcher_v1::custody::capture_payment(state, &pending)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &pending) {
         Ok(owner) => owner,
         Err(_) => {
@@ -22184,6 +22278,7 @@ struct FrozenActivationSource {
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
     ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
+    drake_payment: Option<crate::drake_hatcher_v1::custody::PaymentOwnerV1>,
 }
 
 fn freeze_activation_source(
@@ -22222,6 +22317,7 @@ fn freeze_activation_source(
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
         ravenous_payment: None,
+        drake_payment: None,
     }
 }
 
@@ -22351,6 +22447,8 @@ fn push_paid_activation(
             frozen.fishing_ability_index,
         )
         .is_err()
+        || crate::drake_hatcher_v1::custody::record_paid(state, stack_item_id, frozen.drake_payment)
+            .is_err()
         || crate::ravenous_amulet_v1::record_paid(state, stack_item_id, frozen.ravenous_payment)
             .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()

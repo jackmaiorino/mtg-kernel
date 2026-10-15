@@ -1730,10 +1730,16 @@ pub enum EffectOp {
         player: PlayerRef,
         unpaid: Box<EffectOp>,
     },
-    /// None is a printed binder, Some is the final positive combat event amount.
+    /// Printed/legacy amount description. Execution requires a private capture root.
     IncubationFromCombatDamageV1 {
         amount: Option<i32>,
     },
+    /// Private historical trigger root, issued only by actual combat collection.
+    DrakeIncubationFromCaptureV1 {
+        capture: u64,
+    },
+    /// Printed activation root, executable only with its actual paid input.
+    DrakeCreateTokenFromPaidV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -8183,6 +8189,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
+    crate::drake_hatcher_v1::custody::validate(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::faebloom_trick_v43::validate_state(state)?;
     crate::raid_entry_v1::validate_state(state)?;
@@ -17819,13 +17826,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ));
             }
         }
-        EffectOp::IncubationFromCombatDamageV1 { amount } => {
-            if crate::drake_hatcher_v1::place(state, ctx, *amount).is_err() {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-            }
+        EffectOp::IncubationFromCombatDamageV1 { .. }
+        | EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        | EffectOp::DrakeCreateTokenFromPaidV1 => {
+            // Public inline programs cannot manufacture damage or payment authority.
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::AddSoulCounterToAbilitySourceV1 => {
             if event::add_soul_counter_to_ability_source_v1(state, ctx).is_err() {

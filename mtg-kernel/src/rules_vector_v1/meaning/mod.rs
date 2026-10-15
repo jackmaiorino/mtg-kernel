@@ -84,7 +84,9 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
-        EffectOp::IncubationFromCombatDamageV1 { amount: _ }
+        EffectOp::DrakeIncubationFromCaptureV1 { .. }
+        | EffectOp::DrakeCreateTokenFromPaidV1
+        | EffectOp::IncubationFromCombatDamageV1 { amount: _ }
         | EffectOp::AddSoulCounterToAbilitySourceV1
         | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
         | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1

@@ -26,6 +26,13 @@ pub enum OperationV1 {
         source: crate::state::AbilitySourceContractV4,
         controller: crate::ids::PlayerId,
     },
+    DrakeCombatBatchV1 {
+        events: Vec<ProposedEvent>,
+        legacy_normal_after: bool,
+    },
+    DrakeCounterStackV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 impl Hash for OperationV1 {
@@ -446,7 +453,34 @@ pub(crate) fn end_batch(state: &mut GameState) {
 
 fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decision>, String> {
     match operation {
+        OperationV1::DrakeCombatBatchV1 {
+            events,
+            legacy_normal_after,
+        } => {
+            crate::engine::commit_combat_damage_events_inner(
+                state,
+                events.clone(),
+                *legacy_normal_after,
+            );
+            if state.engine.halted.is_some() {
+                return Err("Drake combat operation halted".into());
+            }
+            Ok(None)
+        }
+        OperationV1::DrakeCounterStackV1 { stack_item_id } => {
+            crate::engine::counter_stack_item_by_id(state, *stack_item_id)?;
+            Ok(None)
+        }
         OperationV1::Step(action) => {
+            if crate::drake_hatcher_v1::custody::relevant(state)
+                && crate::twinflame_tyrant_v1::combat::has_pending(state)
+            {
+                let Action::ChooseEffectOption(index) = action else {
+                    return Err("only the actual combat menu may be answered".into());
+                };
+                crate::twinflame_tyrant_v1::combat::answer(state, *index)?;
+                return Ok(None);
+            }
             crate::engine::step_without_linked_aura_v1(state, action.clone())?;
             Ok(None)
         }
@@ -491,7 +525,8 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
-    potentially_returns_aura(state)
+    crate::drake_hatcher_v1::custody::relevant(state)
+        || potentially_returns_aura(state)
         || crate::fake_your_own_death_v50::death_custody::has_unowned_roots(state)
         || crate::heraldic_banner_v1::potentially_enters(state)
         || !crate::doubling_season_v48::sources(state, state.active_player).is_empty()
@@ -641,6 +676,13 @@ fn replay_general(
                 capture_history_index: capture,
             }));
         }
+        crate::drake_hatcher_v1::custody::enclose(
+            original,
+            operation,
+            answers,
+            runner.used_banner,
+            &mut checkpoint,
+        )?;
         return Ok((*checkpoint, None));
     }
     let result = result?;
@@ -664,6 +706,13 @@ fn replay_general(
             .event_history
             .push(CommittedEvent::BannerEntryOperationCompletedV1 { operation, entries });
     }
+    crate::drake_hatcher_v1::custody::enclose(
+        original,
+        operation,
+        answers,
+        runner.used_banner,
+        &mut staged,
+    )?;
     Ok((staged, result))
 }
 
@@ -1840,4 +1889,23 @@ pub(crate) fn choose_fake_aura_v50(
             Ok((at, SelectionV50::Suspended))
         }
     }
+}
+
+/// Genuine direct combat/counter operations use the same private whole-input owner.
+pub(crate) fn run_drake_operation_v1(
+    state: &mut GameState,
+    operation: &OperationV1,
+) -> Result<(), String> {
+    crate::drake_hatcher_v1::custody::validate(state)?;
+    let (next, _) = replay_general(state, operation, &[], false)?;
+    *state = next;
+    Ok(())
+}
+pub(crate) fn replay_drake_enclosing_v1(
+    original: &GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+) -> Result<GameState, String> {
+    replay_general(original, operation, answers, used_banner).map(|(world, _)| world)
 }
