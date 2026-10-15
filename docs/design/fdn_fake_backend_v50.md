@@ -1,9 +1,12 @@
 # Explicit Fake V50 backend
 
-Source checkpoint: `305168a9dcb1179c4a26b1ea58a34b2cf2c2fecb`. This adds executable
-session preparation for the isolated Partial printing. It is uncompiled and
-unqualified. Human V50, models, sampler/profile publication, fair search/training
-and Full printing admission remain unfinished.
+The isolated printing remains Partial. Native131 exercised backend source
+`23b1a9ddad8756c2618c32a5055f9d0358816fa7`: all four backend groups passed.
+The combined run had 44 passes and one Human privacy assertion failure;
+all three strict lint configurations passed. This is bounded correctness
+evidence, with all produced outputs retained and the original guard released.
+Models, sampler/profile publication, fair search/training and Full printing
+admission remain unfinished.
 
 `FastActorSessionV1` has distinct V50 reset, conversion, current input, bound
 validation and owning restore APIs. Reset retains the fully supported deck
@@ -39,14 +42,17 @@ existing paid two-host Aura group additionally checks the owner menu, no Finish,
 binding, execution and restored replay through V50. Gameplay bytes, policy and
 physical counts and public values are compared across restore. Privileged hashes
 are compared only for immediate read-only refusals, since restore changes their
-revision inputs. These tests have not run.
+revision inputs. Native131 passed these backend groups and the paid Aura,
+two-grant and corrected Heartfire coexistence cases.
 
-Separate predecessor evidence: Native128 on `e9dfdd32` currently has 37 passes
-and one failure in the paid Heartfire coexistence fixture, which asserted source
-departure before actual activation finalization. The checkpoint advances the
-engine before that unchanged assertion. Strict lint checks remain pending.
-Native127's failed final outputs are retained; its actual generator exported 443
+Native128 retains its actual 37 passes, one failure and three strict lint passes,
+despite its faulty aggregate zero exit. Native129 failed compilation before
+executing tests because a selected Aura host was declared after use. Both
+failures remain retained. Native131's actual generator exported 443
 definitions, Fake ID 442, hash `2fa3e07073975972`, source SHA-256
 `b9ff9d9cd357ba26758470d355839d293bc6afd2e7f568cbc4b3e217b122ecf9`.
-Neither predecessor result qualifies this backend checkpoint or permits a live
-profile/model publication.
+The Human controller-knowledge assertion is corrected at `312a0936`; Native132
+reruns all three Human groups and strict lint configurations. Its results are
+pending. Production and producer inputs are unchanged from Native131. Neither
+the backend evidence nor the pending Human check admits a live model/profile
+or completes issue110. Root PR266 qualification remains separate.
