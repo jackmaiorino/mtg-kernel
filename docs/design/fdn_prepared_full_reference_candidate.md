@@ -43,6 +43,12 @@ Pinned Rust formatting and diff checks pass. The Ashroot/Stromkirk supplements
 have a separate scoped source-clear review; their paid/restore model fixtures
 remain unrun. Broader ordinary-model completeness remains open.
 
+Attributed fixture source `85655f37a` adds actual paid Season/Hatcher combat
+incubation and Season/Ravenous soul-counter coexistence, including replacement
+amounts, paid activation costs, countered rows and both-seat serde replay.
+These two Rust groups are uncompiled and unrun. They join this future Full
+candidate; the exact `4ac320fa8` Native160/161 preparation remains unchanged.
+
 No generated catalog hash or successor profile is guessed. Existing v87
 `fdn_dual_full_batch_frozen_literal_matches_the_live_build_constant` and
 `fdn_dual_full_batch_fixture_decodes_live_without_model_admission` remain stale
