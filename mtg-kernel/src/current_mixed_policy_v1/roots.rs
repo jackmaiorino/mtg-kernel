@@ -5,6 +5,8 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "crystal_printing.rs"]
+pub(super) mod crystal_printing;
 #[path = "early_activation_printing.rs"]
 pub(super) mod early_activation_printing;
 #[path = "legendary_printing.rs"]
@@ -301,6 +303,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
     ) {
         return early_activation_printing::baseline(id, d);
+    }
+    if d.name == "Crystal Barricade" {
+        return crystal_printing::baseline(id, d);
     }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
@@ -612,6 +617,7 @@ enum PermanentKeyword {
     Flying,
     Deathtouch,
     Trample,
+    Defender,
 }
 
 /// Mandatory even when one or all family meanings already marked this ID
@@ -623,6 +629,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Crystal Barricade" => return crystal_printing::printing(id, d),
         "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
             return early_activation_printing::printing(id, d)
         }

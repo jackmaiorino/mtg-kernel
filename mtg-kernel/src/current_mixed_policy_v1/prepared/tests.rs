@@ -597,3 +597,8 @@ fn early_printings_paid_ordinary_activations_and_restore_prepared_both_seats() {
         PreparedSession,
     >();
 }
+
+#[test]
+fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_preparedsession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_crystal::<PreparedSession>();
+}

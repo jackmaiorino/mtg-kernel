@@ -6,6 +6,7 @@ use crate::{
     rl::{ActionSemanticV1, TargetRefV1},
     state::{GameState, Zone},
 };
+mod crystal;
 mod early_activation;
 mod entry_attack;
 mod memorial_panda;
@@ -16,6 +17,11 @@ pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
 pub(in crate::current_mixed_policy_v1) fn paid_memorial_panda<O: Owner>() {
     memorial_panda::paid::<O>();
 }
+pub(in crate::current_mixed_policy_v1) fn paid_crystal<O: Owner>() {
+    crystal::paid::<O>();
+    crystal::privacy::<O>();
+}
+
 pub(in crate::current_mixed_policy_v1) fn paid_early_activation<O: Owner>() {
     early_activation::paid::<O>();
 }
@@ -464,4 +470,13 @@ fn early_printings_paid_ordinary_activations_and_restore_fake_both_seats() {
 #[test]
 fn early_printings_paid_ordinary_activations_and_restore_ravenous_both_seats() {
     paid_early_activation::<RavenousSession>();
+}
+
+#[test]
+fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_fake_both_seats() {
+    paid_crystal::<FakeSession>();
+}
+#[test]
+fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_ravenous_both_seats() {
+    paid_crystal::<RavenousSession>();
 }
