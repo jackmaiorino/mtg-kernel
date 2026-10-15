@@ -37,6 +37,19 @@ class LimitedDeckTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
             limited.resolve_mainboard(deck, self.registry)
 
+    def test_fake_partial_preserves_prior_registry_and_refuses_full_deck_resolution(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        prefix = json.dumps(records[:250], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "06ac37d8b170426de4a6248a3d770b5e912cb816cdea986155e2c3e30fde83b0")
+        self.assertEqual(self.registry["Fake Your Own Death"].card_id, 442)
+        self.assertEqual(limited.card_status("Fake Your Own Death", self.registry), "partial")
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_fake_your_own_death_partial.dck").read_text())
+        self.assertEqual(sum(entry.count for entry in deck.mainboard), 40)
+        with self.assertRaisesRegex(ValueError, "unsupported mainboard"):
+            limited.resolve_mainboard(deck, self.registry)
+
     def test_registry_extension_keeps_all_original_ids_and_resolves_the_new_batch(self) -> None:
         cards = limited.load_json((REPO_ROOT / "data/cards_v1.json").read_bytes())["cards"]
         original_names = json.dumps([card["name"] for card in cards[:162]],
