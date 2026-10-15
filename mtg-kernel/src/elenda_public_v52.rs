@@ -148,6 +148,10 @@ fn current(state: &GameState, object: ObjectId) -> Result<CurrentV52, RlContract
     .filter(|kind| crate::engine::object_has_type(state, object, *kind))
     .collect::<Vec<_>>();
     let creature = effective_types.contains(&CardType::Creature);
+    let pt = creature
+        .then(|| crate::engine::checked_effective_pt(state, object))
+        .transpose()
+        .map_err(RlContractError)?;
     Ok(CurrentV52 {
         source: crate::rl::card_ref(state, object)?,
         token: live.v4.is_token,
@@ -182,8 +186,8 @@ fn current(state: &GameState, object: ObjectId) -> Result<CurrentV52, RlContract
             .collect(),
         applied_power_bonus: facts.bonus.power,
         applied_toughness_bonus: facts.bonus.toughness,
-        effective_power: creature.then(|| crate::engine::effective_power(state, object)),
-        effective_toughness: creature.then(|| crate::engine::effective_toughness(state, object)),
+        effective_power: pt.map(|value| value.0),
+        effective_toughness: pt.map(|value| value.1),
         effective_lifelink: crate::engine::has_effective_keyword(state, object, Keywords::LIFELINK),
         effective_menace: crate::engine::has_effective_keyword(state, object, Keywords::MENACE),
         hexproof_from_opponents_instants: crate::source_type_hexproof_v1::characteristics(
@@ -194,6 +198,8 @@ fn current(state: &GameState, object: ObjectId) -> Result<CurrentV52, RlContract
 }
 
 pub fn capture(state: &GameState) -> Result<FactsV52, RlContractError> {
+    crate::engine::validate_battlefield_pt(state)
+        .map_err(|id| RlContractError(format!("native PT envelope exceeded for {id:?}")))?;
     let id = crate::card_def::card_id_by_name("Elenda, Saint of Dusk")
         .ok_or_else(|| RlContractError("Elenda public facts require the actual printing".into()))?;
     let meaning = meaning::printed_meaning(id, RootV52::CreatureSpellAndPrintedStatics)

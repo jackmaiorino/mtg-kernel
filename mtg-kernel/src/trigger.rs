@@ -4517,8 +4517,15 @@ fn sba_fixed_point_with_protected_triggers(
     protected_triggers: &[PendingTrigger],
 ) {
     loop {
+        // Refuse the entire sweep before legend/death/detachment mutations.
+        if crate::engine::halt_on_invalid_battlefield_pt(state) {
+            return;
+        }
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_cards_v1::refresh_aegis_copies(state);
+        if crate::engine::halt_on_invalid_battlefield_pt(state) {
+            return;
+        }
         let protected_players = crate::game_outcome_protection_v1::protected_players(state);
         let protected_draws_consumed =
             crate::game_outcome_protection_v1::consume_protected_empty_draws(
@@ -4550,7 +4557,13 @@ fn sba_fixed_point_with_protected_triggers(
             if !crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature) {
                 continue;
             }
-            let toughness = crate::engine::effective_toughness(state, id);
+            let Ok((_, toughness)) = crate::engine::checked_effective_pt(state, id) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    id,
+                ));
+                return;
+            };
             let indestructible = crate::engine::has_effective_keyword(
                 state,
                 id,
@@ -4807,7 +4820,9 @@ pub(crate) fn collect_and_process_with_waiting(
     state: &mut GameState,
     mut waiting: Vec<PendingTrigger>,
 ) -> Vec<PendingTrigger> {
-    if state.pending_legend_rule_v1.is_some() {
+    if state.pending_legend_rule_v1.is_some()
+        || crate::engine::halt_on_invalid_battlefield_pt(state)
+    {
         return Vec::new();
     }
     waiting.extend(capture_triggers_without_sba(state));
@@ -4824,7 +4839,7 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
     sba_fixed_point_with_protected_triggers(state, &new_triggers);
-    if state.pending_legend_rule_v1.is_some() {
+    if state.engine.halted.is_some() || state.pending_legend_rule_v1.is_some() {
         return Vec::new();
     }
     // SBA entry/replacement work can itself commit counters. Merge those

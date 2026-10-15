@@ -516,7 +516,7 @@ pub(crate) fn spree_mode_prelude(card_name: &str, mode: u8) -> Option<crate::eff
 }
 
 /// Flourishing Bloom-Kin gets +1/+1 for each Forest its controller controls.
-pub(crate) fn controlled_forest_boost(state: &GameState, id: ObjectId) -> i32 {
+pub(crate) fn controlled_forest_boost(state: &GameState, id: ObjectId) -> i128 {
     let Some(object) = state.objects.try_get(id) else {
         return 0;
     };
@@ -534,7 +534,7 @@ pub(crate) fn controlled_forest_boost(state: &GameState, id: ObjectId) -> i32 {
         .filter(|&&land| {
             crate::engine::has_effective_subtype(state, land, crate::card_def::Subtype::Forest)
         })
-        .count() as i32
+        .count() as i128
 }
 
 /// One name-keyed static rule above, as the rules-vector extractor

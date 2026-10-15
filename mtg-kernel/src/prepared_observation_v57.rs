@@ -101,6 +101,8 @@ pub fn commitment(value: &PreparedObservationV57) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::engine::validate_battlefield_pt(state)
+        .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::ravenous_observation_v51::validate_state_complete_prepared_v57(state)?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
     crate::drake_public_v53::capture(state).map_err(|e| e.0)?;

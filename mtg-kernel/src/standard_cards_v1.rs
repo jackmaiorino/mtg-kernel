@@ -2568,7 +2568,7 @@ fn controller_end_step(
 /// Warleader's Call's and a solved Case of the Gateway Express's anthems,
 /// and the Construct token's "+1/+1 for each artifact you control".
 #[cfg(feature = "standard-magezero-fixtures")]
-pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i32, i32) {
+pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i128) {
     let live = state.objects.get(object);
     if live.zone != Zone::Battlefield
         || !crate::engine::object_has_type(state, object, CardType::Creature)
@@ -2579,12 +2579,12 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i32, i32
     let emblem_boost = if crate::engine::has_effective_subtype(state, object, Subtype::Ninja)
         || crate::engine::has_effective_subtype(state, object, Subtype::NinjaAllCaps)
     {
-        i32::from(ninja_emblems(state).map_or(0, |counts| counts[controller.index()]))
+        i128::from(ninja_emblems(state).map_or(0, |counts| counts[controller.index()]))
     } else {
         0
     };
     let mut boost = (emblem_boost, emblem_boost);
-    let mut artifacts = 0;
+    let mut artifacts = 0_i128;
     for &id in &state.players[controller.index()].battlefield {
         if crate::engine::object_has_type(state, id, CardType::Artifact) {
             artifacts += 1;

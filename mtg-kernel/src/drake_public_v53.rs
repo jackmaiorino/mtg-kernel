@@ -298,34 +298,15 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractEr
         loyalty: crate::planeswalker_v1::loyalty(state, id).unwrap_or(0),
     })
 }
-/// Guard the exact unsafe base/counter prefix in the current native query.
-/// Query the public effective base, including face-down/copy/Aura settings.
-/// This is a refusal, not a separate evaluator or a saturation policy.
-fn native_pt_prefix(
-    state: &GameState,
-    id: ObjectId,
-) -> Result<(Option<i32>, Option<i32>), RlContractError> {
-    let live = state.objects.get(id);
-    let power = crate::engine::effective_base_power(state, id);
-    let toughness = crate::engine::effective_base_toughness(state, id);
-    if power.is_some() || toughness.is_some() {
-        let checked = |base: i32, minus_toughness: i16| {
-            base.checked_add(live.counters.plus1_plus1)
-                .and_then(|n| n.checked_sub(i32::from(live.counters.minus1_minus1)))
-                .and_then(|n| n.checked_sub(i32::from(minus_toughness)))
-        };
-        if checked(power.unwrap_or(0), 0).is_none()
-            || checked(toughness.unwrap_or(0), live.counters.minus0_minus1).is_none()
-        {
-            return Err(error("V53 current effective base/counter PT exceeds native engine range; shared checked query required"));
-        }
-    }
-    Ok((power, toughness))
-}
 fn form(state: &GameState, id: ObjectId) -> Result<FormV53, RlContractError> {
     let live = state.objects.get(id);
-    let (base_power, base_toughness) = native_pt_prefix(state, id)?;
+    let base_power = crate::engine::effective_base_power(state, id);
+    let base_toughness = crate::engine::effective_base_toughness(state, id);
     let has_pt = base_power.is_some() || base_toughness.is_some();
+    let pt = has_pt
+        .then(|| crate::engine::checked_effective_pt(state, id))
+        .transpose()
+        .map_err(error)?;
     let printed = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
     let removed = crate::continuous_characteristics_v1::removal_timestamp(state, id).is_some();
     let keyword_bits = (0..u32::BITS).fold(0, |bits, bit| {
@@ -366,8 +347,8 @@ fn form(state: &GameState, id: ObjectId) -> Result<FormV53, RlContractError> {
         color_mask: crate::engine::object_color_mask(state, id),
         base_power,
         base_toughness,
-        power: has_pt.then(|| crate::engine::effective_power(state, id)),
-        toughness: has_pt.then(|| crate::engine::effective_toughness(state, id)),
+        power: pt.map(|value| value.0),
+        toughness: pt.map(|value| value.1),
         keyword_bits,
         ward_generic: if live.v4.face_down_v1.is_some_and(|face| face.disguised) && !removed {
             2
@@ -626,19 +607,14 @@ fn activation_outcome(
 /// Validate the genuine private inputs and complete operation replay first.
 /// Hashes and the current board never stand in for historical authority.
 pub fn capture(state: &GameState) -> Result<FactsV53, RlContractError> {
+    crate::engine::validate_battlefield_pt(state)
+        .map_err(|id| error(format!("native PT envelope exceeded for {id:?}")))?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Err(error(
             "V53 cannot publish a private synchronous operation tail",
         ));
     }
     custody::validate(state).map_err(error)?;
-    // Reject this known native arithmetic hazard before generic queries may
-    // inspect current stats. Historical custody was independently proved above.
-    for (id, live) in state.objects.iter() {
-        if live.zone == Zone::Battlefield {
-            native_pt_prefix(state, id)?;
-        }
-    }
     // Reuse existing generic authority for Prowess/current effect state. This
     // does not manufacture a new historical Prowess occurrence receipt.
     crate::effect::validate_pending_effect_choice(state).map_err(error)?;
