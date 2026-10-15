@@ -26,16 +26,18 @@ pub fn loss_program() -> EffectOp {
     EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
 }
 
-fn definition(id: u16) -> bool {
+pub(crate) fn definition(id: u16) -> bool {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     )) {
         return false;
     }
-    let Some(d) = CARD_DEFS.get(usize::from(id)) else {
-        return false;
-    };
+    CARD_DEFS.get(usize::from(id)).is_some_and(owns_definition)
+        && crate::trigger::triggers_for(id).is_empty()
+}
+
+pub(crate) fn owns_definition(d: &crate::card_def::CardDef) -> bool {
     let [draw, loss] = d.activated_abilities else {
         return false;
     };
@@ -57,6 +59,65 @@ fn definition(id: u16) -> bool {
         && d.mana_value == 2
         && d.power.is_none()
         && d.toughness.is_none()
+        && d.keywords == crate::card_def::Keywords::NONE
+        && d.target_spec == TargetSpec::None
+        && (d.spell_effect)()
+            == Some(EffectOp::MoveObject {
+                object: crate::effect::ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        && d.ward_cost.is_none()
+        && d.alt_cost.is_none()
+        && d.mode2.is_none()
+        && d.mode3.is_none()
+        && d.additional_modes.is_empty()
+        && d.flashback.is_none()
+        && d.kicker_cost.is_none()
+        && d.additional_cost.is_none()
+        && d.optional_additional_cost.is_none()
+        && d.equipment.is_none()
+        && d.attachment.is_none()
+        && d.produces_mana.is_empty()
+        && d.mana_ability_choices.is_empty()
+        && (d.mana_ability)().is_none()
+        && d.starting_loyalty.is_none()
+        && d.enters_with_plus_one_counters.is_none()
+        && d.controlled_creature_grant.is_none()
+        && d.controlled_counter_keyword.is_none()
+        && d.game_outcome_protection_v1.is_none()
+        && d.generic_cost_reduction.is_none()
+        && !d.spell_cannot_be_countered
+        && !d.records_mana_spent
+        && d.plot_cost.is_none()
+        && d.madness_cost.is_none()
+        && d.kicked_target_spec.is_none()
+        && d.escape.is_none()
+        && !d.enters_battlefield_tapped
+        && d.mana_ability_def.is_none()
+        && d.minimum_blockers == 1
+        && d.omen.is_none()
+        && !d.mana_ability_includes_chosen_color
+        && d.as_enters_choose_color_other_than.is_none()
+        && d.additional_mana_abilities.is_empty()
+        && d.enters_battlefield_tapped_unless.is_none()
+        && d.transform_face.is_none()
+        && d.saga.is_none()
+        && !d.changeling
+        && d.bestow.is_none()
+        && !d.delve
+        && d.adventure.is_none()
+        && !d.cant_be_blocked_by_monarchs_creatures
+        && d.conditional_tap_yield.is_none()
+        && d.enters_tapped_unless_controller.is_none()
+        && d.additional_mana_ability_conditions.is_empty()
+        && d.restricted_mana_abilities.is_empty()
+        && d.animation.is_none()
+        && d.activated_ability_generic_reductions.is_empty()
+        && d.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE
+        && d.as_enters_color_choice_v1.is_none()
+        && d.chosen_color_creature_boost_v1.is_none()
+        && d.damage_replacement_v1.is_none()
+        && d.token_counter_replacement_v48.is_none()
         && draw.cost
             == [
                 CostComponent::Mana(mana(1)),

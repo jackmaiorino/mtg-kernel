@@ -55,8 +55,18 @@ claimed. These changes remain uncompiled and unrun. The printed ownership path
 is limited to the pure FDN feature set; the generic soul instruction retains its
 separate Standard modifier behavior.
 
+The V51 printing descriptor preserves both ordered costs and programs, instant
+versus sorcery timing, untargeted loss, original ability controller, source LKI
+and resolution-time placement. It binds the actual catalog and source producer,
+contains no private payment/history operand and keeps model admission false.
+Actual paid cases check its restore and changed-timing refusal. Frozen rules
+vector V1 remains opaque. A third genuine paid case sacrifices a creature with
+paid Fake, restores before its gained return, then checks one tapped return,
+one Treasure, one draw and one soul counter with both journals valid. All new
+Rust remains uncompiled/unrun.
+
 Remaining: native qualification and cross-family original-world validation of
-the new lifecycle and public/meaning/observation/consumer support; actual paid
+the new lifecycle and public/observation/consumer support; actual paid
 both-seat tests and qualification. No Full, model, sampler, fair-search, or
 training claim follows from this prerequisite.
 

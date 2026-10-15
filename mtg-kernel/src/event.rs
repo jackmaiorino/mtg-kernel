@@ -6312,6 +6312,27 @@ mod ravenous_amulet_paid_future_tests {
             }
         }
         let amulet = put(&mut state, actor, "Ravenous Amulet", Zone::Hand);
+        let definition = state.objects.get(amulet).card_def;
+        assert_eq!(
+            crate::card_def::CARD_DEFS[usize::from(definition)].capability,
+            crate::card_def::CardCapability::Partial
+        );
+        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+        for root in [
+            crate::rules_meaning_ravenous_amulet_v51::RootV51::DrawAndSoul,
+            crate::rules_meaning_ravenous_amulet_v51::RootV51::SoulLoss,
+        ] {
+            let meaning =
+                crate::rules_meaning_ravenous_amulet_v51::printed_meaning(definition, root)
+                    .unwrap();
+            let restored = serde_json::from_slice(&serde_json::to_vec(&meaning).unwrap()).unwrap();
+            assert_eq!(meaning, restored);
+            crate::rules_meaning_ravenous_amulet_v51::validate(&restored).unwrap();
+            assert!(!meaning.model_admitted);
+            let mut changed = meaning.clone();
+            changed.sorcery_speed_only = !changed.sorcery_speed_only;
+            assert!(crate::rules_meaning_ravenous_amulet_v51::validate(&changed).is_err());
+        }
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
         engine::step(&mut state, Action::CastSpell(amulet)).unwrap();
         finish(&mut state);
@@ -6455,6 +6476,68 @@ mod ravenous_amulet_paid_future_tests {
                 assert_eq!(branch.objects.get(amulet).zone, Zone::Battlefield);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 0);
                 completed_refusals(branch, loss_id);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn actual_paid_amulet_sacrifice_coexists_with_paid_fake_return_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, amulet) = cast_amulet(actor);
+            let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let spare = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let fake = put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
+            for _ in 0..2 {
+                let swamp = put(&mut state, actor, "Swamp", Zone::Battlefield);
+                paid_priority(&mut state, actor);
+                engine::step(&mut state, Action::ActivateManaAbility(swamp)).unwrap();
+            }
+            engine::step(&mut state, Action::CastSpell(fake)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { ref legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(creature))));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(creature))).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(fake).zone, Zone::Graveyard);
+            assert_eq!(engine::effective_power(&state, creature), 3);
+            let forest = put(&mut state, actor, "Forest", Zone::Battlefield);
+            paid_priority(&mut state, actor);
+            engine::step(&mut state, Action::ActivateManaAbility(forest)).unwrap();
+            engine::step(&mut state, Action::ActivateAbility(amulet, 0)).unwrap();
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseCostTargets { ref candidates, .. }
+                    if candidates.contains(&creature) && candidates.contains(&spare)));
+            engine::step(&mut state, Action::ChooseCostTarget(creature)).unwrap();
+            paid_priority(&mut state, actor);
+            assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
+            let hand = state.players[actor.index()].hand.len();
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            let treasure = crate::card_def::card_id_by_name("Treasure Token").unwrap();
+            for branch in [&mut state, &mut restored] {
+                finish(branch);
+                assert_eq!(branch.objects.get(creature).zone, Zone::Battlefield);
+                assert!(branch.objects.get(creature).tapped);
+                assert_eq!(engine::effective_power(branch, creature), 1);
+                assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                assert_eq!(branch.objects.get(amulet).counters.soul, 1);
+                assert_eq!(
+                    branch.players[actor.index()]
+                        .battlefield
+                        .iter()
+                        .filter(|object| {
+                            let live = branch.objects.get(**object);
+                            live.card_def == treasure && live.v4.is_token
+                        })
+                        .count(),
+                    1
+                );
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(
+                    branch,
+                )
+                .unwrap();
             }
             assert_eq!(state, restored);
         }
