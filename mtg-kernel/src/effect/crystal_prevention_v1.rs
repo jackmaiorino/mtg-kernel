@@ -572,6 +572,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
         }
         EffectOp::Choice { options, .. } => options.iter().all(ordinary_nondamage),
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => ordinary_nondamage(unpaid),
         EffectOp::MayPayCostThen {
             then, otherwise, ..
         } => ordinary_nondamage(then) && otherwise.as_deref().is_none_or(ordinary_nondamage),

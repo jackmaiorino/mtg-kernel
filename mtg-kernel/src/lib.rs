@@ -711,3 +711,6 @@ pub mod fake_observation_v50;
 ))]
 #[path = "flamewake_phoenix_v1/paid_printing_tests.rs"]
 mod flamewake_phoenix_v1;
+
+#[cfg(all(test, feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures")))]
+mod painful_quandary_v1;

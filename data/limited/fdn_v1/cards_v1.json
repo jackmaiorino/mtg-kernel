@@ -7604,6 +7604,36 @@
       "is_token": false,
       "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
       "intrinsic_keywords_v1": ["reach"]
+    },
+    {
+      "name": "Painful Quandary",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_painful_quandary_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "opponent_cast_trigger",
+        "optional_opponent_discard_payment",
+        "unpaid_life_loss"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PainfulQuandary.java",
+      "is_token": false
     }
   ]
 }

@@ -21,6 +21,7 @@ mod standard_look;
 use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
+mod discard_payment_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
@@ -1723,6 +1724,12 @@ pub enum EffectOp {
         player: PlayerRef,
         card_type: CardType,
     },
+    /// Optional exact-one private discard, otherwise run the explicit child.
+    /// Appended so predecessor effect discriminants remain unchanged.
+    MayDiscardCardOtherwiseV1 {
+        player: PlayerRef,
+        unpaid: Box<EffectOp>,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2173,6 +2180,10 @@ pub enum EffectFrame {
         binding: ExileTopChoiceBindingV1,
         chosen: EffectObjectBinding,
     },
+    DiscardPaymentV1 {
+        choice: discard_payment_v1::DiscardPaymentChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2525,6 +2536,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     ChooseNewlyExiledCard {
         binding: ExileTopChoiceBindingV1,
+    },
+    DiscardPaymentV1 {
+        choice: discard_payment_v1::DiscardPaymentChoiceV1,
     },
 }
 
@@ -3124,6 +3138,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
@@ -4478,6 +4493,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
+            let frame = EffectFrame::DiscardPaymentV1 {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::DiscardDraw { choice } => {
             let frame = EffectFrame::DiscardDraw {
@@ -6133,6 +6159,9 @@ pub(crate) fn effect_op_at_structural_path<'a>(
         EffectOp::Choice { options, .. } => options
             .get(usize::from(head))
             .and_then(|op| effect_op_at_structural_path(op, tail)),
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if head == 0 => {
+            effect_op_at_structural_path(unpaid, tail)
+        }
         _ => None,
     }
 }
@@ -6439,6 +6468,7 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
                 _ => return None,
             },
             EffectOp::Choice { options, .. } => options.get(usize::from(component))?,
+            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if component == 0 => unpaid,
             _ => return None,
         };
     }
@@ -7418,6 +7448,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
+                        | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -7437,6 +7468,12 @@ fn validate_answered_choice_guard(
             }
         }
         Some(EffectAnsweredChoiceGuard::StandardSelection { frame }) => {
+            if let EffectFrame::DiscardPaymentV1 { choice, selected } = frame.as_ref() {
+                let mut before_answer = pending.clone();
+                before_answer.frames.pop();
+                discard_payment_v1::validate_choice(state, &before_answer, choice)?;
+                discard_payment_v1::validate_selected(choice, selected)?;
+            }
             if pending.choice.is_some()
                 || pending.frames.last() != Some(&**frame)
                 || !matches!(
@@ -7448,6 +7485,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExilePlay { .. }
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
+                        | EffectFrame::DiscardPaymentV1 { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -8227,6 +8265,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     private_keep_one_v1::validate_required_stage(state, pending)?;
+    discard_payment_v1::validate_required_stage(state, pending)?;
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
@@ -8452,6 +8491,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
+                    discard_payment_v1::validate_choice(state, pending, choice)?;
+                    let all = selected
+                        .iter()
+                        .chain(legal)
+                        .filter_map(|c| c.expected_object)
+                        .collect::<Vec<_>>();
+                    validate_exact_binding_permutation(
+                        &choice.hand,
+                        &all,
+                        "discard payment candidates",
+                    )?;
+                    if *chooser != choice.player
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != 1
+                    {
+                        return Err("discard payment prompt shape changed".into());
+                    }
                 }
                 EffectTargetSelectionPurpose::DiscardDraw { choice } => {
                     standard_discard::validate(state, pending, choice)?;
@@ -10149,6 +10209,7 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
                 validate_resumable_program(option)?;
             }
         }
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => validate_resumable_program(unpaid)?,
         EffectOp::MayPayManaThen { then, .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
         | EffectOp::LookAtTopMayRevealThen { then, .. } => validate_resumable_program(then)?,
@@ -10249,6 +10310,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::ExilePlay { .. }
                 | EffectFrame::ExileBatchSelect { .. }
                 | EffectFrame::DiscardDraw { .. }
+                | EffectFrame::DiscardPaymentV1 { .. }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -10258,6 +10320,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::DiscardPaymentV1 { choice, selected } => {
+                    discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
+                }
                 EffectFrame::DiscardDraw { choice, selected } => {
                     standard_discard::finish(state, &continuation, &choice, &selected)?
                 }
@@ -12302,6 +12367,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 let answer = resolution_answer.take().ok_or("free land play has no typed answer")?;
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true, answer)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::MayDiscardCardOtherwiseV1 { player, unpaid } => {
+                if discard_payment_v1::stage(state, &mut continuation, player, unpaid, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::DiscardUpToThenDraw { player, maximum } => {
                 if standard_discard::stage(state, &mut continuation, player, maximum, path)? {
@@ -17220,6 +17291,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
+        | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

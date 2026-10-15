@@ -271,6 +271,8 @@ pub enum TriggerCondition {
     BeginningControllerCombatWithCreaturePowerAtLeast(i32),
     /// Controlled OTHER nontoken creature death, observed before the batch.
     OtherControlledNontokenCreatureDiesV1,
+    /// Actual opposing casts; spell copies emit no cast event.
+    OpponentCastsSpellV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3448,6 +3450,19 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+pub(crate) fn painful_quandary_payment_v1() -> EffectOp {
+    EffectOp::MayDiscardCardOtherwiseV1 {
+        player: PlayerRef::Opponent,
+        unpaid: Box::new(EffectOp::LoseLife {
+            player: PlayerRef::Opponent,
+            amount: 5,
+        }),
+    }
+}
+const PAINFUL_QUANDARY_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::OpponentCastsSpellV1,
+    ..etb_trigger(painful_quandary_payment_v1)
+}];
 fn tersa_discard_draw() -> EffectOp {
     EffectOp::DiscardUpToThenDraw {
         player: PlayerRef::Controller,
@@ -3530,6 +3545,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         return &JOB_SELECT_TRIGGERS;
     }
     match card.name {
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        "Painful Quandary" => &PAINFUL_QUANDARY_TRIGGERS_V1,
         "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
         "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
         "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
@@ -5959,6 +5979,12 @@ fn trigger_matches(
                 && selected_spell_types(state, *spell)
                     .contains(&crate::card_def::CardType::Creature)
         }
+        (
+            TriggerCondition::OpponentCastsSpellV1,
+            CommittedEvent::SpellCast {
+                controller: caster, ..
+            },
+        ) => *caster == controller.opponent(),
         (
             TriggerCondition::CastSpell,
             CommittedEvent::SpellCast {

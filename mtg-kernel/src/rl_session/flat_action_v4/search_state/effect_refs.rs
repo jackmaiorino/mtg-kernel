@@ -67,6 +67,7 @@ impl Scan<'_> {
                 self.creature_choice(kind)
             }
             Sequence(ops) | Choice { options: ops, .. } => ops.iter().any(|x| self.op(x)),
+            MayDiscardCardOtherwiseV1 { unpaid, .. } => self.op(unpaid),
             Conditional { then, else_, .. } => self.op(then) || self.op(else_),
             MayPayCostThen {
                 then, otherwise, ..
@@ -317,6 +318,9 @@ impl Scan<'_> {
                         .and_then(|candidate| candidate.expected_object)
                         .is_some_and(|b| self.b(&b))
             }
+            DiscardPaymentV1 { choice, selected } => {
+                self.bs(&choice.hand) || self.bs(selected) || self.op(&choice.unpaid)
+            }
             DiscardDraw { choice, selected } => {
                 self.bs(&choice.hand) || self.bs(selected) || self.fs(&choice.remaining)
             }
@@ -560,6 +564,7 @@ impl Scan<'_> {
         match p {
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
+            DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
             DiscardDraw { choice } => self.bs(&choice.hand) || self.fs(&choice.remaining),
             ExileBatch { choice } => {
                 self.fs(&choice.remaining)
