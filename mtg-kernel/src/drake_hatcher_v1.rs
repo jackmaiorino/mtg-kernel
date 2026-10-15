@@ -433,10 +433,7 @@ mod tests {
         assert_eq!(id, 448);
         assert_eq!(card_id_by_name("Drake Token"), Some(449));
         assert_eq!(CARD_DEFS.len(), 450);
-        assert_eq!(
-            CARD_DEFS[usize::from(id)].capability,
-            CardCapability::Partial
-        );
+        assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_err());
         assert!(
             std::panic::catch_unwind(|| crate::rules_vector_v1::sources::card_rules(id)).is_err()

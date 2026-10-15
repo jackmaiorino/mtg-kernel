@@ -238,7 +238,7 @@ fn bolt(state: &mut GameState, actor: PlayerId, target: ObjectId) {
 #[test]
 fn genuine_partial_printing_and_typed_recipe() {
     let def = &CARD_DEFS[usize::from(card_id_by_name("Spinner of Souls").unwrap())];
-    assert_eq!(def.capability, CardCapability::Partial);
+    assert_eq!(def.capability, CardCapability::Full);
     assert_eq!(def.cost.generic, 2);
     assert_eq!((def.power, def.toughness), (Some(4), Some(3)));
     assert_eq!(def.subtypes, &[Subtype::Spider, Subtype::Spirit]);

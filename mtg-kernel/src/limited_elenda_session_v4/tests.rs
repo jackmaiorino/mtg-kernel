@@ -574,7 +574,7 @@ fn v4_strict_wire_types_no_state_injection_owner_restore_and_original_menu_forge
         let before = wire.bytes();
         let mut partial = reset;
         partial["decks"][0]["cards"] =
-            json!([{"name":"Forest","count":39},{"name":ELENDA,"count":1}]);
+            json!([{"name":"Forest","count":39},{"name":"Abyssal Harvester","count":1}]);
         let reply = wire.send(partial);
         assert_eq!(reply["code"], "unsupported_deck");
         assert_eq!(wire.bytes(), before);

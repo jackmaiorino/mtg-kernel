@@ -260,7 +260,7 @@ pub(crate) fn selected_definition(d: &CardDef, card_id: u16) -> bool {
     } = d;
     d.name == "Flamewake Phoenix"
         && d.object_name == d.name
-        && d.capability == CardCapability::Partial
+        && matches!(d.capability, CardCapability::Partial | CardCapability::Full)
         && d.is_executable()
         && d.cost.generic == 1
         && d.cost.x_count == 0

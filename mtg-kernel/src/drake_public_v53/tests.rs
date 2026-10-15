@@ -140,7 +140,7 @@ fn typed_printed_roots_cost_order_token_blueprint_and_tamper() {
     ] {
         let value = meaning::printed_meaning(id, root).unwrap();
         meaning::validate(&value).unwrap();
-        assert_eq!(value.capability, crate::card_def::CardCapability::Partial);
+        assert_eq!(value.capability, crate::card_def::CardCapability::Full);
         assert!(
             !value.full_engine_admitted
                 && !value.model_admitted

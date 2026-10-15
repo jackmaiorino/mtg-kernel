@@ -8975,7 +8975,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 444);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
         assert!(partials.is_empty());
         for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));

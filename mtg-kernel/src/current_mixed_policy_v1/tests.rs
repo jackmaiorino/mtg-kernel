@@ -955,7 +955,7 @@ mod paid {
             let id = crate::card_def::card_id_by_name(name).unwrap();
             assert_eq!(
                 crate::card_def::CARD_DEFS[usize::from(id)].capability,
-                crate::card_def::CardCapability::Partial
+                crate::card_def::CardCapability::Full
             );
             let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
             let printing = &descriptor["registered_permanent_printing"];

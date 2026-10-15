@@ -73,7 +73,7 @@ mod registered {
     fn genuine_printed_order_keeps_two_additive_bonuses_and_menace_only_on_first() {
         let real = genuine();
         validate(&real).unwrap();
-        assert_eq!(real.capability, CardCapability::Partial);
+        assert_eq!(real.capability, CardCapability::Full);
         assert!(!real.model_admitted);
         assert_eq!(real.printed.generic_mana, 2);
         assert_eq!(real.printed.colored_pips, [ManaColor::W, ManaColor::B]);

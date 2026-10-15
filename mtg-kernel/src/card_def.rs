@@ -2763,7 +2763,7 @@ mod tests {
         // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The seven Partial source candidates occupy ids 444-448 and 450-451.
+        // The seven prospective Full candidates occupy ids 444-448 and 450-451.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
@@ -3217,19 +3217,7 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
-        let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
-            &[
-                (444, "Elenda, Saint of Dusk"),
-                (445, "Flamewake Phoenix"),
-                (446, "Spinner of Souls"),
-                (447, "Painful Quandary"),
-                (448, "Drake Hatcher"),
-                (450, "Bloodthirsty Conqueror"),
-                (451, "Doubling Season"),
-            ]
-        } else {
-            &[]
-        };
+        let expected_partial: &[(u16, &str)] = &[];
         let partial = CARD_DEFS
             .iter()
             .enumerate()
@@ -3264,27 +3252,10 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert_eq!(
-                non_full,
-                vec![
-                    (444, "Elenda, Saint of Dusk", CardCapability::Partial),
-                    (445, "Flamewake Phoenix", CardCapability::Partial),
-                    (446, "Spinner of Souls", CardCapability::Partial),
-                    (447, "Painful Quandary", CardCapability::Partial),
-                    (448, "Drake Hatcher", CardCapability::Partial),
-                    (450, "Bloodthirsty Conqueror", CardCapability::Partial),
-                    (451, "Doubling Season", CardCapability::Partial),
-                ]
-            );
+            assert!(non_full.is_empty());
             for id in [444, 445, 446, 447, 448, 450, 451] {
-                assert!(matches!(
-                    preflight_fully_supported_deck(&[id]),
-                    Err(DeckPreflightError::NotFullySupported {
-                        index: 0,
-                        capability: CardCapability::Partial,
-                        ..
-                    })
-                ));
+                assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
+                assert!(preflight_fully_supported_deck(&[id]).is_ok());
             }
             for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
                 assert_eq!(card_id_by_name(name), Some(id));
