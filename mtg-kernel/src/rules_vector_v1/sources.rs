@@ -425,6 +425,15 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
 
 /// Extracts every rules source of one card definition.
 pub fn card_rules(card_id: u16) -> CardRulesV1 {
+    assert!(
+        !crate::trigger::triggers_for(card_id)
+            .iter()
+            .any(|t| matches!(
+                (t.effect)(),
+                EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+            )),
+        "nonland token copy with Aura entry choice requires its precise successor"
+    );
     let def: &CardDef = &CARD_DEFS[usize::from(card_id)];
     assert!(!def.activated_abilities.iter().any(|a| a.cost.iter().any(|c| matches!(c, crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }))), "rules-vector-v1 cannot represent exact typed source-counter costs or saved combat-damage incubation; successor required");
     let CardDef {

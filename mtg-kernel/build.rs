@@ -3498,6 +3498,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
             "EffectOp::TakeExtraTurnAfterThisOneV1",
         ),
+        "Extravagant Replication" => program("None", "MoveObject(ThisSource,Battlefield);controllerUpkeep:CreateAnotherControlledNonlandTargetCopyV1(exactOriginalSourceAndTargetIncarnations,currentCopiableValues,untargetedAuraAttachmentBeforeEntry,replacementsApply)", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Self-Reflection" => program(
             "ControlledCreature",
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
@@ -7238,6 +7239,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Clockwork Percussionist" => "dies:impulse_top_one_until_owners_next_turn",
         "Ichor Wellspring" => "etb_and_dies:draw:1",
         "Experimental Synthesizer" => "etb_and_leaves:impulse_top_one_end_of_turn",
+        "Extravagant Replication" => "controller_upkeep:target_another_controlled_nonland_permanent:create_token_copy:current_copiable_face:untargeted_aura_host_choice_before_entry",
         "Goblin Bushwhacker" => "etb_if_kicked:pump_controlled_creatures:1:0:haste",
         "Faerie Miscreant" => "etb_if_another_same_definition:draw:1",
         "Faerie Seer" => "etb:scry:2",

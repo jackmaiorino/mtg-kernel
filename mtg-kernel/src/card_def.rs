@@ -1090,6 +1090,8 @@ pub enum TargetSpec {
     /// graveyard. The signed bound is captured source power, not a fixed
     /// printed mana value. A negative bound offers no targets.
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
+    /// Exactly one other nonland permanent controlled by the trigger controller.
+    AnotherControlledNonlandPermanent,
 }
 
 impl TargetSpec {
@@ -1184,6 +1186,7 @@ impl TargetSpec {
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
+            TargetSpec::AnotherControlledNonlandPermanent => 104,
         }
     }
 }
@@ -2760,14 +2763,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 452 (Partial Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 453 (Partial Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The eight Partial source candidates occupy ids 444-448 and 450-452.
+        // The nine Partial source candidates occupy ids 444-448 and 450-453.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                453
+                454
             } else {
                 192
             }
@@ -3227,6 +3230,7 @@ mod tests {
                 (450, "Bloodthirsty Conqueror"),
                 (451, "Doubling Season"),
                 (452, "Midnight Snack"),
+                (453, "Extravagant Replication"),
             ]
         } else {
             &[]
@@ -3276,9 +3280,10 @@ mod tests {
                     (450, "Bloodthirsty Conqueror", CardCapability::Partial),
                     (451, "Doubling Season", CardCapability::Partial),
                     (452, "Midnight Snack", CardCapability::Partial),
+                    (453, "Extravagant Replication", CardCapability::Partial),
                 ]
             );
-            for id in [444, 445, 446, 447, 448, 450, 451, 452] {
+            for id in [444, 445, 446, 447, 448, 450, 451, 452, 453] {
                 assert!(matches!(
                     preflight_fully_supported_deck(&[id]),
                     Err(DeckPreflightError::NotFullySupported {

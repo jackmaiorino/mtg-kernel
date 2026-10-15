@@ -3689,16 +3689,59 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
-        Ok(expanded) => expanded,
-        Err(_) => {
+    batch_with_aura_token_hosts_v1(state, events, attachments, None);
+}
+
+/// The bound copy continuation supplies one untargeted host per actual expanded
+/// Aura. Expansion still records the original single request and replacement
+/// world; these entry choices never resubmit each member through replacement.
+pub(crate) fn batch_with_copied_aura_hosts_v1(
+    state: &mut GameState,
+    event: ProposedEvent,
+    hosts: Vec<crate::state::ObjectLinkV4>,
+) {
+    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts));
+}
+fn batch_with_aura_token_hosts_v1(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    attachments: Vec<(
+        crate::effect::EffectObjectBinding,
+        crate::effect::EffectObjectBinding,
+    )>,
+    aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
+) {
+    let (mut events, token_requests) =
+        match crate::doubling_season_v48::expand_tokens(state, events) {
+            Ok(expanded) => expanded,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
+    if let Some(hosts) = aura_hosts {
+        let valid = hosts.len() == events.len() && events.iter().all(|event| {
+            matches!(event, ProposedEvent::CreateToken(token)
+                if crate::card_def::CARD_DEFS[usize::from(token.token_def)].attachment.is_some()
+                && token.initialization_v48.as_ref().is_some_and(|init| init.copied && init.attached_to.is_none()))
+        });
+        if !valid {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ObjectId(0),
             ));
             return;
         }
-    };
+        for (event, host) in events.iter_mut().zip(hosts) {
+            let ProposedEvent::CreateToken(token) = event else {
+                unreachable!()
+            };
+            token.initialization_v48.as_mut().unwrap().attached_to = Some(host);
+        }
+    }
     if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
         || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
     {

@@ -7789,6 +7789,36 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/m/MidnightSnack.java",
       "is_token": false
+    },
+    {
+      "name": "Extravagant Replication",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_extravagant_replication_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "controller_upkeep",
+        "another_controlled_nonland_target_copy",
+        "untargeted_aura_attachment_before_entry"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ExtravagantReplication.java",
+      "is_token": false
     }
   ]
 }

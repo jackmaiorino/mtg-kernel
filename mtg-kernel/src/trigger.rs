@@ -713,6 +713,12 @@ const PHYREXIAN_ARENA_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef 
     },
     ..etb_trigger(phyrexian_arena_effect)
 }];
+const EXTRAVAGANT_REPLICATION_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfUpkeep {
+        controller_only: true,
+    },
+    ..etb_trigger(crate::extravagant_replication_v1::root)
+}];
 const GLEAMING_BARRIER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
     home_zone: Zone::Graveyard,
@@ -3615,6 +3621,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Wardens of the Cycle" => &WARDENS_OF_THE_CYCLE_TRIGGERS,
         "Crypt Feaster" => &CRYPT_FEASTER_TRIGGERS,
         "Erudite Wizard" => &ERUDITE_WIZARD_TRIGGERS,
+        "Extravagant Replication" => &EXTRAVAGANT_REPLICATION_TRIGGERS,
         "Phyrexian Arena" => &PHYREXIAN_ARENA_TRIGGERS,
         "Gleaming Barrier" => &GLEAMING_BARRIER_TRIGGERS,
         "Angel of Finality" => &BOJUKA_BOG_TRIGGERS,
@@ -3870,6 +3877,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Extravagant Replication" => TargetSpec::AnotherControlledNonlandPermanent,
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,

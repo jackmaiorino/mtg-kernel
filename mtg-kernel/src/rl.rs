@@ -10257,6 +10257,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                             crate::effect::EffectTargetSelectionPurpose::UntapLands {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::AttachCopiedAuraV1 { .. }
                             | crate::effect::EffectTargetSelectionPurpose::AttachReturningAura {
                                 ..
                             } => TargetSelectionPurposeV4::PermanentSelection,

@@ -1345,6 +1345,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureToughnessAtLeastFour
                     | TargetSpec::CreatureEnchantmentOrPlaneswalker
                     | TargetSpec::AnotherControlledCreature
+                    | TargetSpec::AnotherControlledNonlandPermanent
                     | TargetSpec::ControlledCreatureWithSubtype(_)
                     | TargetSpec::AttackingCreatureWithSubtype(_)
                     | TargetSpec::ControlledPermanentWithAnySubtype(_)

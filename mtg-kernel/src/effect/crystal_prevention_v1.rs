@@ -570,6 +570,8 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => true,
         EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1) => true,
+        EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+        | EffectOp::CreateAttachedAuraCopyV1 { .. } => true,
         EffectOp::Sequence(ops) => ops.iter().all(ordinary_nondamage),
         EffectOp::Conditional { then, else_, .. } => {
             ordinary_nondamage(then) && ordinary_nondamage(else_)
