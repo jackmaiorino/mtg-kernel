@@ -6130,7 +6130,7 @@ mod soul_placement_primitive_v1_tests {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod ravenous_amulet_paid_future_tests {
+pub(crate) mod ravenous_amulet_paid_future_tests {
     use super::*;
     use crate::engine::{self, Action, Decision};
     use crate::mana::ManaColor;
@@ -6475,14 +6475,14 @@ mod ravenous_amulet_paid_future_tests {
         }
     }
 
-    fn paid_priority(state: &mut GameState, actor: PlayerId) {
+    pub(crate) fn paid_priority(state: &mut GameState, actor: PlayerId) {
         assert!(matches!(engine::advance_until_decision(state),
             Decision::CastSpellOrPass { player, .. } if player == actor));
         assert!(state.engine.pending_cast.is_none());
         assert!(state.engine.pending_activation.is_none());
     }
 
-    fn finish(state: &mut GameState) {
+    pub(crate) fn finish(state: &mut GameState) {
         for _ in 0..32 {
             match engine::advance_until_decision(state) {
                 Decision::CastSpellOrPass { .. } if state.stack.is_empty() => return,
@@ -6493,7 +6493,7 @@ mod ravenous_amulet_paid_future_tests {
         panic!("Amulet stack did not finish");
     }
 
-    fn cast_amulet(actor: PlayerId) -> (GameState, ObjectId) {
+    pub(crate) fn cast_amulet(actor: PlayerId) -> (GameState, ObjectId) {
         cast_amulet_in(ready_state_for(actor), actor)
     }
 
@@ -6704,6 +6704,7 @@ mod ravenous_amulet_paid_future_tests {
             engine::step(&mut state, Action::ChooseCostTarget(creature)).unwrap();
             paid_priority(&mut state, actor);
             assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
+            crate::ravenous_observation_v51::tests::assert_current(&state);
             let hand = state.players[actor.index()].hand.len();
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
@@ -6731,6 +6732,7 @@ mod ravenous_amulet_paid_future_tests {
                     branch,
                 )
                 .unwrap();
+                crate::ravenous_observation_v51::tests::assert_current(branch);
                 cross_family_original_world_refusals(branch, actor, creature);
             }
             assert_eq!(state, restored);

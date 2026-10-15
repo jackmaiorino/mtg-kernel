@@ -2002,20 +2002,23 @@ pub fn observe_v2(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservationTextModeV2 {
     FullArtifact,
+    // Private construction mode. Only the distinct V51 DTO publishes this
+    // storage, together with its mandatory exact battlefield card roster.
+    RavenousV51Artifact,
     FlatForbiddenElided,
 }
 
 impl ObservationTextModeV2 {
     fn kernel_version(self) -> String {
         match self {
-            Self::FullArtifact => KERNEL_VERSION.to_string(),
+            Self::FullArtifact | Self::RavenousV51Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
 
     fn card_name(self, card_id: u16) -> String {
         match self {
-            Self::FullArtifact => card_name(card_id),
+            Self::FullArtifact | Self::RavenousV51Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -3532,6 +3535,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     SeasonV48,
     ConquerorV49,
     FakeV50,
+    RavenousV51,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3561,6 +3565,9 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
+        CommonProjectionScopeV42::RavenousV51 => {
+            crate::ravenous_observation_v51::validate_state(state)
+        }
         CommonProjectionScopeV42::ConquerorV49 => {
             crate::conqueror_observation_v49::validate_state(state)
         }
@@ -3581,6 +3588,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::SeasonV48
             | CommonProjectionScopeV42::ConquerorV49
             | CommonProjectionScopeV42::FakeV50
+            | CommonProjectionScopeV42::RavenousV51
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3592,7 +3600,11 @@ pub(crate) fn common_family_observation_storage_scoped(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: ObservationTextModeV2::FullArtifact,
+                text_mode: if scope == CommonProjectionScopeV42::RavenousV51 {
+                    ObservationTextModeV2::RavenousV51Artifact
+                } else {
+                    ObservationTextModeV2::FullArtifact
+                },
             },
             (
                 (
@@ -3608,6 +3620,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
+                            | CommonProjectionScopeV42::RavenousV51
                     ),
                     matches!(
                         scope,
@@ -3617,6 +3630,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
+                            | CommonProjectionScopeV42::RavenousV51
                     ),
                     matches!(
                         scope,
@@ -3625,6 +3639,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
+                            | CommonProjectionScopeV42::RavenousV51
                     ),
                     matches!(
                         scope,
@@ -3632,17 +3647,21 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
+                            | CommonProjectionScopeV42::RavenousV51
                     ),
                     matches!(
                         scope,
                         CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
+                            | CommonProjectionScopeV42::RavenousV51
                     ),
                 ),
                 matches!(
                     scope,
-                    CommonProjectionScopeV42::ConquerorV49 | CommonProjectionScopeV42::FakeV50
+                    CommonProjectionScopeV42::ConquerorV49
+                        | CommonProjectionScopeV42::FakeV50
+                        | CommonProjectionScopeV42::RavenousV51
                 ),
             ),
         ),
@@ -3658,7 +3677,10 @@ pub(crate) fn common_family_observation_storage_scoped(
             ),
             true,
         ),
-        scope == CommonProjectionScopeV42::FakeV50,
+        matches!(
+            scope,
+            CommonProjectionScopeV42::FakeV50 | CommonProjectionScopeV42::RavenousV51
+        ),
     )
 }
 
@@ -5108,6 +5130,34 @@ pub(crate) fn core_policy_action_candidates_v5(
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     core_policy_action_candidates_hunter_scoped_v45(decision, state, false)
 }
+/// Distinct V51 entry point. Prior consumer entry points retain their modes.
+pub(crate) fn policy_observation_extensions_ravenous_v51(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::ravenous_observation_v51::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::RavenousV51Artifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+    )
+}
+
+/// Actions contain stable references rather than narrow public-card counters.
+/// Validate the actual V51 world before reusing the unchanged family generator.
+pub(crate) fn core_policy_action_candidates_ravenous_scoped_v51(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::ravenous_observation_v51::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_fake_scoped_v50(decision, state, true, true, true, true)
+}
+
 pub(crate) fn policy_observation_extensions_fake_v50(
     state: &GameState,
     actor: PlayerId,
@@ -8410,7 +8460,10 @@ fn public_card_v2(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    if object.counters.soul != 0 {
+    if object.counters.soul != 0
+        && !(text_mode == ObservationTextModeV2::RavenousV51Artifact
+            && object.zone == Zone::Battlefield)
+    {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
         ));
@@ -8438,10 +8491,12 @@ fn public_card_v2_non_soul_fields(
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
             text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
-        } else if matches!(text_mode, ObservationTextModeV2::FullArtifact)
-            && (object.v4.face_index == 1
-                || card_effective_identity_v1(state, id).is_some()
-                || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
+        } else if matches!(
+            text_mode,
+            ObservationTextModeV2::FullArtifact | ObservationTextModeV2::RavenousV51Artifact
+        ) && (object.v4.face_index == 1
+            || card_effective_identity_v1(state, id).is_some()
+            || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
         {
             engine::effective_name(state, id).to_string()
         } else {

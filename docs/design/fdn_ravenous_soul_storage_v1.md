@@ -111,6 +111,50 @@ Remaining: actual native cross-family qualification and observation/consumer
 support. No Full, model, sampler, fair-search or training claim follows from
 this prerequisite.
 
+The distinct `ravenous_observation_v51` source prerequisite now retains every
+V50 mixed-family field and producer, adds Ravenous paid facts and ordered
+meanings, and publishes a mandatory `battlefield: [Vec<CardV51>; 2]` roster.
+Every public battlefield card has exact soul, +1/+1 and marked-damage fields,
+including zero. The common projection retains its predecessor slots only for
+family composition; the V51 roster is authoritative for these three values.
+Artifact checks require identical common card/order/control, unique battlefield
+objects, compatible narrow placeholders and the same sorted nonzero soul facts.
+`validate_current` rebuilds the entire value from the current owned state,
+surface and supplied decision, so a recomputed commitment cannot authorize a
+changed roster, fact, occurrence or decision identity.
+
+A private `RavenousV51Artifact` construction mode and distinct
+`CommonProjectionScopeV42::RavenousV51` admit nonzero soul only for public
+battlefield storage used by this DTO. Prior V1/V2/V50 entry points keep their
+previous modes and refuse nonzero soul. The new scope preserves every prior
+family capability, including the explicit Crystal/Twinflame Fake-aware menus.
+It does not modify any frozen profile, registry, model, tensor or sampler.
+Scoped extension and core candidate wrappers validate the V51 state before
+reusing existing private family builders. Core/Divine/variable-cast candidate
+semantics use stable references and do not serialize a narrow card counter.
+
+New tests reuse the genuinely paid Amulet fixtures, rather than synthesizing
+payment owners. Both seats cover live publication, actual engine counter
+removal, draw/placement, self-sacrifice loss, GameState/DTO restore, recommitted
+forgeries, predecessor soul refusal, private hand/library noninterference and
+mandatory wide fields. The actual paid Fake coexistence case checks the whole
+V51 observation before its gained return and after both restore branches.
+The width case uses labeled numeric fixture operands on a public artifact; it
+does not claim an additional printed producer. No original operation world,
+executable payment index, draw identity or sacrifice printing is added to the
+Ravenous facts. Own and known hand/library cards remain ordinary authorized
+channels. These source changes have only pinned Rust 1.94.1 formatting and
+static/diff checks. All new Rust remains uncompiled and unexecuted.
+
+Remaining consumer work: an owning V51 backend must select this scope, bind
+the exact current observation/actions/decision, and use the V51 candidate and
+extension entry points; Human must resolve visible row handles and render the
+mandatory exact roster and ordered Ravenous facts. Existing sessions/Human
+continue their current refusal behavior. Restore/retry/stale/foreign-action and
+mixed-family backend/Human tests, native cross-family qualification and any
+future model admission remain separate. This observation prerequisite alone
+does not admit Ravenous as Full or admit training, fair search or sampling.
+
 Primary source receipts:
 
 - `Mage.Sets/src/mage/cards/r/RavenousAmulet.java`: blob `0d010bb77fcf85f9168ade1060b9430782571e0f`, SHA-256 `e89ec45785f01de0ef55d485fdcfbc34fb6f8deb71601511b214d43043b39d74`.

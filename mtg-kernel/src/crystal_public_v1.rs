@@ -560,7 +560,11 @@ pub(crate) fn parts_for_common_scope(
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<CrystalObservationV1, RlContractError> {
     let (substep_index, substep_count) = substep;
-    let accept_fake = scope == crate::rl::CommonProjectionScopeV42::FakeV50;
+    let accept_fake = matches!(
+        scope,
+        crate::rl::CommonProjectionScopeV42::FakeV50
+            | crate::rl::CommonProjectionScopeV42::RavenousV51
+    );
 
     validate_state(state).map_err(RlContractError)?;
     let project_menu = !crate::twinflame_observation_v1::owns_family_menu(state);
