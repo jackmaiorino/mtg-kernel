@@ -91,6 +91,12 @@ pub(crate) fn copy_projection(def: u16, method: CastMethodV4) -> SourceTypeProje
     }))
 }
 pub(crate) fn copy_method(method: CastMethodV4) -> CastMethodV4 {
+    copy_method_for_selection(method, enabled())
+}
+fn copy_method_for_selection(method: CastMethodV4, selected: bool) -> CastMethodV4 {
+    if !selected {
+        return CastMethodV4::Normal;
+    }
     match method {
         CastMethodV4::Omen | CastMethodV4::Bestow => method,
         _ => CastMethodV4::Normal,

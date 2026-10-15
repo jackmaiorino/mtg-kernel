@@ -65,8 +65,12 @@ original payment/publication/departure authorities remain intact. Missing,
 duplicate or foreign type evidence refuses, without printed-type fallback.
 The journals retain their existing trusted-occurrence assumption.
 
-Copies append the optional projection to immutable `SpellCopyOriginV4` and
-retain their actual alternative cast form. Validation compares the copy's form,
+When the new descriptor selects it, copies append the optional projection to
+immutable `SpellCopyOriginV4` and retain their actual alternative cast form.
+The three previously Normal-only copy paths keep Normal for every cast method
+when the descriptor is absent; the pre-existing Standard snapshot copier keeps
+its original form behavior. A source test covers all eight methods in both
+modes. Validation compares the selected copy's form,
 origin and parent live/departure types. A ceased copy retains its original
 projection on its arena object; a departed/recast physical parent cannot replace
 it. Empty projections omit JSON and contribute no Hash input. Existing enum

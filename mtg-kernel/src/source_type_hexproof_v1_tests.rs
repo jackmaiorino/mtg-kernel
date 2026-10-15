@@ -140,7 +140,7 @@ fn paid_form(state: &mut GameState, name: &str, form: u8) -> (ObjectId, StackIte
 }
 
 #[test]
-fn actual_paid_sorcery_adventure_and_omen_keep_selected_types_through_parent_departure() {
+fn paid_sorcery_forms_preserve_absent_catalog_copy_contract_through_departure() {
     for name in ["Fang Dragon", "Sagu Wildling"] {
         for form in [0, 1] {
             let mut state = ready();
@@ -151,7 +151,16 @@ fn actual_paid_sorcery_adventure_and_omen_keep_selected_types_through_parent_dep
             assert_eq!(types.contains(CardType::Creature), form == 0);
             let (copy_source, copy_id) =
                 engine::copy_spell_for(&mut state, source, PlayerId::P1).unwrap();
-            assert_eq!(current_types(&state, copy_source).unwrap(), types);
+            let copy_types = if enabled() {
+                types
+            } else {
+                spell_types(
+                    &CARD_DEFS[usize::from(state.objects.get(source).card_def)],
+                    CastMethodV4::Normal,
+                )
+                .unwrap()
+            };
+            assert_eq!(current_types(&state, copy_source).unwrap(), copy_types);
             engine::counter_stack_item_by_id(&mut state, parent_id)
                 .unwrap()
                 .unwrap();
@@ -162,10 +171,10 @@ fn actual_paid_sorcery_adventure_and_omen_keep_selected_types_through_parent_dep
                 .find(|item| item.v4.stack_item_id == copy_id)
                 .unwrap();
             engine::validate_spell_stack_source(&state, copy).unwrap();
-            assert_eq!(current_types(&state, copy_source).unwrap(), types);
+            assert_eq!(current_types(&state, copy_source).unwrap(), copy_types);
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-            assert_eq!(current_types(&restored, copy_source).unwrap(), types);
+            assert_eq!(current_types(&restored, copy_source).unwrap(), copy_types);
             assert_eq!(state.state_hash(), restored.state_hash());
         }
     }
@@ -173,7 +182,7 @@ fn actual_paid_sorcery_adventure_and_omen_keep_selected_types_through_parent_dep
 
 #[test]
 #[cfg(feature = "standard-magezero-fixtures")]
-fn actual_paid_instant_adventure_and_copy_are_distinct_from_the_creature_form() {
+fn paid_instant_adventure_is_distinct_while_absent_catalog_copy_remains_normal() {
     for form in [0, 1] {
         let mut state = ready();
         let (source, parent_id) = paid_form(&mut state, "Questing Druid", form);
@@ -186,6 +195,15 @@ fn actual_paid_instant_adventure_and_copy_are_distinct_from_the_creature_form() 
         );
         let (copy_source, copy_id) =
             engine::copy_spell_for(&mut state, source, PlayerId::P1).unwrap();
+        let copy_types = if enabled() {
+            types
+        } else {
+            spell_types(
+                &CARD_DEFS[usize::from(state.objects.get(source).card_def)],
+                CastMethodV4::Normal,
+            )
+            .unwrap()
+        };
         engine::counter_stack_item_by_id(&mut state, parent_id)
             .unwrap()
             .unwrap();
@@ -198,8 +216,40 @@ fn actual_paid_instant_adventure_and_copy_are_distinct_from_the_creature_form() 
                 .find(|item| item.v4.stack_item_id == copy_id)
                 .unwrap();
             engine::validate_spell_stack_source(state, copy).unwrap();
-            assert_eq!(current_types(state, copy_source).unwrap(), types);
+            assert_eq!(current_types(state, copy_source).unwrap(), copy_types);
         }
+    }
+}
+
+#[test]
+fn every_cast_method_preserves_absent_mode_and_selected_alternative_semantics() {
+    for method in [
+        CastMethodV4::Normal,
+        CastMethodV4::Alternative,
+        CastMethodV4::Flashback,
+        CastMethodV4::Madness,
+        CastMethodV4::Plotted,
+        CastMethodV4::Escape,
+        CastMethodV4::Bestow,
+        CastMethodV4::Omen,
+    ] {
+        assert_eq!(
+            copy_method_for_selection(method, false),
+            CastMethodV4::Normal
+        );
+        let selected = match method {
+            CastMethodV4::Omen | CastMethodV4::Bestow => method,
+            _ => CastMethodV4::Normal,
+        };
+        assert_eq!(copy_method_for_selection(method, true), selected);
+        assert_eq!(
+            copy_method(method),
+            if enabled() {
+                selected
+            } else {
+                CastMethodV4::Normal
+            }
+        );
     }
 }
 
