@@ -37,6 +37,22 @@ pub struct SelectorV52 {
     pub card_db_hash: u64,
     pub producer_sha256: String,
 }
+/// Public rule vocabulary. The frozen engine Supertype has no serde contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SupertypeV52 {
+    Basic,
+    Snow,
+    Legendary,
+}
+impl From<Supertype> for SupertypeV52 {
+    fn from(value: Supertype) -> Self {
+        match value {
+            Supertype::Basic => Self::Basic,
+            Supertype::Snow => Self::Snow,
+            Supertype::Legendary => Self::Legendary,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrintedCreatureV52 {
@@ -44,7 +60,7 @@ pub struct PrintedCreatureV52 {
     pub colored_pips: Vec<ManaColor>,
     pub types: Vec<CardType>,
     pub subtypes: Vec<Subtype>,
-    pub supertypes: Vec<Supertype>,
+    pub supertypes: Vec<SupertypeV52>,
     pub colors: Vec<ManaColor>,
     pub power: i16,
     pub toughness: i16,
@@ -143,6 +159,8 @@ pub fn producer_sha256() -> String {
         for source in [
             SCHEMA,
             include_str!("rules_meaning_elenda_v52.rs"),
+            include_str!("elenda_public_v52.rs"),
+            include_str!("rl.rs"),
             include_str!("starting_life_statics_v1.rs"),
             include_str!("source_type_hexproof_v1.rs"),
             include_str!("controlled_creature_grants_v1.rs"),
@@ -348,7 +366,12 @@ pub fn meaning(
         colored_pips: vec![ManaColor::W, ManaColor::B],
         types: definition.types.to_vec(),
         subtypes: definition.subtypes.to_vec(),
-        supertypes: definition.supertypes.to_vec(),
+        supertypes: definition
+            .supertypes
+            .iter()
+            .copied()
+            .map(SupertypeV52::from)
+            .collect(),
         colors: definition.colors.to_vec(),
         power: definition.power.unwrap(),
         toughness: definition.toughness.unwrap(),

@@ -77,6 +77,7 @@ mod registered {
         assert!(!real.model_admitted);
         assert_eq!(real.printed.generic_mana, 2);
         assert_eq!(real.printed.colored_pips, [ManaColor::W, ManaColor::B]);
+        assert_eq!(real.printed.supertypes, [SupertypeV52::Legendary]);
         assert_eq!((real.printed.power, real.printed.toughness), (4, 4));
         assert_eq!(real.home, HomeV52::BattlefieldPrintedFrontFace);
         assert!(real.active_printed_ability_required);
