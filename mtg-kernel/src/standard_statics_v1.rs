@@ -297,6 +297,30 @@ pub(crate) fn modified_life_loss(
         .fold(amount, |lost, _| lost.saturating_mul(2))
 }
 
+/// Exact quote for new unbounded soul-count loss. Legacy callers retain
+/// their existing saturating calculation; this path refuses an inexact quote.
+pub(crate) fn modified_soul_life_loss_checked_v1(
+    state: &GameState,
+    player: crate::ids::PlayerId,
+    amount: i32,
+) -> Result<i32, String> {
+    let active = state.active_player;
+    if amount <= 0 || player == active {
+        return Ok(amount);
+    }
+    state.players[active.index()]
+        .battlefield
+        .iter()
+        .filter(|&&source| {
+            battlefield_definition_name(state, source) == Some("Bloodletter of Aclazotz")
+                && state.objects.get(source).controller == active
+        })
+        .try_fold(amount, |lost, _| {
+            lost.checked_mul(2)
+                .ok_or_else(|| "soul life-loss modifier overflow".into())
+        })
+}
+
 /// Generic mana a spell with `types` cast by `caster` costs more and less
 /// because of permanents' statics: "Noncreature spells cost {1} more to
 /// cast" (Thalia, Guardian of Thraben, any controller) and "Instant and

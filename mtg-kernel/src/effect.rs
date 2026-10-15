@@ -1707,6 +1707,9 @@ pub enum EffectOp {
     /// Appended to preserve every predecessor Hash discriminant. A departed
     /// or reentered ability source receives none; prior instructions remain.
     AddSoulCounterToAbilitySourceV1,
+    /// Appended original-source soul count. Uses the current battlefield
+    /// incarnation or exact departure LKI, never a later incarnation's count.
+    LoseLifeEachOpponentEqualSourceSoulV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17623,6 +17626,36 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::AddSoulCounterToAbilitySourceV1 => {
             if event::add_soul_counter_to_ability_source_v1(state, ctx).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::LoseLifeEachOpponentEqualSourceSoulV1 => {
+            let result = (|| -> Result<(), String> {
+                let source = ctx
+                    .ability_source_contract
+                    .ok_or("soul loss lacks original source")?;
+                if source.source != ctx.source || source.controller != ctx.controller {
+                    return Err("soul loss changed original source relation".into());
+                }
+                let count = state.soul_count_for_ability_source_v1(source)?;
+                let opponent = ctx.controller.opponent();
+                #[cfg(feature = "standard-magezero-fixtures")]
+                let effective = crate::standard_statics_v1::modified_soul_life_loss_checked_v1(
+                    state, opponent, count,
+                )?;
+                #[cfg(not(feature = "standard-magezero-fixtures"))]
+                let effective = count;
+                state.players[opponent.index()]
+                    .life
+                    .checked_sub(effective)
+                    .ok_or("soul life-total overflow")?;
+                event::propose_and_commit(state, event::ProposedEvent::life_loss(opponent, count));
+                Ok(())
+            })();
+            if result.is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,

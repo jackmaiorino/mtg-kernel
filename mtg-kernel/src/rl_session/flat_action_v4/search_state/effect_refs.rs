@@ -270,6 +270,7 @@ impl Scan<'_> {
             | CreateTokenTappedAndAttacking { .. }
             | AddPlusOneCounterToAbilitySource
             | AddSoulCounterToAbilitySourceV1
+            | LoseLifeEachOpponentEqualSourceSoulV1
             | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
             | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies

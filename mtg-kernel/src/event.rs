@@ -1471,10 +1471,14 @@ pub struct HistoricalDamageSourceV1 {
 
 /// Remembers the counters of a departing permanent whose own leave ability
 /// reads them. Each exact departing incarnation remains available to its triggers.
-#[cfg(feature = "standard-magezero-fixtures")]
 fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let live = state.objects.get(object);
-    if !crate::standard_statics_v1::reads_counter_lki(live.card_def) {
+    #[cfg(feature = "standard-magezero-fixtures")]
+    let reads_standard = crate::standard_statics_v1::reads_counter_lki(live.card_def);
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    let reads_standard = false;
+    let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
+    if !reads_standard && !reads_soul {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -1487,7 +1491,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         time: live.v4.time_counters_v1,
         finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
     };
-    if live.counters.any() || extras != Default::default() {
+    if reads_soul || live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
@@ -1498,6 +1502,27 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         });
     }
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
+}
+
+fn definition_reads_soul_lki_v1(card_def: u16) -> bool {
+    static READS: std::sync::OnceLock<Vec<bool>> = std::sync::OnceLock::new();
+    READS
+        .get_or_init(|| {
+            crate::card_def::CARD_DEFS
+                .iter()
+                .map(|def| {
+                    def.activated_abilities.iter().any(|ability| {
+                        matches!(
+                            (ability.effect)(),
+                            crate::effect::EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
+                        )
+                    })
+                })
+                .collect()
+        })
+        .get(usize::from(card_def))
+        .copied()
+        .unwrap_or(false)
 }
 
 fn initialize_entry_lore_v48(
@@ -3051,12 +3076,10 @@ fn commit_with_entry_batch_and_source_color(
                     state.engine.event_history.push(marker);
                 }
             }
-            #[cfg(feature = "standard-magezero-fixtures")]
             if from == Zone::Battlefield {
                 record_counter_lki(state, z.object);
+                #[cfg(feature = "standard-magezero-fixtures")]
                 crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
-            }
-            if from == Zone::Battlefield {
                 crate::ashroot_animist_v1::before_departure(state, z.object);
                 crate::source_power_activation_v1::before_departure(state, z.object);
                 crate::gorehorn_damage_v1::before_departure(state, z.object);
@@ -5901,6 +5924,122 @@ mod soul_placement_primitive_v1_tests {
             let before = state.clone();
             assert!(add_soul_counter_to_ability_source_v1(&mut state, &ctx).is_err());
             assert_eq!(state, before);
+        }
+    }
+
+    #[test]
+    fn untargeted_soul_loss_uses_original_departure_and_original_controller_after_reentry_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            // Typed source/LKI and control operands, no printed paid activation.
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            state.objects.get_mut(source).counters.soul = 5;
+            let ctx = context(&state, source, actor);
+            propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            state.objects.get_mut(source).counters.soul = 9;
+            crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+            let life = state.players.each_ref().map(|p| p.life);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    branch,
+                );
+                assert!(branch.engine.halted.is_none());
+                assert_eq!(branch.players[actor.index()].life, life[actor.index()]);
+                assert_eq!(
+                    branch.players[actor.opponent().index()].life,
+                    life[actor.opponent().index()] - 5
+                );
+                assert_eq!(branch.objects.get(source).counters.soul, 9);
+                assert_eq!(branch.objects.get(source).controller, actor.opponent());
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    fn soul_loss_refuses_underflow_before_mutation_and_keeps_exact_boundary_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for (life, refuses) in [(-2, true), (-1, false)] {
+                let mut state = ready_state_for(actor);
+                // Arithmetic boundary operands, not a printed protection or paid activation.
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                state.objects.get_mut(source).counters.soul = i32::MAX;
+                state.players[actor.opponent().index()].life = life;
+                let ctx = context(&state, source, actor);
+                let before = state.clone();
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    &mut state,
+                );
+                if refuses {
+                    assert_eq!(
+                        state.engine.halted.take(),
+                        Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            source
+                        ))
+                    );
+                    assert_eq!(state, before);
+                } else {
+                    assert!(state.engine.halted.is_none());
+                    assert_eq!(state.players[actor.opponent().index()].life, i32::MIN);
+                    assert_eq!(
+                        state.players[actor.index()].life,
+                        before.players[actor.index()].life
+                    );
+                    assert!(
+                        matches!(state.engine.event_history.last(), Some(CommittedEvent::LifeLoss { player, amount }) if *player == actor.opponent() && *amount == i32::MAX)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "standard-magezero-fixtures")]
+    fn soul_loss_preserves_real_standard_modifier_and_refuses_inexact_quote_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for count in [3, i32::MAX] {
+                let mut state = ready_state_for(actor);
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                put(
+                    &mut state,
+                    actor,
+                    "Bloodletter of Aclazotz",
+                    Zone::Battlefield,
+                );
+                state.objects.get_mut(source).counters.soul = count;
+                let ctx = context(&state, source, actor);
+                let before = state.clone();
+                effect::execute(
+                    &EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+                    &ctx,
+                    &mut state,
+                );
+                if count == i32::MAX {
+                    assert!(state.engine.halted.take().is_some());
+                    assert_eq!(state, before);
+                } else {
+                    assert!(state.engine.halted.is_none());
+                    assert_eq!(
+                        state.players[actor.opponent().index()].life,
+                        before.players[actor.opponent().index()].life - 6
+                    );
+                    assert!(
+                        matches!(state.engine.event_history.last(), Some(CommittedEvent::LifeLoss { player, amount }) if *player == actor.opponent() && *amount == 6)
+                    );
+                }
+            }
         }
     }
 }

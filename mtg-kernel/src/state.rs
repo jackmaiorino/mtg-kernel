@@ -2153,9 +2153,9 @@ pub struct GameState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_mulligans_v1: Option<crate::london_mulligan_v1::LondonMulligansV1>,
     /// Last-known counters of permanents whose leave-the-battlefield
-    /// abilities read them (Quirion Beastcaller, Unstoppable Slasher). Only
-    /// `standard-magezero-fixtures` builds record entries, so it stays absent
-    /// everywhere else.
+    /// abilities read them (Quirion Beastcaller, Unstoppable Slasher). Selected
+    /// Standard abilities and soul-reading source incarnations
+    /// record entries. Unused components retain predecessor absent bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub counter_lki_v1: Option<Vec<CounterLkiV1>>,
     /// Power and toughness of departed Standard creatures, keyed by exact
@@ -2277,6 +2277,48 @@ impl GameState {
             (entry.source.object == object && entry.source.zone_change_count == zone_change_count)
                 .then_some(entry.counters)
         })
+    }
+
+    /// Reads one original source, refusing unknown or ambiguous departure
+    /// data. A later battlefield incarnation never supplies the old count.
+    pub(crate) fn soul_count_for_ability_source_v1(
+        &self,
+        source: AbilitySourceContractV4,
+    ) -> Result<i32, String> {
+        if source.zone != Zone::Battlefield {
+            return Err("soul count source was not a battlefield incarnation".into());
+        }
+        let live = self
+            .objects
+            .try_get(source.source)
+            .ok_or("soul source absent")?;
+        if live.owner != source.owner || live.zone_change_count < source.zone_change_count {
+            return Err("soul count source identity changed".into());
+        }
+        let count = if live.zone_change_count == source.zone_change_count {
+            if live.zone != Zone::Battlefield {
+                return Err("soul source changed zone without incarnation change".into());
+            }
+            live.counters.soul
+        } else {
+            let mut entries = self.counter_lki_v1.iter().flatten().filter(|entry| {
+                entry.source.object == source.source
+                    && entry.source.zone_change_count == source.zone_change_count
+            });
+            let count = entries
+                .next()
+                .ok_or("soul count missing original departure")?
+                .counters
+                .soul;
+            if entries.next().is_some() {
+                return Err("soul count duplicated original departure".into());
+            }
+            count
+        };
+        if count < 0 {
+            return Err("negative source soul count".into());
+        }
+        Ok(count)
     }
 }
 
@@ -4872,5 +4914,66 @@ mod soul_counter_storage_v1_tests {
             serde_json::to_vec(&state).unwrap(),
             serde_json::to_vec(&restored).unwrap()
         );
+    }
+
+    #[test]
+    fn original_soul_departures_remain_distinct_from_returned_incarnations_both_seats() {
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            // Counter/LKI operands only, not a printed Forest ability.
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            state.objects.get_mut(source).counters.soul = 5;
+            let original = AbilitySourceContractV4::capture(&state, source);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(5));
+            propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            assert_eq!(state.objects.get(source).counters.soul, 0);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(5));
+            propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            state.objects.get_mut(source).counters.soul = 9;
+            let returned = AbilitySourceContractV4::capture(&state, source);
+            assert_ne!(returned.zone_change_count, original.zone_change_count);
+            assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(5));
+            assert_eq!(state.soul_count_for_ability_source_v1(returned), Ok(9));
+            propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&state, &restored] {
+                assert_eq!(branch.soul_count_for_ability_source_v1(original), Ok(5));
+                assert_eq!(branch.soul_count_for_ability_source_v1(returned), Ok(9));
+            }
+        }
+    }
+
+    #[test]
+    fn unused_zero_soul_keeps_lki_absent_and_unknown_or_duplicate_departure_refuses_readonly() {
+        use crate::event::{propose_and_commit, ProposedEvent};
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+        let actor = PlayerId::P0;
+        let mut state = ready_state_for(actor);
+        let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+        let original = AbilitySourceContractV4::capture(&state, source);
+        assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(0));
+        propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        assert!(state.counter_lki_v1.is_none());
+        let before = state.clone();
+        assert!(state.soul_count_for_ability_source_v1(original).is_err());
+        assert_eq!(state, before);
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        state.objects.get_mut(source).counters.soul = 3;
+        let next = AbilitySourceContractV4::capture(&state, source);
+        propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+        let entry = state.counter_lki_v1.as_ref().unwrap()[0];
+        state.counter_lki_v1.as_mut().unwrap().push(entry);
+        let before = state.clone();
+        assert!(state.soul_count_for_ability_source_v1(next).is_err());
+        assert_eq!(state, before);
     }
 }
