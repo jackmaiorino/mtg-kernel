@@ -222,16 +222,23 @@ fn generic_restore_preserves_v50_revision_and_cannot_import_mode_or_foreign_epis
 }
 
 #[test]
-fn v50_optin_keeps_partial_deck_rejection_and_legacy_visible_refusal_both_seats() {
+fn v50_engine_full_admission_keeps_legacy_visible_and_model_search_refusals_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (session, spell, _, _) = fixture(actor);
         let definition = session.state.objects.get(spell).card_def;
         assert_eq!(
             crate::card_def::CARD_DEFS[definition as usize].capability,
-            crate::card_def::CardCapability::Partial
+            crate::card_def::CardCapability::Full
         );
-        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+        assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_ok());
         let before = serde_json::to_vec(&session.state).unwrap();
+        let e = expected(&session);
+        assert!(session.flat_policy_observation_v1(e).is_err());
+        assert!(session.flat_policy_observation_v2(e).is_err());
+        assert!(session.flat_policy_observation_v3(e).is_err());
+        assert!(session.flat_policy_observation_v4(e).is_err());
+        assert!(session.flat_policy_observation_v5(e).is_err());
+        assert!(session.kernel_search_redeterminized_clone_v4(1).is_err());
         assert!(
             crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
                 &session.state,

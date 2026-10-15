@@ -2696,7 +2696,7 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 443 (Partial Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 443 (Partial Ravenous and Full Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
@@ -2716,7 +2716,7 @@ mod tests {
             assert_eq!(fake, 442);
             assert_eq!(
                 CARD_DEFS[usize::from(fake)].capability,
-                CardCapability::Partial
+                CardCapability::Full
             );
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
@@ -3147,8 +3147,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - 2 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the registered Partial Fake and Ravenous printings may remain outside Full"
+            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the registered Partial Ravenous printing may remain outside Full"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3160,21 +3160,17 @@ mod tests {
                 .collect();
             assert_eq!(
                 non_full,
-                vec![
-                    (442, "Fake Your Own Death", CardCapability::Partial),
-                    (443, "Ravenous Amulet", CardCapability::Partial),
-                ]
+                vec![(443, "Ravenous Amulet", CardCapability::Partial)]
             );
-            for id in [442, 443] {
-                assert!(matches!(
-                    preflight_fully_supported_deck(&[id]),
-                    Err(DeckPreflightError::NotFullySupported {
-                        index: 0,
-                        capability: CardCapability::Partial,
-                        ..
-                    })
-                ));
-            }
+            assert!(preflight_fully_supported_deck(&[442]).is_ok());
+            assert!(matches!(
+                preflight_fully_supported_deck(&[443]),
+                Err(DeckPreflightError::NotFullySupported {
+                    index: 0,
+                    capability: CardCapability::Partial,
+                    ..
+                })
+            ));
         }
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[

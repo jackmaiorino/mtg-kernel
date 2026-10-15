@@ -8924,6 +8924,16 @@ mod tests {
             FROZEN_CARD_DB_HASH_U64_HEX_FDN_RAVENOUS_PARTIAL_BATCH_V1,
             "69edc2fbec6b9070"
         );
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn prospective_fake_engine_full_inventory_keeps_ravenous_partial() {
+        // Independent of v86's live-catalog canary. A new actual export must
+        // establish v87 before source promotion is qualified for publication.
         let partials: Vec<_> = crate::card_def::CARD_DEFS
             .iter()
             .enumerate()
@@ -8931,10 +8941,12 @@ mod tests {
             .map(|(id, def)| (id as u16, def.name))
             .collect();
         assert_eq!(crate::card_def::CARD_DEFS.len(), 444);
+        assert_eq!(partials, [(443, "Ravenous Amulet")]);
         assert_eq!(
-            partials,
-            [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")]
+            crate::card_def::card_id_by_name("Fake Your Own Death"),
+            Some(442)
         );
+        assert!(crate::card_def::preflight_fully_supported_deck(&[442]).is_ok());
         for (id, name) in partials {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
             assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_err());

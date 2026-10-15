@@ -7439,7 +7439,7 @@
     },
     {
       "name": "Fake Your Own Death",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": ["B"],

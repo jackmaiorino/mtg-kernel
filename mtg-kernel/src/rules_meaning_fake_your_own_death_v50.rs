@@ -1,5 +1,5 @@
 //! Ordered printing descriptors. These contain no executable death-history
-//! index and do not admit the Partial printing to a model or Full deck.
+//! index. Engine capability is reported exactly; model admission stays false.
 use crate::card_def::CardCapability;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

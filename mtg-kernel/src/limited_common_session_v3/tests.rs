@@ -418,11 +418,9 @@ fn v3_strict_schema_full_only_reset_london_and_no_fixture_wire_injection() {
         assert!(wire.state().engine.combat.foundations_v1.is_some());
         wire.restore(snapshot);
         wire.reject_unchanged(stale, "stale_decision");
-        for name in ["Fake Your Own Death", "Ravenous Amulet"] {
-            let mut partial = reset.clone();
-            partial["decks"][0]["cards"][0]["name"] = json!(name);
-            wire.reject_unchanged(partial, "unsupported_deck");
-        }
+        let mut partial = reset.clone();
+        partial["decks"][0]["cards"][0]["name"] = json!("Ravenous Amulet");
+        wire.reject_unchanged(partial, "unsupported_deck");
         wire.reject_unchanged(
             json!({"request_type": "current", "state_spec": {}}),
             "invalid_request",
@@ -514,5 +512,75 @@ fn v3_wire_actual_combat_scan_range_exact_safe_handles_and_restore_both_seats() 
             }
         }
         assert!(finished, "actual V3 Foundations combat did not finish");
+    }
+}
+#[test]
+fn public_v3_full_fake_reference_reset_owned_restore_and_continued_gameplay_both_seats() {
+    for actor in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let mut wire = Wire::new();
+        let deck = json!({"cards": crate::fake_full_engine_admission_v1_tests::reference_rows()});
+        wire.send(json!({"request_type": "reset", "expected_card_db_hash": KERNEL_CARDDB_HASH,
+            "episode_id": 77, "env_seed": 912, "starting_player": actor,
+            "decks": [deck.clone(), deck], "max_physical_decisions": 10000, "max_policy_steps": 10000}));
+        assert_eq!(wire.menu()["actor"], json!(actor));
+        assert_eq!(
+            wire.menu()["state"]["own_hand"].as_array().unwrap().len(),
+            7
+        );
+        safe(&wire.last);
+        let snapshot = wire.snapshot();
+        let stale = wire.request(|label| label.starts_with("Keep this hand"));
+        for _ in 0..2 {
+            wire.step(|label| label.starts_with("Keep this hand"));
+        }
+        wire.step(|label| label == "Pass priority");
+        let continued = (
+            wire.bytes(),
+            wire.server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .policy_step_count(),
+            wire.server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .physical_decision_count(),
+        );
+        let generation = wire.last["state"]["authority_generation"].as_u64().unwrap();
+        wire.restore(snapshot);
+        assert!(wire.last["state"]["authority_generation"].as_u64().unwrap() > generation);
+        wire.reject_unchanged(stale, "stale_decision");
+        for _ in 0..2 {
+            wire.step(|label| label.starts_with("Keep this hand"));
+        }
+        wire.step(|label| label == "Pass priority");
+        assert_eq!(
+            (
+                wire.bytes(),
+                wire.server
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .policy_step_count(),
+                wire.server
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .physical_decision_count()
+            ),
+            continued
+        );
+        assert!(wire.state().engine.combat.foundations_v1.is_some());
+        let core = &wire.server.active.as_ref().unwrap().core;
+        let bound = wire.server.pending.as_ref().unwrap();
+        assert!(core
+            .ravenous_current_decision_input_v51(bound.expected, bound.expected.acting_player)
+            .is_ok());
+        safe(&wire.last);
     }
 }

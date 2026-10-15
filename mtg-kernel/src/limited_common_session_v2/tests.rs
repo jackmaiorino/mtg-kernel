@@ -156,8 +156,8 @@ fn paid_fake_and_bolt_return_treasure_safe_facts_restore_retry_both_seats() {
     use crate::policy_observation_v6::tests::put;
     use crate::state::Zone;
     for actor in [PlayerId::P0, PlayerId::P1] {
-        // Test-only registered Partial state. Public reset must still reject
-        // Fake decks until printing admission is separately qualified.
+        // Controlled paid lifecycle fixture complements the separate genuine
+        // reference-deck public reset, without replacing its shuffled input.
         let mut state = crate::rl_session::panda_v47::tests::ordinary(actor);
         put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
         put(&mut state, actor, "Lightning Bolt", Zone::Hand);
@@ -928,5 +928,106 @@ fn registered_combat_primitive_actual_scan_damage_range_and_owning_restore_both_
         }
         // Do not silently accept an unexercised range/restore path.
         assert!(finished, "actual Foundations combat did not finish");
+    }
+}
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn public_v2_full_fake_reference_reset_owned_restore_and_continued_gameplay_both_seats() {
+    for actor in [PlayerSeatV1::P0, PlayerSeatV1::P1] {
+        let mut server = LimitedCommonJsonlServerV2::new();
+        let mut input = reset(actor, "fake_reference_reset");
+        if let LimitedCommonRequestV2::Reset { decks, .. } = &mut input {
+            *decks = std::array::from_fn(|_| CustomDeckV1 {
+                cards: crate::fake_full_engine_admission_v1_tests::reference_rows(),
+            });
+        }
+        let opening = server.handle_request(input);
+        assert_eq!(decision(&opening).2.actor, actor);
+        assert_eq!(decision(&opening).2.state.own_hand.len(), 7);
+        let original = step(&opening, "stale_fake_reference_keep", "Keep this hand");
+        let saved = server.handle_request(LimitedCommonRequestV2::Snapshot {
+            schema_version: SCHEMA_VERSION,
+            request_id: "fake_reference_snapshot".into(),
+        });
+        let LimitedCommonBodyV2::State {
+            snapshot_id: Some(snapshot),
+            ..
+        } = saved.body
+        else {
+            panic!("public V2 reference snapshot")
+        };
+        let mut reply = opening;
+        for index in 0..2 {
+            reply = server.handle_request(step(
+                &reply,
+                &format!("reference_keep{index}"),
+                "Keep this hand",
+            ));
+        }
+        reply = server.handle_request(step(&reply, "reference_priority", "Pass priority"));
+        let core = &server.active.as_ref().unwrap().core;
+        let continued = (
+            serde_json::to_vec(core.fake_fixture_state()).unwrap(),
+            core.policy_step_count(),
+            core.physical_decision_count(),
+        );
+        let old_generation = decision(&reply).1;
+        reply = server.handle_request(LimitedCommonRequestV2::Restore {
+            schema_version: SCHEMA_VERSION,
+            request_id: "fake_reference_restore".into(),
+            snapshot_id: snapshot,
+        });
+        assert!(decision(&reply).1 > old_generation);
+        let before = server
+            .active
+            .as_ref()
+            .unwrap()
+            .core
+            .privileged_core_environment_hash();
+        error(&server.handle_request(original), "stale_decision");
+        assert_eq!(
+            server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .privileged_core_environment_hash(),
+            before
+        );
+        reply = server.handle_request(request("fake_reference_current"));
+        for index in 0..2 {
+            reply = server.handle_request(step(
+                &reply,
+                &format!("reference_replay_keep{index}"),
+                "Keep this hand",
+            ));
+        }
+        reply = server.handle_request(step(&reply, "reference_replay_priority", "Pass priority"));
+        let core = &server.active.as_ref().unwrap().core;
+        assert_eq!(
+            (
+                serde_json::to_vec(core.fake_fixture_state()).unwrap(),
+                core.policy_step_count(),
+                core.physical_decision_count()
+            ),
+            continued
+        );
+        let bound = server.pending.as_ref().unwrap();
+        assert!(core
+            .fake_current_decision_input_v50(bound.expected, bound.expected.acting_player)
+            .is_ok());
+        assert!(!decision(&reply).2.actions.is_empty());
+        let text = serde_json::to_string(&reply).unwrap();
+        for private in [
+            "arena_id",
+            "event_history",
+            "source_contract",
+            "private_snapshot_json",
+        ] {
+            assert!(!text.contains(private));
+        }
     }
 }
