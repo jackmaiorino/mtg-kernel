@@ -3726,7 +3726,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    batch_with_aura_token_hosts_v1(state, events, attachments, None);
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None);
 }
 
 /// The bound copy continuation supplies one untargeted host per actual expanded
@@ -3737,7 +3737,23 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
     event: ProposedEvent,
     hosts: Vec<crate::state::ObjectLinkV4>,
 ) {
-    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts));
+    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts), None);
+}
+/// Consumes one private genuine finishing permit. It cannot be reconstructed
+/// from serialized frames or reused for a second batch.
+pub(crate) fn commit_goblin_excess_tokens_owned(
+    state: &mut GameState,
+    permit: crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>,
+) -> Result<(), String> {
+    let events = permit.events()?;
+    if !permit.allows(state, &events) {
+        return Err("excess token batch lost exact continuation owner".into());
+    }
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit));
+    if state.engine.halted.is_some() {
+        return Err("excess token batch halted".into());
+    }
+    Ok(())
 }
 fn batch_with_aura_token_hosts_v1(
     state: &mut GameState,
@@ -3747,7 +3763,15 @@ fn batch_with_aura_token_hosts_v1(
         crate::effect::EffectObjectBinding,
     )>,
     aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
+    excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
 ) {
+    if excess_permit.is_some_and(|permit| !permit.allows(state, &events)) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     let (mut events, token_requests) =
         match crate::doubling_season_v48::expand_tokens(state, events) {
             Ok(expanded) => expanded,
@@ -3817,7 +3841,7 @@ fn batch_with_aura_token_hosts_v1(
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
-    if crate::effect::crystal_prevention_v1::validate(state).is_err() {
+    if excess_permit.is_none() && crate::effect::crystal_prevention_v1::validate(state).is_err() {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             crate::ids::ObjectId(0),

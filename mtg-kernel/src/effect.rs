@@ -17600,11 +17600,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 );
             }
         }
-        EffectOp::DealXDamageThenCreateTokensForExcess {
-            target_index,
-            token_def,
-        } => {
-            crate::goblin_negotiation_v1::resolve(state, ctx, *target_index, *token_def);
+        EffectOp::DealXDamageThenCreateTokensForExcess { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::ReturnSourceAsDemonWithTwoCountersV1 => {
             crate::infernal_vessel_v1::resolve(state, ctx);

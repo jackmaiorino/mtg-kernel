@@ -81,6 +81,10 @@ fn tapped(s: &GameState, actor: PlayerId) -> usize {
 }
 fn announce(s: &mut GameState, actor: PlayerId, target: ObjectId, x: u16) -> ObjectId {
     let spell = put(s, actor, "Goblin Negotiation", Zone::Hand);
+    announce_source(s, actor, spell, target, x);
+    spell
+}
+fn announce_source(s: &mut GameState, actor: PlayerId, spell: ObjectId, target: ObjectId, x: u16) {
     assert!(
         matches!(next(s), Decision::CastSpellOrPass { player, castable_spells, .. }
         if player == actor && castable_spells.contains(&spell))
@@ -102,7 +106,6 @@ fn announce(s: &mut GameState, actor: PlayerId, target: ObjectId, x: u16) -> Obj
     assert_eq!(s.objects.get(spell).zone, Zone::Stack);
     assert_eq!(tapped(s, actor) - before, usize::from(x) + 2);
     assert_eq!(s.stack.last().unwrap().v4.x_value, x);
-    spell
 }
 #[test]
 fn exact_partial_printing_reuses_existing_goblin_dependency() {
@@ -404,5 +407,315 @@ fn paid_stack_season_count_overflow_refuses_before_damage_or_removal_both_seats_
             assert_eq!(unchanged.state_hash(), hash);
         }
         assert_eq!(s.state_hash(), restored.state_hash());
+    }
+}
+
+fn shield_primitive(s: &mut GameState, source: ObjectId, target: ObjectId, remaining: i32) {
+    // No current FDN card grants this numeric shield. This is the existing
+    // replacement primitive around a genuine paid Goblin Negotiation cast.
+    let id = s.engine.next_replacement_id;
+    s.engine.next_replacement_id += 1;
+    s.engine.active_replacements.push(event::ActiveReplacement {
+        id,
+        source,
+        kind: event::ReplacementEffectKind::PreventNextDamage {
+            target: Target::Object(target),
+            remaining,
+        },
+    });
+}
+fn wait_ordering(s: &mut GameState, affected: PlayerId) {
+    for _ in 0..12 {
+        let d = next(s);
+        if let Decision::ChooseEffectOption { player, .. } = d {
+            assert!(crate::effect::crystal_prevention_v1::is_choice(s));
+            assert_eq!(player, affected);
+            return;
+        }
+        quiet(s, d);
+    }
+    panic!("actual affected-player ordering did not appear");
+}
+fn choice_slot(s: &GameState, kind: &str) -> u16 {
+    use crate::effect::{
+        crystal_prevention_v1::PreventionV1, EffectOptionChoicePurpose, PendingEffectChoice,
+    };
+    let Some(PendingEffectChoice::ChooseOption {
+        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+        ..
+    }) = s
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|p| p.choice.as_ref())
+    else {
+        panic!("actual replacement menu");
+    };
+    choice
+        .options
+        .iter()
+        .position(|option| match (kind, option) {
+            ("double", PreventionV1::Multiplier(_))
+            | ("numeric", PreventionV1::Replacement(_))
+            | ("crystal", PreventionV1::Barricade(_)) => true,
+            _ => false,
+        })
+        .unwrap() as u16
+}
+fn ordered_finish_with_restores(s: &mut GameState, first: &str) {
+    let mut first = Some(first);
+    loop {
+        let mut restored = restore(s);
+        let slot = first.take().map_or(0, |kind| choice_slot(s, kind));
+        for branch in [&mut *s, &mut restored] {
+            let facts = super::public_ordering_stage(branch).unwrap().unwrap();
+            assert_eq!(facts.original_x, 3);
+            assert_eq!(facts.lethal_damage, 2);
+            engine::step(branch, Action::ChooseEffectOption(slot)).unwrap();
+        }
+        assert_eq!(s.state_hash(), restored.state_hash());
+        if s.engine.pending_effect.as_ref().unwrap().choice.is_none() {
+            // The final answer has committed its actual damage, while the
+            // retained frame has not created any tokens or moved the spell.
+            let mut before_completion = restore(s);
+            assert!(goblins(s, s.active_player).is_empty());
+            for branch in [&mut *s, &mut restored, &mut before_completion] {
+                settle(branch);
+            }
+            assert_eq!(s.state_hash(), restored.state_hash());
+            assert_eq!(s.state_hash(), before_completion.state_hash());
+            return;
+        }
+        assert!(matches!(next(s), Decision::ChooseEffectOption { .. }));
+    }
+}
+#[test]
+fn actual_numeric_prevention_and_doubling_orders_have_different_excess_both_seats_restore_every_choice(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (first, dealt, tokens) in [("double", 5, 6), ("numeric", 4, 4)] {
+            let mut s = ready(actor);
+            let tyrant = put(&mut s, actor, "Twinflame Tyrant", Zone::Battlefield);
+            put(&mut s, actor, "Doubling Season", Zone::Battlefield);
+            let target = put(
+                &mut s,
+                actor.opponent(),
+                "Axgard Cavalry",
+                Zone::Battlefield,
+            );
+            shield_primitive(&mut s, tyrant, target, 1);
+            let spell = announce(&mut s, actor, target, 3);
+            wait_ordering(&mut s, actor.opponent());
+            ordered_finish_with_restores(&mut s, first);
+            assert_eq!(damage(&s, spell, target), dealt);
+            assert_eq!(goblins(&s, actor).len(), tokens);
+            let completed = super::public_completed(&s).unwrap();
+            assert_eq!(completed.len(), 1);
+            assert_eq!(completed[0].actual_damage, dealt);
+            assert_eq!(completed[0].excess, (dealt - 2) as u32);
+            assert_eq!(completed[0].tokens_created, tokens as u64);
+            assert_eq!(s.objects.get(spell).zone, Zone::Graveyard);
+        }
+    }
+}
+#[test]
+fn actual_crystal_prevention_selected_first_completes_once_without_damage_or_tokens() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let tyrant = put(&mut s, actor, "Twinflame Tyrant", Zone::Battlefield);
+        put(
+            &mut s,
+            actor.opponent(),
+            "Crystal Barricade",
+            Zone::Battlefield,
+        );
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        shield_primitive(&mut s, tyrant, target, 1);
+        let spell = announce(&mut s, actor, target, 3);
+        wait_ordering(&mut s, actor.opponent());
+        ordered_finish_with_restores(&mut s, "crystal");
+        assert_eq!(damage(&s, spell, target), 0);
+        assert!(goblins(&s, actor).is_empty());
+        assert_eq!(s.objects.get(target).zone, Zone::Battlefield);
+        assert_eq!(super::public_completed(&s).unwrap()[0].tokens_created, 0);
+    }
+}
+#[test]
+fn genuine_foreign_owned_exile_permission_cast_keeps_captured_controller_for_excess_tokens() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let tyrant = put(&mut s, actor, "Twinflame Tyrant", Zone::Battlefield);
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let spell = put(&mut s, actor.opponent(), "Goblin Negotiation", Zone::Hand);
+        event::propose_and_commit(&mut s, ProposedEvent::zone_change(spell, Zone::Exile));
+        // Existing play-permission primitive, followed by the genuine paid cast.
+        s.engine
+            .exile_play_permissions
+            .push(engine::PlayPermission {
+                without_mana_cost: Default::default(),
+                object: spell,
+                holder: actor,
+                zone_change_generation: s.objects.get(spell).zone_change_count,
+                play_or_cast: engine::PlayOrCast::Cast,
+                expiry: engine::PlayPermissionExpiry::EndOfTurn,
+            });
+        shield_primitive(&mut s, tyrant, target, 1);
+        announce_source(&mut s, actor, spell, target, 3);
+        wait_ordering(&mut s, actor.opponent());
+        ordered_finish_with_restores(&mut s, "numeric");
+        assert_eq!(damage(&s, spell, target), 4);
+        assert_eq!(goblins(&s, actor).len(), 2);
+        assert!(goblins(&s, actor.opponent()).is_empty());
+        assert_eq!(s.objects.get(spell).owner, actor.opponent());
+        assert!(s.players[actor.opponent().index()]
+            .graveyard
+            .contains(&spell));
+    }
+}
+#[test]
+fn native_pending_ordering_refuses_stale_source_target_reentry_and_changed_actor() {
+    use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let tyrant = put(&mut s, actor, "Twinflame Tyrant", Zone::Battlefield);
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        shield_primitive(&mut s, tyrant, target, 1);
+        let spell = announce(&mut s, actor, target, 3);
+        wait_ordering(&mut s, actor.opponent());
+        for changed in 0..3 {
+            let mut stale = restore(&s);
+            if changed < 2 {
+                let object = if changed == 0 { spell } else { target };
+                // Raw zone-commit primitive invalidates a saved continuation;
+                // this is an incarnation guard test, not priority during resolution.
+                event::commit(&mut stale, ProposedEvent::zone_change(object, Zone::Exile));
+                event::commit(
+                    &mut stale,
+                    ProposedEvent::zone_change(
+                        object,
+                        if changed == 0 {
+                            Zone::Hand
+                        } else {
+                            Zone::Battlefield
+                        },
+                    ),
+                );
+            } else {
+                let Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+                    ..
+                }) = stale
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .choice
+                    .as_mut()
+                else {
+                    unreachable!()
+                };
+                *player = actor;
+                choice.chooser = actor;
+            }
+            let before = serde_json::to_vec(&stale).unwrap();
+            assert!(engine::step(&mut stale, Action::ChooseEffectOption(0)).is_err());
+            assert_eq!(serde_json::to_vec(&stale).unwrap(), before);
+            assert!(goblins(&stale, actor).is_empty());
+            assert_eq!(damage(&stale, spell, target), 0);
+        }
+    }
+}
+
+#[test]
+fn paid_flash_control_response_preserves_creature_target_and_excess_both_seats_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        // Existing registered permission makes the genuine control sorcery a
+        // legal response to Goblin Negotiation. Both spells pay their full cost.
+        put(&mut s, actor, "High Fae Trickster", Zone::Battlefield);
+        let response = put(&mut s, actor, "Involuntary Employment", Zone::Hand);
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let incarnation = s.objects.get(target).zone_change_count;
+        let spell = announce(&mut s, actor, target, 3);
+        let announced_target = s.stack.last().unwrap().v4.target_contracts[0];
+        assert!(
+            matches!(next(&mut s), Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == actor && castable_spells.contains(&response))
+        );
+        engine::step(&mut s, Action::CastSpell(response)).unwrap();
+        assert!(
+            matches!(next(&mut s), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(target)))
+        );
+        engine::step(&mut s, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(
+            matches!(next(&mut s), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(tapped(&s, actor), 9); // X3+RR, then3R.
+        assert_eq!(s.stack.len(), 2);
+        let mut response_restore = restore(&s);
+        for branch in [&mut s, &mut response_restore] {
+            let mut completed = false;
+            for _ in 0..16 {
+                let decision = next(branch);
+                if branch.objects.get(response).zone == Zone::Graveyard
+                    && branch.stack.len() == 1
+                    && branch.engine.pending_effect.is_none()
+                {
+                    assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                    completed = true;
+                    break;
+                }
+                quiet(branch, decision);
+            }
+            assert!(completed);
+            assert_eq!(branch.stack[0].source, spell);
+            assert_eq!(branch.objects.get(target).controller, actor);
+            assert_eq!(branch.objects.get(target).owner, actor.opponent());
+            assert_eq!(branch.objects.get(target).zone_change_count, incarnation);
+            assert!(engine::target_contract_matches_live(
+                branch,
+                Target::Object(target),
+                announced_target
+            ));
+        }
+        assert_eq!(s.state_hash(), response_restore.state_hash());
+        let mut after_control_restore = restore(&s);
+        for branch in [&mut s, &mut response_restore, &mut after_control_restore] {
+            settle(branch);
+            assert_eq!(damage(branch, spell, target), 3);
+            assert_eq!(goblins(branch, actor).len(), 1);
+            assert!(goblins(branch, actor.opponent()).is_empty());
+            let completed = super::public_completed(branch).unwrap();
+            assert_eq!(completed.len(), 1);
+            assert_eq!(completed[0].actual_damage, 3);
+            assert_eq!(completed[0].excess, 1);
+            assert_eq!(completed[0].tokens_created, 1);
+            assert_eq!(branch.objects.get(spell).zone, Zone::Graveyard);
+            assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+        }
+        assert_eq!(s.state_hash(), response_restore.state_hash());
+        assert_eq!(s.state_hash(), after_control_restore.state_hash());
     }
 }
