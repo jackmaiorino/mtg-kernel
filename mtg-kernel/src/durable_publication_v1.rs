@@ -2,7 +2,9 @@
 //!
 //! Publication uses a `create_new` staging file in the already-existing target
 //! directory. The staged bytes are written, file-synced, reopened, and checked
-//! against an exact length and SHA-256. [`std::fs::hard_link`] then creates the
+//! against an exact length and SHA-256: the caller's bytes are hashed once, and
+//! each readback is compared with them byte for byte, which is the same check.
+//! [`std::fs::hard_link`] then creates the
 //! absent final directory entry without replacing anything. A hard link makes
 //! the complete, already-synced inode visible in one namespace operation; there
 //! is no partially-written final-file interval. The final path is reopened and
@@ -802,6 +804,37 @@ pub(crate) fn recapture_exact_file_v1(
     expectation: DurableFileExpectationV1,
     error_kind: DurablePublicationErrorKindV1,
 ) -> Result<(), DurablePublicationErrorV1> {
+    recapture_exact_content_v1(path, required_identity, expectation, None, error_kind)
+}
+
+/// [`recapture_exact_file_v1`] for a publication that still holds the bytes it
+/// wrote, already proven to match `expectation` by [`validate_caller_content_v1`].
+/// Every byte read back is compared with them instead of being hashed again:
+/// equal bytes have the expected SHA-256, and any difference fails exactly
+/// where a digest mismatch would, after the same identity and length checks.
+fn recapture_exact_caller_bytes_v1(
+    path: &Path,
+    required_identity: ObjectIdentityV1,
+    expectation: DurableFileExpectationV1,
+    verified_caller_bytes: &[u8],
+    error_kind: DurablePublicationErrorKindV1,
+) -> Result<(), DurablePublicationErrorV1> {
+    recapture_exact_content_v1(
+        path,
+        required_identity,
+        expectation,
+        Some(verified_caller_bytes),
+        error_kind,
+    )
+}
+
+fn recapture_exact_content_v1(
+    path: &Path,
+    required_identity: ObjectIdentityV1,
+    expectation: DurableFileExpectationV1,
+    verified_caller_bytes: Option<&[u8]>,
+    error_kind: DurablePublicationErrorKindV1,
+) -> Result<(), DurablePublicationErrorV1> {
     let path_before = regular_path_metadata_v1(path, error_kind)?;
     let identity_before =
         path_identity_v1(path, &path_before).map_err(|error| DurablePublicationErrorV1 {
@@ -844,6 +877,7 @@ pub(crate) fn recapture_exact_file_v1(
     }
 
     let mut hasher = Sha256::new();
+    let mut content_matches = true;
     let mut total_length = 0_u64;
     let mut buffer = [0_u8; RECAPTURE_BUFFER_BYTES_V1];
     loop {
@@ -857,6 +891,7 @@ pub(crate) fn recapture_exact_file_v1(
         if read == 0 {
             break;
         }
+        let offset = total_length;
         total_length = total_length
             .checked_add(u64::try_from(read).map_err(|_| {
                 DurablePublicationErrorV1::new(error_kind, "read length does not fit u64")
@@ -870,9 +905,18 @@ pub(crate) fn recapture_exact_file_v1(
                 "publication file exceeds its required exact length",
             ));
         }
-        hasher.update(&buffer[..read]);
+        match verified_caller_bytes {
+            Some(expected) => {
+                content_matches &=
+                    expected.get(offset as usize..total_length as usize) == Some(&buffer[..read]);
+            }
+            None => hasher.update(&buffer[..read]),
+        }
     }
-    let digest: [u8; 32] = hasher.finalize().into();
+    let content_matches = match verified_caller_bytes {
+        Some(_) => content_matches,
+        None => <[u8; 32]>::from(hasher.finalize()) == expectation.sha256,
+    };
 
     let opened_after = file.metadata().map_err(|error| {
         DurablePublicationErrorV1::with_io(
@@ -924,7 +968,7 @@ pub(crate) fn recapture_exact_file_v1(
         || path_after.len() != expectation.exact_length
         || reopened_metadata.len() != expectation.exact_length
         || total_length != expectation.exact_length
-        || digest != expectation.sha256
+        || !content_matches
     {
         return Err(DurablePublicationErrorV1::new(
             error_kind,
@@ -1023,11 +1067,56 @@ pub fn publish_new_file_v1(
     )
 }
 
+/// [`publish_new_file_v1`] with the expectation derived from `bytes` here, so
+/// their SHA-256 is computed once rather than once by the caller and again by
+/// the caller-content check. Publication, readbacks and receipt are identical.
+pub fn publish_new_bytes_v1(
+    parent: &ValidatedPublicationParentV1,
+    stage_name: impl AsRef<OsStr>,
+    final_name: impl AsRef<OsStr>,
+    bytes: &[u8],
+) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
+    publish_verified_bytes_with_hook_v1(
+        parent,
+        stage_name.as_ref(),
+        final_name.as_ref(),
+        bytes,
+        expectation,
+        |_, _, _| Ok(()),
+    )
+}
+
 fn publish_new_file_with_hook_v1(
     parent: &ValidatedPublicationParentV1,
     stage_name: &OsStr,
     final_name: &OsStr,
     bytes: &[u8],
+    expectation: DurableFileExpectationV1,
+    boundary_hook: impl FnMut(
+        PublicationBoundaryV1,
+        &Path,
+        &Path,
+    ) -> Result<(), DurablePublicationErrorV1>,
+) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
+    validate_caller_content_v1(bytes, expectation)?;
+    publish_verified_bytes_with_hook_v1(
+        parent,
+        stage_name,
+        final_name,
+        bytes,
+        expectation,
+        boundary_hook,
+    )
+}
+
+/// The publication itself, for caller bytes already proven to match
+/// `expectation`. Each readback compares the file with those bytes.
+fn publish_verified_bytes_with_hook_v1(
+    parent: &ValidatedPublicationParentV1,
+    stage_name: &OsStr,
+    final_name: &OsStr,
+    verified_bytes: &[u8],
     expectation: DurableFileExpectationV1,
     mut boundary_hook: impl FnMut(
         PublicationBoundaryV1,
@@ -1035,7 +1124,7 @@ fn publish_new_file_with_hook_v1(
         &Path,
     ) -> Result<(), DurablePublicationErrorV1>,
 ) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
-    validate_caller_content_v1(bytes, expectation)?;
+    let bytes = verified_bytes;
     let stage_path = child_path_v1(parent, stage_name)?;
     let final_path = child_path_v1(parent, final_name)?;
     if stage_path == final_path {
@@ -1113,10 +1202,11 @@ fn publish_new_file_with_hook_v1(
     })?;
     boundary_hook(PublicationBoundaryV1::StageSynced, &stage_path, &final_path)?;
 
-    recapture_exact_file_v1(
+    recapture_exact_caller_bytes_v1(
         &stage_path,
         stage_identity,
         expectation,
+        bytes,
         DurablePublicationErrorKindV1::StageVerification,
     )?;
     boundary_hook(
@@ -1127,10 +1217,11 @@ fn publish_new_file_with_hook_v1(
 
     revalidate_parent_v1(parent)?;
     // Recheck after the testable boundary and immediately before publication.
-    recapture_exact_file_v1(
+    recapture_exact_caller_bytes_v1(
         &stage_path,
         stage_identity,
         expectation,
+        bytes,
         DurablePublicationErrorKindV1::StageVerification,
     )?;
     fs::hard_link(&stage_path, &final_path).map_err(|error| {
@@ -1161,10 +1252,11 @@ fn publish_new_file_with_hook_v1(
         &stage_path,
         &final_path,
     )?;
-    recapture_exact_file_v1(
+    recapture_exact_caller_bytes_v1(
         &final_path,
         stage_identity,
         expectation,
+        bytes,
         DurablePublicationErrorKindV1::FinalVerification,
     )?;
     boundary_hook(
@@ -1213,10 +1305,11 @@ fn publish_new_file_with_hook_v1(
 
     // There is deliberately no test hook after this last reopen: no test-only
     // mutation boundary can slip invalid content into a successful receipt.
-    recapture_exact_file_v1(
+    recapture_exact_caller_bytes_v1(
         &final_path,
         stage_identity,
         expectation,
+        bytes,
         DurablePublicationErrorKindV1::FinalVerification,
     )?;
     Ok(receipt_v1(final_path, expectation))
@@ -1450,6 +1543,75 @@ mod tests {
                     )
                     .is_err(),
                     "invalid final was accepted at {target:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_hash_publication_matches_and_byte_readbacks_reject_one_changed_byte() {
+        use std::io::{Seek, SeekFrom};
+        // Several readback buffers, so the changed byte sits in a late one.
+        let bytes = (0..3 * RECAPTURE_BUFFER_BYTES_V1 + 17)
+            .map(|index| (index * 31 % 251) as u8)
+            .collect::<Vec<_>>();
+        let expectation = DurableFileExpectationV1::from_bytes(&bytes).unwrap();
+        let directory = TestDirectoryV1::new("single-hash");
+        let parent = capture_existing_publication_parent_v1(directory.path()).unwrap();
+        let receipt =
+            publish_new_bytes_v1(&parent, OsStr::new("a.stage"), OsStr::new("a.bin"), &bytes)
+                .unwrap();
+        assert_eq!(receipt.sha256(), expectation.sha256());
+        assert_eq!(receipt.exact_length(), expectation.exact_length());
+        assert_eq!(fs::read(receipt.final_path()).unwrap(), bytes);
+        assert_eq!(
+            verify_existing_publication_v1(&parent, OsStr::new("a.bin"), expectation).unwrap(),
+            receipt
+        );
+
+        for (ordinal, (target, kind)) in [
+            (
+                PublicationBoundaryV1::StageSynced,
+                DurablePublicationErrorKindV1::StageVerification,
+            ),
+            (
+                PublicationBoundaryV1::FinalNamespaceSynced,
+                DurablePublicationErrorKindV1::FinalVerification,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let final_name = format!("changed-{ordinal}.bin");
+            let result = publish_verified_bytes_with_hook_v1(
+                &parent,
+                OsStr::new(&format!("changed-{ordinal}.stage")),
+                OsStr::new(&final_name),
+                &bytes,
+                expectation,
+                |boundary, stage_path, final_path| {
+                    if boundary == target {
+                        let path = if target == PublicationBoundaryV1::StageSynced {
+                            stage_path
+                        } else {
+                            final_path
+                        };
+                        let mut file = OpenOptions::new().write(true).open(path).unwrap();
+                        let offset = 2 * RECAPTURE_BUFFER_BYTES_V1 + 5;
+                        file.seek(SeekFrom::Start(offset as u64)).unwrap();
+                        file.write_all(&[bytes[offset] ^ 0x01]).unwrap();
+                        file.sync_all().unwrap();
+                    }
+                    Ok(())
+                },
+            );
+            assert_eq!(result.unwrap_err().kind(), kind, "{target:?}");
+            let final_path = directory.path().join(&final_name);
+            if final_path.exists() {
+                assert!(
+                    verify_existing_publication_v1(&parent, OsStr::new(&final_name), expectation)
+                        .is_err(),
+                    "changed final was accepted at {target:?}"
                 );
             }
         }

@@ -1,9 +1,7 @@
 //! Resumable training with CPU V3 collection and an explicit update backend.
 //! This successor owns its checkpoints; it does not reinterpret legacy Stores.
 
-use crate::durable_publication_v1::{
-    capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
-};
+use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
@@ -452,17 +450,20 @@ fn publish(
         .as_nanos();
     // A crashed writer may leave any previous stage. A new stage preserves
     // those bytes and allows the absent final receipt to publish on resume.
-    publish_new_file_v1(
+    let receipt = publish_new_bytes_v1(
         &parent,
         format!(".{name}.stage-{}-{nonce}", std::process::id()),
         name,
         &bytes,
-        DurableFileExpectationV1::from_bytes(&bytes).map_err(err)?,
     )
     .map_err(err)?;
     Ok(PinnedFileV1 {
         path: directory.join(name),
-        sha256: digest(&bytes),
+        sha256: receipt
+            .sha256()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
     })
 }
 fn parse_pin(document: &Value, field: &str) -> Result<PinnedFileV1, String> {
