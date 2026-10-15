@@ -50,6 +50,7 @@ pub(crate) mod conqueror_v49;
 pub(crate) mod crystal_v22;
 pub(crate) mod divine_v44;
 pub(crate) mod eaten_v46;
+mod elenda_v52;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
 pub(crate) mod faebloom_v43;
@@ -66,6 +67,7 @@ pub(crate) mod krenko_v34;
 mod limited_common_v1;
 pub(crate) mod panda_v47;
 pub(crate) mod ravenous_v51;
+pub use elenda_v52::{ElendaDecisionV52, ElendaSessionV52, ElendaSnapshotV52};
 pub(crate) mod season_v48;
 pub(crate) mod strongbox_v32;
 pub(crate) mod twinflame_v38;
@@ -3398,6 +3400,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             ))
     {
         return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
@@ -3433,6 +3436,7 @@ fn flat_validate_current_binding_header_akroma_inner(
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
         )
         && session
             .surface
@@ -4522,6 +4526,7 @@ fn flat_validate_expected_decision_akroma_inner(
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
         )
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
@@ -4545,7 +4550,8 @@ fn flat_validate_expected_decision_akroma_inner(
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50
-                | FlatActionContractModeV1::RavenousV51),
+                | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52),
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
@@ -4688,6 +4694,7 @@ enum FlatActionContractModeV1 {
     ConquerorV49,
     FakeV50,
     RavenousV51,
+    ElendaV52,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -7367,7 +7374,9 @@ impl FastActorSessionV1 {
     }
 
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
-        if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
+            let _ = self.elenda_restore_v52(snapshot);
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
             let _ = self.ravenous_restore_v51(snapshot);
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             // Keep the frozen void signature. Invalid ownership refuses
@@ -7375,7 +7384,9 @@ impl FastActorSessionV1 {
             let _ = self.fake_restore_v50(snapshot);
         } else if !matches!(
             snapshot.0.flat_action_contract_mode,
-            FlatActionContractModeV1::FakeV50 | FlatActionContractModeV1::RavenousV51
+            FlatActionContractModeV1::FakeV50
+                | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
         ) {
             *self = snapshot.0.clone();
         }
@@ -7435,23 +7446,36 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
-        let ravenous_guard =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
-            } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(
-                    &self.state,
-                    Some(
-                        self.current
-                            .as_ref()
-                            .map_or(self.state.priority_player, |current| current.actor),
-                    ),
-                )
-            };
+        if self.flat_action_contract_mode != FlatActionContractModeV1::ElendaV52 {
+            let actor = self
+                .current
+                .as_ref()
+                .map_or(self.state.priority_player, |current| current.actor);
+            crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor)).map_err(
+                |error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error),
+            )?;
+        }
+        let ravenous_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
+            crate::ravenous_observation_v51::validate_state(&self.state)
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+        };
         ravenous_guard
             .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
-        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51
-        {
+        let fake_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7469,7 +7493,10 @@ impl FastActorSessionV1 {
         fake_guard
             .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
 
-        if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7486,6 +7513,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
         ) {
             crate::doubling_season_v48::require_legacy_visible(
                 &self.state,
@@ -7515,7 +7543,10 @@ impl FastActorSessionV1 {
                 )
             })?;
             let mut rederived = current.clone();
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+            if matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+            ) {
                 ravenous_v51::prepare_current(self, &mut rederived)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
                 fake_v50::prepare_current(self, &mut rederived)
@@ -7688,19 +7719,41 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
-        let ravenous_guard =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
-            } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(
-                    &self.state,
-                    Some(
-                        self.current
-                            .as_ref()
-                            .map_or(self.state.priority_player, |current| current.actor),
-                    ),
-                )
-            };
+        if self.flat_action_contract_mode != FlatActionContractModeV1::ElendaV52 {
+            let actor = self
+                .current
+                .as_ref()
+                .map_or(self.state.priority_player, |current| current.actor);
+            if let Err(error) =
+                crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:elenda_v52_required:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
+        let ravenous_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
+            crate::ravenous_observation_v51::validate_state(&self.state)
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(
+                &self.state,
+                Some(
+                    self.current
+                        .as_ref()
+                        .map_or(self.state.priority_player, |current| current.actor),
+                ),
+            )
+        };
         if let Err(error) = ravenous_guard {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7713,8 +7766,10 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let fake_guard = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51
-        {
+        let fake_guard = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7742,7 +7797,10 @@ impl FastActorSessionV1 {
             return;
         }
 
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7771,6 +7829,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::ConquerorV49
                 | FlatActionContractModeV1::FakeV50
                 | FlatActionContractModeV1::RavenousV51
+                | FlatActionContractModeV1::ElendaV52
         ) && crate::doubling_season_v48::require_legacy_visible(
             &self.state,
             self.state.priority_player,
@@ -7788,7 +7847,10 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7817,7 +7879,10 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        if (if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        if (if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
             crate::ravenous_observation_v51::validate_state(&self.state)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             crate::fake_observation_v50::validate_state(&self.state)
@@ -7861,6 +7926,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
                 && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
@@ -7889,6 +7955,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
                 && crate::ajani_observation_v42::validate_state(&self.state).is_err())
@@ -7920,6 +7987,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             ))
             || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
                 && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
@@ -7951,7 +8019,10 @@ impl FastActorSessionV1 {
             return;
         }
         if (if self.is_common_v40() {
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+            if matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+            ) {
                 crate::ravenous_observation_v51::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
                 crate::fake_observation_v50::validate_state(&self.state)
@@ -8094,6 +8165,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             )
         {
             self.current = None;
@@ -8157,6 +8229,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::ConquerorV49
                     | FlatActionContractModeV1::FakeV50
                     | FlatActionContractModeV1::RavenousV51
+                    | FlatActionContractModeV1::ElendaV52
             )
         {
             self.terminal = Some(halted_terminal(
@@ -8210,6 +8283,7 @@ impl FastActorSessionV1 {
                             | FlatActionContractModeV1::ConquerorV49
                             | FlatActionContractModeV1::FakeV50
                             | FlatActionContractModeV1::RavenousV51
+                            | FlatActionContractModeV1::ElendaV52
                     ) =>
                 {
                     substeps
@@ -8270,12 +8344,30 @@ impl FastActorSessionV1 {
         };
         // Advancement can draw a formerly hidden printing or change the actor.
         // Check the actual publication view as well as the pre-advance state.
-        let ravenous_publication =
-            if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
-                crate::ravenous_observation_v51::validate_state(&self.state)
-            } else {
-                crate::ravenous_amulet_v1::require_legacy_consumer(&self.state, Some(actor))
-            };
+        if self.flat_action_contract_mode != FlatActionContractModeV1::ElendaV52 {
+            if let Err(error) =
+                crate::elenda_public_v52::require_legacy_visible(&self.state, Some(actor))
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:elenda_v52_required:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
+        let ravenous_publication = if matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52
+        ) {
+            crate::ravenous_observation_v51::validate_state(&self.state)
+        } else {
+            crate::ravenous_amulet_v1::require_legacy_consumer(&self.state, Some(actor))
+        };
         if let Err(error) = ravenous_publication {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -8288,7 +8380,9 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
+            elenda_v52::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::RavenousV51 {
             ravenous_v51::actual_candidates(&surfaced, &self.state, &self.surface)
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::FakeV50 {
             fake_v50::actual_candidates(&surfaced, &self.state, &self.surface)
@@ -8592,7 +8686,7 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
-            FlatActionContractModeV1::RavenousV51 => {
+            FlatActionContractModeV1::RavenousV51 | FlatActionContractModeV1::ElendaV52 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
                 if let Err(error) = ravenous_v51::prepare_current(self, &mut current) {

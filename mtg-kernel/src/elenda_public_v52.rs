@@ -11,6 +11,58 @@ use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = "mtg-kernel/elenda-public/v52";
 
+/// Predecessors cannot publish these mechanics through a generic keyword row.
+/// Only the actor's authorized identities and public zones select this refusal.
+pub(crate) fn require_legacy_visible(
+    state: &GameState,
+    actor: Option<crate::ids::PlayerId>,
+) -> Result<(), String> {
+    for (id, object) in state.objects.iter() {
+        let visible = match object.zone {
+            Zone::Hand => actor.is_some_and(|actor| {
+                actor == object.owner
+                    || state
+                        .known_hand_cards(actor, object.owner)
+                        .iter()
+                        .any(|known| {
+                            known.object == id
+                                && known.zone_change_count == object.zone_change_count
+                        })
+            }),
+            Zone::Library => actor.is_some_and(|actor| {
+                state
+                    .known_library_cards(actor, object.owner)
+                    .iter()
+                    .any(|known| {
+                        known.object == id && known.zone_change_count == object.zone_change_count
+                    })
+            }),
+            _ => true,
+        };
+        let known_form = object.v4.face_down_v1.is_none()
+            || actor.is_some_and(|actor| {
+                object
+                    .v4
+                    .face_down_v1
+                    .is_some_and(|face| face.lookers & (1 << actor.index()) != 0)
+            });
+        if visible && known_form && object.v4.face_index == 0 {
+            let definition = crate::card_def::CARD_DEFS
+                .get(usize::from(object.card_def))
+                .ok_or("visible Elenda boundary definition absent")?;
+            if definition.is_executable()
+                && (!definition.starting_life_self_bonuses_v1.is_empty()
+                    || definition.source_type_hexproof_v1.is_some())
+            {
+                return Err(
+                    "starting-life bonuses and source-type hexproof require Elenda V52".into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BonusV52 {

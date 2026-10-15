@@ -199,6 +199,21 @@ pub(crate) fn observe_parts_v51(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(actor_and_origin.0))
+        .map_err(RlContractError)?;
+    observe_parts_complete_base_v52(state, surface, actor_and_origin, step, physical, substep)
+}
+
+/// Complete inherited storage for the distinct V52 envelope. This bypasses
+/// only the Elenda predecessor refusal; every V51 family validator remains.
+pub(crate) fn observe_parts_complete_base_v52(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
     let (actor, origin) = actor_and_origin;
     if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
         return Err(RlContractError(

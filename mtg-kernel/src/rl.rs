@@ -1894,6 +1894,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
@@ -1987,6 +1989,8 @@ pub fn observe_v2(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV2> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::effect::validate_legacy_ward_observation(state).map_err(RlContractError)?;
     crate::effect::temporary_control_v1::refuse_legacy_observation(state)
         .map_err(RlContractError)?;
@@ -2417,6 +2421,8 @@ pub fn observe_policy_v5(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let mut observation = build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2445,6 +2451,8 @@ pub(crate) fn observe_policy_v5_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV5> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     build_policy_observation_v5(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2913,6 +2921,8 @@ pub fn observe_policy_v6(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let mut observation = build_policy_observation_v6(PolicyObservationBuildV5 {
         state,
         surface,
@@ -2936,6 +2946,8 @@ pub(crate) fn observe_policy_v6_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<ObservationV6> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     build_policy_observation_v6(PolicyObservationBuildV5 {
         state,
         surface,
@@ -4381,6 +4393,8 @@ pub fn observe_policy_v8(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<crate::policy_observation_v8::ObservationV8> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let base = build_policy_observation_common_v6(
         PolicyObservationBuildV5 {
             state,
@@ -4418,6 +4432,8 @@ pub(crate) fn observe_policy_v8_unhashed_for_flat_policy(
     substep_index: u32,
     substep_count: u32,
 ) -> Result<crate::policy_observation_v8::ObservationV8> {
+    crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     let base = build_policy_observation_common_v6(
         PolicyObservationBuildV5 {
             state,

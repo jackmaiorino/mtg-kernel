@@ -360,6 +360,9 @@ pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if session.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
+        return super::elenda_v52::prepare_current(session, current);
+    }
     current.candidates = normalized_origin(session, current)?;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
