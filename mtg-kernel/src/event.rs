@@ -6125,8 +6125,8 @@ mod soul_placement_primitive_v1_tests {
     }
 }
 
+#[cfg(test)]
 #[cfg(all(
-    test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
