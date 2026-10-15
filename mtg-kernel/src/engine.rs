@@ -15462,6 +15462,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if targets_legal && crate::goblin_negotiation_v1::preflight_resolution(state, item).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(
         state,
         state.stack.last().expect("resolving genuine stack item"),

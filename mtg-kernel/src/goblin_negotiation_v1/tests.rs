@@ -359,3 +359,50 @@ fn paid_toughness_increase_changes_excess_at_resolution() {
         assert_eq!(goblins(&s, actor).len(), 1);
     }
 }
+
+#[test]
+fn paid_stack_season_count_overflow_refuses_before_damage_or_removal_both_seats_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        // Primitive board setup uses 64 actual registered Season permanents.
+        // This triggers the existing usize count overflow without allocating tokens.
+        for _ in 0..64 {
+            put(&mut s, actor, "Doubling Season", Zone::Battlefield);
+        }
+        let target = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let spell = announce(&mut s, actor, target, 3);
+        assert_eq!(tapped(&s, actor), 5);
+        engine::step(&mut s, Action::Pass).unwrap();
+        assert!(
+            matches!(next(&mut s), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
+        );
+        engine::step(&mut s, Action::Pass).unwrap();
+        assert_eq!(s.engine.priority_passes, [true, true]);
+        let mut restored = restore(&s);
+        let before = serde_json::to_value(&s).unwrap();
+        let hash = s.state_hash();
+        for branch in [&mut s, &mut restored] {
+            assert!(
+                matches!(engine::advance_until_decision(branch), Decision::Halted { source, .. } if source == spell)
+            );
+            assert_eq!(branch.objects.get(target).damage, 0);
+            assert_eq!(damage(branch, spell, target), 0);
+            assert_eq!(branch.objects.get(spell).zone, Zone::Stack);
+            assert_eq!(branch.stack.len(), 1);
+            assert_eq!(branch.stack[0].source, spell);
+            assert!(goblins(branch, actor).is_empty());
+            // Only the diagnostic halt may differ. Compare the complete world,
+            // including stack, paid mana, replacements and every event journal.
+            let mut unchanged = branch.clone();
+            unchanged.engine.halted = None;
+            assert_eq!(serde_json::to_value(&unchanged).unwrap(), before);
+            assert_eq!(unchanged.state_hash(), hash);
+        }
+        assert_eq!(s.state_hash(), restored.state_hash());
+    }
+}

@@ -3,7 +3,7 @@ use crate::{
     card_def::{CardType, Keywords, TargetSpec, CARD_DEFS},
     effect::{EffectOp, ExecCtx},
     event::{self, CommittedEvent, ProposedEvent},
-    state::{GameState, Target, Zone},
+    state::{GameState, StackItem, Target, Zone},
 };
 
 /// The existing fixed-damage owner cannot suspend this linked instruction.
@@ -37,6 +37,124 @@ pub(crate) fn validate_commuting_path(
     Ok(())
 }
 
+/// Called unconditionally by native resolution while the complete paid spell
+/// remains on the stack, before any resolution publication or removal.
+pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Result<(), String> {
+    let definition = &CARD_DEFS[usize::from(state.objects.get(item.source).card_def)];
+    let root = item
+        .inline_effect
+        .clone()
+        .or_else(|| (definition.spell_effect)());
+    let Some(op @ EffectOp::DealXDamageThenCreateTokensForExcess { .. }) = root else {
+        return Ok(());
+    };
+    let EffectOp::DealXDamageThenCreateTokensForExcess {
+        target_index,
+        token_def,
+    } = &op
+    else {
+        unreachable!()
+    };
+    let mut ctx = ExecCtx::no_targets(item.source, item.controller);
+    ctx.stack_item_id = Some(item.v4.stack_item_id);
+    ctx.targets = item.targets.clone();
+    ctx.target_contracts = item.v4.target_contracts.clone();
+    ctx.x_value = item.v4.x_value;
+    validate_commuting_path(state, &ctx, &op)?;
+    let index = usize::from(*target_index);
+    if !ctx.target_incarnation_matches(index, state) {
+        return Ok(());
+    }
+    let Some(Target::Object(target)) = ctx.targets.get(index).copied() else {
+        return Err("excess damage lost creature target".into());
+    };
+    let lethal = lethal_threshold(state, ctx.source, target)?;
+    // Reuse the real replacement/prevention pass on a disposable copy. It may
+    // consume shields there, but never commits damage or mutates the live world.
+    let mut preview = state.clone();
+    let result = event::apply_replacements(
+        &mut preview,
+        ProposedEvent::damage(ctx.source, Target::Object(target), i32::from(ctx.x_value)),
+    );
+    if preview.engine.halted.is_some() {
+        return Err("excess damage replacement preview refused".into());
+    }
+    let amount = match result {
+        None => 0,
+        Some(ProposedEvent::Damage(damage))
+            if damage.source == ctx.source && damage.target == Target::Object(target) =>
+        {
+            damage.amount.max(0)
+        }
+        _ => return Err("excess damage preview changed unsupported recipient or event".into()),
+    };
+    state
+        .objects
+        .get(target)
+        .damage
+        .checked_add(amount as u32)
+        .ok_or("excess damage marked-damage overflow")?;
+    let excess = i64::from(amount).saturating_sub(lethal).max(0);
+    let original = usize::try_from(excess).map_err(|_| "excess token count overflow")?;
+    if original == 0 {
+        return Ok(());
+    }
+    let token = CARD_DEFS
+        .get(usize::from(*token_def))
+        .ok_or("excess token definition absent")?;
+    if !(token.is_token && token.is_executable() && token.has_full_support()) {
+        return Err("excess token definition is not executable Full token".into());
+    }
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, ctx.controller);
+    let expanded = replacement.replaced_token_count(original)?;
+    let final_objects = state
+        .objects
+        .len()
+        .checked_add(expanded)
+        .ok_or("excess token arena count overflow")?;
+    if u64::try_from(final_objects).map_err(|_| "excess token arena count overflow")?
+        > u64::from(u32::MAX) + 1
+    {
+        return Err("excess token arena id overflow".into());
+    }
+    let bytes = expanded
+        .checked_mul(std::mem::size_of::<ProposedEvent>())
+        .ok_or("excess token roster byte overflow")?;
+    if bytes > isize::MAX as usize {
+        return Err("excess token roster capacity overflow".into());
+    }
+    // Every member has this same definition and unchanged pre-entry board.
+    // Validate one template without allocating an exponential expanded roster.
+    let template = [ProposedEvent::create_token(*token_def, ctx.controller)];
+    crate::doubling_season_v48::preflight_entry_roster(state, &template)?;
+    crate::doubling_season_v48::preflight_token_initialization(state, &template)?;
+    Ok(())
+}
+
+fn lethal_threshold(
+    state: &GameState,
+    source: crate::ids::ObjectId,
+    target: crate::ids::ObjectId,
+) -> Result<i64, String> {
+    // CR120.10's creature+planeswalker grammar needs a separate implementation.
+    // No current genuine FDN path produces that combination; refuse it if added.
+    if crate::engine::object_has_type(state, target, CardType::Planeswalker) {
+        return Err("excess damage to creature planeswalker requires successor".into());
+    }
+    let live = state.objects.get(target);
+    let remaining = (i64::from(crate::engine::effective_toughness(state, target))
+        - i64::from(live.damage))
+    .max(0);
+    Ok(
+        if crate::engine::has_effective_keyword(state, source, Keywords::DEATHTOUCH) {
+            remaining.min(1)
+        } else {
+            remaining
+        },
+    )
+}
+
 pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, slot: u8, token_def: u16) {
     let index = usize::from(slot);
     if !ctx.target_incarnation_matches(index, state)
@@ -60,15 +178,15 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx, slot: u8, token_def:
     {
         return;
     }
-    // Lethal damage uses the creature's effective toughness and previously
-    // marked damage. Indestructible does not change how much damage is lethal.
-    let remaining = (i64::from(crate::engine::effective_toughness(state, target))
-        - i64::from(live.damage))
-    .max(0);
-    let lethal = if crate::engine::has_effective_keyword(state, ctx.source, Keywords::DEATHTOUCH) {
-        remaining.min(1)
-    } else {
-        remaining
+    let lethal = match lethal_threshold(state, ctx.source, target) {
+        Ok(lethal) => lethal,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            return;
+        }
     };
     let start = state.engine.event_history.len();
     event::propose_and_commit(
