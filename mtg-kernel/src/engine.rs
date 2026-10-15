@@ -18237,6 +18237,13 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             |(characteristics, _)| vec![characteristics.subtype.stable_id()],
         )
     });
+    if object.zone == Zone::Battlefield {
+        if let Some((subtype, timestamp)) = object.v4.added_subtype_v1 {
+            if replacement_timestamp.is_none_or(|replacement| timestamp > replacement) {
+                subtype_ids.push(subtype.stable_id());
+            }
+        }
+    }
     if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
         subtype_ids.extend(animation.subtypes.iter().map(|subtype| subtype.stable_id()));
     }

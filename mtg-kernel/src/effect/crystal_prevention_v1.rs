@@ -665,6 +665,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         | EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands
         | EffectOp::ReturnOwnGraveyardCreaturesManaValueAtMost { .. }
         | EffectOp::ReturnAllGraveyardCreaturesUnderController
+        | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
         | EffectOp::ExileTargetLinkedToSource { .. }
         | EffectOp::ReturnObjectsExiledBySource
         | EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature

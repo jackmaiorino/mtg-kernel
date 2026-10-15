@@ -20,6 +20,7 @@ pub(crate) fn enabled() -> bool {
                             matches!(
                                 ability.condition,
                                 TriggerCondition::ThisOrControlledCreatureDies
+                                    | TriggerCondition::DiesUnlessSubtype(_)
                                     | TriggerCondition::OtherNontokenCreatureDies
                                     | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                             )
@@ -58,7 +59,9 @@ pub(crate) fn capture(
                 .iter()
                 .enumerate()
                 .filter(move |(_, ability)| {
-                    ((ability.condition == TriggerCondition::ThisOrControlledCreatureDies
+                    ((matches!(ability.condition, TriggerCondition::DiesUnlessSubtype(subtype)
+                        if source == change.object && !crate::engine::has_effective_subtype(state, source, subtype)))
+                        || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
                         && object.controller == dead.controller)
                         || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
                             && crate::high_society_hunter_v1::owns_definition(object.card_def)
@@ -159,9 +162,12 @@ pub(crate) fn pending(
         || !matches!(
             ability.condition,
             TriggerCondition::ThisOrControlledCreatureDies
+                | TriggerCondition::DiesUnlessSubtype(_)
                 | TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
         )
+        || (matches!(ability.condition, TriggerCondition::DiesUnlessSubtype(_))
+            && (source.source != died.object || source.controller != *controller_before))
         || source.zone != Zone::Battlefield
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
             && source.controller != *controller_before)
@@ -195,6 +201,7 @@ pub(crate) fn pending(
             ability.condition,
             TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+                | TriggerCondition::DiesUnlessSubtype(_)
         ) && crate::engine::validate_historical_ability_source_contract(state, *source)
             .is_err())
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
@@ -253,6 +260,7 @@ pub(crate) fn owns_program(
                 matches!(
                     ability.condition,
                     TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                 ) && ability.home_zone == Zone::Battlefield
                     && (ability.effect)() == *effect

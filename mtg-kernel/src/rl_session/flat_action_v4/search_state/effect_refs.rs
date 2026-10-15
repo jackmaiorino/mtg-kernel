@@ -264,6 +264,7 @@ impl Scan<'_> {
             | ExileSingleGraveyardTargetsThenDrainTwoV1
             | RemoveTimeCounterFromSource
             | ReturnSourceAsEnduringEnchantment
+            | ReturnSourceAsDemonWithTwoCountersV1
             | SearchLibraryCardsToDestination { .. }
             | CreateTokensDynamic { .. }
             | BackupTarget { .. }

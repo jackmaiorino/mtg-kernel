@@ -273,6 +273,8 @@ pub enum TriggerCondition {
     OtherControlledNontokenCreatureDiesV1,
     /// Actual opposing casts; spell copies emit no cast event.
     OpponentCastsSpellV1,
+    /// Precommit death capture checks the departed effective subtypes.
+    DiesUnlessSubtype(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -3687,6 +3689,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
+        "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
         "Courageous Goblin" => &COURAGEOUS_GOBLIN_TRIGGERS,
@@ -5330,6 +5333,7 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OpponentLosesLifeBatchV49
@@ -6432,6 +6436,7 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (TriggerCondition::DiesUnlessSubtype(_), _) => false,
         (
             TriggerCondition::DiesWithoutCounters,
             CommittedEvent::ZoneChange {
