@@ -36,7 +36,7 @@ deceased/cast objects or completed occurrences, and none are synthesized here.
 Existing public hand/library knowledge remains ordinary engine authority. No
 whole-world journal or historical receipt prerequisite is introduced.
 
-Eight new Rust fixture groups prepare exact/rehashed meaning refusal, mandatory
+Nine new Rust fixture groups prepare exact/rehashed meaning refusal, mandatory
 wide counters/DTO tamper, independently constructed hidden/face-down world
 parity, real paid Spinner reveal/decline restore, paid control changes while its
 trigger remains on stack, suppression before/after collection, token-copy death
@@ -56,16 +56,27 @@ Spinner, then pays Think Twice. Actual held/stack Rod roots and restored damage
 must remain valid with no phantom Spinner reveal root. No source/controller
 validation was weakened and no grant or attachment is synthesized.
 
+Quandary review repair: a live exact-zero-or-one prompt must have no selected
+prefix because one selection immediately becomes its typed answer frame. Every
+legal row must carry its exact object binding, and the full legal cardinality
+and permutation must equal the original hand. The scoped DiscardPaymentV1
+validator and defensive V55 Result mapping reject unbound rows instead of
+dropping them. A new genuine both-seat paid fixture prepares unbound selected,
+extra/replaced unbound legal, duplicate and impossible bound-prefix negatives
+with refusal before mutation, plus ordinary choose-zero/choose-one answer restore.
+The original hand, payer, printed program, frames and source inputs are retained.
+
 Observed: all 71 affected Python Limited deck/frozen-pool cases passed; pinned
 `cargo +1.94.1 fmt --all --check`, diff and bounded static checks passed. Existing
-engine, state, enum, registry, frozen pool/token, toolchain and consumer files
-are unchanged. No Rust compile/test/check/clippy, native, GPU, paid execution,
+state, complete effect enum/continuation bodies, registry, frozen pool/token,
+toolchain and transport files are unchanged. The scoped effect validator above
+is the only existing production-engine edit. No Rust compile/test/check/clippy, native, GPU, paid execution,
 network, push or PR occurred. Current form uses the existing engine query and
 V53's narrow checked effective-base/counter prefix refusal. Later unchecked
 engine PT additions remain a concrete shared arithmetic limitation, not repaired
 by this DTO. One combined successor still owns observation/backend/Human/RPC
 transport, numeric admission, qualification and remaining interaction coverage.
 
-Source SHA-256: `9bea6a9c393cef864f37b4c27934874603652802f9f07311d31906804f526591`.
-Sort the ten changed Rust paths versus the base; hash UTF-8 path, NUL and raw
+Source SHA-256: `8b51d813e87216ee26f3c1a2713ba4633ae83d48b8d5052adf45b28fd186a862`.
+Sort the eleven changed Rust paths versus the base; hash UTF-8 path, NUL and raw
 SHA-256 of LF-normalized contents. Exclude this receipt.

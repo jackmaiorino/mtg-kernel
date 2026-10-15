@@ -517,3 +517,92 @@ fn v55_genuine_spell_copy_is_not_a_cast_and_public_facts_keep_no_extra_root_both
         );
     }
 }
+
+#[test]
+fn v55_actual_live_discard_prompt_requires_empty_selected_and_exact_bound_hand_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let (mut state, _) = paid_quandary(actor);
+            let payer = actor.opponent();
+            let first = put(&mut state, payer, "Lightning Bolt", Zone::Hand);
+            let second = put(&mut state, payer, "Llanowar Elves", Zone::Hand);
+            cast_think_twice(&mut state, payer);
+            payment(&mut state, payer);
+            let original = serde_json::to_vec(&state).unwrap();
+            for mutation in 0..5 {
+                let mut forged: GameState = serde_json::from_slice(&original).unwrap();
+                let Some(PendingEffectChoice::SelectTargets {
+                    selected, legal, ..
+                }) = forged
+                    .engine
+                    .pending_effect
+                    .as_mut()
+                    .unwrap()
+                    .choice
+                    .as_mut()
+                else {
+                    panic!("genuine payment prompt")
+                };
+                assert!(selected.is_empty());
+                assert_eq!(legal.len(), 2);
+                let unbound = effect::EffectTargetCandidate {
+                    target: Target::Object(first),
+                    expected_object: None,
+                };
+                match mutation {
+                    0 => selected.push(unbound),
+                    1 => legal.push(unbound),
+                    2 => legal[0].expected_object = None,
+                    3 => selected.push(legal.remove(0)),
+                    _ => legal.push(legal[0].clone()),
+                }
+                let bytes = serde_json::to_vec(&forged).unwrap();
+                assert!(effect::validate_pending_effect_choice(&forged).is_err());
+                for viewer in [actor, payer] {
+                    assert!(crate::quandary_public_v55::capture(&forged, viewer).is_err());
+                }
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), bytes);
+                for action in [
+                    Action::ChooseEffectTarget(Target::Object(first)),
+                    Action::FinishEffectSelection,
+                ] {
+                    let mut attempted: GameState = serde_json::from_slice(&bytes).unwrap();
+                    assert!(engine::step(&mut attempted, action).is_err());
+                    assert_eq!(serde_json::to_vec(&attempted).unwrap(), bytes);
+                }
+                assert!(effect::resume_resumable_resolution(&mut forged).is_err());
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), bytes);
+            }
+            assert_eq!(serde_json::to_vec(&state).unwrap(), original);
+            let mut replay: GameState = serde_json::from_slice(&original).unwrap();
+            for game in [&mut state, &mut replay] {
+                if pay {
+                    engine::step(game, Action::ChooseEffectTarget(Target::Object(first))).unwrap();
+                } else {
+                    engine::step(game, Action::FinishEffectSelection).unwrap();
+                }
+                assert!(game
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .unwrap()
+                    .choice
+                    .is_none());
+                effect::validate_pending_effect_choice(game).unwrap();
+                crate::quandary_public_v55::capture(game, payer).unwrap();
+                *game = serde_json::from_slice(&serde_json::to_vec(game).unwrap()).unwrap();
+                drain(game);
+                assert_eq!(game.players[payer.index()].life, if pay { 20 } else { 15 });
+                assert_eq!(
+                    game.objects.get(first).zone,
+                    if pay { Zone::Graveyard } else { Zone::Hand }
+                );
+                assert_eq!(game.objects.get(second).zone, Zone::Hand);
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}

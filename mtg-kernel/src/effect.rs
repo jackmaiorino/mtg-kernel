@@ -8616,24 +8616,35 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
                     discard_payment_v1::validate_choice(state, pending, choice)?;
-                    let all = selected
-                        .iter()
-                        .chain(legal)
-                        .filter_map(|c| c.expected_object)
-                        .collect::<Vec<_>>();
-                    validate_exact_binding_permutation(
-                        &choice.hand,
-                        &all,
-                        "discard payment candidates",
-                    )?;
                     if *chooser != choice.player
                         || *path != choice.path
                         || *ordered
                         || *min_targets != 0
                         || *max_targets != 1
+                        // Selecting one auto-completes this exact-zero-or-one
+                        // prompt. A live prompt has no selected prefix.
+                        || !selected.is_empty()
+                        || legal.len() != choice.hand.len()
                     {
                         return Err("discard payment prompt shape changed".into());
                     }
+                    let all = legal
+                        .iter()
+                        .map(|candidate| {
+                            let binding = candidate
+                                .expected_object
+                                .ok_or("discard payment candidate lost its exact binding")?;
+                            if candidate.target != Target::Object(binding.object) {
+                                return Err("discard payment candidate target changed");
+                            }
+                            Ok(binding)
+                        })
+                        .collect::<Result<Vec<_>, &str>>()?;
+                    validate_exact_binding_permutation(
+                        &choice.hand,
+                        &all,
+                        "discard payment candidates",
+                    )?;
                 }
                 EffectTargetSelectionPurpose::DiscardDraw { choice } => {
                     standard_discard::validate(state, pending, choice)?;

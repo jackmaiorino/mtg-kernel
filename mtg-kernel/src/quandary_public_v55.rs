@@ -98,23 +98,29 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV55, String> 
                     selected,
                     purpose: EffectTargetSelectionPurpose::DiscardPaymentV1 { choice },
                     ..
-                }) => StageV55::AwaitingPayment {
-                    payer: payer.into(),
-                    minimum: 0,
-                    maximum: 1,
-                    payer_hand: if viewer == payer {
-                        Some(PrivateHandV55 {
-                            original_hand: refs(state, viewer, choice.hand.iter().copied())?,
-                            selected: refs(
-                                state,
-                                viewer,
-                                selected.iter().filter_map(|c| c.expected_object),
-                            )?,
+                }) => {
+                    let selected_bindings = selected
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "Quandary selected candidate lacks its exact binding".to_string()
+                            })
                         })
-                    } else {
-                        None
-                    },
-                },
+                        .collect::<Result<Vec<_>, String>>()?;
+                    StageV55::AwaitingPayment {
+                        payer: payer.into(),
+                        minimum: 0,
+                        maximum: 1,
+                        payer_hand: if viewer == payer {
+                            Some(PrivateHandV55 {
+                                original_hand: refs(state, viewer, choice.hand.iter().copied())?,
+                                selected: refs(state, viewer, selected_bindings)?,
+                            })
+                        } else {
+                            None
+                        },
+                    }
+                }
                 None => match p.frames.as_slice() {
                     [EffectFrame::DiscardPaymentV1 { selected, .. }] => StageV55::Answered {
                         payer: payer.into(),
