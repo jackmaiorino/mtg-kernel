@@ -4522,9 +4522,11 @@ fn sba_fixed_point_with_protected_triggers(
             return;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
-        crate::standard_cards_v1::refresh_aegis_copies(state);
-        if crate::engine::halt_on_invalid_battlefield_pt(state) {
-            return;
+        {
+            crate::standard_cards_v1::refresh_aegis_copies(state);
+            if crate::engine::halt_on_invalid_battlefield_pt(state) {
+                return;
+            }
         }
         let protected_players = crate::game_outcome_protection_v1::protected_players(state);
         let protected_draws_consumed =
