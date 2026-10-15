@@ -8,7 +8,11 @@ lineage then reads the parent, O-final and every phase-1 checkpoint offline.
 
 A U collapse diagnostic cell (collab LANES/spy-u-collapse-20261014) is arm U
 with ``--cell`` and the options it changes; its checkpoints become candidates
-``CELL-step-N``.
+``CELL-step-N``. A best-line target cell (collab
+LANES/bestline-target-test-20261015) names a keep-set file with
+``--keep-sets KEEP.json`` in place of ``--min-edge-backups`` or
+``--count-control``: the rows it lists and, at each, the live actions its
+target keeps (bt1.py census writes these files).
 
 CLI (JSON on stdout):
   phase1 --lineage r1 --arm U|L --parent P.json --games GAMES.jsonl --bank BANK.json
@@ -60,11 +64,12 @@ def phase1_command(lineage: str, arm: str, parent: dict, games: Path, bank: Path
 
 def cell_options(cell: str | None, learning_rate: float | None = None, anchor_coefficient: float | None = None,
                  min_edge_backups: int | None = None, count_control: int | None = None,
-                 checkpoint_steps: list[int] | None = None) -> dict | None:
+                 checkpoint_steps: list[int] | None = None, keep_sets: Path | None = None) -> dict | None:
     """The command's ``options``: the cell label and only the fields it changes."""
     fields = {"learning_rate": learning_rate, "anchor_coefficient": anchor_coefficient,
               "min_edge_backups": min_edge_backups, "count_control": count_control,
-              "checkpoint_steps": checkpoint_steps}
+              "checkpoint_steps": checkpoint_steps,
+              "keep_sets": None if keep_sets is None else pin(Path(keep_sets).resolve())}
     if cell is None:
         require(all(v is None for v in fields.values()), "phase-1 options need --cell")
         return None
@@ -129,6 +134,7 @@ def main(argv=None) -> int:
     rows = p.add_mutually_exclusive_group()
     rows.add_argument("--min-edge-backups", type=int)
     rows.add_argument("--count-control", type=int)
+    rows.add_argument("--keep-sets", type=Path)
     p.add_argument("--checkpoint-steps", type=lambda v: [int(x) for x in v.split(",")])
     q = sub.add_parser("probe")
     q.add_argument("--o-final", type=Path, required=True)
@@ -148,7 +154,7 @@ def main(argv=None) -> int:
     parent, anchor = read_json(a.parent), read_json(a.anchor)
     if a.op == "phase1":
         options = cell_options(a.cell, a.learning_rate, a.anchor_coefficient, a.min_edge_backups,
-                               a.count_control, a.checkpoint_steps)
+                               a.count_control, a.checkpoint_steps, a.keep_sets)
         command = phase1_command(a.lineage, a.arm, parent, a.games, a.bank, anchor, a.output_directory,
                                  a.dry_run, a.rerun, options)
     else:

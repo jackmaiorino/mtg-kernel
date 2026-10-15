@@ -14,7 +14,10 @@
 //!   optimizer: a one-hot forward KL at archive rows plus a forward-KL anchor
 //!   to the parent's softmax on the parent's own ordinary rows. Before the
 //!   first step, the anchor alone over every anchor-training row, on the
-//!   same fresh moments, must leave the parent unchanged bit for bit.
+//!   same fresh moments, must leave the parent unchanged bit for bit. A
+//!   keep-set cell (collab LANES/bestline-target-test-20261015) trains only
+//!   the rows its file lists, each toward the parent's own softmax over the
+//!   live actions the file keeps there, in place of the one-hot target.
 //! - Each phase-1 checkpoint holds the phase-1 parameters with the parent's
 //!   exact Adam state under its own loss identity and a typed provenance
 //!   record. The loader reads the named parent checkpoint and requires that
@@ -37,6 +40,7 @@ use crate::native_policy_train_step_v1::{
 };
 use crate::regret_census_v1::stage4a::{decision_replay_key, spy_menu_flags_v1};
 use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
+use std::collections::{BTreeMap, HashMap};
 
 pub const ARCHIVE_DISTILLATION_NAMESPACE_V1: &str = "spy-archive-distillation-v1";
 /// The U collapse diagnostic's namespace (its count-control subsets).
@@ -48,6 +52,7 @@ const METHOD: &str = "spy-archive-distillation-phase1-v1";
 const BANK_SCHEMA: &str = "mtg-kernel-archive-distillation-bank/v1";
 const PHASE1_SCHEMA: &str = "mtg-kernel-archive-distillation-phase1/v1";
 const PROBE_SCHEMA: &str = "mtg-kernel-archive-distillation-probe/v1";
+pub const KEEP_SETS_SCHEMA_V1: &str = "mtg-kernel-archive-distillation-keep-sets/v1";
 /// The frozen phase-1 recipe (design section 5).
 const LEARNING_RATE: f32 = 1e-4;
 const ARCHIVE_BATCH: usize = 32;
@@ -259,6 +264,11 @@ pub struct ArchiveDistillationOptionsV1 {
     /// schedule; the last is the run's length.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_steps: Option<Vec<u64>>,
+    /// Keeps exactly the rows this [`ArchiveDistillationKeepSetsV1`] file
+    /// lists, each with the parent's softmax over its kept live actions as
+    /// the target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_sets: Option<PinnedFileV1>,
 }
 
 /// A cell as its checkpoints record it: the resolved recipe, in bits. The
@@ -273,6 +283,32 @@ pub struct ArchiveDistillationCellV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count_control: Option<u64>,
     pub checkpoint_steps: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_sets: Option<PinnedFileV1>,
+}
+
+/// A keep-set file: one lineage's rows of one bank, and at each row the
+/// live actions its target keeps, strictly increasing. Phase 1 trains on
+/// exactly these rows. A row's target is the binary64 softmax of the
+/// parent's raw logits over its kept actions, built as the anchor's targets
+/// are, with probability 0 at every other action; one kept action is the
+/// one-hot target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveDistillationKeepSetsV1 {
+    pub schema: String,
+    pub lineage: String,
+    /// The bank's own `rows_sha256`.
+    pub bank_rows_sha256: String,
+    pub rows: Vec<ArchiveDistillationKeepRowV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveDistillationKeepRowV1 {
+    pub game: String,
+    pub step: u64,
+    pub keep: Vec<u32>,
 }
 
 /// The phase-1 recipe values a run uses: the frozen ones, or a cell's.
@@ -319,7 +355,15 @@ fn recipe_v1(
         "the anchor coefficient is a positive finite number",
     )?;
     ensure(
-        options.min_edge_backups.is_none() || options.count_control.is_none(),
+        [
+            options.min_edge_backups.is_some(),
+            options.count_control.is_some(),
+            options.keep_sets.is_some(),
+        ]
+        .into_iter()
+        .filter(|&rule| rule)
+        .count()
+            <= 1,
         "a cell keeps rows by one rule at most",
     )?;
     ensure(
@@ -344,23 +388,37 @@ fn recipe_v1(
             min_edge_backups: options.min_edge_backups,
             count_control: options.count_control.map(|n| n as u64),
             checkpoint_steps: options.checkpoint_steps.clone().unwrap_or_default(),
+            keep_sets: options.keep_sets.clone(),
         }),
     })
 }
 
 /// The arm's rows, then a cell's row rule: a support floor on the executed
-/// edge's backups, or a count control ranked by
-/// `[U_COLLAPSE_NAMESPACE_V1, lineage, "count-control", n, game, step]`.
-/// The result is in bank order; the plan orders each epoch itself.
+/// edge's backups, a count control ranked by
+/// `[U_COLLAPSE_NAMESPACE_V1, lineage, "count-control", n, game, step]`, or
+/// a keep-set file's rows ([`keep_sets_v1`]). The result is in bank order;
+/// the plan orders each epoch itself.
 fn select_rows_v1(
     rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
     arm: ArchiveDistillationArmV1,
     lineage: &str,
     options: Option<&ArchiveDistillationOptionsV1>,
+    keep: Option<&BTreeMap<usize, Vec<u32>>>,
 ) -> Result<Vec<usize>, String> {
+    ensure(
+        keep.is_some() == options.is_some_and(|o| o.keep_sets.is_some()),
+        "a keep-set cell reads its loaded keep sets",
+    )?;
     let mut selected: Vec<usize> = (0..rows.len())
         .filter(|&i| arm.admits(&rows[i].0))
         .collect();
+    if let Some(keep) = keep {
+        selected.retain(|i| keep.contains_key(i));
+        ensure(
+            selected.len() == keep.len(),
+            "a keep-set row is outside the arm",
+        )?;
+    }
     if let Some(floor) = options.and_then(|o| o.min_edge_backups) {
         selected.retain(|&i| rows[i].0.edge_backups.is_some_and(|b| b >= floor));
     }
@@ -387,6 +445,122 @@ fn select_rows_v1(
         selected.sort_unstable();
     }
     Ok(selected)
+}
+
+/// Reads a keep-set file against the reproduced bank: its lineage and the
+/// bank's rows hash; every listed row one bank row, listed once; every
+/// keep set non-empty, strictly increasing and inside the row's menu, with
+/// positive parent probability. Returns each listed row's bank index and
+/// its kept actions.
+fn keep_sets_v1(
+    pin: &PinnedFileV1,
+    lineage: &str,
+    bank_rows_sha256: &str,
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+) -> Result<BTreeMap<usize, Vec<u32>>, String> {
+    let file: ArchiveDistillationKeepSetsV1 = read_pinned(pin)?;
+    ensure(
+        file.schema == KEEP_SETS_SCHEMA_V1
+            && file.lineage == lineage
+            && file.bank_rows_sha256 == bank_rows_sha256,
+        "keep-set file identity differs from the bank",
+    )?;
+    ensure(
+        !file.rows.is_empty(),
+        "a keep-set file lists at least one row",
+    )?;
+    let index: HashMap<(&str, u64), usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (row, _))| ((row.game.as_str(), row.step), i))
+        .collect();
+    ensure(
+        index.len() == rows.len(),
+        "bank rows repeat a game and step",
+    )?;
+    let mut keep = BTreeMap::new();
+    for listed in &file.rows {
+        let &i = index
+            .get(&(listed.game.as_str(), listed.step))
+            .ok_or("a keep-set row is not a bank row")?;
+        let row = &rows[i].0;
+        ensure(
+            !listed.keep.is_empty()
+                && listed.keep.windows(2).all(|w| w[0] < w[1])
+                && listed.keep.last().is_some_and(|&a| a < row.k),
+            "a keep set is non-empty, strictly increasing and inside its menu",
+        )?;
+        let parent = line_b_softmax_v1(&f64_logits(&recorded_logits(&row.parent_logits)))
+            .map_err(err)?
+            .probabilities;
+        ensure(
+            listed.keep.iter().map(|&a| parent[a as usize]).sum::<f64>() > 0.0,
+            "a keep set holds no parent probability",
+        )?;
+        ensure(
+            keep.insert(i, listed.keep.clone()).is_none(),
+            "a keep-set row is listed twice",
+        )?;
+    }
+    Ok(keep)
+}
+
+/// A keep-set row's target: the binary64 softmax of the parent's raw logits
+/// over the kept actions, built as the anchor's targets are, placed at
+/// those actions with probability 0 and log-probability minus infinity at
+/// every other action. One kept action gives the one-hot target exactly.
+fn kept_target_v1(row: &ArchiveRowV1, keep: &[u32]) -> Result<LineBSoftmaxV1, String> {
+    let logits = f64_logits(&recorded_logits(&row.parent_logits));
+    let kept: Vec<f64> = keep.iter().map(|&a| logits[a as usize]).collect();
+    let softmax = line_b_softmax_v1(&kept).map_err(err)?;
+    let mut probabilities = vec![0.0; logits.len()];
+    let mut log_probabilities = vec![f64::NEG_INFINITY; logits.len()];
+    for (j, &a) in keep.iter().enumerate() {
+        probabilities[a as usize] = softmax.probabilities[j];
+        log_probabilities[a as usize] = softmax.log_probabilities[j];
+    }
+    Ok(LineBSoftmaxV1 {
+        probabilities,
+        log_probabilities,
+        weight_sum: softmax.weight_sum,
+    })
+}
+
+/// A keep-set cell's rows as its census records them: the kept actions,
+/// the parent's probability on them, the target's mass on the menu's Spy
+/// self-target and Dread-Return-on-Giant actions (null when the menu has
+/// none) and the forward KL from the parent's softmax to the target.
+fn keep_census_v1(
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+    keep: &BTreeMap<usize, Vec<u32>>,
+    targets: &[LineBSoftmaxV1],
+) -> Result<Value, String> {
+    let mut out = Vec::with_capacity(keep.len());
+    for (&i, kept) in keep {
+        let row = &rows[i].0;
+        let logits = f64_logits(&recorded_logits(&row.parent_logits));
+        let parent = line_b_softmax_v1(&logits).map_err(err)?.probabilities;
+        let target = &targets[i];
+        let mass = |actions: &[u32]| -> Option<f64> {
+            (!actions.is_empty()).then(|| {
+                actions
+                    .iter()
+                    .map(|&a| target.probabilities[a as usize])
+                    .sum()
+            })
+        };
+        let kl = line_b_divergence_v1(LineBDivergenceV1::Forward, &logits, target)
+            .map_err(err)?
+            .divergence;
+        out.push(
+            json!({"game":row.game,"step":row.step,"k":row.k,"keep":kept,
+            "kept_parent_probability":kept.iter().map(|&a| parent[a as usize]).sum::<f64>(),
+            "target_self_mass":mass(&row.self_actions),
+            "target_giant_mass":mass(&row.giant_actions),
+            "kl_target_from_parent":kl}),
+        );
+    }
+    Ok(Value::Array(out))
 }
 
 /// The parent's own ordinary play, split by unit before collection (design
@@ -1442,7 +1616,12 @@ pub(super) fn phase1_v1(
     let parent_pin = parent.checkpoint.clone().expect("checked by load");
     let parent_checkpoint = read_ordinary_checkpoint_v1(&parent_pin, inputs.policy.identity_v1())?;
     let (bank_record, rows) = reproduce_bank_v1(&inputs, &parent, &lineage, &games, &bank)?;
-    let selected = select_rows_v1(&rows, arm, &lineage, options.as_ref())?;
+    let keep = options
+        .as_ref()
+        .and_then(|o| o.keep_sets.as_ref())
+        .map(|pin| keep_sets_v1(pin, &lineage, &bank_record.rows_sha256, &rows))
+        .transpose()?;
+    let selected = select_rows_v1(&rows, arm, &lineage, options.as_ref(), keep.as_ref())?;
     let mut ids = BTreeSet::new();
     let anchor_train = load_anchor_split_v1(
         &anchor.training,
@@ -1479,7 +1658,13 @@ pub(super) fn phase1_v1(
     )?;
     let archive_targets = rows
         .iter()
-        .map(|(row, _)| one_hot_target_v1(row.k as usize, row.target as usize).map_err(err))
+        .enumerate()
+        .map(
+            |(i, (row, _))| match keep.as_ref().and_then(|k| k.get(&i)) {
+                Some(kept) => kept_target_v1(row, kept),
+                None => one_hot_target_v1(row.k as usize, row.target as usize).map_err(err),
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     let anchor_targets = anchor_targets_v1(&anchor_train)?;
     let anchor_sha256 = sha(&serde_json::to_vec(&anchor).map_err(err)?);
@@ -1514,6 +1699,9 @@ pub(super) fn phase1_v1(
                 "line":r.line})
             )
             .collect::<Vec<_>>());
+    }
+    if let Some(keep) = &keep {
+        census["keep_rows"] = keep_census_v1(&rows, keep, &archive_targets)?;
     }
     let identity = json!({"lineage":lineage,"arm":arm,"parent":parent,
         "parent_state_sha256":inputs.state_sha256,"games":games,"bank":bank,
