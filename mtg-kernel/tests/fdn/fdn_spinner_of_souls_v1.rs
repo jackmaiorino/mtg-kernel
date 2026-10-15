@@ -756,3 +756,112 @@ fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats(
         }
     }
 }
+
+#[test]
+fn v54_real_paid_rods_hosted_by_spinner_keep_granted_damage_out_of_printed_roots_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for rod_count in [1_u8, 2] {
+            let mut state = ready(actor, true);
+            let spinner = source(&mut state, actor);
+            let mut rods = Vec::new();
+            for _ in 0..rod_count {
+                let rod = cast(
+                    &mut state,
+                    actor,
+                    "Black Mage's Rod",
+                    ManaColor::B,
+                    1,
+                    1,
+                    None,
+                );
+                settle(&mut state);
+                assert!(
+                    matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+                );
+                state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 3;
+                engine::step(&mut state, Action::ActivateAbility(rod, 0)).unwrap();
+                assert!(
+                    matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..} if legal_targets.contains(&Target::Object(spinner)))
+                );
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(spinner))).unwrap();
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+                settle(&mut state);
+                assert_eq!(
+                    state.objects.get(rod).v4.attached_to.unwrap().object,
+                    spinner
+                );
+                rods.push(rod);
+            }
+            let life = state.players[actor.opponent().index()].life;
+            let history = state.engine.event_history.len();
+            let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+            assert!(
+                matches!(next(&mut state),Decision::CastSpellOrPass{player,..} if player==actor)
+            );
+            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+            engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+            let decision = next(&mut state);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            assert!(state.engine.pending_cast.is_none());
+            let mut replay = restore(&state);
+            if rod_count == 2 {
+                assert!(
+                    matches!(decision,Decision::OrderTriggers{player,ref pending} if player==actor&&pending.len()==2)
+                );
+                assert_eq!(state.engine.pending_triggers.len(), 2);
+                assert!(state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .all(|row| row.source == spinner
+                        && row
+                            .granted_by
+                            .is_some_and(|grant| rods.contains(&grant.source))));
+                for game in [&state, &replay] {
+                    let facts = mtg_kernel::spinner_public_v54::capture(game).unwrap();
+                    assert!(facts.held.is_empty() && facts.stack.is_empty());
+                    mtg_kernel::spinner_public_v54::validate(game, &facts).unwrap();
+                }
+                for game in [&mut state, &mut replay] {
+                    engine::step(game, Action::OrderTriggers(vec![1, 0])).unwrap();
+                    assert!(matches!(next(game), Decision::CastSpellOrPass { .. }));
+                }
+            } else {
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            }
+            for game in [&state, &replay] {
+                assert_eq!(
+                    game.stack
+                        .iter()
+                        .filter(|row| row.source == spinner
+                            && row
+                                .v4
+                                .granted_by
+                                .is_some_and(|grant| rods.contains(&grant.source)))
+                        .count(),
+                    usize::from(rod_count)
+                );
+                let facts = mtg_kernel::spinner_public_v54::capture(game).unwrap();
+                assert_eq!(facts.current.len(), 1);
+                assert!(facts.stack.is_empty() && facts.held.is_empty());
+            }
+            replay = restore(&replay);
+            for game in [&mut state, &mut replay] {
+                settle(game);
+                assert_eq!(
+                    game.players[actor.opponent().index()].life,
+                    life - i32::from(rod_count)
+                );
+                assert_eq!(game.engine.event_history[history..].iter().filter(|event|matches!(event,CommittedEvent::Damage{source,target:Target::Player(player),amount:1} if *source==spinner&&*player==actor.opponent())).count(),usize::from(rod_count));
+                let facts = mtg_kernel::spinner_public_v54::capture(game).unwrap();
+                assert!(facts.stack.is_empty() && facts.held.is_empty());
+            }
+            assert_eq!(
+                serde_json::to_vec(&state).unwrap(),
+                serde_json::to_vec(&replay).unwrap()
+            );
+        }
+    }
+}

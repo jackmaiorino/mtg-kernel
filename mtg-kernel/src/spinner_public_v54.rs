@@ -35,9 +35,15 @@ pub fn capture(state: &GameState) -> Result<FactsV54, String> {
         crate::card_def::card_id_by_name("Spinner of Souls").ok_or("Spinner printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
     public::validate_state(state)?;
+    let printed_root = (crate::trigger::triggers_for(id)[0].effect)();
     let mut held = Vec::new();
     for pending in public::held(state) {
         if let Some(source) = pending.source_contract.filter(|s| s.card_def == id) {
+            // A host's printing does not turn an independently granted root
+            // (for example Rod damage) into its printed death trigger.
+            if pending.granted_by.is_some() || pending.effect != printed_root {
+                continue;
+            }
             held.push(public::root(state, source, None)?);
         }
     }
@@ -49,6 +55,9 @@ pub fn capture(state: &GameState) -> Result<FactsV54, String> {
         let Some(source) = item.v4.ability_source_contract.filter(|s| s.card_def == id) else {
             continue;
         };
+        if item.v4.granted_by.is_some() || item.inline_effect.as_ref() != Some(&printed_root) {
+            continue;
+        }
         let mut stage = StageV54::OnStack;
         if let Some(p) = state
             .engine

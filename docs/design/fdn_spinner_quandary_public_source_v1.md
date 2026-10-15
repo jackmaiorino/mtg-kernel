@@ -36,7 +36,7 @@ deceased/cast objects or completed occurrences, and none are synthesized here.
 Existing public hand/library knowledge remains ordinary engine authority. No
 whole-world journal or historical receipt prerequisite is introduced.
 
-Seven new Rust fixture groups prepare exact/rehashed meaning refusal, mandatory
+Eight new Rust fixture groups prepare exact/rehashed meaning refusal, mandatory
 wide counters/DTO tamper, independently constructed hidden/face-down world
 parity, real paid Spinner reveal/decline restore, paid control changes while its
 trigger remains on stack, suppression before/after collection, token-copy death
@@ -48,6 +48,14 @@ fixture inputs, not invented spell or face-down producers. No genuine current
 Limited producer for changing control/suppressing the noncreature Quandary
 permanent is asserted; its spell-copy exclusion is exercised directly.
 
+Review repair: Spinner classification now requires its actual printed root and
+no granting source after generic validation. A genuine Rod trigger hosted by
+Spinner remains outside its printed death facts. The new both-seat fixture pays
+one/two Rod casts, lets native Job Select create/attach Heroes, pays Equip3 onto
+Spinner, then pays Think Twice. Actual held/stack Rod roots and restored damage
+must remain valid with no phantom Spinner reveal root. No source/controller
+validation was weakened and no grant or attachment is synthesized.
+
 Observed: all 71 affected Python Limited deck/frozen-pool cases passed; pinned
 `cargo +1.94.1 fmt --all --check`, diff and bounded static checks passed. Existing
 engine, state, enum, registry, frozen pool/token, toolchain and consumer files
@@ -58,6 +66,6 @@ engine PT additions remain a concrete shared arithmetic limitation, not repaired
 by this DTO. One combined successor still owns observation/backend/Human/RPC
 transport, numeric admission, qualification and remaining interaction coverage.
 
-Source SHA-256: `d8131f5c9eb55ca665af09495b8c0250d180cdf1768f770292fe95ae34c26c29`.
+Source SHA-256: `9bea6a9c393cef864f37b4c27934874603652802f9f07311d31906804f526591`.
 Sort the ten changed Rust paths versus the base; hash UTF-8 path, NUL and raw
 SHA-256 of LF-normalized contents. Exclude this receipt.
