@@ -19,6 +19,8 @@ pub(super) mod faebloom_printing;
 mod legendary_printing;
 #[path = "rallier_bloom_printing.rs"]
 pub(super) mod rallier_bloom_printing;
+#[path = "soulstone_printing.rs"]
+pub(super) mod soulstone_printing;
 #[path = "tyrant_herald_printing.rs"]
 pub(super) mod tyrant_herald_printing;
 
@@ -313,6 +315,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     }
     if d.name == "Eaten Alive" {
         return eaten_printing::baseline(id, d);
+    }
+    if d.name == "Soulstone Sanctuary" {
+        return soulstone_printing::baseline(id, d);
     }
     if matches!(
         d.name,
@@ -672,6 +677,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Soulstone Sanctuary" => return soulstone_printing::printing(id, d),
         "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter" => {
             return enchantment_hunter_printing::printing(id, d)
         }

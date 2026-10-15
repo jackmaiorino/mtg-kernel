@@ -94,6 +94,16 @@ impl Choice {
             Self::Prepared(d) => d.packet(),
         }
     }
+
+    fn erase(&mut self) {
+        let packet = match self {
+            Self::Fake(d) => &mut d.packet,
+            Self::Ravenous(d) => &mut d.packet,
+            Self::Elenda(d) => &mut d.packet,
+            Self::Prepared(d) => &mut d.packet,
+        };
+        packet.state = NumericTree::encode(&json!({})).unwrap();
+    }
 }
 struct Harness {
     source: Source,
@@ -343,6 +353,156 @@ fn exact_legendary_printing_roots_keep_ordinary_costs_static_bonus_ward_and_perm
             );
         }
         assert!(roots::baseline(id).is_err());
+    }
+}
+
+#[test]
+fn genuine_paid_soulstone_land_play_colorless_mana_and_persistent_animation_all_modes_both_seats() {
+    for source in SOURCES {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut raw = ready(actor);
+            let land = put(&mut raw, actor, "Soulstone Sanctuary", Zone::Hand);
+            let forests = (0..3)
+                .map(|_| put(&mut raw, actor, "Forest", Zone::Battlefield))
+                .collect::<Vec<_>>();
+            let mut h = Harness::new(source, raw.clone());
+            let packet = h.packet();
+            assert_eq!(
+                field_count(&packet.state, "registered_permanent_printing"),
+                1
+            );
+            assert_eq!(field_count(&packet.state, "ordinary_land_play"), 1);
+
+            let foreign = Harness::new(source, raw).save();
+            let before_foreign_restore = h.gameplay();
+            assert!(matches!(
+                h.owner.restore(&foreign.owner),
+                Err(Error::ForeignSnapshot)
+            ));
+            assert_eq!(h.gameplay(), before_foreign_restore);
+
+            let actions = h.input().1;
+            let play_index = actions
+                .iter()
+                .position(|action| {
+                    matches!(action,ActionSemanticV1::PlayLand{source,..}if source.arena_id==land.0)
+                })
+                .unwrap();
+            let mut erased = h.owner.encode(h.expected());
+            erased.erase();
+            let before_erased = h.gameplay();
+            assert!(matches!(
+                h.owner.apply(&erased, play_index as u32),
+                Err(Error::StaleBinding)
+            ));
+            assert_eq!(h.gameplay(), before_erased);
+
+            h.act(|action| {
+                matches!(action,ActionSemanticV1::PlayLand{source,..}if source.arena_id==land.0)
+            });
+            assert_eq!(h.state().objects.get(land).zone, Zone::Battlefield);
+            assert!(!h.state().stack.iter().any(|item| item.source == land));
+            assert_eq!(h.state().objects.get(land).controller, actor);
+
+            for forest in forests {
+                h.mana(forest);
+            }
+            h.mana(land);
+            assert!(h.state().objects.get(land).tapped);
+            assert_eq!(
+                h.state().players[actor.index()].mana_pool[crate::mana::ManaColor::G.pool_index()],
+                3
+            );
+            assert_eq!(
+                h.state().players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()],
+                1
+            );
+            assert_eq!(
+                h.state().players[actor.index()]
+                    .mana_pool
+                    .iter()
+                    .sum::<u8>(),
+                4
+            );
+            let actions = h.input().1;
+            assert!(actions.iter().any(|action|matches!(action,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==land.0)));
+            h.act(|action| {
+                matches!(action,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==land.0)
+            });
+            assert_eq!(h.state().players[actor.index()].mana_pool, [0; 6]);
+            let pending = h.save();
+            h.drain(None);
+            let after = (h.gameplay(), h.packet());
+            assert!(crate::engine::object_has_type(
+                h.state(),
+                land,
+                crate::card_def::CardType::Land
+            ));
+            assert!(crate::engine::object_has_type(
+                h.state(),
+                land,
+                crate::card_def::CardType::Creature
+            ));
+            assert_eq!(
+                crate::engine::checked_effective_pt(h.state(), land).unwrap(),
+                (3, 3)
+            );
+            assert!(crate::engine::has_effective_keyword(
+                h.state(),
+                land,
+                crate::card_def::Keywords::VIGILANCE
+            ));
+            for subtype in crate::card_def::Subtype::CREATURE_TYPES {
+                assert!(crate::engine::has_effective_subtype(
+                    h.state(),
+                    land,
+                    subtype
+                ));
+            }
+            assert!(h.state().objects.get(land).summoning_sick);
+            assert!(h.state().objects.get(land).v4.animation_timestamp.is_some());
+            h.restore(&pending);
+            h.drain(None);
+            assert_eq!((h.gameplay(), h.packet()), after);
+
+            // Animation does not bypass summoning sickness for a land played this turn.
+            let mut saw_combat = false;
+            for _ in 0..48 {
+                let actions = h.input().1;
+                if let Some(attackers) = actions.iter().find_map(|action| match action {
+                    ActionSemanticV1::DeclareAttackers { attackers, .. } => Some(attackers),
+                    _ => None,
+                }) {
+                    assert!(!attackers.iter().any(|attacker| attacker.arena_id == land.0));
+                    h.act(|action| {
+                        matches!(action,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())
+                    });
+                    saw_combat = true;
+                    break;
+                }
+                h.act(|action| {
+                    matches!(action,ActionSemanticV1::Pass{..})
+                        || matches!(action,ActionSemanticV1::DeclareBlockersForAttacker{blockers,..}if blockers.is_empty())
+                });
+            }
+            assert!(saw_combat);
+        }
+    }
+}
+
+#[test]
+fn soulstone_printing_and_current_animation_facts_preserve_opponent_hand_privacy_all_modes_both_seats(
+) {
+    for source in SOURCES {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let build = |hidden: &str| {
+                let mut raw = ready(actor);
+                put(&mut raw, actor, "Soulstone Sanctuary", Zone::Hand);
+                put(&mut raw, actor.opponent(), hidden, Zone::Hand);
+                Harness::new(source, raw)
+            };
+            assert_eq!(build("Forest").packet(), build("Island").packet());
+        }
     }
 }
 
