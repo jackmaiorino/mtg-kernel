@@ -93,11 +93,14 @@ mod paid {
         matches!(action,ActionSemanticV1::ActivateManaAbility{source,..}if source.arena_id==id.0)
     }
     #[test]
-    fn real_paid_fake_keeps_original_action_order_binding_restore_and_private_hand_both_seats() {
+    fn real_paid_fake_and_bolt_keep_custody_order_binding_restore_and_private_hand_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut raw = state(actor);
             let spell = put(&mut raw, actor, "Fake Your Own Death", Zone::Hand);
             let creature = put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield);
+            let bolt = put(&mut raw, actor.opponent(), "Lightning Bolt", Zone::Hand);
+            let mountain = put(&mut raw, actor.opponent(), "Mountain", Zone::Battlefield);
+
             let swamps: [ObjectId; 2] =
                 std::array::from_fn(|_| put(&mut raw, actor, "Swamp", Zone::Battlefield));
             let raw = FastActorSessionV1::from_fake_v50_fixture_state(raw);
@@ -160,6 +163,90 @@ mod paid {
                 .grants
                 .len(),
                 1
+            );
+
+            if expected(&session.inner).acting_player != actor.opponent().into() {
+                act!(session, fake_current_decision_input_v50, |a| matches!(
+                    a,
+                    ActionSemanticV1::Pass { .. }
+                ));
+            }
+            assert_eq!(
+                expected(&session.inner).acting_player,
+                actor.opponent().into()
+            );
+            act!(session, fake_current_decision_input_v50, |a| mana(
+                a, mountain
+            ));
+            act!(
+                session,
+                fake_current_decision_input_v50,
+                |a| matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==bolt.0)
+            );
+            act!(
+                session,
+                fake_current_decision_input_v50,
+                |a| matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Object{object},..}if object.arena_id==creature.0)
+            );
+            let mut restored_death = false;
+            for _ in 0..32 {
+                let facts = crate::fake_your_own_death_v50::public_v50::capture(
+                    session.inner.fake_fixture_state(),
+                )
+                .unwrap();
+                if !restored_death && facts.deaths.iter().any(|d| {
+                    d.phase == crate::fake_your_own_death_v50::public_v50::DeathPhaseV50::Published
+                }) {
+                    let e = expected(&session.inner);
+                    let old = session.encode(e).unwrap();
+                    let saved = session.snapshot();
+                    session.restore(&saved).unwrap();
+                    assert!(matches!(session.apply(&old, 0), Err(Error::StaleBinding)));
+                    assert_eq!(
+                        session.encode(expected(&session.inner)).unwrap().packet,
+                        old.packet
+                    );
+                    restored_death = true;
+                }
+                if session.inner.fake_fixture_state().stack.is_empty() {
+                    break;
+                }
+                act!(session, fake_current_decision_input_v50, |a| matches!(
+                    a,
+                    ActionSemanticV1::Pass { .. }
+                ));
+            }
+            assert!(restored_death);
+            let facts = crate::fake_your_own_death_v50::public_v50::capture(
+                session.inner.fake_fixture_state(),
+            )
+            .unwrap();
+            assert_eq!(facts.deaths.len(), 1);
+            assert_eq!(
+                facts.deaths[0].phase,
+                crate::fake_your_own_death_v50::public_v50::DeathPhaseV50::Resolved
+            );
+            assert_eq!(facts.deaths[0].treasures.len(), 1);
+            assert_eq!(
+                session
+                    .inner
+                    .fake_fixture_state()
+                    .objects
+                    .get(creature)
+                    .zone,
+                Zone::Battlefield
+            );
+            assert!(
+                session
+                    .inner
+                    .fake_fixture_state()
+                    .objects
+                    .get(creature)
+                    .tapped
+            );
+            assert_eq!(
+                session.inner.fake_fixture_state().objects.get(bolt).zone,
+                Zone::Graveyard
             );
             let mut alternative = session.inner.fake_fixture_state().clone();
             let hidden = put(&mut alternative, actor.opponent(), "Island", Zone::Hand);

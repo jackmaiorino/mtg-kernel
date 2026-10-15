@@ -44,7 +44,7 @@ prerequisite therefore does **not** claim complete current-catalog scoring.
 Closing those concrete root/shape gaps is subsequent implementation work.
 Frozen model identities and retained-world sampler/search refusals remain.
 
-Authored tests include both-seat paid Fake and Amulet, private-hand invariance,
+Authored tests include both-seat paid Fake/Bolt death-return-Treasure and Amulet, private-hand invariance,
 whole binding/owner/restore refusal, exact native selected-action parity, wide
 noncreature V51 operands, a genuine 260-target Divine cast with restore at255,
 and the genuine large-menu missing-root refusal. All Rust tests are **uncompiled
