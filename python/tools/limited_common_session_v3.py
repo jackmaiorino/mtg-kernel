@@ -51,6 +51,40 @@ def _validate_battlefield(visible: dict[str, Any]) -> None:
             _bounded_int(row.get("soul"), "soul", 0, (1 << 31) - 1)
 
 
+def _same_json_value(left: Any, right: Any) -> bool:
+    """Compare issued JSON without Python's bool/int/float equality coercion.
+
+    The retained side is a private deepcopy of a decoded, validated reply.
+    Accept only exact JSON value types and string keys on the caller side.
+    Dictionary insertion order has no effect on prompt identity.
+    """
+    pending = [(left, right)]
+    while pending:
+        actual, expected = pending.pop()
+        kind = type(actual)
+        if kind is not type(expected):
+            return False
+        if kind is dict:
+            if (any(type(key) is not str for key in actual)
+                    or any(type(key) is not str for key in expected)
+                    or actual.keys() != expected.keys()):
+                return False
+            pending.extend((actual[key], expected[key]) for key in actual)
+        elif kind is list:
+            if len(actual) != len(expected):
+                return False
+            pending.extend(zip(actual, expected))
+        elif kind in (str, int, bool, type(None)):
+            if actual != expected:
+                return False
+        elif kind is float:
+            if not math.isfinite(actual) or not math.isfinite(expected) or actual != expected:
+                return False
+        else:
+            return False
+    return True
+
+
 class LimitedCommonClientV3(LimitedClientV1):
     def __init__(self, command: Sequence[str], *, expected_card_db_hash: int,
                  timeout_s: float = 10.0) -> None:
@@ -166,7 +200,7 @@ class LimitedCommonClientV3(LimitedClientV1):
     def step(self, reply: dict[str, Any], action_index: int) -> dict[str, Any]:
         state = self._issued_state
         if (state is None or state.get("state_type") != "decision"
-                or not isinstance(reply, dict) or reply.get("state") != state):
+                or type(reply) is not dict or not _same_json_value(reply.get("state"), state)):
             raise LimitedSessionError("stale or unavailable common prompt")
         actions = state["decision"]["actions"]
         if type(action_index) is not int or not 0 <= action_index < len(actions):

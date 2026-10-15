@@ -176,6 +176,65 @@ class LimitedCommonClientV3Test(unittest.TestCase):
             self.assertEqual(client.next_request, sent)
             client.step(original, 0)
 
+    def test_issued_prompt_numeric_types_cannot_change_before_transport(self):
+        with self.client() as client:
+            original = client.reset(self.decks)
+            sent = client.next_request
+            for field in ("soul", "plus_one_counters", "marked_damage"):
+                for seat, replacements in ((0, (False, 0.0)), (1, (True, float(
+                        original["state"]["decision"]["state"]["public"]["battlefield"][1][0][field])))):
+                    for replacement in replacements:
+                        with self.subTest(field=field, seat=seat, replacement=replacement):
+                            changed = deepcopy(original)
+                            changed["state"]["decision"]["state"]["public"]["battlefield"][seat][0][field] = replacement
+                            with self.assertRaisesRegex(LimitedSessionError, "stale"):
+                                client.step(changed, 0)
+                            self.assertEqual(client.next_request, sent)
+            for action, replacement in ((0, False), (0, 0.0), (1, True), (1, 1.0)):
+                changed = deepcopy(original)
+                changed["state"]["decision"]["actions"][action]["action_index"] = replacement
+                with self.subTest(action=action, replacement=replacement):
+                    with self.assertRaisesRegex(LimitedSessionError, "stale"):
+                        client.step(changed, 0)
+                    self.assertEqual(client.next_request, sent)
+            changed = deepcopy(original)
+            self.assertEqual(changed["state"]["decision"]["prompt_seq"], 1)
+            changed["state"]["decision"]["prompt_seq"] = True
+            with self.assertRaisesRegex(LimitedSessionError, "stale"):
+                client.step(changed, 0)
+            self.assertEqual(client.next_request, sent)
+            self.assertFalse(client.closed)
+
+            def reordered(value):
+                if type(value) is dict:
+                    return {key: reordered(item) for key, item in reversed(list(value.items()))}
+                if type(value) is list:
+                    return [reordered(item) for item in value]
+                return value
+
+            # Deep copies and JSON object key order preserve the issued prompt.
+            valid = reordered(deepcopy(original))
+            self.assertEqual(client.step(valid, 0)["state"]["state_type"], "terminal")
+
+    def test_non_json_issued_prompt_values_refuse_without_sending(self):
+        with self.client() as client:
+            original = client.reset(self.decks)
+            sent = client.next_request
+            for replacement in (object(), set(), (), float("nan"), float("inf"), {0: "value"}):
+                changed = deepcopy(original)
+                changed["state"]["decision"]["state"]["public"]["battlefield"][0][0]["soul"] = replacement
+                with self.subTest(replacement=type(replacement).__name__):
+                    with self.assertRaisesRegex(LimitedSessionError, "stale"):
+                        client.step(changed, 0)
+                    self.assertEqual(client.next_request, sent)
+            changed = deepcopy(original)
+            changed["state"]["decision"][False] = changed["state"]["decision"].pop("prompt_seq")
+            with self.assertRaisesRegex(LimitedSessionError, "stale"):
+                client.step(changed, 0)
+            self.assertEqual(client.next_request, sent)
+            self.assertFalse(client.closed)
+            client.step(deepcopy(original), 0)
+
     def test_invalid_action_indices_send_nothing(self):
         with self.client() as client:
             original = client.reset(self.decks)
