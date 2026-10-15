@@ -210,6 +210,9 @@ jobs:
         # Slowest groups first: runners take matrix jobs in this order.
         group:
           - limited
+          - limited-v2
+          - limited-v3
+          - limited-v1
           - standard
           - workspace
           - cuda
@@ -222,7 +225,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -416,8 +419,10 @@ jobs:
         run: |
           python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" ordinary_departure_retains_color_proof actual_grant_source_still_requires_successor
 
+      # Each protocol keeps its complete checks in a separate job. Serial
+      # gameplay plus the three process replays exceeded the two-hour limit.
       - name: Validate Limited common server and Python client
-        if: ${{ !cancelled() && matrix.group == 'limited' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-v1' }}
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_common_session_v1::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env
@@ -429,7 +434,7 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V1=1 python -m cProfile -s cumulative python/tools/check_limited_common_client_v1.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env$binary_suffix"
 
       - name: Validate current Limited V2 server and complete Fake consumers
-        if: ${{ !cancelled() && matrix.group == 'limited' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-v2' }}
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures fake_full_engine_admission_v1_tests:: fake_observation_v50:: rules_meaning_fake_your_own_death_v50:: rl_session::fake_v50:: human_bo3_v1::fake_v50:: limited_common_session_v2::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env_v2
@@ -440,7 +445,7 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V2=1 python python/tools/check_limited_common_client_v2.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v2$binary_suffix"
 
       - name: Validate Ravenous V51 consumers and Limited V3 process
-        if: ${{ !cancelled() && matrix.group == 'limited' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-v3' }}
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures ravenous_full_engine_admission_v1_tests:: elenda_public_v52:: elenda_observation_v52:: rl_session::elenda_v52:: human_bo3_v1::elenda_v52:: limited_elenda_session_v4:: rules_meaning_elenda_v52:: state::soul_counter_storage_v1_tests:: event::soul_placement_primitive_v1_tests:: event::ravenous_amulet_paid_future_tests:: soul_transfer_preserves_value_restore_and_overflow_refusal ravenous_amulet_v1:: soul_counters_v1:: ravenous_public_v51:: rules_meaning_ravenous_amulet_v51:: ravenous_observation_v51:: rl_session::ravenous_v51:: limited_common_session_v3::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env_v3
