@@ -2760,14 +2760,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 449 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The seven Partial source candidates occupy ids 442-448.
+        // The nine Partial source candidates occupy ids 442-448 and 450-451.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                450
+                452
             } else {
                 192
             }
@@ -2805,6 +2805,8 @@ mod tests {
             assert_eq!(card_id_by_name("Painful Quandary"), Some(447));
             assert_eq!(card_id_by_name("Drake Hatcher"), Some(448));
             assert_eq!(card_id_by_name("Drake Token"), Some(449));
+            assert_eq!(card_id_by_name("Bloodthirsty Conqueror"), Some(450));
+            assert_eq!(card_id_by_name("Doubling Season"), Some(451));
             assert_eq!(CARD_DEFS[449].capability, CardCapability::Full);
         }
     }
@@ -3224,6 +3226,8 @@ mod tests {
                 (446, "Spinner of Souls"),
                 (447, "Painful Quandary"),
                 (448, "Drake Hatcher"),
+                (450, "Bloodthirsty Conqueror"),
+                (451, "Doubling Season"),
             ]
         } else {
             &[]

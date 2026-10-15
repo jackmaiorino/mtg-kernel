@@ -1306,7 +1306,6 @@ fn actual_mixed_copied_pole_untap_original_controller_history_and_human_restore_
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_season_bait_and_complete_fish_roster_original_controller_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, host, pole) = fixture(actor);

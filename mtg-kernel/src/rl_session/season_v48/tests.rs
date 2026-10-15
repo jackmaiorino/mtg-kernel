@@ -64,7 +64,10 @@ fn actual_absence_mixed_input_owning_revision_and_whole_observation_binding_both
     }
 }
 #[test]
-#[ignore = "future actual Doubling Season registration required"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_source_old_mode_advance_refuses_readonly_and_v48_publishes_distinct_facts() {
     use crate::event::{self, ProposedEvent};
     for actor in [PlayerId::P0, PlayerId::P1] {

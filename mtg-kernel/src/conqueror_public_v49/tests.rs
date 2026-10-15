@@ -51,7 +51,10 @@ fn registered_absence_and_original_amount_only_public_facts_do_not_export_privat
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_paid_original_public_occurrence_source_and_completion_rederive_before_after_restore() {
     use conqueror::tests::future_printed;
     for actor in [PlayerId::P0, PlayerId::P1] {

@@ -78,6 +78,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
                 || !def.starting_life_self_bonuses_v1.is_empty()
                 || def.source_type_hexproof_v1.is_some()
                 || def.other_controlled_nontoken_death_v1.is_some()
+                || def.token_counter_replacement_v48.is_some()
         })
         .map(|(id, _)| id as u16)
         .collect();
@@ -95,6 +96,7 @@ fn supported_v1_card_ids() -> Vec<u16> {
             expected.push(card_id("Elenda, Saint of Dusk"));
             expected.push(card_id("Spinner of Souls"));
             expected.push(card_id("Drake Hatcher"));
+            expected.push(card_id("Doubling Season"));
         }
         assert_eq!(excluded, expected);
         assert!(matches!(
@@ -1510,4 +1512,14 @@ fn full_ajani_keeps_each_native_program_opaque_in_frozen_v1() {
             Err(crate::rules_meaning_ajani_v42::ErrorV42::UnsupportedRepresentation)
         );
     }
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[should_panic(expected = "effect token and counter replacement requires its precise successor")]
+fn registered_partial_season_still_refuses_frozen_v1_extraction() {
+    card_rules(card_id("Doubling Season"));
 }

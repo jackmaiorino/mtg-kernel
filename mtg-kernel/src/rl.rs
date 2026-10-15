@@ -1894,6 +1894,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
@@ -2189,7 +2191,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     let (
@@ -2755,7 +2757,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
     let (
@@ -4114,8 +4116,11 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(request.state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(request.state)
-            .map_err(RlContractError)?;
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(
+            request.state,
+            Some(request.acting_player),
+        )
+        .map_err(RlContractError)?;
     }
     let (
         request,
@@ -5280,7 +5285,7 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
     }
     if accept_panda {
@@ -5525,8 +5530,11 @@ fn core_surface_action_candidates_fake_scoped_v50(
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
-        crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)
-            .map_err(RlContractError)?;
+        crate::bloodthirsty_conqueror_v49::require_legacy_visible(
+            state,
+            PolicyDecisionV5::Surface(decision.clone()).actor(state),
+        )
+        .map_err(RlContractError)?;
     }
     if accept_panda {
         crate::fiendish_panda_v1::custody::validate(state).map_err(RlContractError)?;

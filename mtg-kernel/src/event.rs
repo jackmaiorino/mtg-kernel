@@ -5832,7 +5832,10 @@ mod season_time_entry_tests_v48 {
     use crate::policy_observation_v6::tests::{put, ready_state_for};
 
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_time_entry_primitive_preflights_original_board_before_mutation_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for seasons in [1, 6] {

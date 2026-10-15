@@ -527,3 +527,94 @@ fn v3_wire_actual_combat_scan_range_exact_safe_handles_and_restore_both_seats() 
         assert!(finished, "actual V3 Foundations combat did not finish");
     }
 }
+
+#[test]
+fn actual_v3_paid_conqueror_season_tokens_damage_gain_and_owning_restore_both_seats() {
+    use crate::mana::ManaColor;
+    fn cast_named(wire: &mut Wire, name: &str, mana: u32) {
+        let actor = wire.menu()["actor"].clone();
+        let seat = if actor == "p0" { 0 } else { 1 };
+        let before: u32 = wire.state().players[seat]
+            .mana_pool
+            .iter()
+            .map(|&v| u32::from(v))
+            .sum();
+        wire.step(|label| label.starts_with(&format!("Begin casting {name} [")));
+        let after: u32 = wire.state().players[seat]
+            .mana_pool
+            .iter()
+            .map(|&v| u32::from(v))
+            .sum();
+        assert_eq!(before - after, mana);
+        wire.drain();
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+        }
+        // Genuine initial support permanent, not a claimed paid Elf casting.
+        put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        let conqueror = put(&mut state, actor, "Bloodthirsty Conqueror", Zone::Hand);
+        put(&mut state, actor, "Dwynen's Elite", Zone::Hand);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 8;
+        state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 2;
+        state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 2;
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        let mut wire = Wire::fixture(state);
+        cast_named(&mut wire, "Doubling Season", 5);
+        assert_eq!(wire.state().objects.get(season).zone, Zone::Battlefield);
+        cast_named(&mut wire, "Bloodthirsty Conqueror", 5);
+        assert_eq!(wire.state().objects.get(conqueror).zone, Zone::Battlefield);
+        cast_named(&mut wire, "Dwynen's Elite", 2);
+        let token = crate::card_def::card_id_by_name("Elf Warrior Token").unwrap();
+        assert_eq!(
+            wire.state().players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|&&id| wire.state().objects.get(id).card_def == token)
+                .count(),
+            2
+        );
+        let creation = &wire.menu()["state"]["extensions"]["season"]["creations"][0];
+        assert_eq!(creation["requested"], 1);
+        assert_eq!(creation["created"].as_array().unwrap().len(), 2);
+        let before = wire.snapshot();
+        let stale = wire.request(|label| label.starts_with("Begin casting Lightning Bolt ["));
+        let play = |wire: &mut Wire| {
+            wire.step(|label| label.starts_with("Begin casting Lightning Bolt ["));
+            wire.step(|label| label.starts_with("Target your opponent with Lightning Bolt ["));
+            assert_eq!(wire.state().players[actor.index()].mana_pool, [0; 6]);
+            wire.drain();
+            assert_eq!(wire.state().objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(wire.state().players[actor.index()].life, 23);
+            assert_eq!(wire.state().players[actor.opponent().index()].life, 17);
+            let facts = &wire.menu()["state"]["extensions"]["conqueror"]["occurrences"];
+            assert_eq!(facts.as_array().unwrap().len(), 1);
+            assert_eq!(facts[0]["saved_actual_amount"], 3);
+            assert_eq!(facts[0]["actual_gain"], 3);
+            assert_eq!(facts[0]["phase"], "Resolved");
+            safe(&wire.last);
+        };
+        play(&mut wire);
+        let public = wire.menu()["state"].clone();
+        let actions = wire.menu()["actions"].clone();
+        let bytes = wire.bytes();
+        wire.restore(before);
+        wire.reject_unchanged(stale, "stale_decision");
+        play(&mut wire);
+        assert_eq!(wire.menu()["state"], public);
+        assert_eq!(wire.menu()["actions"], actions);
+        assert_eq!(wire.bytes(), bytes);
+        for name in ["Bloodthirsty Conqueror", "Doubling Season"] {
+            let reply=wire.send(json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
+                "episode_id":7,"env_seed":123,"starting_player":crate::rl::PlayerSeatV1::from(actor),
+                "decks":[{"cards":[{"name":"Forest","count":39},{"name":name,"count":1}]},
+                         {"cards":[{"name":"Island","count":40}]}],"max_physical_decisions":1000,"max_policy_steps":1000}));
+            assert_eq!(reply["code"], "unsupported_deck");
+            assert_eq!(wire.bytes(), bytes);
+        }
+    }
+}

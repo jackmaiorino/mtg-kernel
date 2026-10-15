@@ -387,7 +387,6 @@ mod owned_frame;
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);

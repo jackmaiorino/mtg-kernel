@@ -76,7 +76,9 @@ pub fn meaning(selector: &SelectorV49, card_id: u16, root: RootV49) -> Result<Me
         return Err("Conqueror precise selector changed".into());
     }
     if !crate::bloodthirsty_conqueror_v49::owns_definition(card_id) {
-        return Err("Conqueror requires genuine exact Full definition and original root".into());
+        return Err(
+            "Conqueror requires genuine exact Partial or Full definition and original root".into(),
+        );
     }
     let (program, ordered_facts) = match root {
         RootV49::CreatureSpell => (
@@ -171,7 +173,10 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     #[test]
-    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_printed_meaning_all_field_order_and_unknown_field_forgeries_refuse() {
         let card = crate::card_def::card_id_by_name("Bloodthirsty Conqueror").unwrap();
         let selector = live_selector().unwrap();

@@ -1059,7 +1059,10 @@ mod doubling_season_transfer_tests_v48 {
         }
     }
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_bait_transfer_original_world_balance_and_restore_refuse_counter_forgery_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1157,7 +1160,6 @@ mod doubling_season_transfer_tests_v48 {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    #[ignore = "future actual Doubling Season registration required"]
     fn actual_shared_multikind_transfer_doubles_each_kind_and_restores() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);

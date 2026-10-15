@@ -694,7 +694,10 @@ mod tests {
         not(feature = "standard-magezero-fixtures")
     ))]
     #[test]
-    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_resolved_and_countered_conqueror_history_remains_unsampleable_without_live_or_transient_root(
     ) {
         use crate::bloodthirsty_conqueror_v49::{self as conqueror, tests::future_printed};

@@ -173,7 +173,10 @@ fn until_spell_gone(state: &mut GameState, spell: ObjectId) {
     panic!("real response failed to finish");
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_paid_conqueror_real_bolt_saved_gain_and_registered_pridemate_side_effect_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -199,7 +202,10 @@ fn actual_paid_conqueror_real_bolt_saved_gain_and_registered_pridemate_side_effe
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_simultaneous_player_losses_sum_once_and_real_control_transfer_preserves_original_beneficiary(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -245,7 +251,10 @@ fn actual_simultaneous_player_losses_sum_once_and_real_control_transfer_preserve
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_witness_response_does_not_cancel_published_gain_but_suppresses_later_losses() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -273,7 +282,10 @@ fn actual_witness_response_does_not_cancel_published_gain_but_suppresses_later_l
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_snap_and_real_flash_recast_keep_old_generation_gain_independent_of_new_controller() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -349,7 +361,10 @@ fn actual_snap_and_real_flash_recast_keep_old_generation_gain_independent_of_new
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn actual_source_lethal_combat_batch_observes_unblocked_loss_before_sba_and_gains_after_death() {
     let turn_key = |state: &GameState| {
         state
@@ -435,7 +450,10 @@ fn actual_source_lethal_combat_batch_observes_unblocked_loss_before_sba_and_gain
 }
 
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn real_bolt_crystal_and_typed_finite_shield_order_prevent_creature_damage_without_manufacturing_life_loss(
 ) {
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -512,7 +530,10 @@ fn real_bolt_crystal_and_typed_finite_shield_order_prevent_creature_damage_witho
     }
 }
 #[test]
-#[ignore = "genuine Conqueror registration/native qualification belongs to parent"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn real_sire_ward_life_payment_triggers_original_opposing_conqueror_but_decline_does_not() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for pay in [false, true] {

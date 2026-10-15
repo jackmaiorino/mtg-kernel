@@ -617,7 +617,10 @@ mod printed {
         }
     }
     #[test]
-    #[ignore = "Requires genuine Fiendish Panda and Doubling Season registration and current native qualification"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_paid_doubling_season_changes_placement_amount_without_repeating_panda_trigger_both_seats(
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {

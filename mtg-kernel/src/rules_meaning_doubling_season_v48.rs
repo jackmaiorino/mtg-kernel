@@ -151,7 +151,10 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn actual_printed_roots_and_complete_forged_facts() {
         let id = crate::card_def::card_id_by_name("Doubling Season").unwrap();
         for root in [
@@ -186,7 +189,6 @@ mod tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    #[ignore = "future actual Doubling Season registration required"]
     fn genuine_compiled_definition_rejects_foreign_rule_descriptors() {
         use crate::card_def::{CardDef, Keywords, ModeDef, OptionalAdditionalCostDef};
         let id = crate::card_def::card_id_by_name("Doubling Season").unwrap();

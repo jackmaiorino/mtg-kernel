@@ -93,7 +93,10 @@ fn registered_absence_hidden_hand_foreign_owner_retry_restore_and_current_facts_
 }
 
 #[test]
-#[ignore = "future actual Doubling Season registration required"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_printed_cast_and_replacement_facts_fixed_seat_owned_restore_both_seats() {
     use crate::event::{self, ProposedEvent};
     use crate::mana::ManaColor;
@@ -231,7 +234,10 @@ fn genuine_printed_cast_and_replacement_facts_fixed_seat_owned_restore_both_seat
 }
 
 #[test]
-#[ignore = "future actual Doubling Season registration required"]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 fn genuine_created_token_attachment_human_exact_choice_private_binding_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (state, equipment) =

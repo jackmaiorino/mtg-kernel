@@ -1,0 +1,45 @@
+{
+  "source_base": "018a82b95f2d4af449cc1c5351318e10f806b6ed",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "references": [
+    {
+      "path": "Mage.Sets/src/mage/cards/b/BloodthirstyConqueror.java",
+      "blob": "7b79ec2d3268ac18772cc780908dfff8913490d3",
+      "bytes": 1498,
+      "sha256": "8373bd726bcfd0ee927d7ea4ea418bfdc79e1a946c8e39d3b07ac449f13d81c4"
+    },
+    {
+      "path": "Mage.Sets/src/mage/cards/d/DoublingSeason.java",
+      "blob": "29542ba45c79761e312862564fc90a4087f654b5",
+      "bytes": 4135,
+      "sha256": "72181a61bc8290fe500a73ffccd70f93a0b51c38c154be4e8b43f1c24ea23fe1"
+    },
+    {
+      "path": "Mage.Sets/src/mage/sets/Foundations.java",
+      "blob": "7a5db20dc7188f69b64095ad068fcbe36e8c8571",
+      "bytes": 89049,
+      "sha256": "da8083b2b96a940bb16359e64d77a42ae71302a4a493827a59ae55b2ad6da40b"
+    }
+  ],
+  "prior_258_records_canonical_sha256": "7ed089181b25bce1e63c6db4de9d1cdc60811ce76314b0a5f8ae89123c842f69",
+  "frozen_booster_pool_sha256": "3cf2926c75797fb164489128b715da4264793b9b7ca4ad149fef63516ab89155",
+  "registrations": [
+    {
+      "id": 450,
+      "name": "Bloodthirsty Conqueror",
+      "set": "FDN",
+      "collector_number": "58",
+      "capability": "partial"
+    },
+    {
+      "id": 451,
+      "name": "Doubling Season",
+      "set": "FDN",
+      "collector_number": "216",
+      "capability": "partial"
+    }
+  ],
+  "rust_execution": "uncompiled_unrun",
+  "full_deck_admission": false,
+  "profile_or_export_observed": false
+}

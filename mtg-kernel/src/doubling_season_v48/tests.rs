@@ -81,7 +81,6 @@ fn ordinary_token_proposal_and_real_batch_keep_absent_extension_bytes() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_simultaneous_expanded_roster_original_control_and_private_receipt_refusal() {
     use crate::engine::{self, Action};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -188,7 +187,6 @@ fn actual_simultaneous_expanded_roster_original_control_and_private_receipt_refu
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_simultaneous_season_entry_does_not_depend_on_member_order() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for source_first in [false, true] {
@@ -229,7 +227,6 @@ fn actual_simultaneous_season_entry_does_not_depend_on_member_order() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_ajani_entry_eight_and_genuine_zero_target_plus_cost_one() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -321,7 +318,6 @@ fn cast_season(state: &mut GameState, actor: PlayerId) -> ObjectId {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_printed_source_recipient_controller_multiple_sources_cost_and_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -393,7 +389,6 @@ fn actual_printed_source_recipient_controller_multiple_sources_cost_and_restore(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_effect_lore_and_rule_lore_are_distinct_counter_placements() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -468,7 +463,6 @@ fn genuine_initialized_token_batch_haste_and_copy_are_present_at_entry() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_doubled_haste_tokens_and_copied_nontoken_all_initialize_before_observers() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -531,7 +525,6 @@ fn actual_doubled_haste_tokens_and_copied_nontoken_all_initialize_before_observe
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_original_world_rejects_rewritten_replacement_roster_after_source_departure() {
     use crate::engine::{self, Action};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -641,7 +634,6 @@ fn actual_original_world_rejects_rewritten_replacement_roster_after_source_depar
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn unrelated_entry_does_not_quote_unrequested_three_counters() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -671,7 +663,6 @@ fn unrelated_entry_does_not_quote_unrequested_three_counters() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn actual_full_width_loyalty_and_entry_overflow_halt_before_any_move() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -721,7 +712,6 @@ fn actual_full_width_loyalty_and_entry_overflow_halt_before_any_move() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_played_land_rule_entry_and_effect_entry_sample_distinct_origins() {
     use crate::engine::{self, Action};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -756,7 +746,6 @@ fn genuine_played_land_rule_entry_and_effect_entry_sample_distinct_origins() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_return_stun_primitive_uses_returned_owner_not_original_ability_controller() {
     use crate::effect::ExecCtx;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -828,7 +817,6 @@ fn genuine_return_stun_primitive_uses_returned_owner_not_original_ability_contro
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn frozen_visible_printing_refusal_uses_only_actor_current_knowledge_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -863,7 +851,6 @@ fn frozen_visible_printing_refusal_uses_only_actor_current_knowledge_both_seats(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_arahbo_self_entry_is_expanded_once_and_full_roster_closure_both_seats() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -917,7 +904,6 @@ fn genuine_arahbo_self_entry_is_expanded_once_and_full_roster_closure_both_seats
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_both_seats() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1045,7 +1031,6 @@ fn genuine_paid_self_reflection_arahbo_token_self_entry_and_legend_held_custody_
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_stun_return_overflow_leaves_original_graveyard_incarnation_unchanged() {
     use crate::effect::ExecCtx;
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1089,7 +1074,6 @@ fn genuine_stun_return_overflow_leaves_original_graveyard_incarnation_unchanged(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_and_host() {
     use crate::effect::{ExecCtx, ObjectRef};
     use crate::state::{StackTargetContractV4, Target};
@@ -1300,7 +1284,6 @@ fn genuine_no_season_paid_permanent_copy_is_nontoken_on_stack_and_token_at_entry
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for copy_controller in [actor, actor.opponent()] {
@@ -1316,7 +1299,6 @@ fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() 
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for owner_controls_season in [false, true] {
@@ -1380,7 +1362,6 @@ fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn native_loyalty_effect_and_cost_quotes_remain_distinct_at_signed_boundary() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -1421,7 +1402,6 @@ fn native_loyalty_effect_and_cost_quotes_remain_distinct_at_signed_boundary() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_before_actions() {
     use crate::engine::{self, Action};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1565,7 +1545,6 @@ fn original_effect_counter_world_binds_actor_recipient_and_actual_placement_befo
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn retained_replacement_history_keeps_single_token_initialization_before_entry() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);
@@ -1845,7 +1824,6 @@ fn ordinary_actual_token_occurrence_keeps_legacy_bytes_and_derived_hash() {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_full_ajani_zero_target_cost_uses_same_quote_as_payment_before_resolution() {
     use crate::engine::{self, Action, Decision};
     for actor in [PlayerId::P0, PlayerId::P1] {
@@ -2030,7 +2008,6 @@ fn genuine_talent_level_order_changes_cost_rule_and_effect_quotes_without_joint_
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-#[ignore = "future actual Doubling Season registration required"]
 fn genuine_offer_counter_reward_is_one_whole_expanded_entry_roster_for_original_controller() {
     use crate::engine::{self, Action, Decision};
     use crate::state::Target;

@@ -271,7 +271,10 @@ pub(crate) mod tests {
         (state, equipment)
     }
     #[test]
-    #[ignore = "future actual Doubling Season registration required"]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     fn genuine_created_token_attachment_choice_restore_and_original_history_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, equipment) = actual_primitive_checkpoint(actor);
