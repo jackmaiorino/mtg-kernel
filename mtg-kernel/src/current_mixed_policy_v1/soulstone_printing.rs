@@ -108,7 +108,6 @@ fn validate_shape(id: u16, d: &CardDef) -> Result<()> {
         pips: &[],
         x_count: 0,
     };
-    let animation = d.animation;
     let activation = d.activated_abilities;
     let activation_matches = activation.len() == 1
         && activation[0].cost == [crate::card_def::CostComponent::Mana(animation_cost)]
