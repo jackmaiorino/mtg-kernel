@@ -4,7 +4,9 @@ Owned branch `codex/fdn-prepared-v57-human-transport-20261015` starts at
 `451c14c74b4abf538b00474d0edd328e49869159`. Attributed prerequisites are the
 reviewed Spinner/Quandary publics and repairs (2cfa, 760, f9), Phoenix meaning/
 public and repair (f22, 240), then Agent A core `4506503ad0d809bcb425e4d3f749ca65702d6bec`.
-The original owned Phoenix checkpoint and every previous source branch remain.
+The core historical-source follow-up `aaa90046c4709852d9ac6712ad695fa8c5e09a52` is
+also composed without changing its API. The original owned Phoenix checkpoint
+and every previous source branch remain.
 
 `HumanPreparedSessionV57`/Projector/Decision use the sealed owning Prepared V57
 backend, fixed Human seat, original owner, checked generation, snapshots,
