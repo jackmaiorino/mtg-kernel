@@ -141,7 +141,10 @@ fn put_spell_on_stack(
                 parent_controller: parent_object.controller,
                 parent_stack_zone_change_count: parent_object.zone_change_count,
                 parent_was_copy: false,
-                source_types_v1: Default::default(),
+                source_types_v1: mtg_kernel::source_type_hexproof_v1::copy_projection(
+                    parent_object.card_def,
+                    mtg_kernel::state::CastMethodV4::Normal,
+                ),
             }),
             plotted_turn: None,
             zone_change_count: 0,

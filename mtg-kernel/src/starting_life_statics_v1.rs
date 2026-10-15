@@ -1,8 +1,8 @@
 //! Definition-owned self bonuses based on the live controller's starting life.
 //!
-//! This is a source prerequisite, not an Elenda registration. No current
-//! definition selects these rules. In particular this module does not implement
-//! hexproof from instants, spell-source history, or variable starting life.
+//! Selected by the genuine Partial Elenda printing. Source-type protection lives
+//! in source_type_hexproof_v1; this module retains the supported fixed starting
+//! life contract and does not introduce variable starting life.
 
 use crate::card_def::{Keywords, StartingLifeSelfBonusDefV1, CARD_DEFS};
 use crate::ids::{ObjectId, PlayerId};

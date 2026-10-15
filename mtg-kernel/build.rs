@@ -4246,7 +4246,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sacred Cat Embalmed Token"
         | "Guarded Heir"
         | "Felidar Savior"
-        | "Sun-Blessed Healer" => keywords.push("Keywords::LIFELINK"),
+        | "Sun-Blessed Healer"
+        | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")

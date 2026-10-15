@@ -167,11 +167,22 @@ fn nonbattlefield_and_foreign_face_never_apply() {
 }
 
 #[test]
-fn source_preparation_leaves_every_catalog_descriptor_empty() {
-    assert!(card_id_by_name("Elenda, Saint of Dusk").is_none());
-    assert!(CARD_DEFS
-        .iter()
-        .all(|def| def.starting_life_self_bonuses_v1.is_empty()));
+fn only_the_genuine_partial_limited_printing_selects_threshold_descriptors() {
+    let selected = cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ));
+    let elenda = card_id_by_name("Elenda, Saint of Dusk");
+    assert_eq!(elenda.is_some(), selected);
+    for (id, def) in CARD_DEFS.iter().enumerate() {
+        assert_eq!(
+            !def.starting_life_self_bonuses_v1.is_empty(),
+            Some(id as u16) == elenda
+        );
+    }
+    if let Some(id) = elenda {
+        assert_eq!(CARD_DEFS[id as usize].starting_life_self_bonuses_v1, RULES);
+    }
 }
 
 #[test]

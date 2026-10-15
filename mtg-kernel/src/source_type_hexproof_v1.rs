@@ -232,7 +232,9 @@ pub(crate) fn spell_types(def: &CardDef, method: CastMethodV4) -> Result<SourceT
 
 /// Copies bind the copied form in immutable origin provenance, rather than
 /// consulting a parent object's later incarnation or a mutable stack flag.
-pub(crate) fn copy_projection(def: u16, method: CastMethodV4) -> SourceTypeProjectionV1 {
+/// Callers must supply a registered definition and its validated selected form.
+/// This is characteristic data, not independent copy-creation authentication.
+pub fn copy_projection(def: u16, method: CastMethodV4) -> SourceTypeProjectionV1 {
     SourceTypeProjectionV1(enabled().then(|| {
         spell_types(&CARD_DEFS[usize::from(def)], method)
             .expect("validated spell form at genuine copy creation")

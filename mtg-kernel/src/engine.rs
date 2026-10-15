@@ -24830,7 +24830,10 @@ mod tests {
             parent_controller: parent_object.controller,
             parent_stack_zone_change_count: parent_object.zone_change_count,
             parent_was_copy: false,
-            source_types_v1: Default::default(),
+            source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                parent_object.card_def,
+                parent_method,
+            ),
         };
         let copy = state.objects.push(crate::state::GameObject {
             card_def: parent_object.card_def,

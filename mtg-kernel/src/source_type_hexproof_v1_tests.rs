@@ -140,7 +140,7 @@ fn paid_form(state: &mut GameState, name: &str, form: u8) -> (ObjectId, StackIte
 }
 
 #[test]
-fn paid_sorcery_forms_preserve_absent_catalog_copy_contract_through_departure() {
+fn paid_sorcery_forms_preserve_catalog_selected_copy_contract_through_departure() {
     for name in ["Fang Dragon", "Sagu Wildling"] {
         for form in [0, 1] {
             let mut state = ready();
@@ -254,17 +254,26 @@ fn every_cast_method_preserves_absent_mode_and_selected_alternative_semantics() 
 }
 
 #[test]
-fn source_only_catalog_does_not_activate_type_captures_or_hexproof() {
-    assert!(!enabled());
-    assert!(CARD_DEFS
-        .iter()
-        .all(|def| def.source_type_hexproof_v1.is_none()));
+fn only_the_genuine_partial_limited_printing_selects_source_type_captures() {
+    let selected = cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ));
+    assert_eq!(enabled(), selected);
+    for def in CARD_DEFS {
+        assert_eq!(
+            def.source_type_hexproof_v1.is_some(),
+            selected && def.name == "Elenda, Saint of Dusk"
+        );
+    }
     let mut state = ready();
     let object = put(&mut state, "Lightning Bolt");
     assert!(characteristics(&state, object).is_none());
     assert_eq!(
-        copy_projection(state.objects.get(object).card_def, CastMethodV4::Normal),
-        SourceTypeProjectionV1::default()
+        copy_projection(state.objects.get(object).card_def, CastMethodV4::Normal)
+            .0
+            .is_some(),
+        selected
     );
 }
 
@@ -310,7 +319,7 @@ fn explicit_rule_primitive_uses_current_target_controller_and_printed_ability_su
 }
 
 #[test]
-fn foreign_copy_type_projection_cannot_extend_an_old_catalog_contract() {
+fn wrong_copy_type_projection_cannot_replace_selected_form_or_extend_absent_mode() {
     let mut state = ready();
     let (source, _) = paid_form(&mut state, "Fang Dragon", 1);
     let (copy, id) = engine::copy_spell_for(&mut state, source, PlayerId::P1).unwrap();
@@ -339,7 +348,7 @@ fn explicit_snapshot_input(
     source: ObjectId,
 ) -> crate::controlled_creature_grants_v1::DepartureColorV1 {
     // A primitive input built from the actual current board. This is not
-    // inserted as a fabricated journal occurrence in the unselected catalog.
+    // inserted as a fabricated journal occurrence; real opt-in history has its own fixture.
     crate::controlled_creature_grants_v1::DepartureColorV1 {
         source: crate::state::AbilitySourceContractV4::capture(state, source),
         color_mask: engine::object_color_mask(state, source),
