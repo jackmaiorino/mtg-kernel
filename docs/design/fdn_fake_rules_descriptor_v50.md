@@ -3,7 +3,8 @@
 The separate Partial candidate now has a rooted, ordered printing descriptor.
 It is preparation for public consumers, not a Full printing, model, sampler,
 search or training admission. No existing meaning enum, vector, schema or profile
-is rewritten. Native compilation and runtime qualification remain pending.
+is rewritten. Native131 compiled and passed the genuine paid-printing descriptor
+checks. Full/model/profile qualification remains pending.
 
 The exact existing printing selector verifies the real executable Instant,
 `{1}{B}`, any-creature target, colors, mana value and installation recipe. The
@@ -32,12 +33,14 @@ without game-state or dependency-function inputs.
 All ten paid fixture groups construct and validate both roots for their genuine
 printing, while requiring Partial capability and no model admission. They still
 exercise paid mana, cast/target/actual engine execution and complete restores.
-Those checks are written, uncompiled and unrun. Complete V50 public projections,
-backend/Human clients, model representation and fair search/training remain open.
+Those checks passed in Native131. Public/backend and two Human groups also
+passed; the remaining Human privacy assertion is corrected at312a and rerunning
+in Native132. Model representation and fair search/training remain open.
 
 Source consultation found missing exclusions for extra rule descriptors and
 missing direct death/color-protection callees in the producer fingerprint. The
 printing selector now checks every current CardDef field, including alternate
 cast forms, additional abilities, replacements and entry/combat rules. The
 fingerprint now includes the actual trigger, death-capture and controlled-grant
-implementations and shared return helpers. Runtime remains pending.
+implementations and shared return helpers. Native131 provides bounded runtime
+evidence only; Fake remains Partial and fully supported deck admission refuses it.

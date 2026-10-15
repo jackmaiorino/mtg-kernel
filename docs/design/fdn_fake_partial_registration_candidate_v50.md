@@ -27,19 +27,22 @@ complete resulting states, assert the new tapped owner-controlled incarnation
 and independent Treasure beneficiary, and distinguish countering the paid spell
 from countering its gained ability. A real acquired removal loan also checks
 capture/collection erasure before any journal mutation. These groups are
-uncompiled and unrun until the next qualified native attempt.
+passed in Native131's actual registered-printing correctness run.
 
 The candidate registry expects 251 FDN records and 443 combined definitions,
 including one additional Partial printing. Actual generated count, printing ID,
-catalog hash and frozen successor profile await the native generator export;
-no hash or ID is guessed. Existing profile literals and full-coverage assertions
-are retained. A new live profile cannot be published before its actual identity
-is observed and reconciled.
+catalog hash are observed in the retained Native131 export: Fake ID442,
+catalog `2fa3e07073975972`, generated SHA-256
+`b9ff9d9cd357ba26758470d355839d293bc6afd2e7f568cbc4b3e217b122ecf9`.
+Existing profile literals and full-coverage assertions are retained. No new
+live profile or Full capability is published by this result.
 
-Remaining Full work includes returning animated Auras with an untargeted legal
-host choice, entry-choice restore/coexistence, every other departure path,
-complete V50 public/backend/Human/meaning/model consumers, sampling and fair
-search/training integration, and current-head qualification. This intermediate
+Native131 passed genuine untargeted Aura returns, entry-choice restores,
+public/meaning/backend and two Human groups; its combined result was44PASS/1FAIL
+and all3strict lint PASS. The remaining Human controller-knowledge fixture is
+corrected at312a and rerunning in Native132. Complete model consumers, sampling,
+fair search/training, departure coverage and current-head Full qualification
+remain open. This intermediate
 registration enables real paid correctness checks while those requirements remain
 open. No training, paid compute or model admission is authorized by it.
 
@@ -50,8 +53,8 @@ original publication row. Countered and completed resolutions still require
 absence. A genuine paid Banner/Fake fixture checks both seats, serialization at
 the color choice, answer completion, one Treasure, expired animation and refusal
 of changed, duplicated, absent or ownerless rows. Its animation is the existing
-captured-target primitive operand, not a paid Tough Cookie printing. Compilation
-and runtime remain pending.
+captured-target primitive operand, not a paid Tough Cookie printing. Native131
+passed this genuine paid Banner/Fake coexistence group.
 
 
 The returning-Aura candidate is now implemented separately in

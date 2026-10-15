@@ -2,8 +2,9 @@
 
 The genuine Partial printing remains Partial. Full printing, consumers and models
 remain unaccepted. This source closes the previously explicit returning animated
-Aura refusal with an owned zero/one/many-host path. Native compilation, gameplay,
-actual443 generation/hash/profile and cross-family qualification remain pending.
+Aura refusal with an owned zero/one/many-host path. Native131 compiled and passed
+the genuine Aura groups and exported the actual443catalog. Profile/model/Full
+admission and complete cross-family qualification remain pending.
 
 The actual pre-pop gained-death owner retains its original battlefield publication
 and captured graveyard incarnation. Its ordered program still attempts return,
@@ -36,17 +37,19 @@ Shroud/Hexproof and Ward hosts, checkpoint serialization/restore, tapped return,
 one Treasure and unchanged targeting count. Its starting animation is the existing
 incarnation-bound operand, not a paid animation printing. Forged chooser, menu,
 original stack and graveyard binding must refuse before actor mutation. These are
-written checks, not observed passes. Pinned formatting and diff checks pass.
+observed passes in Native131. Pinned formatting and diff checks pass.
 
-Native123 continues unchanged at exact PR266 source711e1fba on its original owned
-allocation. This separate source is not included in PR266 and cannot borrow its
-qualification. Existing Banner/token entry coexistence, other departure outcomes,
-complete V50 public/Human/meaning/model/sampler/fair-search/training consumers and
-full pool acceptance remain open. No training or playing-strength claim is made.
+This separate source is not included in PR266 and cannot borrow its qualification.
+Native131 at23b1 finished44PASS/1FAIL and all3strict lint PASS; its sole failure
+was the Human face-down controller-knowledge assertion, corrected at312a and
+rerunning in Native132. Full model/sampler/fair-search/training consumers,
+departure coverage and full pool acceptance remain open. No training or
+playing-strength claim is made.
 
 Scoped source review found that a successful Aura chain could be erased entirely,
 and a no-host completion could be moved after Treasure. Closure now requires
 exactly one linked Aura input and completion for every closed Aura-capable return
 program, with resolution/input/completion/Treasure/death-closure ordering and the
 same actual return result. Original-journal-preserving erase-all and reordered
-no-host negatives are written. Runtime verification remains pending.
+no-host negatives passed in Native131. Its final produced outputs and original
+reservation release are verified; the printing remains Partial.
