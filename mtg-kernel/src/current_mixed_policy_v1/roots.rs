@@ -530,6 +530,7 @@ enum PermanentTargets {
 #[derive(serde::Serialize)]
 enum PermanentEntry {
     MoveOriginalSpellFromStackToBattlefieldUnderCasterControl,
+    ResolveExistingWildwoodCapturedXEntry,
 }
 #[derive(serde::Serialize)]
 enum PermanentDeparture {
@@ -610,6 +611,7 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
     let keywords = match d.name {
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Sower of Chaos" => return sower_printing(id, d),
+        "Wildwood Scourge" => return wildwood_printing(id, d),
         "Bloodthirsty Conqueror" => {
             if !crate::bloodthirsty_conqueror_v49::owns_definition(id) {
                 return Err(Error::UnsupportedPrintedRoot(id));
@@ -1101,6 +1103,200 @@ pub(super) fn sower_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             timing:PrintedActivationTiming::WithPriorityAtInstantSpeed,
             original_source_incarnation_bound_before_payment:true,payment_precedes_stack_publication:true,
             countered_activation_never_refunds_payment:true,meaning,
+        }],
+    }})))
+}
+
+/// A native variable-cost route, deliberately distinct from the fixed-cost
+/// permanent template. Current source/option candidates own its actual quote.
+#[derive(serde::Serialize)]
+struct WildwoodVariableCastRoot {
+    method: crate::state::CastMethodV4,
+    ordinary_route: crate::state::SpellCastRouteV4,
+    ordinary_origin: Zone,
+    timing: PermanentTiming,
+    targets: PermanentTargets,
+    ordered_announcement: [NativeXSelection; 1],
+    ordered_costs: [NativeVariableManaPayment; 1],
+    ordered_resolution: [PermanentEntry; 1],
+    mana_value: NativeVariableManaValue,
+    physical_departure: PermanentDeparture,
+    existing_entry_meaning_owns_the_only_counter_placement: bool,
+    other_cast_permissions_require_current_candidate_authority: bool,
+    zone_replacements_still_apply: bool,
+}
+#[derive(serde::Serialize)]
+struct NativeXSelection {
+    minimum: u16,
+    supported_maximum: u16,
+    menu: NativeXMenu,
+    option_index_adds_to_minimum: bool,
+    option_count_is_current_payable_maximum_minus_minimum_plus_one: bool,
+    sole_payable_value_is_selected_automatically: bool,
+    maximum_requires_current_native_payment_quote: bool,
+    native_option_menu_requires_original_pending_cast: bool,
+    native_without_mana_cost_permission_forces_zero_x: bool,
+}
+#[derive(serde::Serialize)]
+enum NativeXMenu {
+    SourceBoundChooseEffectOption,
+}
+#[derive(serde::Serialize)]
+struct NativeVariableManaPayment {
+    native_printed_cost: crate::mana::Cost,
+    x_source: NativeXSource,
+    each_printed_x_adds_chosen_x_generic_mana: bool,
+    total_cost_modifiers_require_current_native_payment_quote: bool,
+    payment_precedes_finalized_stack_publication: bool,
+}
+#[derive(serde::Serialize)]
+enum NativeXSource {
+    NativePendingCastChoiceThenFinalizedStackStateXValue,
+}
+#[derive(serde::Serialize)]
+struct NativeVariableManaValue {
+    printed_base: u16,
+    stack_x_multiplicity: u8,
+    stack_uses_finalized_captured_x: bool,
+    pending_unfinalized_object_uses_printed_base: bool,
+    off_stack_x_value: u16,
+    maximum_represented_stack_value: u16,
+}
+pub(super) fn wildwood_printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
+    use crate::card_def::{Keywords, Subtype};
+    use crate::mana::{Cost, ManaColor, Pip};
+    if d.name != "Wildwood Scourge" {
+        return Ok(None);
+    }
+    let cost = Cost {
+        generic: 0,
+        pips: &[Pip::Colored(ManaColor::G)],
+        x_count: 1,
+    };
+    if d.object_name != d.name
+        || d.capability != CardCapability::Full
+        || d.cost != cost
+        || d.mana_value != 1
+        || d.types != [CardType::Creature]
+        || d.subtypes != [Subtype::Hydra]
+        || d.colors != [ManaColor::G]
+        || !d.supertypes.is_empty()
+        || d.power != Some(0)
+        || d.toughness != Some(0)
+        || d.keywords != Keywords::NONE
+        || d.is_land
+        || d.is_token
+        || d.minimum_blockers != 1
+        || d.target_spec != TargetSpec::None
+        || (d.spell_effect)() != Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters)
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || !d.activated_abilities.is_empty()
+        || d.generic_cost_reduction.is_some()
+        || d.ward_cost.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.equipment.is_some()
+        || d.attachment.is_some()
+        || d.starting_loyalty.is_some()
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant.is_some()
+        || d.game_outcome_protection_v1.is_some()
+        || d.alt_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.flashback.is_some()
+        || d.plot_cost.is_some()
+        || d.madness_cost.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.kicked_target_spec.is_some()
+        || d.escape.is_some()
+        || d.enters_battlefield_tapped
+        || d.mana_ability_def.is_some()
+        || d.omen.is_some()
+        || d.mana_ability_includes_chosen_color
+        || d.as_enters_choose_color_other_than.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.transform_face.is_some()
+        || d.saga.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.changeling
+        || d.bestow.is_some()
+        || d.delve
+        || d.adventure.is_some()
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.conditional_tap_yield.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || !d.additional_mana_ability_conditions.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || d.animation.is_some()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
+        || d.as_enters_color_choice_v1.is_some()
+        || d.chosen_color_creature_boost_v1.is_some()
+        || d.damage_replacement_v1.is_some()
+        || d.token_counter_replacement_v48.is_some()
+        || !d.starting_life_self_bonuses_v1.is_empty()
+        || d.source_type_hexproof_v1.is_some()
+        || d.other_controlled_nontoken_death_v1.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+
+    // Authenticate both immutable native family roots. Their single existing
+    // X-entry program owns counter placement; this descriptor adds no effect.
+    use crate::rules_meaning_wildwood_v1 as meaning;
+    let selector = meaning::live_selector_v1().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    let family =
+        meaning::meaning_v1(&selector, id).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    let characteristics = PermanentCharacteristics {
+        types: d.types.to_vec(),
+        subtypes: d.subtypes.to_vec(),
+        supertypes: Vec::new(),
+        colors: d.colors.to_vec(),
+        mana_value: d.mana_value,
+        power: d.power,
+        toughness: d.toughness,
+        ordered_keywords: Vec::new(),
+        minimum_blockers: d.minimum_blockers,
+        token: false,
+        land: false,
+        enters_tapped: false,
+        printed_mana_abilities: 0,
+        printed_activated_abilities: 0,
+    };
+    Ok(Some(json!({"card_id":id,"registered_permanent_printing":{
+        "characteristics":characteristics,
+        "ordered_cast_roots":[WildwoodVariableCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,ordinary_origin:Zone::Hand,
+            timing:PermanentTiming::CasterMainPhaseEmptyStackWithPriority,targets:PermanentTargets::None,
+            ordered_announcement:[NativeXSelection {
+                minimum:family.entry.represented_x_minimum,supported_maximum:family.entry.represented_x_maximum,
+                menu:NativeXMenu::SourceBoundChooseEffectOption,option_index_adds_to_minimum:true,
+                option_count_is_current_payable_maximum_minus_minimum_plus_one:true,
+                sole_payable_value_is_selected_automatically:true,maximum_requires_current_native_payment_quote:true,
+                native_option_menu_requires_original_pending_cast:true,native_without_mana_cost_permission_forces_zero_x:true,
+            }],
+            ordered_costs:[NativeVariableManaPayment {
+                native_printed_cost:cost,x_source:NativeXSource::NativePendingCastChoiceThenFinalizedStackStateXValue,
+                each_printed_x_adds_chosen_x_generic_mana:true,total_cost_modifiers_require_current_native_payment_quote:true,
+                payment_precedes_finalized_stack_publication:true,
+            }],
+            ordered_resolution:[PermanentEntry::ResolveExistingWildwoodCapturedXEntry],
+            mana_value:NativeVariableManaValue {
+                printed_base:d.mana_value,stack_x_multiplicity:d.cost.x_count,stack_uses_finalized_captured_x:true,
+                pending_unfinalized_object_uses_printed_base:true,
+                off_stack_x_value:0,maximum_represented_stack_value:d.mana_value+family.entry.represented_x_maximum*u16::from(d.cost.x_count),
+            },
+            physical_departure:PermanentDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            existing_entry_meaning_owns_the_only_counter_placement:true,
+            other_cast_permissions_require_current_candidate_authority:true,zone_replacements_still_apply:true,
         }],
     }})))
 }

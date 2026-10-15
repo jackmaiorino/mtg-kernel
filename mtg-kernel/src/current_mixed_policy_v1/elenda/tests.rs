@@ -791,3 +791,181 @@ fn sower_printing_supplement_preserves_independent_hidden_hand_invariance_v52_bo
         }
     }
 }
+
+#[test]
+fn genuine_paid_wildwood_x_zero_three_255_native_menu_stack_and_entry_restore_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for x in [0u8, 3, 255] {
+            let mut raw = state(actor, "Lightning Bolt", 30);
+            let source = put(&mut raw, actor, "Wildwood Scourge", Zone::Hand);
+            let forest = put(&mut raw, actor, "Forest", Zone::Battlefield);
+            // Initial bounded funding predates every operation; actual finalization
+            // pays this generic pool and G from the genuine Forest activation.
+            raw.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = x;
+            let mut session = own(raw);
+            assert_eq!(
+                crate::engine::object_mana_value(session.inner.fixture_state_v52(), source),
+                1
+            );
+            let initial = session.inner.decision_v52().unwrap();
+            assert!(initial.observation().common.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Wildwood(v)if v.roots.len()==1)));
+            assert_eq!(
+                ordinary_printing_count(session.encode(initial.expected()).unwrap().packet()),
+                1
+            );
+            mana(&mut session, forest);
+            cast(&mut session, source);
+            let original_choice = if x != 0 {
+                let current = session.inner.decision_v52().unwrap();
+                assert_eq!(current.actions().len(), usize::from(x) + 1);
+                for (i, a) in current.actions().iter().enumerate() {
+                    assert!(
+                        matches!(a,ActionSemanticV1::ChooseEffectOption{source:card,option_index,option_count,..}if card.arena_id==source.0 && usize::from(*option_index)==i && *option_count==u16::from(x)+1)
+                    );
+                }
+                assert_eq!(
+                    session
+                        .inner
+                        .fixture_state_v52()
+                        .engine
+                        .pending_cast
+                        .as_ref()
+                        .unwrap()
+                        .x_value,
+                    None
+                );
+                assert_eq!(
+                    crate::engine::object_mana_value(session.inner.fixture_state_v52(), source),
+                    1
+                );
+                let decision = session.encode(current.expected()).unwrap();
+                assert_eq!(decision.packet().actions().len(), usize::from(x) + 1);
+                Some((session.snapshot(), decision))
+            } else {
+                assert!(session
+                    .inner
+                    .fixture_state_v52()
+                    .engine
+                    .pending_cast
+                    .is_none());
+                None
+            };
+            let mut final_world = None;
+            for replay in 0..if x == 0 { 1 } else { 2 } {
+                if let Some((snapshot, original)) = &original_choice {
+                    if replay != 0 {
+                        session.restore(snapshot).unwrap();
+                        let before = gameplay(&session);
+                        assert!(matches!(
+                            session.apply(original, u32::from(x)),
+                            Err(Error::StaleBinding)
+                        ));
+                        assert_eq!(gameplay(&session), before);
+                        assert_eq!(
+                            session.encode(expected(&session)).unwrap().packet(),
+                            original.packet()
+                        );
+                    }
+                    let current = session.encode(expected(&session)).unwrap();
+                    let mut erased = current.clone();
+                    erased.packet.state = super::super::NumericTree::encode(&json!({})).unwrap();
+                    let before = gameplay(&session);
+                    assert!(matches!(
+                        session.apply(&erased, u32::from(x)),
+                        Err(Error::StaleBinding)
+                    ));
+                    assert_eq!(gameplay(&session), before);
+                    assert!(matches!(
+                        session.apply(&current, u32::from(x) + 1),
+                        Err(Error::ActionRange)
+                    ));
+                    assert_eq!(gameplay(&session), before);
+                    session.apply(&current, u32::from(x)).unwrap();
+                }
+                let paid = session.inner.fixture_state_v52();
+                assert!(paid.engine.pending_cast.is_none());
+                assert_eq!(paid.players[actor.index()].mana_pool, [0; 6]);
+                assert!(paid.objects.get(forest).tapped);
+                assert_eq!(paid.objects.get(source).zone, Zone::Stack);
+                assert_eq!(paid.stack.len(), 1);
+                assert_eq!(paid.stack[0].v4.x_value, u16::from(x));
+                assert_eq!(
+                    crate::engine::object_mana_value(paid, source),
+                    u16::from(x) + 1
+                );
+                let current = session.inner.decision_v52().unwrap();
+                assert_eq!(
+                    current.observation().common.projection.surface.stack[0].x_value,
+                    u16::from(x)
+                );
+                let paid_snapshot = session.snapshot();
+                let mut entry = None;
+                for repeat in 0..2 {
+                    if repeat != 0 {
+                        session.restore(&paid_snapshot).unwrap();
+                    }
+                    drain(&mut session);
+                    let world = session.inner.fixture_state_v52();
+                    assert_eq!(
+                        world.objects.get(source).zone,
+                        if x == 0 {
+                            Zone::Graveyard
+                        } else {
+                            Zone::Battlefield
+                        }
+                    );
+                    assert_eq!(crate::engine::object_mana_value(world, source), 1);
+                    assert_eq!(world.objects.get(source).counters.plus1_plus1, i32::from(x));
+                    assert_eq!(
+                        world
+                            .engine
+                            .event_history
+                            .iter()
+                            .filter_map(|event| match event {
+                                crate::event::CommittedEvent::PlusOneCountersAdded {
+                                    object,
+                                    count,
+                                    ..
+                                } if *object == source => Some(*count),
+                                _ => None,
+                            })
+                            .sum::<i32>(),
+                        i32::from(x)
+                    );
+                    assert_eq!(world.engine.event_history.iter().filter(|event|matches!(event,crate::event::CommittedEvent::PlusOneCountersAdded{object,count,..}if *object==source && *count>0)).count(),usize::from(x!=0));
+                    let result = gameplay(&session);
+                    if let Some(previous) = &entry {
+                        assert_eq!(&result, previous);
+                    } else {
+                        entry = Some(result);
+                    }
+                }
+                if let Some(previous) = &final_world {
+                    assert_eq!(entry.as_ref().unwrap(), previous);
+                } else {
+                    final_world = entry;
+                }
+            }
+        }
+    }
+}
+#[test]
+fn wildwood_variable_printing_supplement_preserves_independent_hidden_hands_v52_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for known in [false, true] {
+            let make = |hidden| {
+                let mut raw = state(actor, hidden, 30);
+                if known {
+                    put(&mut raw, actor, "Wildwood Scourge", Zone::Hand);
+                }
+                own(raw)
+            };
+            let a = make("Wildwood Scourge");
+            let b = make("Frenzied Goblin");
+            let pa = a.encode(expected(&a)).unwrap();
+            let pb = b.encode(expected(&b)).unwrap();
+            assert_eq!(pa.packet(), pb.packet());
+            assert_eq!(ordinary_printing_count(pa.packet()), usize::from(known));
+        }
+    }
+}

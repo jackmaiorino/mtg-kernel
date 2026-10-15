@@ -1793,4 +1793,257 @@ mod paid {
         run!(FakeSession, from_fake_v50_fixture_state);
         run!(RavenousSession, from_ravenous_v51_fixture_state);
     }
+
+    #[test]
+    fn wildwood_closed_variable_printing_keeps_native_x_cost_mana_value_and_single_entry_owner() {
+        use crate::card_def::{CostComponent, TargetSpec};
+        use crate::mana::{Cost, ManaColor, Pip};
+        let id = crate::card_def::card_id_by_name("Wildwood Scourge").unwrap();
+        let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
+        assert_eq!(
+            roots::wildwood_printing(id, &ordinary_recipe(id)).unwrap(),
+            Some(descriptor.clone())
+        );
+        let printing = &descriptor["registered_permanent_printing"];
+        let card = &printing["characteristics"];
+        assert_eq!(card["types"], json!(["Creature"]));
+        assert_eq!(card["subtypes"], json!(["Hydra"]));
+        assert_eq!(card["supertypes"], json!([]));
+        assert_eq!(card["colors"], json!(["G"]));
+        assert_eq!(card["mana_value"], 1);
+        assert_eq!(card["power"], 0);
+        assert_eq!(card["toughness"], 0);
+        assert_eq!(card["ordered_keywords"], json!([]));
+        assert_eq!(card["printed_activated_abilities"], 0);
+        assert_eq!(card["printed_mana_abilities"], 0);
+        let cast = &printing["ordered_cast_roots"][0];
+        assert_eq!(cast["method"], "normal");
+        assert_eq!(cast["ordinary_route"], "Hand");
+        assert_eq!(cast["ordinary_origin"], "Hand");
+        assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+        assert_eq!(cast["targets"], "None");
+        let x = &cast["ordered_announcement"][0];
+        assert_eq!(x["minimum"], 0);
+        assert_eq!(x["supported_maximum"], 255);
+        assert_eq!(x["menu"], "SourceBoundChooseEffectOption");
+        assert_eq!(x["option_index_adds_to_minimum"], true);
+        assert_eq!(
+            x["option_count_is_current_payable_maximum_minus_minimum_plus_one"],
+            true
+        );
+        assert_eq!(x["sole_payable_value_is_selected_automatically"], true);
+        assert_eq!(x["maximum_requires_current_native_payment_quote"], true);
+        assert_eq!(x["native_option_menu_requires_original_pending_cast"], true);
+        assert_eq!(x["native_without_mana_cost_permission_forces_zero_x"], true);
+        let payment = &cast["ordered_costs"][0];
+        assert_eq!(
+            payment["native_printed_cost"],
+            json!({"generic":0,"pips":[{"Colored":"G"}],"x_count":1})
+        );
+        assert_eq!(
+            payment["x_source"],
+            "NativePendingCastChoiceThenFinalizedStackStateXValue"
+        );
+        assert_eq!(payment["each_printed_x_adds_chosen_x_generic_mana"], true);
+        assert_eq!(
+            payment["payment_precedes_finalized_stack_publication"],
+            true
+        );
+        assert_eq!(
+            cast["mana_value"],
+            json!({"printed_base":1,"stack_x_multiplicity":1,"stack_uses_finalized_captured_x":true,"pending_unfinalized_object_uses_printed_base":true,"off_stack_x_value":0,"maximum_represented_stack_value":256})
+        );
+        assert_eq!(
+            cast["ordered_resolution"],
+            json!(["ResolveExistingWildwoodCapturedXEntry"])
+        );
+        assert_eq!(
+            cast["existing_entry_meaning_owns_the_only_counter_placement"],
+            true
+        );
+        assert_eq!(
+            cast["physical_departure"],
+            "BattlefieldOnResolutionOtherwiseGraveyard"
+        );
+        let family = crate::rules_meaning_wildwood_v1::meaning_v1(
+            &crate::rules_meaning_wildwood_v1::live_selector_v1().unwrap(),
+            id,
+        )
+        .unwrap();
+        assert!(
+            family.entry.counter_count_equals_captured_x
+                && family.entry.counters_committed_during_entry_before_sba
+                && family.entry.entry_is_a_replacement_not_a_trigger
+                && family.entry.zero_base_toughness_uses_ordinary_sba
+        );
+        assert!(
+            family.counter_trigger.recipient_is_another_object
+                && !family
+                    .counter_trigger
+                    .later_batch_collection_duplicates_capture
+        );
+        assert_eq!(
+            family.counter_trigger.excluded_effective_subtype,
+            crate::card_def::Subtype::Hydra
+        );
+        macro_rules! reject {
+            ($field:ident,$value:expr)=>{{let mut d=ordinary_recipe(id);d.$field=$value;assert!(matches!(roots::wildwood_printing(id,&d),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};
+        }
+        reject!(
+            cost,
+            Cost {
+                generic: 0,
+                pips: &[Pip::Colored(ManaColor::G)],
+                x_count: 0
+            }
+        );
+        reject!(
+            cost,
+            Cost {
+                generic: 0,
+                pips: &[Pip::Colored(ManaColor::G)],
+                x_count: 2
+            }
+        );
+        reject!(mana_value, 2);
+        reject!(power, Some(1));
+        reject!(toughness, Some(1));
+        reject!(target_spec, TargetSpec::Creature);
+        reject!(spell_effect, || Some(crate::effect::EffectOp::MoveObject {
+            object: crate::effect::ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield
+        }));
+        reject!(
+            alt_cost,
+            Some(crate::card_def::AltCostDef {
+                components: &[CostComponent::Mana(Cost::zero())],
+                condition: crate::card_def::AltCostCondition::Always
+            })
+        );
+        reject!(
+            mode2,
+            Some(crate::card_def::ModeDef {
+                target_spec: TargetSpec::None,
+                effect: || crate::effect::EffectOp::Sequence(vec![])
+            })
+        );
+        reject!(
+            bestow,
+            Some(crate::card_def::BestowDef {
+                cost: Cost::zero(),
+                target_spec: TargetSpec::Creature
+            })
+        );
+        reject!(
+            activated_abilities,
+            crate::card_def::CARD_DEFS
+                [usize::from(crate::card_def::card_id_by_name("Sower of Chaos").unwrap())]
+            .activated_abilities
+        );
+        reject!(
+            source_type_hexproof_v1,
+            Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+        );
+        reject!(other_controlled_nontoken_death_v1,Some(crate::card_def::OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom));
+    }
+
+    #[test]
+    fn genuine_paid_wildwood_x_zero_three_255_choice_entry_and_restore_v50_v51_both_seats() {
+        macro_rules! run {
+            ($session:ident,$from:ident,$input:ident,$world:ident)=>{
+                for actor in [PlayerId::P0,PlayerId::P1] {for x in [0u8,3,255] {
+                    let mut raw=state(actor);let source=put(&mut raw,actor,"Wildwood Scourge",Zone::Hand);
+                    let forest=put(&mut raw,actor,"Forest",Zone::Battlefield);
+                    // Declared initial funding before all native journals. The
+                    // actual Forest ability supplies G; native finalization
+                    // pays every chosen generic X from this bounded pool.
+                    raw.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()]=x;
+                    let mut session=$session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                    assert_eq!(crate::engine::object_mana_value(session.inner.$world(),source),1);
+                    let e=expected(&session.inner);let (public,_,_)=session.inner.$input(e,e.acting_player).unwrap();
+                    assert!(public.families.iter().any(|f|matches!(f,crate::akroma_family_public_v40::FamilyFactsV40::Wildwood(v)if v.roots.len()==1)));
+                    assert_eq!(numeric_field_count(session.encode(e).unwrap().packet.state(),"registered_permanent_printing"),1);
+                    act!(session,$input,|a|mana(a,forest));
+                    act!(session,$input,|a|matches!(a,ActionSemanticV1::CastSpell{source:card,..}if card.arena_id==source.0));
+                    let original_choice=if x!=0 {
+                        let e=expected(&session.inner);let (_,actions,_)=session.inner.$input(e,e.acting_player).unwrap();
+                        assert_eq!(actions.len(),usize::from(x)+1);
+                        for (i,a) in actions.iter().enumerate() {assert!(matches!(a,ActionSemanticV1::ChooseEffectOption{source:card,option_index,option_count,..}if card.arena_id==source.0 && usize::from(*option_index)==i && *option_count==u16::from(x)+1));}
+                        let pending=session.inner.$world().engine.pending_cast.as_ref().unwrap();assert_eq!(pending.x_value,None);assert_eq!(crate::engine::object_mana_value(session.inner.$world(),source),1);
+                        let decision=session.encode(e).unwrap();assert_eq!(decision.packet.actions().len(),usize::from(x)+1);
+                        Some((session.snapshot(),decision))
+                    } else {assert!(session.inner.$world().engine.pending_cast.is_none());None};
+                    let mut final_world=None;
+                    for replay in 0..if x==0 {1}else{2} {
+                        if let Some((snapshot,original))=&original_choice {
+                            if replay!=0 {session.restore(snapshot).unwrap();let before=session.inner.privileged_core_environment_hash();assert!(matches!(session.apply(original,u32::from(x)),Err(Error::StaleBinding)));assert_eq!(session.inner.privileged_core_environment_hash(),before);assert_eq!(session.encode(expected(&session.inner)).unwrap().packet,original.packet);}
+                            let e=expected(&session.inner);let decision=session.encode(e).unwrap();let mut erased=decision.clone();erased.packet.state=NumericTree::encode(&json!({})).unwrap();
+                            let before=session.inner.privileged_core_environment_hash();assert!(matches!(session.apply(&erased,u32::from(x)),Err(Error::StaleBinding)));assert_eq!(session.inner.privileged_core_environment_hash(),before);assert!(matches!(session.apply(&decision,u32::from(x)+1),Err(Error::ActionRange)));assert_eq!(session.inner.privileged_core_environment_hash(),before);
+                            let mut reference=session.inner.clone();let reply=reference.step(e.episode_id,e.step,u32::from(x)).unwrap();assert_eq!(session.apply(&decision,u32::from(x)).unwrap(),reply);assert_eq!(session.inner.$world(),reference.$world());
+                        }
+                        let paid=session.inner.$world();assert!(paid.engine.pending_cast.is_none());assert_eq!(paid.players[actor.index()].mana_pool,[0;6]);assert!(paid.objects.get(forest).tapped);
+                        assert_eq!(paid.objects.get(source).zone,Zone::Stack);assert_eq!(paid.stack.len(),1);assert_eq!(paid.stack[0].v4.x_value,u16::from(x));
+                        assert_eq!(crate::engine::object_mana_value(paid,source),u16::from(x)+1);
+                        let e=expected(&session.inner);let (public,_,_)=session.inner.$input(e,e.acting_player).unwrap();assert_eq!(public.projection.surface.stack[0].x_value,u16::from(x));
+                        let paid_snapshot=session.snapshot();let mut entry=None;
+                        for repeat in 0..2 {
+                            if repeat!=0 {session.restore(&paid_snapshot).unwrap();}
+                            for _ in 0..16 {if session.inner.$world().stack.is_empty(){break;}act!(session,$input,|a|matches!(a,ActionSemanticV1::Pass{..}));}
+                            let world=session.inner.$world();assert_eq!(world.objects.get(source).zone,if x==0 {Zone::Graveyard}else{Zone::Battlefield});
+                            assert_eq!(crate::engine::object_mana_value(world,source),1);assert_eq!(world.objects.get(source).counters.plus1_plus1,i32::from(x));
+                            assert_eq!(world.engine.event_history.iter().filter_map(|event|match event {crate::event::CommittedEvent::PlusOneCountersAdded{object,count,..}if *object==source=>Some(*count),_=>None}).sum::<i32>(),i32::from(x));
+                            assert_eq!(world.engine.event_history.iter().filter(|event|matches!(event,crate::event::CommittedEvent::PlusOneCountersAdded{object,count,..}if *object==source && *count>0)).count(),usize::from(x!=0));
+                            let result=(world.clone(),session.inner.policy_step_count(),session.inner.physical_decision_count());if let Some(previous)=&entry {assert_eq!(&result,previous);}else {entry=Some(result);}
+                        }
+                        if let Some(previous)=&final_world {assert_eq!(entry.as_ref().unwrap(),previous);}else {final_world=entry;}
+                    }
+                }}
+            };
+        }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_fixture_state
+        );
+    }
+
+    #[test]
+    fn wildwood_variable_supplement_keeps_independent_hidden_hands_private_v50_v51_both_seats() {
+        macro_rules! run {
+            ($session:ident,$from:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    for known in [false, true] {
+                        let mut raw = state(actor);
+                        if known {
+                            put(&mut raw, actor, "Wildwood Scourge", Zone::Hand);
+                        }
+                        let hidden =
+                            put(&mut raw, actor.opponent(), "Wildwood Scourge", Zone::Hand);
+                        let mut other = raw.clone();
+                        other.objects.get_mut(hidden).card_def =
+                            crate::card_def::card_id_by_name("Frenzied Goblin").unwrap();
+                        other.objects.get_mut(hidden).name = "Frenzied Goblin".into();
+                        let a = $session::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                        let b = $session::from_session(FastActorSessionV1::$from(other)).unwrap();
+                        let pa = a.encode(expected(&a.inner)).unwrap();
+                        let pb = b.encode(expected(&b.inner)).unwrap();
+                        assert_eq!(pa.packet, pb.packet);
+                        assert_eq!(
+                            numeric_field_count(pa.packet.state(), "registered_permanent_printing"),
+                            usize::from(known)
+                        );
+                    }
+                }
+            };
+        }
+        run!(FakeSession, from_fake_v50_fixture_state);
+        run!(RavenousSession, from_ravenous_v51_fixture_state);
+    }
 }
