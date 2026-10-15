@@ -141,11 +141,11 @@ pub(super) fn validate_selected(
     Ok(())
 }
 
-fn unpaid(pending: &mut EffectContinuation, program: Box<EffectOp>, mut path: Vec<u16>) {
+fn unpaid(pending: &mut EffectContinuation, program: EffectOp, mut path: Vec<u16>) {
     path.push(0);
     pending
         .frames
-        .push(EffectFrame::Program { op: *program, path });
+        .push(EffectFrame::Program { op: program, path });
 }
 
 pub(super) fn stage(
@@ -169,7 +169,7 @@ pub(super) fn stage(
         return Err("discard payment root changed".into());
     }
     if hand.is_empty() {
-        unpaid(pending, program, path);
+        unpaid(pending, *program, path);
         return Ok(false);
     }
     let choice = DiscardPaymentChoiceV1 {
@@ -212,7 +212,7 @@ pub(super) fn finish(
         // Use the genuine discard event/replacement path, including Madness.
         crate::engine::commit_discarded_card(state, card.object);
     } else {
-        unpaid(pending, choice.unpaid.clone(), choice.path.clone());
+        unpaid(pending, (*choice.unpaid).clone(), choice.path.clone());
     }
     Ok(())
 }
