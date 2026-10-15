@@ -12,6 +12,7 @@ pub(crate) fn enabled() -> bool {
     *HAS_OBSERVERS.get_or_init(|| {
         CARD_DEFS.iter().enumerate().any(|(id, card)| {
             crate::fiendish_panda_v1::owns_definition(id as u16)
+                || crate::fake_your_own_death_v50::spell_custody::selected_definition(id as u16)
                 || card.is_executable()
                     && crate::trigger::triggers_for(id as u16)
                         .iter()
@@ -26,19 +27,22 @@ pub(crate) fn enabled() -> bool {
     })
 }
 
-pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<CommittedEvent> {
+pub(crate) fn capture(
+    state: &GameState,
+    event: &ProposedEvent,
+) -> Result<Vec<CommittedEvent>, String> {
     if !enabled() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let ProposedEvent::ZoneChange(change) = event else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let dead = state.objects.get(change.object);
     if dead.zone != Zone::Battlefield
         || change.to_zone != Zone::Graveyard
         || !crate::engine::object_has_type(state, change.object, CardType::Creature)
     {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut captures = state
         .objects
@@ -82,7 +86,8 @@ pub(crate) fn capture(state: &GameState, event: &ProposedEvent) -> Vec<Committed
     if let Some(capture) = crate::fiendish_panda_v1::capture_death(state, event) {
         captures.push(capture);
     }
-    captures
+    captures.extend(crate::fake_your_own_death_v50::spell_custody::capture_death(state, event)?);
+    Ok(captures)
 }
 
 /// A capture is authoritative only beside its committed death in both the

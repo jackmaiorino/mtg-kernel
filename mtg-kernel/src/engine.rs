@@ -9320,7 +9320,9 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+    if crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)
+        .is_err()
+        || crate::bloodthirsty_conqueror_v49::validate(state).is_err()
         || crate::doubling_season_v48::validate_token_journals(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -13580,6 +13582,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::fake_your_own_death_v50::death_custody::publish(state, &finalized)?;
     crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
     crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::arahbo_v1::publish(state, &finalized)?;
@@ -13778,6 +13781,9 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::fake_your_own_death_v50::death_custody::validate_trigger_identity(state, item)? {
+        return Ok(None);
+    }
     if matches!(
         inline_effect,
         EffectOp::TapAttachedCreatureAndDamageControllerByPower
@@ -14625,6 +14631,8 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
         SpellDeparture::Move { source, .. } | SpellDeparture::Cease { source } => *source,
     };
     let faebloom_departure = crate::faebloom_trick_v43::departure_candidate(state, faebloom_source);
+    let fake_departure =
+        crate::fake_your_own_death_v50::spell_custody::departure_candidate(state, faebloom_source);
     let faebloom_start = state.engine.event_history.len();
     let mut faebloom_ceased = false;
     match departure {
@@ -14655,6 +14663,12 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
     crate::faebloom_trick_v43::record_departure(
         state,
         faebloom_departure,
+        faebloom_start,
+        faebloom_ceased,
+    )?;
+    crate::fake_your_own_death_v50::spell_custody::record_departure(
+        state,
+        fake_departure,
         faebloom_start,
         faebloom_ceased,
     )?;
@@ -14727,7 +14741,14 @@ pub(crate) fn counter_stack_item_by_id(
     let zul_owner = crate::zul_ashur_v1::acquire(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
     let faebloom_counter_owner = crate::faebloom_trick_v43::acquire(state, &item)?;
+    let fake_counter_owner = crate::fake_your_own_death_v50::spell_custody::acquire(state, &item)?;
+    let fake_death_counter_owner =
+        crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    let fake_death_counter = crate::fake_your_own_death_v50::death_custody::begin_counter(
+        state,
+        fake_death_counter_owner,
+    )?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
             apply_spell_departure(state, plan)?;
@@ -14735,6 +14756,7 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::fake_your_own_death_v50::death_custody::finish_counter(state, fake_death_counter)?;
     crate::ajani_full_v42::lifecycle::record_removed(state, ajani_counter_owner.as_ref(), true)?;
     crate::krenko_v1::record_input(
         state,
@@ -14755,6 +14777,13 @@ pub(crate) fn counter_stack_item_by_id(
             state,
             owner,
             crate::faebloom_trick_v43::RemovalV43::Countered,
+        )?;
+    }
+    if let Some(owner) = fake_counter_owner {
+        crate::fake_your_own_death_v50::spell_custody::resolve(
+            state,
+            owner,
+            crate::fake_your_own_death_v50::spell_custody::RemovalV50::Countered,
         )?;
     }
     crate::extra_turn_v1::record_countered(state, temporal_owner);
@@ -14932,6 +14961,7 @@ pub(crate) fn apply_live_stack_spell_departure(
     validate_spell_stack_source(state, &item)?;
     let departure = plan_spell_departure(state, &item, requested_zone)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    let fake_owner = crate::fake_your_own_death_v50::spell_custody::acquire(state, &item)?;
     if let Some(owner) = crate::faebloom_trick_v43::acquire(state, &item)? {
         state
             .stack
@@ -14940,6 +14970,18 @@ pub(crate) fn apply_live_stack_spell_departure(
             state,
             owner,
             crate::faebloom_trick_v43::RemovalV43::OtherDeparture {
+                zone: requested_zone,
+            },
+        )?;
+    }
+    if let Some(owner) = fake_owner {
+        state
+            .stack
+            .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id);
+        crate::fake_your_own_death_v50::spell_custody::resolve(
+            state,
+            owner,
+            crate::fake_your_own_death_v50::spell_custody::RemovalV50::OtherDeparture {
                 zone: requested_zone,
             },
         )?;
@@ -15079,6 +15121,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    let fake_death_owner =
+        match crate::fake_your_own_death_v50::death_custody::acquire_resolution(state, item) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
             Ok(owner) => owner,
@@ -15368,6 +15421,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let fake_owner = match crate::fake_your_own_death_v50::spell_custody::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -15455,6 +15518,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = fake_death_owner {
+        if crate::fake_your_own_death_v50::death_custody::resolve_owned(state, owner, &item, &ctx)
+            .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = conqueror_owner.as_ref() {
         if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
             state,
@@ -15504,6 +15577,32 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         // The owned family resolver applies creation or the reflexive tap.
         // A spell still performs its final ordinary departure afterward.
         if finish_resolved_stack_item(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = fake_owner {
+        if crate::fake_your_own_death_v50::spell_custody::resolve(
+            state,
+            owner,
+            crate::fake_your_own_death_v50::spell_custody::RemovalV50::Resolving {
+                target_legal: targets_legal,
+            },
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        let departure = if targets_legal {
+            finish_resolved_stack_item(state, &item)
+        } else {
+            finish_failed_stack_item(state, &item)
+        };
+        if departure.is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -16434,7 +16533,23 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
+            let fake_cleanup =
+                match crate::fake_your_own_death_v50::spell_custody::before_cleanup(state) {
+                    Ok(owner) => owner,
+                    Err(_) => {
+                        state.engine.halted =
+                            Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                        return;
+                    }
+                };
             state.engine.until_end_of_turn.clear();
+            if crate::fake_your_own_death_v50::spell_custody::finish_cleanup(state, fake_cleanup)
+                .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             if let Err(source) = event::expire_exile_if_dies_replacements(state) {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, source));
@@ -18447,6 +18562,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)?;
     crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
@@ -19893,7 +20009,13 @@ pub(crate) fn copy_spell_for(
     copy.v4.optional_additional_cost_paid = None;
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
-    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err()
+        || crate::fake_your_own_death_v50::spell_custody::publish_copy_created(
+            state,
+            copy_stack_item,
+        )
+        .is_err()
+    {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
     }
     Some((copy_source, copy_stack_item))
@@ -19949,6 +20071,11 @@ pub(crate) fn finish_spell_copy_targets(
         if !spell_copy_retarget_candidates(state, copy_stack_item).contains(&target) {
             return Err(format!("{target:?} is not a legal spell-copy target"));
         }
+        crate::fake_your_own_death_v50::spell_custody::record_copy_target_input(
+            state,
+            copy_stack_item,
+            Some(target),
+        )?;
         let contract = StackTargetContractV4::capture(state, target);
         let copy = state
             .stack
@@ -19957,8 +20084,15 @@ pub(crate) fn finish_spell_copy_targets(
             .ok_or("the spell copy is no longer on the stack")?;
         copy.targets = vec![target];
         copy.v4.target_contracts = vec![contract];
+    } else {
+        crate::fake_your_own_death_v50::spell_custody::record_copy_target_input(
+            state,
+            copy_stack_item,
+            None,
+        )?;
     }
-    log_final_targeting_events(state, copy_stack_item)
+    log_final_targeting_events(state, copy_stack_item)?;
+    crate::fake_your_own_death_v50::spell_custody::publish_spell(state, copy_stack_item)
 }
 
 fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (ObjectId, StackItemId) {
@@ -19979,7 +20113,13 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
     );
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
-    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err()
+        || crate::fake_your_own_death_v50::spell_custody::publish_copy_created(
+            state,
+            copy_stack_item,
+        )
+        .is_err()
+    {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
     }
     (copy_source, copy_stack_item)
@@ -20355,7 +20495,13 @@ fn apply_choose_spell_copy_retarget(
     let copy_stack_item = pending
         .copy_stack_item
         .ok_or("the retarget-stage spell copy lacks a stack incarnation")?;
+    crate::fake_your_own_death_v50::spell_custody::record_copy_target_input(
+        state,
+        copy_stack_item,
+        None,
+    )?;
     log_final_targeting_events(state, copy_stack_item)?;
+    crate::fake_your_own_death_v50::spell_custody::publish_spell(state, copy_stack_item)?;
     finish_pending_spell_copy_resolution(state, &pending)
 }
 
@@ -20387,6 +20533,11 @@ fn apply_choose_spell_copy_target(state: &mut GameState, target: Target) -> Resu
         .copy_stack_item
         .ok_or("the target-stage spell copy lacks a stack incarnation")?;
     let target_contract = StackTargetContractV4::capture(state, target);
+    crate::fake_your_own_death_v50::spell_custody::record_copy_target_input(
+        state,
+        copy_stack_item,
+        Some(target),
+    )?;
     let copy = state
         .stack
         .iter_mut()
@@ -20397,6 +20548,7 @@ fn apply_choose_spell_copy_target(state: &mut GameState, target: Target) -> Resu
     copy.targets = vec![target];
     copy.v4.target_contracts = vec![target_contract];
     log_final_targeting_events(state, copy_stack_item)?;
+    crate::fake_your_own_death_v50::spell_custody::publish_spell(state, copy_stack_item)?;
     finish_pending_spell_copy_resolution(state, &pending)
 }
 
@@ -21520,6 +21672,7 @@ fn finalize_owned_cast(
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
     crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
+    crate::fake_your_own_death_v50::spell_custody::publish_spell(state, stack_item_id)?;
     if matches!(
         paid_optional_additional_cost,
         Some(OptionalAdditionalCostDef::Casualty(_))

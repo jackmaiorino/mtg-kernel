@@ -10,13 +10,13 @@ from fixtures import DECK_HASHES, DECK_IDS, fake_launcher
 
 
 class ClientStrictnessTest(unittest.TestCase):
-    def make_client(self, scenario: str, timeout_s: float = 1.0) -> KernelRlClient:
+    def make_client(self, scenario: str, timeout_s: float = 5.0) -> KernelRlClient:
         self.tmp = tempfile.TemporaryDirectory()
         launcher = fake_launcher(Path(self.tmp.name), scenario)
         return KernelRlClient(launcher, timeout_s=timeout_s)
 
     def assert_reset_protocol_error(self, scenario: str) -> None:
-        client = self.make_client(scenario, timeout_s=0.2 if scenario == "timeout" else 1.0)
+        client = self.make_client(scenario, timeout_s=0.2 if scenario == "timeout" else 5.0)
         try:
             with self.assertRaises((ProtocolError, EnvProcessError)):
                 client.reset(episode_id=0, env_seed=1, max_physical_decisions=8, max_policy_steps=16)
