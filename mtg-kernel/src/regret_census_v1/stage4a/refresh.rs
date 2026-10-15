@@ -714,6 +714,85 @@ pub(super) fn budget_case(
     Ok(row)
 }
 
+/// Versioned plain control for the ordinary-opening budget player. Both live
+/// roles use exactly the search arm's opening and guide sampling streams.
+/// No search roles, tree, initial search or refresh are constructed here.
+/// The terminal replay still constructs the existing diagnostic replay keys.
+pub(super) fn budget_plain_case(
+    sh: &BankShared,
+    policy: &FrozenPlayPolicyV1,
+    src: &SourceSpec,
+    binding: &str,
+) -> Result<Value, String> {
+    let started = Instant::now();
+    let opp = sh
+        .labels
+        .iter()
+        .position(|l| *l == src.opp)
+        .ok_or("unknown guide opponent")?;
+    let mut live_focal = policy.fork_for_collection_v3()?;
+    let mut live_opp = sh.opponents[opp].fork_for_collection_v3()?;
+    live_focal.reset_sampling_v1(src.guide_policy_seeds);
+    live_opp.reset_sampling_v1(src.guide_policy_seeds);
+    let focal = PlayerId(src.seat);
+    let opening = source_session(&sh.spec, src)?;
+    let mut s = opening.clone();
+    let defs = spy_defs();
+    let mut suffix = super::labels::Suffix::new(true);
+    let mut meter = Meter::new(u64::MAX);
+    let mut counters = Counters::default();
+    let (mut actions, mut decisions) = (Vec::new(), Vec::new());
+    while let Some(d) = decision(&s) {
+        let a = if acting(&d) == focal {
+            act_plain(&mut live_focal, &s, &d, &mut counters)?
+        } else {
+            act_plain(&mut live_opp, &s, &d, &mut counters)?
+        };
+        if acting(&d) == focal && d.legal_action_count >= 2 {
+            let sem = s.diagnostic_current_action_semantics().unwrap_or_default();
+            let (mut cast_offered, mut own_offered, mut dr_offered) = (false, false, false);
+            for x in &sem {
+                let (cast, own, dr) = classify(x, s.game_state(), focal, &defs);
+                cast_offered |= cast;
+                own_offered |= own;
+                dr_offered |= dr;
+            }
+            let (cast_chosen, own_chosen, dr_chosen) =
+                sem.get(a as usize).map_or((false, false, false), |x| {
+                    classify(x, s.game_state(), focal, &defs)
+                });
+            super::play::observe(Some(&mut suffix), &s, a, focal, &defs);
+            decisions.push(
+                json!({"step":d.step,"physical_decision_id":d.physical_decision_id,
+                "substep":d.substep_index,"k":d.legal_action_count,"chooser":"plain",
+                "search":null,"lookup":null,"refreshed":null,"edge_backups":null,
+                "remaining_before":0,"remaining_after":0,
+                "spy_cast_offered":cast_offered,"spy_cast_chosen":cast_chosen,
+                "spy_self_offered":own_offered,"spy_self_chosen":own_chosen,
+                "dr_giant_offered":dr_offered,"dr_giant_chosen":dr_chosen}),
+            );
+        }
+        actions.push(a);
+        apply(&mut s, &d, a, &mut meter, focal, Some(&mut suffix), &defs).map_err(err)?;
+    }
+    let end = outcome(&s, focal);
+    let valid = end.is_some_and(|e| e != "nonnatural");
+    let (starts, _) = guide_record(&opening, focal, &actions)?;
+    Ok(
+        json!({"kind":"budget_game","schema":"search-total-budget-v1/game","arm":"plain-v1",
+        "id":src.id,"lineage":sh.spec.lineage,"own":src.own,"other":src.other,
+        "seat":src.seat,"opp":src.opp,"seed":src.seed,"starting_player":src.starting_player,
+        "live_policy_seeds":src.guide_policy_seeds,"search_root":src.search_root,
+        "bank_binding_sha256":binding,"allocation":{"initial":0,"refresh":0,"total":0},
+        "game":{"valid":valid,"invalid_reason":(!valid).then_some("non-natural guide"),
+            "end":end,"actions":actions,"decisions":decisions,"learner_starts":starts.len(),
+            "searches":[],"transitions_used":0,"key_mode":null,
+            "search_keys":KeyStats::default().json(),"execution_keys":KeyStats::default().json(),
+            "sequence":suffix.json(),"real_transitions":meter.spent,"wall":started.elapsed().as_secs_f64()},
+        "wall":started.elapsed().as_secs_f64()}),
+    )
+}
+
 /// Replay check of one recorded budget game (analysis only): rebuilds the
 /// case's opening, applies the recorded actions for both seats with the
 /// passive sequence tracker (the same observation rule as live play), and
@@ -963,6 +1042,151 @@ mod tests {
 
     fn roles(policy: &FrozenPlayPolicyV1) -> Roles {
         bank_roles(policy, std::slice::from_ref(policy)).unwrap()
+    }
+
+    fn plain_control_fixture(
+        seat: u8,
+        starting_player: u8,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+    ) -> (FrozenPlayPolicyV1, BankShared, SourceSpec) {
+        use super::super::bank::{BankSpec, DeckSpec, SPEC_SCHEMA};
+        let policy = FrozenPlayPolicyV1::training_fixture_v3();
+        let src = SourceSpec {
+            id: format!("plain-control-s{seat}-p{starting_player}"),
+            own: 5,
+            other: 1,
+            seat,
+            opp: "fixture".into(),
+            seed: 101,
+            starting_player,
+            source_policy_seeds: [101, 103],
+            anchor_draw: 0,
+            guide_policy_seeds: [7, 9],
+            search_root: "unused-plain-control".into(),
+        };
+        let sh = BankShared {
+            spec: BankSpec {
+                schema: SPEC_SCHEMA.into(),
+                namespace: "spy-reset-pilot-v1".into(),
+                lineage: "fixture".into(),
+                runtime_rules: "resolution-boundary-v1".into(),
+                select_rule: "fpu-1.5".into(),
+                max_physical_decisions,
+                max_policy_steps,
+                decks: RUNTIME_DECKS
+                    .iter()
+                    .map(|d| DeckSpec {
+                        label: d.id.into(),
+                        mainboard: d.card_ids.to_vec(),
+                    })
+                    .collect(),
+                sources: vec![src.clone()],
+            },
+            labels: vec!["fixture".into()],
+            opponents: vec![policy.fork_for_collection_v3().unwrap()],
+            prior: DeckPrior::new(&(0..RUNTIME_DECKS.len()).collect::<Vec<_>>()),
+            limits: Limits::FORMAL,
+        };
+        (policy, sh, src)
+    }
+
+    /// Independent plain collection with the same opening and guide seeds
+    /// must reproduce every selected action for either focal/starting seat.
+    #[test]
+    #[ignore = "native qualification: bounded fixture policy inference"]
+    fn plain_control_matches_guide_seeded_plain_collection_for_both_seats() {
+        for seat in 0..2 {
+            for starting_player in 0..2 {
+                let (policy, sh, src) = plain_control_fixture(seat, starting_player, 12, 40);
+                let row = budget_plain_case(&sh, &policy, &src, "binding").unwrap();
+                let mut reference = source_session(&sh.spec, &src).unwrap();
+                let mut focal = policy.fork_for_collection_v3().unwrap();
+                let mut opponent = sh.opponents[0].fork_for_collection_v3().unwrap();
+                focal.reset_sampling_v1(src.guide_policy_seeds);
+                opponent.reset_sampling_v1(src.guide_policy_seeds);
+                let mut actions = Vec::new();
+                plain_logged(
+                    &mut reference,
+                    PlayerId(seat),
+                    &mut focal,
+                    &mut opponent,
+                    &mut actions,
+                )
+                .unwrap();
+                assert_eq!(row["game"]["actions"], json!(actions));
+                assert_eq!(
+                    row["game"]["end"],
+                    json!(outcome(&reference, PlayerId(seat)))
+                );
+                assert_eq!(row["live_policy_seeds"], json!(src.guide_policy_seeds));
+                assert_eq!(row["arm"], "plain-v1");
+                assert_eq!(
+                    row["allocation"],
+                    json!({"initial":0,"refresh":0,"total":0})
+                );
+                assert_eq!(row["game"]["searches"], json!([]));
+                assert_eq!(row["game"]["transitions_used"], 0);
+                assert_eq!(row["game"]["real_transitions"], actions.len());
+                assert!(row["game"]["decisions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|d| {
+                        d["chooser"] == "plain" && d["search"].is_null() && d["refreshed"].is_null()
+                    }));
+                // Source/anchor streams belong to the former bank procedure,
+                // and must never seed the ordinary-opening plain control.
+                let mut changed = src.clone();
+                changed.source_policy_seeds = [997, 991];
+                changed.search_root = "another-unused-search-root".into();
+                changed.anchor_draw = u64::MAX;
+                let again = budget_plain_case(&sh, &policy, &changed, "binding").unwrap();
+                assert_eq!(row["game"]["actions"], again["game"]["actions"]);
+                assert_eq!(row["game"]["end"], again["game"]["end"]);
+            }
+        }
+    }
+
+    /// A technical decision limit is an invalid non-natural result, never
+    /// a loss or draw. Natural results retain focal perspective on replay.
+    #[test]
+    #[ignore = "native qualification: two complete fixture games and two limited games"]
+    fn plain_control_preserves_natural_and_limited_terminal_results() {
+        for seat in 0..2 {
+            for limited in [true, false] {
+                let (physical, policy_steps) = if limited { (1, 1) } else { (100_000, 200_000) };
+                let (policy, sh, src) = plain_control_fixture(seat, 0, physical, policy_steps);
+                let row = budget_plain_case(&sh, &policy, &src, "binding").unwrap();
+                let actions: Vec<u32> =
+                    serde_json::from_value(row["game"]["actions"].clone()).unwrap();
+                let replay = budget_replay(&sh, &src, &actions).unwrap();
+                assert_eq!(row["game"]["end"], replay["end"]);
+                assert_eq!(row["game"]["sequence"], replay["sequence"]);
+                if limited {
+                    assert_eq!(row["game"]["end"], "nonnatural");
+                    assert_eq!(row["game"]["valid"], false);
+                    assert_eq!(row["game"]["invalid_reason"], "non-natural guide");
+                } else {
+                    assert_eq!(row["game"]["valid"], true);
+                    assert!(row["game"]["invalid_reason"].is_null());
+                    let end = walk(
+                        source_session(&sh.spec, &src).unwrap(),
+                        &actions,
+                        |_, _, _| Ok(()),
+                    )
+                    .unwrap();
+                    let other = outcome(&end, PlayerId(1 - seat)).unwrap();
+                    let expected = match row["game"]["end"].as_str().unwrap() {
+                        "win" => "loss",
+                        "loss" => "win",
+                        "draw" => "draw",
+                        e => panic!("expected natural result, got {e}"),
+                    };
+                    assert_eq!(other, expected);
+                }
+            }
+        }
     }
 
     /// Live plain and opponent policies are separate from the search roles:
