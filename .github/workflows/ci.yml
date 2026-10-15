@@ -437,7 +437,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then
             binary_suffix=".exe"
           fi
-          python python/tools/check_limited_common_client_v2.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v2$binary_suffix"
+          MTG_LIMITED_COMMON_TIMING_V2=1 python python/tools/check_limited_common_client_v2.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v2$binary_suffix"
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
