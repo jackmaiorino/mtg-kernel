@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 pub(super) mod crystal_printing;
 #[path = "early_activation_printing.rs"]
 pub(super) mod early_activation_printing;
+#[path = "enchantment_hunter_printing.rs"]
+pub(super) mod enchantment_hunter_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
 #[path = "rallier_bloom_printing.rs"]
@@ -302,6 +304,12 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if matches!(
+        d.name,
+        "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter"
+    ) {
+        return enchantment_hunter_printing::baseline(id, d);
+    }
     if matches!(d.name, "Squad Rallier" | "Bloom Tender") {
         return rallier_bloom_printing::baseline(id, d);
     }
@@ -641,6 +649,9 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter" => {
+            return enchantment_hunter_printing::printing(id, d)
+        }
         "Crystal Barricade" => return crystal_printing::printing(id, d),
         "Twinflame Tyrant" | "Herald of Eternal Dawn" => {
             return tyrant_herald_printing::printing(id, d)

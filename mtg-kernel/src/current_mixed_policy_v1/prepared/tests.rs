@@ -723,3 +723,10 @@ fn rallier_bloom_paid_cast_private_pick_and_mana_restore_prepared_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<PreparedSession>(
     );
 }
+
+#[test]
+fn enchantment_hunter_paid_cast_trigger_restore_privacy_preparedsession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_enchantment_hunter::<
+        PreparedSession,
+    >();
+}
