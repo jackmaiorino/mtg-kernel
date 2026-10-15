@@ -303,3 +303,95 @@ fn opponent_projection_redacts_unpaid_private_hand_candidates() {
         assert_eq!(legal_targets.len(), 1);
     }
 }
+
+#[test]
+fn direct_resume_validates_genuine_discard_prompt_and_answer_before_mutation_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let (mut state, source) = paid_quandary(actor);
+            let payer = actor.opponent();
+            let card = put(&mut state, payer, "Lightning Bolt", Zone::Hand);
+            cast_think_twice(&mut state, payer);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            payment(&mut state, payer);
+            let prompt = serde_json::to_vec(&state).unwrap();
+            assert_eq!(
+                effect::resume_resumable_resolution(&mut state).unwrap(),
+                effect::ResumableProgress::Suspended
+            );
+            assert_eq!(serde_json::to_vec(&state).unwrap(), prompt);
+            for answered in [false, true] {
+                let mut checkpoint: GameState = serde_json::from_slice(&prompt).unwrap();
+                if answered {
+                    if pay {
+                        engine::step(
+                            &mut checkpoint,
+                            Action::ChooseEffectTarget(Target::Object(card)),
+                        )
+                        .unwrap();
+                    } else {
+                        engine::step(&mut checkpoint, Action::FinishEffectSelection).unwrap();
+                    }
+                }
+                let bytes = serde_json::to_vec(&checkpoint).unwrap();
+                for mutation in 0..3 {
+                    let mut forged: GameState = serde_json::from_slice(&bytes).unwrap();
+                    let pending = forged.engine.pending_effect.as_mut().unwrap();
+                    pending.choice = None;
+                    pending.answered_choice_guard = None;
+                    pending.frames = match mutation {
+                        0 => vec![],
+                        1 => vec![EffectFrame::Program {
+                            op: EffectOp::DrawCards {
+                                player: crate::effect::PlayerRef::Opponent,
+                                count: 1,
+                            },
+                            path: vec![0],
+                        }],
+                        _ => vec![EffectFrame::Program {
+                            op: EffectOp::LoseLife {
+                                player: crate::effect::PlayerRef::Opponent,
+                                amount: 50,
+                            },
+                            path: vec![0],
+                        }],
+                    };
+                    let before = serde_json::to_vec(&forged).unwrap();
+                    assert!(effect::validate_pending_effect_choice(&forged).is_err());
+                    assert!(effect::resume_resumable_resolution(&mut forged).is_err());
+                    assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                }
+                if answered {
+                    let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+                    let expected_item = checkpoint
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .unwrap()
+                        .resolving_item
+                        .clone();
+                    for game in [&mut checkpoint, &mut restored] {
+                        assert_eq!(
+                            effect::resume_resumable_resolution(game).unwrap(),
+                            effect::ResumableProgress::Complete(Box::new(expected_item.clone()))
+                        );
+                        assert!(game.engine.pending_effect.is_none());
+                        assert_eq!(game.players[payer.index()].life, if pay { 20 } else { 15 });
+                        assert_eq!(
+                            game.objects.get(card).zone,
+                            if pay { Zone::Graveyard } else { Zone::Hand }
+                        );
+                        assert_eq!(game.players[actor.index()].life, 20);
+                    }
+                    assert_eq!(
+                        serde_json::to_vec(&checkpoint).unwrap(),
+                        serde_json::to_vec(&restored).unwrap()
+                    );
+                }
+            }
+        }
+    }
+}

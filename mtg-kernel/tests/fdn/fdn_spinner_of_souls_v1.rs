@@ -468,3 +468,108 @@ fn tampered_optional_and_answered_payloads_refuse_without_mutation() {
     *op = EffectOp::Sequence(vec![]);
     assert!(mtg_kernel::effect::validate_pending_effect_choice(&state).is_err());
 }
+
+#[test]
+fn direct_resume_validates_paid_spinner_prompt_and_answer_before_mutation_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for v2 in [false, true] {
+            for accept in [false, true] {
+                let mut state = ready(actor, v2);
+                let spinner = source(&mut state, actor);
+                let dead = victim(&mut state, actor);
+                let original = library(
+                    &mut state,
+                    actor,
+                    &["Forest", "Mountain", "Llanowar Elves", "Island"],
+                );
+                bolt(&mut state, actor.opponent(), dead);
+                await_choice(&mut state, actor, spinner);
+                let prompt = serde_json::to_vec(&state).unwrap();
+                assert_eq!(
+                    mtg_kernel::effect::resume_resumable_resolution(&mut state).unwrap(),
+                    mtg_kernel::effect::ResumableProgress::Suspended
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), prompt);
+                for answered in [false, true] {
+                    let mut checkpoint: GameState = serde_json::from_slice(&prompt).unwrap();
+                    if answered {
+                        engine::step(
+                            &mut checkpoint,
+                            Action::ChooseEffectOption(u16::from(accept)),
+                        )
+                        .unwrap();
+                    }
+                    let bytes = serde_json::to_vec(&checkpoint).unwrap();
+                    for erased in [false, true] {
+                        let mut forged: GameState = serde_json::from_slice(&bytes).unwrap();
+                        let pending = forged.engine.pending_effect.as_mut().unwrap();
+                        pending.choice = None;
+                        pending.answered_choice_guard = None;
+                        pending.frames = if erased {
+                            vec![]
+                        } else {
+                            vec![EffectFrame::Program {
+                                op: EffectOp::DrawCards {
+                                    player: mtg_kernel::effect::PlayerRef::Controller,
+                                    count: 3,
+                                },
+                                path: vec![1],
+                            }]
+                        };
+                        let before = serde_json::to_vec(&forged).unwrap();
+                        assert!(
+                            mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err()
+                        );
+                        assert!(
+                            mtg_kernel::effect::resume_resumable_resolution(&mut forged).is_err()
+                        );
+                        assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                    }
+                    if answered {
+                        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+                        let expected_item = checkpoint
+                            .engine
+                            .pending_effect
+                            .as_ref()
+                            .unwrap()
+                            .resolving_item
+                            .clone();
+                        let before_rng = rng(&checkpoint);
+                        let before_knowledge = knowledge(&checkpoint, actor);
+                        for game in [&mut checkpoint, &mut restored] {
+                            assert_eq!(
+                                mtg_kernel::effect::resume_resumable_resolution(game).unwrap(),
+                                mtg_kernel::effect::ResumableProgress::Complete(Box::new(
+                                    expected_item.clone()
+                                ))
+                            );
+                            assert!(game.engine.pending_effect.is_none());
+                            if accept {
+                                assert_eq!(game.objects.get(original[2]).zone, Zone::Hand);
+                                assert!(game
+                                    .known_hand_cards(actor.opponent(), actor)
+                                    .iter()
+                                    .any(|entry| entry.object == original[2]));
+                                assert_eq!(game.players[actor.index()].library[0], original[3]);
+                                let mut rest = game.players[actor.index()].library[1..].to_vec();
+                                let mut expected = original[..2].to_vec();
+                                rest.sort();
+                                expected.sort();
+                                assert_eq!(rest, expected);
+                                assert_ne!(rng(game), before_rng);
+                            } else {
+                                assert_eq!(game.players[actor.index()].library, original);
+                                assert_eq!(rng(game), before_rng);
+                                assert_eq!(knowledge(game, actor), before_knowledge);
+                            }
+                        }
+                        assert_eq!(
+                            serde_json::to_vec(&checkpoint).unwrap(),
+                            serde_json::to_vec(&restored).unwrap()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

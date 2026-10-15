@@ -3275,12 +3275,10 @@ fn begin_resumable_resolution_with_inspiration_owner(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
-    if state
-        .engine
-        .pending_effect
-        .as_ref()
-        .is_some_and(|pending| requires_ferocious_payment_stage(pending))
-    {
+    if state.engine.pending_effect.as_ref().is_some_and(|pending| {
+        requires_ferocious_payment_stage(pending)
+            || requires_printed_optional_trigger_stage(state, pending)
+    }) {
         validate_pending_effect_choice(state)?;
     }
     if state
@@ -6456,6 +6454,42 @@ fn requires_ferocious_payment_stage(pending: &EffectContinuation) -> bool {
                         crate::trigger::TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_))
             })
         })
+}
+
+/// Select the printed optional roots without trusting a saved choice, answer,
+/// frame or inline program. Ordinary engine resumption already validates them;
+/// the public direct resume boundary must make the same check before mutation.
+fn requires_printed_optional_trigger_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> bool {
+    if pending.resolving_item.kind != crate::state::StackItemKind::TriggeredAbility {
+        return false;
+    }
+    let definition = pending
+        .resolving_item
+        .v4
+        .ability_source_contract
+        .map(|source| source.card_def)
+        .or_else(|| {
+            state
+                .objects
+                .try_get(pending.resolving_item.source)
+                .map(|source| source.card_def)
+        });
+    definition.is_some_and(|id| {
+        let Some(card) = crate::card_def::CARD_DEFS.get(usize::from(id)) else {
+            // The common validator owns the invalid-definition diagnostic.
+            return true;
+        };
+        card.other_controlled_nontoken_death_v1.is_some()
+            || crate::trigger::triggers_for(id).iter().any(|ability| {
+                matches!(
+                    (ability.effect)(),
+                    EffectOp::MayDiscardCardOtherwiseV1 { .. }
+                )
+            })
+    })
 }
 
 fn validate_ferocious_payment_stage(
