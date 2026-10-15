@@ -607,6 +607,9 @@ pub(crate) fn return_lagrella_exiles(state: &mut GameState, source_id: ObjectId,
             live.zone == Zone::Exile && live.zone_change_count == record.exiled_zone_change_count
         })
     });
+    if records.is_empty() {
+        return;
+    }
     crate::event::propose_and_commit_batch(
         state,
         records
