@@ -74,6 +74,7 @@ pub mod native_search_trajectory_v3;
 pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod planeswalker_v1;
+pub mod rules_meaning_fake_your_own_death_v50;
 pub mod rules_meaning_fiendish_panda_v1;
 pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
@@ -197,6 +198,7 @@ pub mod unclamped_softmax_sampler_v1;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod limited_common_session_v1;
+pub mod limited_common_session_v2;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;
@@ -690,3 +692,5 @@ pub mod doubling_season_public_v48;
 pub mod season_observation_v48;
 
 pub mod season_token_attachment_v48;
+
+pub mod fake_observation_v50;

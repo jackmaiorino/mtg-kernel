@@ -82,6 +82,35 @@ pub(crate) fn candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    candidates_fake_scoped_v50(
+        state,
+        surface,
+        decision,
+        accept_hunter,
+        accept_panda,
+        accept_conqueror,
+        false,
+    )
+}
+
+pub(crate) fn candidates_fake_scoped_v50(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            decision.actor(state),
+        )?;
+    }
+
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -272,12 +301,13 @@ pub(crate) fn candidates_conqueror_scoped_v49(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = crate::rl::core_policy_action_candidates_conqueror_scoped_v49(
+                let old = crate::rl::core_policy_action_candidates_fake_scoped_v50(
                     decision,
                     state,
                     accept_hunter,
                     accept_panda,
                     accept_conqueror,
+                    accept_fake,
                 )?;
                 let feasible = if matches!(
                     decision,

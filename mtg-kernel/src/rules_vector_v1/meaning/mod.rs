@@ -102,6 +102,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         }
         EffectOp::HighSocietyHunterFromCaptureV45 { .. }
         | EffectOp::FaebloomCreateFaeriesV43
+        | EffectOp::FakeInstallGrantV50
+        | EffectOp::FakeDeathFromCaptureV50 { .. }
         | EffectOp::FaebloomTapFromCaptureV43 { .. } => {
             out.atoms.push(Atom::Opaque);
         }
@@ -353,6 +355,8 @@ mod standard_completion_tests {
         for op in [
             EffectOp::AddSoulCounterToAbilitySourceV1,
             EffectOp::LoseLifeEachOpponentEqualSourceSoulV1,
+            EffectOp::FakeInstallGrantV50,
+            EffectOp::FakeDeathFromCaptureV50 { capture: 17 },
             EffectOp::KrenkoCreateGoblinsV1,
             EffectOp::AjaniLoyaltyV42 { ability_index: 0 },
             EffectOp::AjaniLoyaltyV42 { ability_index: 1 },

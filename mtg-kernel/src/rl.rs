@@ -1894,6 +1894,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, Some(acting_player))?;
     crate::doubling_season_v48::require_legacy_visible(state, acting_player)
         .map_err(RlContractError)?;
 
@@ -2140,6 +2141,37 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
 ) -> Result<ObservationV2> {
+    build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        capabilities,
+        accepted_planes,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
+    state: &GameState,
+    surface: &crate::surface_v2::HarnessSurfaceV2,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: FamilyCapabilitiesWithFishingV40,
+    accepted_planes: AcceptedPlanesV49,
+    accept_fake: bool,
+) -> Result<ObservationV2> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            Some(acting_player),
+        )?;
+    }
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
@@ -2309,13 +2341,14 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
             public_cards_v2(state, &state.players[1].graveyard, text_mode)?,
         ],
         exile: public_cards_v2(state, &state.exile, text_mode)?,
-        stack: stack_public_conqueror_v49(
+        stack: stack_public_conqueror_v49_fake_v50(
             state,
             acting_player,
             accept_fishing,
             (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
             accept_divine,
             accept_conqueror,
+            accept_fake,
         )?,
         combat: combat_public_v2(state, acting_player)?,
         continuous_effects: continuous_effects_common_v2(
@@ -2328,12 +2361,13 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49(
         object_relations: object_relations_public_v4(state, acting_player)?,
         exile_play_permissions: exile_play_permissions_public_v2(state)?,
         engine_context: if accept_akroma {
-            engine_context_v2_conqueror_inner_v49(
+            engine_context_v2_conqueror_inner_v49_fake_v50(
                 state,
                 acting_player,
                 (accept_banishing, accept_inspiration, accept_fishing),
                 (true, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
+                accept_fake,
             )?
         } else {
             engine_context_v2(
@@ -2669,6 +2703,37 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49(
     capabilities: FamilyCapabilitiesWithFishingV40,
     accepted_planes: AcceptedPlanesV49,
 ) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
+        state,
+        surface,
+        acting_player,
+        step_index,
+        text_mode,
+        capabilities,
+        accepted_planes,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    acting_player: PlayerId,
+    step_index: u64,
+    text_mode: ObservationTextModeV2,
+    capabilities: FamilyCapabilitiesWithFishingV40,
+    accepted_planes: AcceptedPlanesV49,
+    accept_fake: bool,
+) -> Result<(ObservationV2, PolicySurfaceContextV5)> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            Some(acting_player),
+        )?;
+    }
     let (accepted_planes, accept_conqueror) = accepted_planes;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
@@ -2780,7 +2845,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49(
             .map_err(RlContractError)?;
     }
 
-    let base = build_observation_common_v2_fishing_v39_conqueror_v49(
+    let base = build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         state,
         surface.harness_surface(),
         acting_player,
@@ -2819,6 +2884,7 @@ fn build_policy_observation_parts_common_fishing_v39_conqueror_v49(
             ),
             accept_conqueror,
         ),
+        accept_fake,
     )?;
     let context = policy_surface_context_v5(
         state,
@@ -3465,6 +3531,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     PandaV47,
     SeasonV48,
     ConquerorV49,
+    FakeV50,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3493,6 +3560,7 @@ pub(crate) fn common_family_observation_storage_scoped(
         }
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
+        CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
         CommonProjectionScopeV42::ConquerorV49 => {
             crate::conqueror_observation_v49::validate_state(state)
         }
@@ -3512,8 +3580,9 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::PandaV47
             | CommonProjectionScopeV42::SeasonV48
             | CommonProjectionScopeV42::ConquerorV49
+            | CommonProjectionScopeV42::FakeV50
     );
-    build_policy_observation_storage_common_fishing_v39_conqueror_v49(
+    build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
             PolicyObservationBuildV5 {
                 state,
@@ -3538,6 +3607,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::PandaV47
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
+                            | CommonProjectionScopeV42::FakeV50
                     ),
                     matches!(
                         scope,
@@ -3546,6 +3616,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::PandaV47
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
+                            | CommonProjectionScopeV42::FakeV50
                     ),
                     matches!(
                         scope,
@@ -3553,20 +3624,26 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::PandaV47
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
+                            | CommonProjectionScopeV42::FakeV50
                     ),
                     matches!(
                         scope,
                         CommonProjectionScopeV42::PandaV47
                             | CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
+                            | CommonProjectionScopeV42::FakeV50
                     ),
                     matches!(
                         scope,
                         CommonProjectionScopeV42::SeasonV48
                             | CommonProjectionScopeV42::ConquerorV49
+                            | CommonProjectionScopeV42::FakeV50
                     ),
                 ),
-                scope == CommonProjectionScopeV42::ConquerorV49,
+                matches!(
+                    scope,
+                    CommonProjectionScopeV42::ConquerorV49 | CommonProjectionScopeV42::FakeV50
+                ),
             ),
         ),
         true,
@@ -3581,6 +3658,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             ),
             true,
         ),
+        scope == CommonProjectionScopeV42::FakeV50,
     )
 }
 
@@ -3961,6 +4039,37 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
     accept_cerberus: bool,
     accepted_statics: FamilyCapabilitiesWithFishingV40,
 ) -> Result<PolicyObservationStorageV6> {
+    build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
+        request,
+        accept_life_ward,
+        accept_cant_block,
+        accept_wildwood,
+        accept_temporary_control,
+        accept_cerberus,
+        accepted_statics,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
+    request: (PolicyObservationBuildV5<'_>, AcceptedPlanesV49),
+    accept_life_ward: bool,
+    accept_cant_block: bool,
+    accept_wildwood: bool,
+    accept_temporary_control: bool,
+    accept_cerberus: bool,
+    accepted_statics: FamilyCapabilitiesWithFishingV40,
+    accept_fake: bool,
+) -> Result<PolicyObservationStorageV6> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(request.0.state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            request.0.state,
+            Some(request.0.acting_player),
+        )?;
+    }
     let (request, (accepted_planes, accept_conqueror)) = request;
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(request.state).map_err(RlContractError)?;
@@ -4113,7 +4222,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
-    let extensions = policy_observation_extensions_conqueror_inner_v49(
+    let extensions = policy_observation_extensions_conqueror_inner_v49_fake_v50(
         state,
         acting_player,
         text_mode,
@@ -4121,9 +4230,10 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
         accept_fishing,
         (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
         accept_conqueror,
+        accept_fake,
     )?;
     let (mut base, policy_surface_context) =
-        build_policy_observation_parts_common_fishing_v39_conqueror_v49(
+        build_policy_observation_parts_common_fishing_v39_conqueror_v49_fake_v50(
             state,
             surface,
             acting_player,
@@ -4162,6 +4272,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49(
                 ),
                 accept_conqueror,
             ),
+            accept_fake,
         )?;
     if let Some(search) = &extensions.decision_local_library {
         let Some(PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) = base
@@ -4468,6 +4579,37 @@ fn policy_observation_extensions_conqueror_inner_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        acting_player,
+        text_mode,
+        accept_life_ward,
+        accept_fishing,
+        accepted_sources,
+        accept_conqueror,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
+    state: &GameState,
+    acting_player: PlayerId,
+    text_mode: ObservationTextModeV2,
+    accept_life_ward: bool,
+    accept_fishing: bool,
+    accepted_sources: HistoricalSourcesV47,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<PolicyObservationExtensionsV6> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            Some(acting_player),
+        )?;
+    }
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let pending = state
         .engine
@@ -4601,12 +4743,13 @@ fn policy_observation_extensions_conqueror_inner_v49(
         // stack_source_ref validates the independent finalized cast binding,
         // including equality with the complete paid-cost record and its LKI.
         if item.kind == StackItemKind::Spell {
-            let source = stack_source_ref_conqueror_v49(
+            let source = stack_source_ref_conqueror_v49_fake_v50(
                 state,
                 item,
                 accept_fishing,
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
+                accept_fake,
             )?;
             let chosen_creature_cost = CARD_DEFS[source.card_db_id as usize].additional_cost
                 .is_some_and(|cost| cost.iter().any(|component| matches!(component,
@@ -4635,12 +4778,13 @@ fn policy_observation_extensions_conqueror_inner_v49(
                     stack_index: u32::try_from(index)
                         .map_err(|_| RlContractError("stack index exceeds u32".into()))?,
                 },
-                source: stack_source_ref_conqueror_v49(
+                source: stack_source_ref_conqueror_v49_fake_v50(
                     state,
                     item,
                     accept_fishing,
                     (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                     accept_conqueror,
+                    accept_fake,
                 )?,
                 stack_item_kind: item.kind.into(),
             });
@@ -4664,12 +4808,13 @@ fn policy_observation_extensions_conqueror_inner_v49(
         }
         historical_public_sources.push(HistoricalPublicSourceV6 {
             context: HistoricalSourceContextV6::PendingEffect,
-            source: stack_source_ref_conqueror_v49(
+            source: stack_source_ref_conqueror_v49_fake_v50(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
                 (accept_akroma, accept_faebloom, accept_hunter, accept_panda),
                 accept_conqueror,
+                accept_fake,
             )?,
             stack_item_kind: pending.resolving_item.kind.into(),
         });
@@ -4963,6 +5108,21 @@ pub(crate) fn core_policy_action_candidates_v5(
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     core_policy_action_candidates_hunter_scoped_v45(decision, state, false)
 }
+pub(crate) fn policy_observation_extensions_fake_v50(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::FullArtifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+    )
+}
 pub(crate) fn policy_observation_extensions_conqueror_v49(
     state: &GameState,
     actor: PlayerId,
@@ -5006,6 +5166,32 @@ pub(crate) fn core_policy_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    core_policy_action_candidates_fake_scoped_v50(
+        decision,
+        state,
+        accept_hunter,
+        accept_panda,
+        accept_conqueror,
+        false,
+    )
+}
+
+pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            decision.actor(state),
+        )?;
+    }
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -5020,12 +5206,13 @@ pub(crate) fn core_policy_action_candidates_conqueror_scoped_v49(
     }
     let out: Vec<CorePolicyActionCandidateV1> = match decision {
         PolicyDecisionV5::Surface(surface_decision) => {
-            core_surface_action_candidates_conqueror_scoped_v49(
+            core_surface_action_candidates_fake_scoped_v50(
                 surface_decision,
                 state,
                 accept_hunter,
                 accept_panda,
                 accept_conqueror,
+                accept_fake,
             )?
             .into_iter()
             .map(|candidate| CorePolicyActionCandidateV1 {
@@ -5219,6 +5406,32 @@ fn core_surface_action_candidates_conqueror_scoped_v49(
     accept_panda: bool,
     accept_conqueror: bool,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    core_surface_action_candidates_fake_scoped_v50(
+        decision,
+        state,
+        accept_hunter,
+        accept_panda,
+        accept_conqueror,
+        false,
+    )
+}
+
+fn core_surface_action_candidates_fake_scoped_v50(
+    decision: &SurfaceDecision,
+    state: &GameState,
+    accept_hunter: bool,
+    accept_panda: bool,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            PolicyDecisionV5::Surface(decision.clone()).actor(state),
+        )?;
+    }
     if accept_conqueror {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -7953,7 +8166,7 @@ fn visible_card_refs(
 // A public reference must preserve its captured identity after an incarnation
 // changes. Disguise's Stack-to-Battlefield resolution is the exception to
 // revealing a departing face-down object: that next incarnation stays hidden.
-fn projected_captured_card_def(
+pub(crate) fn projected_captured_card_def(
     state: &GameState,
     id: ObjectId,
     generation: u32,
@@ -9212,6 +9425,32 @@ fn engine_context_v2_conqueror_inner_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<EngineContextV2> {
+    engine_context_v2_conqueror_inner_v49_fake_v50(
+        state,
+        acting_player,
+        capabilities,
+        accepted_sources,
+        accept_conqueror,
+        false,
+    )
+}
+
+fn engine_context_v2_conqueror_inner_v49_fake_v50(
+    state: &GameState,
+    acting_player: PlayerId,
+    capabilities: (bool, bool, bool),
+    accepted_sources: HistoricalSourcesV47,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<EngineContextV2> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(
+            state,
+            Some(acting_player),
+        )?;
+    }
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     let (accept_banishing, accept_inspiration, accept_fishing) = capabilities;
     let planeswalkers = if state.planeswalkers_v1.is_some() {
@@ -9423,12 +9662,13 @@ fn engine_context_v2_conqueror_inner_v49(
             .transpose()?,
         pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
             Some(if accept_akroma {
-                pending_effect_semantic_v4_akroma_inner(
+                pending_effect_semantic_v4_akroma_inner_fake_v50(
                     state,
                     acting_player,
                     pending,
                     (accept_inspiration, accept_fishing),
                     (true, accept_hunter, accept_panda),
+                    accept_fake,
                 )?
             } else {
                 pending_effect_semantic_v4(
@@ -9466,6 +9706,11 @@ fn engine_context_v2_conqueror_inner_v49(
                     .flat_map(|pending| pending.waiting_triggers()),
             )
             .map(|p| {
+                let fake_source = if accept_fake {
+                    crate::fake_your_own_death_v50::public_v50::pending_source_reference(state, p)?
+                } else {
+                    None
+                };
                 let conqueror_source = if accept_conqueror {
                     crate::conqueror_public_v49::pending_source_reference(state, p)?
                 } else {
@@ -9477,7 +9722,8 @@ fn engine_context_v2_conqueror_inner_v49(
                     None
                 };
                 Ok(PendingTriggerSemanticV2 {
-                    source: if let Some(source) = conqueror_source.or(panda_source) {
+                    source: if let Some(source) = fake_source.or(conqueror_source).or(panda_source)
+                    {
                         Some(source)
                     } else if accept_hunter
                         && crate::high_society_hunter_custody_v45::binding(&p.effect).is_some()
@@ -9538,6 +9784,24 @@ fn pending_effect_semantic_v4_akroma_inner(
     capabilities: (bool, bool),
     accepted_sources: (bool, bool, bool),
 ) -> Result<PendingEffectSemanticV4> {
+    pending_effect_semantic_v4_akroma_inner_fake_v50(
+        state,
+        acting_player,
+        pending,
+        capabilities,
+        accepted_sources,
+        false,
+    )
+}
+
+fn pending_effect_semantic_v4_akroma_inner_fake_v50(
+    state: &GameState,
+    acting_player: PlayerId,
+    pending: &crate::effect::EffectContinuation,
+    capabilities: (bool, bool),
+    accepted_sources: (bool, bool, bool),
+    accept_fake: bool,
+) -> Result<PendingEffectSemanticV4> {
     let (accept_akroma, accept_hunter, accept_panda) = accepted_sources;
     let (accept_inspiration, accept_fishing) = capabilities;
     crate::effect::validate_pending_effect_choice(state).map_err(RlContractError)?;
@@ -9563,11 +9827,13 @@ fn pending_effect_semantic_v4_akroma_inner(
     };
     if let Some(player) = surveil_player.filter(|player| *player != acting_player) {
         return Ok(PendingEffectSemanticV4 {
-            source: Some(stack_source_ref_union_v40(
+            source: Some(stack_source_ref_conqueror_v49_fake_v50(
                 state,
                 &pending.resolving_item,
                 accept_fishing,
                 (accept_akroma, false, accept_hunter, accept_panda),
+                false,
+                accept_fake,
             )?),
             controller: pending.resolving_item.controller.into(),
             choice: Some(PendingEffectChoiceSemanticV4::Targets {
@@ -9892,11 +10158,13 @@ fn pending_effect_semantic_v4_akroma_inner(
         // A resolving stack item's source was already public as part of that
         // stack item. Reuse the same unconditional public source reference even
         // if the underlying card has since moved to a normally hidden zone.
-        source: Some(stack_source_ref_union_v40(
+        source: Some(stack_source_ref_conqueror_v49_fake_v50(
             state,
             &pending.resolving_item,
             accept_fishing,
             (accept_akroma, false, accept_hunter, accept_panda),
+            false,
+            accept_fake,
         )?),
         controller: pending.resolving_item.controller.into(),
         choice,
@@ -10289,20 +10557,21 @@ fn stack_item_public_v1(
     })
 }
 
-fn stack_public_conqueror_v49(
+fn stack_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
     accept_fishing: bool,
     accepted_sources: HistoricalSourcesV47,
     accept_divine: bool,
     accept_conqueror: bool,
+    accept_fake: bool,
 ) -> Result<Vec<StackItemPublicV2>> {
     state
         .stack
         .iter()
         .enumerate()
         .map(|(stack_index, item)| {
-            stack_item_public_conqueror_v49(
+            stack_item_public_conqueror_v49_fake_v50(
                 state,
                 acting_player,
                 stack_index as u32,
@@ -10310,12 +10579,14 @@ fn stack_public_conqueror_v49(
                 accept_fishing,
                 accepted_sources,
                 (accept_divine, accept_conqueror),
+                accept_fake,
             )
         })
         .collect()
 }
 
-fn stack_item_public_conqueror_v49(
+#[allow(clippy::too_many_arguments)]
+fn stack_item_public_conqueror_v49_fake_v50(
     state: &GameState,
     acting_player: PlayerId,
     stack_index: u32,
@@ -10323,6 +10594,7 @@ fn stack_item_public_conqueror_v49(
     accept_fishing: bool,
     accepted_sources: HistoricalSourcesV47,
     accepted_roots: (bool, bool),
+    accept_fake: bool,
 ) -> Result<StackItemPublicV2> {
     let (accept_divine, accept_conqueror) = accepted_roots;
     if (item.kind == StackItemKind::Spell) != item.v4.cast_method.is_some() {
@@ -10362,12 +10634,13 @@ fn stack_item_public_conqueror_v49(
         public_counter_distribution(item.inline_effect.as_ref(), targets.clone());
     Ok(StackItemPublicV2 {
         stack_index,
-        source: stack_source_ref_conqueror_v49(
+        source: stack_source_ref_conqueror_v49_fake_v50(
             state,
             item,
             accept_fishing,
             accepted_sources,
             accept_conqueror,
+            accept_fake,
         )?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
@@ -10545,6 +10818,26 @@ pub(crate) fn akroma_crystal_resolving_source_ref_v40(
     state: &GameState,
     item: &StackItem,
 ) -> Result<CardStableRefV1> {
+    akroma_crystal_resolving_source_ref_inner_v50(state, item, false)
+}
+pub(crate) fn akroma_crystal_resolving_source_ref_fake_scoped_v50(
+    state: &GameState,
+    item: &StackItem,
+    accept_fake: bool,
+) -> Result<CardStableRefV1> {
+    if !accept_fake {
+        return akroma_crystal_resolving_source_ref_v40(state, item);
+    }
+    akroma_crystal_resolving_source_ref_inner_v50(state, item, true)
+}
+fn akroma_crystal_resolving_source_ref_inner_v50(
+    state: &GameState,
+    item: &StackItem,
+    accept_fake: bool,
+) -> Result<CardStableRefV1> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    }
     if !matches!(
         item.inline_effect.as_ref(),
         Some(crate::effect::EffectOp::StandardV1(
@@ -10563,12 +10856,26 @@ pub(crate) fn akroma_crystal_resolving_source_ref_v40(
     }
     crate::effect::crystal_prevention_v1::validate(state).map_err(RlContractError)?;
     crate::source_power_activation_v1::validate_state(state).map_err(RlContractError)?;
-    akroma_historical_source_ref_v40(state, item)
+    if accept_fake {
+        akroma_historical_source_ref_fake_scoped_v50(state, item, true)
+    } else {
+        akroma_historical_source_ref_v40(state, item)
+    }
 }
 pub(crate) fn akroma_historical_source_ref_v40(
     state: &GameState,
     item: &StackItem,
 ) -> Result<CardStableRefV1> {
+    akroma_historical_source_ref_fake_scoped_v50(state, item, false)
+}
+fn akroma_historical_source_ref_fake_scoped_v50(
+    state: &GameState,
+    item: &StackItem,
+    accept_fake: bool,
+) -> Result<CardStableRefV1> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    }
     if let Some(source) =
         crate::ajani_full_v42::lifecycle::historical_source(state, item).map_err(RlContractError)?
     {
@@ -10585,7 +10892,18 @@ pub(crate) fn akroma_historical_source_ref_v40(
             "V40 historical source requires its genuine complete live row".into(),
         ));
     }
-    stack_source_ref_union_v40(state, item, true, (true, false, false, false))
+    if accept_fake {
+        stack_source_ref_conqueror_v49_fake_v50(
+            state,
+            item,
+            true,
+            (true, false, false, false),
+            false,
+            true,
+        )
+    } else {
+        stack_source_ref_union_v40(state, item, true, (true, false, false, false))
+    }
 }
 
 /// Select each genuine source family independently; no transport rewrites another family's rows.
@@ -10605,6 +10923,36 @@ fn stack_source_ref_conqueror_v49(
     accepted_sources: HistoricalSourcesV47,
     accept_conqueror: bool,
 ) -> Result<CardStableRefV1> {
+    stack_source_ref_conqueror_v49_fake_v50(
+        state,
+        item,
+        accept_fishing,
+        accepted_sources,
+        accept_conqueror,
+        false,
+    )
+}
+
+fn stack_source_ref_conqueror_v49_fake_v50(
+    state: &GameState,
+    item: &StackItem,
+    accept_fishing: bool,
+    accepted_sources: HistoricalSourcesV47,
+    accept_conqueror: bool,
+    accept_fake: bool,
+) -> Result<CardStableRefV1> {
+    if accept_fake {
+        crate::fake_your_own_death_v50::public_v50::capture(state)?;
+    } else {
+        crate::fake_your_own_death_v50::public_v50::require_legacy_visible(state, None)?;
+    }
+    if accept_fake {
+        if let Some(source) =
+            crate::fake_your_own_death_v50::public_v50::stack_source_reference(state, item)?
+        {
+            return Ok(source);
+        }
+    }
     if accept_conqueror {
         if let Some(source) = crate::conqueror_public_v49::stack_source_reference(state, item)? {
             return Ok(source);

@@ -178,6 +178,8 @@ impl Scan<'_> {
             | GarrukDrawFromCaptureV1 {..}
             | HighSocietyHunterFromCaptureV45 { .. }
             | FaebloomCreateFaeriesV43 | FaebloomTapFromCaptureV43 { .. }
+            | FakeInstallGrantV50
+            | FakeDeathFromCaptureV50 { .. }
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | ExileTopChooseOneUntilNextTurn { .. }
@@ -1039,6 +1041,7 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
                 | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
                 | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
+                | crate::event::CommittedEvent::FakeJournalV50 { .. }
                 | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
                 | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
                 | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
@@ -1408,6 +1411,7 @@ pub(super) fn conflicts(
             TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
+                | FakeJournalV50 { .. }
                 | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. }
                 | FiendishPandaLifeGainCaptureV1 { .. }
                 | FiendishPandaDeathCaptureV1 { .. }

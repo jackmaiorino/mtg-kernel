@@ -62,6 +62,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<crate::season_token_attachment_v48::ChoiceV48>,
         selected: EffectObjectBinding,
     },
+    FakeAuraV50 {
+        choice: Box<crate::fake_your_own_death_v50::return_aura::ChoiceV50>,
+        selected: EffectObjectBinding,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -75,6 +79,10 @@ pub enum GeneralChoiceV36 {
     },
     TokenEquipmentV48 {
         choice: Box<crate::season_token_attachment_v48::ChoiceV48>,
+        input: u64,
+    },
+    FakeAuraV50 {
+        choice: Box<crate::fake_your_own_death_v50::return_aura::ChoiceV50>,
         input: u64,
     },
 }
@@ -116,6 +124,10 @@ struct RunnerV1 {
     original_world_v48: Option<Box<GameState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     attachment_input_v48: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_world_v50: Option<Box<GameState>>,
+    #[serde(skip)]
+    active_fake_aura_entry_v50: Option<crate::fake_your_own_death_v50::return_aura::EntryLoanV50>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +138,9 @@ pub struct StateV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_token_attachment_v48:
         Option<Box<crate::season_token_attachment_v48::CheckpointV48>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_fake_aura_v50:
+        Option<Box<crate::fake_your_own_death_v50::return_aura::CheckpointV50>>,
     #[serde(skip)]
     runtime: Option<Box<RunnerV1>>,
 }
@@ -134,10 +149,17 @@ impl StateV1 {
         self.pending.is_none()
             && self.pending_general_v36.is_none()
             && self.pending_token_attachment_v48.is_none()
+            && self.pending_fake_aura_v50.is_none()
     }
 }
 impl Hash for StateV1 {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
+        if let Some(pending) = &self.pending_fake_aura_v50 {
+            "fake-aura-return/v50".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned Fake Aura checkpoint serializes")
+                .hash(hasher);
+        }
         if let Some(pending) = &self.pending_token_attachment_v48 {
             "season-token-attachment/v48".hash(hasher);
             serde_json::to_vec(pending)
@@ -161,6 +183,25 @@ impl Hash for StateV1 {
 
 pub(crate) fn locally_owned(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.runtime.is_some()
+}
+
+/// Borrow the existing enclosing operation of a published entry checkpoint.
+pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
+    if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
+        return Some((&pending.original, &pending.operation));
+    }
+    if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
+        return Some((&pending.original, &pending.operation));
+    }
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_general_v36 {
+        return Some((&pending.original, &pending.operation));
+    }
+    state
+        .engine
+        .linked_aura_operation_v1
+        .pending
+        .as_ref()
+        .map(|pending| (pending.original.as_ref(), &pending.operation))
 }
 
 /// An opaque input for speculative Panda verification. It cannot install a
@@ -218,6 +259,7 @@ pub fn has_pending(state: &GameState) -> bool {
     state.engine.linked_aura_operation_v1.pending.is_some()
         || has_banner_pending(state)
         || crate::season_token_attachment_v48::pending(state).is_some()
+        || crate::fake_your_own_death_v50::return_aura::pending(state).is_some()
 }
 pub(crate) fn has_banner_pending(state: &GameState) -> bool {
     state
@@ -324,6 +366,7 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
 }
 fn potential_operation(state: &GameState) -> bool {
     potentially_returns_aura(state)
+        || crate::fake_your_own_death_v50::death_custody::has_unowned_roots(state)
         || crate::heraldic_banner_v1::potentially_enters(state)
         || !crate::doubling_season_v48::sources(state, state.active_player).is_empty()
         || !crate::doubling_season_v48::sources(state, state.active_player.opponent()).is_empty()
@@ -386,6 +429,11 @@ fn replay_general(
         original_world_v48: crate::doubling_season_v48::requires_successor(original)
             .then(|| Box::new(original.clone())),
         attachment_input_v48: None,
+        original_world_v50: crate::fake_your_own_death_v50::death_custody::has_unowned_roots(
+            original,
+        )
+        .then(|| Box::new(original.clone())),
+        active_fake_aura_entry_v50: None,
     }));
     if potentially_returns_aura(original) {
         staged
@@ -407,7 +455,21 @@ fn replay_general(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
-        if let Some(input) = runner.attachment_input_v48 {
+        if let GeneralChoiceV36::FakeAuraV50 { input, .. } = &choice {
+            checkpoint
+                .engine
+                .linked_aura_operation_v1
+                .pending_fake_aura_v50 = Some(Box::new(
+                crate::fake_your_own_death_v50::return_aura::CheckpointV50 {
+                    original: Box::new(original.clone()),
+                    operation: operation.clone(),
+                    answers: answers.to_vec(),
+                    input: *input,
+                    choice,
+                    used_banner: runner.used_banner,
+                },
+            ));
+        } else if let Some(input) = runner.attachment_input_v48 {
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -696,6 +758,46 @@ pub(crate) fn return_departures(state: &mut GameState, departures: &[(crate::ids
 /// Complete checkpoint reconstruction authenticates source incarnation,
 /// owner, menu, already committed choices, actual journal and operation tail.
 pub fn validate(state: &GameState) -> Result<(), String> {
+    let owners = usize::from(state.engine.linked_aura_operation_v1.pending.is_some())
+        + usize::from(
+            state
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36
+                .is_some(),
+        )
+        + usize::from(crate::season_token_attachment_v48::pending(state).is_some())
+        + usize::from(crate::fake_your_own_death_v50::return_aura::pending(state).is_some());
+    if owners > 1 || (owners != 0 && locally_owned(state)) {
+        return Err("entry checkpoint has multiple or synchronous owners".into());
+    }
+    if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
+        if !matches!(state.engine.event_history.get(pending.input as usize),
+            Some(CommittedEvent::FakeJournalV50 { journal }) if matches!(journal.as_ref(),
+                crate::fake_your_own_death_v50::spell_custody::JournalV50::AuraReturnInput { input }
+                    if input.original == pending.original && input.operation == pending.operation
+                        && input.prior_answers == pending.answers
+                        && pending.choice == (GeneralChoiceV36::FakeAuraV50 {
+                            choice: Box::new(input.choice.clone()), input: pending.input })))
+        {
+            return Err("Fake Aura checkpoint lost independently committed original input".into());
+        }
+        let (expected, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &pending.answers,
+            pending.used_banner,
+        )?;
+        if expected != *state
+            || crate::fake_your_own_death_v50::return_aura::pending(&expected).is_none()
+        {
+            return Err(
+                "Fake Aura checkpoint changed original operation, source, menu or prior answers"
+                    .into(),
+            );
+        }
+        return Ok(());
+    }
     if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
         if locally_owned(state)
             || state.engine.linked_aura_operation_v1.pending.is_some()
@@ -771,6 +873,24 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
+        let GeneralChoiceV36::FakeAuraV50 { choice, .. } = &pending.choice else {
+            return Err("Fake Aura checkpoint changed choice kind".into());
+        };
+        return Ok(Decision::ChooseEffectTargets {
+            player: choice.owner,
+            source: choice.aura.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|host| Target::Object(host.object))
+                .collect(),
+        });
+    }
     if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
         return equipment_decision_v48(&pending.choice);
     }
@@ -781,8 +901,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
         .as_ref()
     {
         return Ok(match &pending.choice {
-            GeneralChoiceV36::TokenEquipmentV48 { .. } => {
-                return Err("token attachment cannot use frozen Banner checkpoint".into())
+            GeneralChoiceV36::TokenEquipmentV48 { .. } | GeneralChoiceV36::FakeAuraV50 { .. } => {
+                return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
                 player: choice.controller,
@@ -827,6 +947,20 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if let Some(pending) = crate::fake_your_own_death_v50::return_aura::pending(state) {
+        validate(state)?;
+        let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
+        let mut answers = pending.answers.clone();
+        answers.push(answer);
+        let (next, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            pending.used_banner,
+        )?;
+        *state = next;
+        return Ok(());
+    }
     if let Some(pending) = crate::season_token_attachment_v48::pending(state) {
         validate(state)?;
         let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
@@ -1243,6 +1377,19 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::FakeAuraV50 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.owner,
+            source: choice.aura.object,
+            selected_count: 0,
+            min_targets: 1,
+            max_targets: 1,
+            can_finish: false,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|host| Target::Object(host.object))
+                .collect(),
+        }),
         GeneralChoiceV36::TokenEquipmentV48 { choice, .. } => Ok(Decision::ChooseEffectTargets {
             player: choice.controller,
             source: choice.source.source,
@@ -1281,6 +1428,17 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (
+            GeneralChoiceV36::FakeAuraV50 { choice, .. },
+            Action::ChooseEffectTarget(Target::Object(id)),
+        ) => Ok(GeneralAnswerV36::FakeAuraV50 {
+            choice: choice.clone(),
+            selected: *choice
+                .candidates
+                .iter()
+                .find(|host| host.object == id)
+                .ok_or("host outside original untargeted Fake Aura menu")?,
+        }),
         (
             GeneralChoiceV36::TokenEquipmentV48 { choice, .. },
             Action::ChooseEffectTarget(Target::Object(id)),
@@ -1409,6 +1567,151 @@ pub(crate) fn choose_created_token_v48(
                 },
             ));
             Ok(None)
+        }
+    }
+}
+
+/// The opaque loan is created only by the authenticated gained-death return.
+pub(crate) fn install_fake_aura_entry_v50(
+    state: &mut GameState,
+    loan: crate::fake_your_own_death_v50::return_aura::EntryLoanV50,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Fake Aura entry lacks actual enclosing operation")?;
+    if runner.active_fake_aura_entry_v50.is_some() {
+        return Err("Fake Aura entry already has a private loan".into());
+    }
+    runner.active_fake_aura_entry_v50 = Some(loan);
+    Ok(())
+}
+pub(crate) fn clear_fake_aura_entry_v50(state: &mut GameState) {
+    if let Some(runner) = state.engine.linked_aura_operation_v1.runtime.as_mut() {
+        runner.active_fake_aura_entry_v50 = None;
+    }
+}
+pub(crate) fn fake_aura_entry_v50(
+    state: &GameState,
+) -> Option<&crate::fake_your_own_death_v50::return_aura::EntryLoanV50> {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()?
+        .active_fake_aura_entry_v50
+        .as_ref()
+}
+
+/// Keep suspension distinct from the independently captured no-host result.
+pub(crate) fn choose_fake_aura_v50(
+    state: &mut GameState,
+    choice: crate::fake_your_own_death_v50::return_aura::ChoiceV50,
+) -> Result<
+    (
+        u64,
+        crate::fake_your_own_death_v50::return_aura::SelectionV50,
+    ),
+    String,
+> {
+    use crate::fake_your_own_death_v50::return_aura::SelectionV50;
+    crate::fake_your_own_death_v50::return_aura::validate_choice(state, &choice)?;
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Fake Aura return has no genuine enclosing operation")?;
+    if runner.checkpoint.is_some() {
+        return Ok((0, SelectionV50::Suspended));
+    }
+    let input = crate::fake_your_own_death_v50::return_aura::InputV50 {
+        original: runner
+            .original_world_v50
+            .clone()
+            .ok_or("Fake Aura lost actual original operation input")?,
+        operation: runner.operation.clone(),
+        prior_answers: runner.answers[..runner.cursor].to_vec(),
+        choice: choice.clone(),
+    };
+    let answer = runner.answers.get(runner.cursor).cloned();
+    let at = crate::fake_your_own_death_v50::spell_custody::emit(
+        state,
+        crate::fake_your_own_death_v50::spell_custody::JournalV50::AuraReturnInput {
+            input: Box::new(input),
+        },
+    );
+    match choice.candidates.as_slice() {
+        [] => return Ok((at, SelectionV50::NoHost)),
+        [host] => return Ok((at, SelectionV50::Host(*host))),
+        _ => {}
+    }
+    match answer {
+        Some(GeneralAnswerV36::FakeAuraV50 {
+            choice: original,
+            selected,
+        }) => {
+            if *original != choice || !choice.candidates.contains(&selected) {
+                return Err(
+                    "Fake Aura replay changed its original complete menu or owner answer".into(),
+                );
+            }
+            state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap()
+                .cursor += 1;
+            Ok((at, SelectionV50::Host(selected)))
+        }
+        Some(_) => Err("Fake Aura replay changed its confirmed answer kind".into()),
+        None => {
+            let mut snapshot = state.clone();
+            let runner = state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_ref()
+                .unwrap();
+            let original = runner
+                .original_stack
+                .last()
+                .ok_or("Fake Aura choice lost original stack top")?;
+            if snapshot
+                .stack
+                .iter()
+                .any(|row| row.v4.stack_item_id == original.v4.stack_item_id)
+            {
+                return Err(
+                    "Fake Aura choice did not borrow the actually removed original row".into(),
+                );
+            }
+            snapshot.stack.insert(
+                runner
+                    .original_stack
+                    .len()
+                    .saturating_sub(1)
+                    .min(snapshot.stack.len()),
+                original.clone(),
+            );
+            snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+            state
+                .engine
+                .linked_aura_operation_v1
+                .runtime
+                .as_mut()
+                .unwrap()
+                .checkpoint = Some((
+                Box::new(snapshot),
+                GeneralChoiceV36::FakeAuraV50 {
+                    choice: Box::new(choice),
+                    input: at,
+                },
+            ));
+            Ok((at, SelectionV50::Suspended))
         }
     }
 }

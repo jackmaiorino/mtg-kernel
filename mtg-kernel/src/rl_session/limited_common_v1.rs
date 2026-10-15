@@ -15,6 +15,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::PandaV47
                 | FlatActionContractModeV1::SeasonV48
                 | FlatActionContractModeV1::ConquerorV49
+                | FlatActionContractModeV1::FakeV50
         )
     }
     #[cfg(all(
