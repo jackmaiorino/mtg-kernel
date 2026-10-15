@@ -80,31 +80,35 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut digest = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_banishing_v1.rs"),
-        include_str!("banishing_light_v1.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("linked_aura_return_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("event.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("../build.rs"),
-    ] {
-        digest.update([0]);
-        digest.update(source.as_bytes());
-    }
-    digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut digest = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_banishing_v1.rs"),
+            include_str!("banishing_light_v1.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("linked_aura_return_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("../build.rs"),
+        ] {
+            digest.update([0]);
+            digest.update(source.as_bytes());
+        }
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 pub fn live_selector_v1() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(
@@ -183,6 +187,7 @@ pub fn meaning_v1(
         || def.adventure.is_some()
         || def.enters_with_plus_one_counters.is_some()
         || def.controlled_counter_keyword.is_some()
+        || def.controlled_creature_grant.is_some()
         || !def.mana_ability_choices.is_empty()
         || def.mana_ability_def.is_some()
         || def.enters_battlefield_tapped

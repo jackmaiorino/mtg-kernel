@@ -58,37 +58,41 @@ pub struct MeaningV1 {
     pub illegal_target_creates_no_token: bool,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for (path, source) in [
-        (
-            "rules_meaning_self_reflection_v1.rs",
-            include_str!("rules_meaning_self_reflection_v1.rs"),
-        ),
-        (
-            "self_reflection_v1.rs",
-            include_str!("self_reflection_v1.rs"),
-        ),
-        ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
-        (
-            "standard_statics_v1.rs",
-            include_str!("standard_statics_v1.rs"),
-        ),
-        (
-            "standard_legends_v1.rs",
-            include_str!("standard_legends_v1.rs"),
-        ),
-        ("engine.rs", include_str!("engine.rs")),
-        ("effect.rs", include_str!("effect.rs")),
-        ("event.rs", include_str!("event.rs")),
-        ("card_def.rs", include_str!("card_def.rs")),
-        ("build.rs", include_str!("../build.rs")),
-    ] {
-        h.update(path.as_bytes());
-        h.update([0]);
-        h.update(source.as_bytes());
-        h.update([0]);
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for (path, source) in [
+            (
+                "rules_meaning_self_reflection_v1.rs",
+                include_str!("rules_meaning_self_reflection_v1.rs"),
+            ),
+            (
+                "self_reflection_v1.rs",
+                include_str!("self_reflection_v1.rs"),
+            ),
+            ("standard_cards_v1.rs", include_str!("standard_cards_v1.rs")),
+            (
+                "standard_statics_v1.rs",
+                include_str!("standard_statics_v1.rs"),
+            ),
+            (
+                "standard_legends_v1.rs",
+                include_str!("standard_legends_v1.rs"),
+            ),
+            ("engine.rs", include_str!("engine.rs")),
+            ("effect.rs", include_str!("effect.rs")),
+            ("event.rs", include_str!("event.rs")),
+            ("card_def.rs", include_str!("card_def.rs")),
+            ("build.rs", include_str!("../build.rs")),
+        ] {
+            h.update(path.as_bytes());
+            h.update([0]);
+            h.update(source.as_bytes());
+            h.update([0]);
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(

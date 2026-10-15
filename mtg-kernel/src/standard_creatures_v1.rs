@@ -169,20 +169,16 @@ fn apply_counter_transfer(
     // Work on a caller-owned projection so every family commits atomically.
     let counters = snapshot.counters;
     let scale = |amount: i32| {
-        #[cfg(feature = "standard-magezero-fixtures")]
-        {
-            crate::standard_cards_v1::scale_counters(
-                state,
-                state.objects.get(target).controller,
-                amount,
-            )
-        }
-        #[cfg(not(feature = "standard-magezero-fixtures"))]
-        {
-            amount
-        }
+        crate::doubling_season_v48::counter_amount(
+            state,
+            target,
+            player,
+            crate::doubling_season_v48::CounterOriginV48::Effect,
+            amount,
+        )
+        .ok()
     };
-    let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))).ok();
+    let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))?).ok();
     let live = state.objects.get(target);
     let minus_one = live
         .counters
@@ -195,9 +191,15 @@ fn apply_counter_transfer(
     let stun = live.counters.stun.checked_add(placed_i16(counters.stun)?)?;
     let lore = live.counters.lore.checked_add(placed_i16(counters.lore)?)?;
     let oil = live.counters.oil.checked_add(placed_i16(counters.oil)?)?;
-    let charge = live.counters.charge.checked_add(scale(counters.charge))?;
-    let net = live.counters.net.checked_add(scale(counters.net))?;
-    let loyalty = i32::try_from(snapshot.extras.loyalty).ok()?;
+    let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
+    let net = live.counters.net.checked_add(scale(counters.net)?)?;
+    let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
+    let loyalty = snapshot.extras.loyalty;
+    if loyalty > 0
+        && (crate::doubling_season_v48::requires_successor(state) || loyalty > i32::MAX as u32)
+    {
+        crate::planeswalker_v1::quote_loyalty_counters_v48(state, target, loyalty).ok()?;
+    }
     let lifelink = live
         .v4
         .lifelink_keyword_counters
@@ -205,13 +207,20 @@ fn apply_counter_transfer(
     let time = live
         .v4
         .time_counters_v1
-        .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))).ok()?)?;
+        .checked_add(u8::try_from(scale(i32::from(snapshot.extras.time))?).ok()?)?;
     let finality = live
         .v4
         .creature_upgrade
         .as_ref()
         .map_or(0, |u| u.finality)
-        .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))).ok()?)?;
+        .checked_add(u16::try_from(scale(i32::from(snapshot.extras.finality))?).ok()?)?;
+    let bait_input = crate::doubling_season_v48::record_bait_transfer_input(
+        state,
+        target,
+        player,
+        counters.bait,
+    )
+    .ok()?;
     crate::event::add_plus_one_counters(state, target, player, counters.plus1_plus1).ok()?;
     let keyword_timestamp =
         (snapshot.extras.lifelink > 0).then(|| crate::engine::next_timestamp(state));
@@ -223,6 +232,7 @@ fn apply_counter_transfer(
     live.counters.oil = oil;
     live.counters.charge = charge;
     live.counters.net = net;
+    live.counters.bait = bait;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -234,7 +244,8 @@ fn apply_counter_transfer(
     if keyword_timestamp.is_some() {
         live.v4.lifelink_counter_timestamp = keyword_timestamp;
     }
-    crate::planeswalker_v1::add_loyalty_counters(state, target, loyalty);
+    crate::planeswalker_v1::add_loyalty_counters_u32_v48(state, target, loyalty).ok()?;
+    crate::doubling_season_v48::record_bait_transfer_applied(state, bait_input).ok()?;
     Some(())
 }
 
@@ -293,9 +304,12 @@ pub(crate) fn creature_types(state: &GameState, id: ObjectId) -> Option<(Vec<u16
         .iter()
         .copied()
         .filter(|value| {
-            !Subtype::CREATURE_TYPES
-                .iter()
-                .any(|subtype| subtype.stable_id() == *value)
+            // Scout is a known creature subtype even before the FDN catalog
+            // admits Kellan and extends its materialized changeling universe.
+            *value != Subtype::Scout.stable_id()
+                && !Subtype::CREATURE_TYPES
+                    .iter()
+                    .any(|subtype| subtype.stable_id() == *value)
         })
         .collect();
     result.extend_from_slice(types);
@@ -465,20 +479,35 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         {
             return;
         }
-        #[cfg(feature = "standard-magezero-fixtures")]
-        let amount = crate::standard_cards_v1::scale_counters(state, live.controller, 1);
-        #[cfg(not(feature = "standard-magezero-fixtures"))]
-        let amount = 1;
-        let upgrade = state
-            .objects
-            .get_mut(object)
+        let amount = crate::doubling_season_v48::counter_amount(
+            state,
+            object,
+            live.controller,
+            crate::doubling_season_v48::CounterOriginV48::Effect,
+            1,
+        );
+        let before = live
             .v4
             .creature_upgrade
-            .get_or_insert_with(Default::default);
-        if let Ok(amount) = u16::try_from(amount) {
-            if let Some(total) = upgrade.finality.checked_add(amount) {
-                upgrade.finality = total;
-            }
+            .as_ref()
+            .map_or(0, |upgrade| upgrade.finality);
+        let total = amount
+            .ok()
+            .and_then(|amount| u16::try_from(amount).ok())
+            .and_then(|amount| before.checked_add(amount));
+        if let Some(total) = total {
+            state
+                .objects
+                .get_mut(object)
+                .v4
+                .creature_upgrade
+                .get_or_insert_with(Default::default)
+                .finality = total;
+        } else if crate::doubling_season_v48::requires_successor(state) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         return;
     }
@@ -617,14 +646,22 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         }
         if effect == CreatureEffectV1::FloodpitsTapStun {
             crate::event::propose_and_commit(state, crate::event::ProposedEvent::tap(target));
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let count = crate::standard_cards_v1::scale_counters(
+            let count = match crate::doubling_season_v48::counter_amount(
                 state,
+                target,
                 state.objects.get(target).controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
                 1,
-            );
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            let count = 1;
+            ) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
             let count = i16::try_from(count)
                 .ok()
                 .and_then(|count| state.objects.get(target).counters.stun.checked_add(count));
@@ -916,6 +953,246 @@ pub(crate) fn execute(effect: CreatureEffectV1, ctx: &ExecCtx, state: &mut GameS
         CreatureEffectV1::SurgeBlue => {
             value.base_stats = Some((5, 4, timestamp));
             value.color = Some((2, timestamp));
+        }
+    }
+}
+
+#[cfg(test)]
+mod fdn_kellan_subtype_boundary_tests {
+    use super::*;
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state};
+
+    /// Registered Elf stand-in for the physical subtype-replacement boundary.
+    /// This is not printed Kellan gameplay or card admission evidence.
+    #[test]
+    fn replacement_removes_scout_but_preserves_noncreature_subtypes_after_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state();
+            let source = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+            let object = state.objects.get_mut(source);
+            object.v4.effective_subtype_ids =
+                vec![Subtype::Scout.stable_id(), Subtype::Equipment.stable_id()];
+            object.v4.creature_upgrade = Some(CreatureUpgradeV1 {
+                creature_types: Some((
+                    vec![Subtype::Human.stable_id(), Subtype::Detective.stable_id()],
+                    1,
+                )),
+                ..Default::default()
+            });
+            let expected = vec![
+                Subtype::Equipment.stable_id(),
+                Subtype::Human.stable_id(),
+                Subtype::Detective.stable_id(),
+            ];
+            assert_eq!(creature_types(&state, source), Some((expected.clone(), 1)));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(creature_types(&restored, source), Some((expected, 1)));
+            crate::event::propose_and_commit(
+                &mut restored,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            crate::event::propose_and_commit(
+                &mut restored,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert!(creature_types(&restored, source).is_none());
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod doubling_season_transfer_tests_v48 {
+    use super::*;
+    use crate::{
+        event::{self, ProposedEvent},
+        ids::PlayerId,
+        policy_observation_v6::tests::{put, ready_state_for},
+        state::Zone,
+    };
+    #[test]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn actual_bait_transfer_original_world_balance_and_restore_refuse_counter_forgery_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let recipient = put(&mut state, actor, "Fishing Pole", Zone::Battlefield);
+            let original = CounterTransferV1 {
+                counters: crate::state::Counters {
+                    bait: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            // Actual shared counter-transfer primitive, not an invented Pole ability.
+            for _ in 0..2 {
+                apply_counter_transfer(&mut state, recipient, actor, original).unwrap();
+            }
+            assert_eq!(state.objects.get(recipient).counters.bait, 4);
+            let other = put(&mut state, actor, "Forest", Zone::Battlefield);
+            apply_counter_transfer(&mut state, other, actor, original).unwrap();
+            assert_eq!(state.objects.get(other).counters.bait, 2);
+            let mut zeroed = state.clone();
+            zeroed.objects.get_mut(other).counters.bait = 0;
+            let before = zeroed.clone();
+            assert!(crate::engine::step(&mut zeroed, crate::engine::Action::Pass).is_err());
+            assert_eq!(zeroed, before);
+            crate::doubling_season_v48::validate_token_journals(&state).unwrap();
+            crate::fishing_pole_v39::lifecycle::validate_state(&state).unwrap();
+            for _ in 0..3 {
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                crate::doubling_season_v48::validate_token_journals(&state).unwrap();
+                crate::fishing_pole_v39::lifecycle::validate_state(&state).unwrap();
+            }
+            let mut changed = state.clone();
+            let at = changed
+                .engine
+                .event_history
+                .iter()
+                .position(|e| matches!(e, event::CommittedEvent::BaitTransferAppliedV48 { .. }))
+                .unwrap();
+            changed.engine.event_history[at] = event::CommittedEvent::Tap { object: recipient };
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+            let mut changed = state.clone();
+            changed.objects.get_mut(recipient).counters.bait = 0;
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+            let mut changed = state.clone();
+            for event in &mut changed.engine.event_history {
+                if let event::CommittedEvent::BaitTransferAppliedV48 { placement } = event {
+                    placement.after -= 1;
+                    break;
+                }
+            }
+            let before = changed.clone();
+            assert!(crate::engine::step(&mut changed, crate::engine::Action::Pass).is_err());
+            assert_eq!(changed, before);
+        }
+    }
+
+    #[test]
+    fn genuine_unsigned_loyalty_transfer_preserves_full_width_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let target = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let original = (i32::MAX as u32) + 1;
+            let snapshot = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: original,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, snapshot).unwrap();
+                assert_eq!(
+                    crate::planeswalker_v1::loyalty(branch, target),
+                    Some(original)
+                );
+            }
+            assert_eq!(state, restored);
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn actual_shared_multikind_transfer_doubles_each_kind_and_restores() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(season, Zone::Battlefield),
+            );
+            let target = put(&mut state, actor, "Forest", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+            // Typed counter-transfer primitive, not a fabricated printed ability.
+            let snapshot = CounterTransferV1 {
+                counters: crate::state::Counters {
+                    plus1_plus1: 1,
+                    minus1_minus1: 1,
+                    minus0_minus1: 1,
+                    stun: 1,
+                    lore: 1,
+                    oil: 1,
+                    charge: 1,
+                    net: 1,
+                    bait: 1,
+                },
+                extras: CounterExtrasV1 {
+                    loyalty: 1,
+                    lifelink: 1,
+                    time: 1,
+                    finality: 1,
+                },
+            };
+            let mut restored: crate::state::GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, snapshot).unwrap();
+                let o = branch.objects.get(target);
+                assert_eq!(o.counters.plus1_plus1, 2);
+                assert_eq!(o.counters.minus1_minus1, 2);
+                assert_eq!(o.counters.minus0_minus1, 2);
+                assert_eq!(o.counters.stun, 2);
+                assert_eq!(o.counters.lore, 2);
+                assert_eq!(o.counters.oil, 2);
+                assert_eq!(o.counters.charge, 2);
+                assert_eq!(o.counters.net, 2);
+                assert_eq!(o.counters.bait, 2);
+                assert_eq!(o.v4.lifelink_keyword_counters, 2);
+                assert_eq!(o.v4.time_counters_v1, 2);
+                assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);
+                assert_eq!(crate::planeswalker_v1::loyalty(branch, target), Some(2));
+                crate::doubling_season_v48::validate_token_journals(branch).unwrap();
+                crate::fishing_pole_v39::lifecycle::validate_state(branch).unwrap();
+            }
+            assert_eq!(state, restored);
+            let original = (i32::MAX as u32) / 2 + 1;
+            let second = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let native = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: original,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            apply_counter_transfer(&mut state, second, actor, native).unwrap();
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(&state, second),
+                Some(original * 2)
+            );
+            let before = state.clone();
+            let overflow = CounterTransferV1 {
+                extras: CounterExtrasV1 {
+                    loyalty: u32::MAX,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(apply_counter_transfer(&mut state, second, actor, overflow).is_none());
+            assert_eq!(state, before);
         }
     }
 }

@@ -174,6 +174,57 @@ fn activation_cost(components: &[CostComponent], source: &str) -> Result<String,
         .map(|parts| parts.join("; "))
 }
 
+// The owning V40 union can offer an ordinary Equipment's printed equip
+// alongside a later family's granted abilities. Keep this exact supported
+// root separate from the frozen common effect-description whitelist.
+pub(super) fn label_printed_equip_v40(
+    action: &A,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<Option<String>, Error> {
+    let A::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    else {
+        return Ok(None);
+    };
+    if !granted_ability.is_none() {
+        return Ok(None);
+    }
+    let def = definition(source)?;
+    let Some(ability) = def.activated_abilities.get(usize::from(*ability_index)) else {
+        return Ok(None);
+    };
+    if def.equipment.is_none()
+        || def.capability != card_def::CardCapability::Full
+        || source.zone != Zone::Battlefield
+        || ability.activation_zone != Zone::Battlefield
+        || ability.target_spec != card_def::TargetSpec::ControlledCreature
+        || ability.activation_target_filter != card_def::ActivationTargetFilter::TargetSpecOnly
+        || !ability.sorcery_speed_only
+        || ability.max_activations_per_turn.is_some()
+        || !matches!(ability.cost, [CostComponent::Mana(_)])
+        || (ability.effect)()
+            != (EffectOp::AttachSourceToTarget {
+                object: ObjectRef::Target(0),
+            })
+    {
+        return Ok(None);
+    }
+    if *actor != human {
+        return Err(Error::NotHumanTurn);
+    }
+    Ok(Some(format!(
+        "Activate {} equip: {}: attach this Equipment to target creature you control; activate only as a sorcery",
+        handles.name(source)?,
+        activation_cost(ability.cost, &handles.name(source)?)?
+    )))
+}
+
 // Definition programs contain no runtime objects or hidden card identities.
 // Unsupported operations deliberately have no Debug/string fallback.
 fn effect_player(player: PlayerRef) -> Result<&'static str, Error> {
@@ -344,7 +395,11 @@ fn pending_program(
     selected.ok_or(Error::UnsupportedPrompt)
 }
 
-fn target(target: &TargetRefV1, handles: &Handles, human: PlayerSeatV1) -> Result<String, Error> {
+pub(super) fn target(
+    target: &TargetRefV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
     match target {
         TargetRefV1::Player { player } => Ok(if *player == human {
             "you"
@@ -426,7 +481,11 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseLondonMulligan { actor, .. }
         | A::ChooseLondonBottom { actor, .. }
         | A::ChooseAttackTarget { actor, .. }
-        | A::ChooseLegendPermanent { actor, .. } => Some(*actor),
+        | A::ChooseLegendPermanent { actor, .. }
+        | A::ChooseEntryColorV36 { actor, .. }
+        | A::ChooseDivineKickerV44 { actor, .. }
+        | A::ChooseDivineTargetV44 { actor, .. }
+        | A::FinishDivineTargetsV44 { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
@@ -1393,7 +1452,11 @@ fn label_common(
         | A::ChooseLondonBottom { .. }
         | A::ChooseLegendPermanent { .. }
         | A::ChooseAttackTarget { .. }
-        | A::Ambiguous { .. } => return Err(Error::UnsupportedPrompt),
+        | A::Ambiguous { .. }
+        | A::ChooseEntryColorV36 { .. }
+        | A::ChooseDivineKickerV44 { .. }
+        | A::ChooseDivineTargetV44 { .. }
+        | A::FinishDivineTargetsV44 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }
 
@@ -1570,6 +1633,190 @@ pub(super) fn label_fiery_v33(
                 return Err(Error::UnsupportedPrompt);
             }
             return Ok(format!("Begin casting {} (printed cost {{2}}{{R}}): five damage to one creature, exile up to one targeted Equipment attached to it, and exile that creature if it would die this turn",handles.name(source)?));
+        }
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
+pub(super) fn label_krenko_v34(
+    action: &A,
+    observation: &crate::krenko_observation_v1::KrenkoObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    match action {
+        A::CastSpell { actor, source }
+            if observation.roots.iter().any(|r| {
+                r.card_id == source.card_db_id
+                    && r.root == crate::rules_meaning_krenko_v1::RootV1::PrintedCreatureSpell
+            }) =>
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!(
+                "Begin casting {} (printed cost {{2}}{{R}}{{R}}): legendary 3/3 Goblin Warrior",
+                handles.name(source)?
+            ));
+        }
+        A::ActivateAbility {
+            actor,
+            source,
+            ability_index: 0,
+            granted_ability,
+        } if granted_ability.is_none()
+            && observation.roots.iter().any(|r| {
+                r.card_id == source.card_db_id
+                    && r.root
+                        == crate::rules_meaning_krenko_v1::RootV1::PrintedTapActivation {
+                            ability_index: 0,
+                        }
+            }) =>
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let row = observation
+                .facts
+                .sources
+                .iter()
+                .find(|r| r.source == *source)
+                .ok_or(Error::UnsupportedPrompt)?;
+            return Ok(format!("Tap {}: create 1/1 red Goblin tokens equal to your Goblin permanents at resolution (currently {})", handles.name(source)?, row.current_controlled_goblin_permanents));
+        }
+        _ => {}
+    }
+    let parts = super::life_ward_v8::ProjectionPartsV8 {
+        projection: &observation.projection,
+        own_hand: &observation.own_hand,
+        known_library_cards: &observation.known_library_cards,
+        known_hand_cards: &observation.known_hand_cards,
+        known_face_down_cards: &observation.known_face_down_cards,
+        extensions: &observation.extensions,
+    };
+    label_parts_v8(action, &parts, handles, human)
+}
+
+pub(super) fn label_fishing_pole_v39(
+    action: &A,
+    grant: Option<&crate::rl_session::fishing_pole_v39::GrantedLabelV39>,
+    observation: &crate::fishing_pole_observation_v39::FishingPoleObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    let pending_label = |index: usize,
+                         source: &crate::rl::CardStableRefV1,
+                         sources: &[crate::rl::CardStableRefV1]|
+     -> Result<String, Error> {
+        let occurrence = sources[..index]
+            .iter()
+            .filter(|previous| {
+                previous.arena_id == source.arena_id
+                    && previous.zone_change_count == source.zone_change_count
+            })
+            .count();
+        let original = observation
+            .facts
+            .operations
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                row.trigger
+                    && row.stage == crate::fishing_pole_public_v39::StageV39::Pending
+                    && row.original_pole.arena_id == source.arena_id
+                    && row.original_pole.zone_change_count == source.zone_change_count
+            })
+            .nth(occurrence);
+        if let Some((ordinal, _)) = original {
+            Ok(format!(
+                "{} untap occurrence {}",
+                handles.name(source)?,
+                ordinal + 1
+            ))
+        } else {
+            handles.name(source)
+        }
+    };
+    if let A::OrderTriggers {
+        actor,
+        pending_sources,
+        order,
+    } = action
+    {
+        if *actor != human {
+            return Err(Error::UnsupportedPrompt);
+        }
+        let names = order
+            .iter()
+            .map(|index| {
+                pending_sources
+                    .get(*index)
+                    .ok_or(Error::InvalidVisibleReference)
+                    .and_then(|source| pending_label(*index, source, pending_sources))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(format!(
+            "Put triggers on the stack in this order (last resolves first): {}",
+            names.join(", ")
+        ));
+    }
+    if let A::CastSpell { actor, source } = action {
+        if observation.roots.iter().any(|root| {
+            root.card_id == source.card_db_id
+                && root.root == crate::rules_meaning_fishing_pole_v39::RootV39::PrintedArtifactSpell
+        }) {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Begin casting {} (printed cost {{1}}): Equipment with equip {{2}}, a granted bait ability, and mandatory untap Fish trigger",handles.name(source)?));
+        }
+    }
+    if let A::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability,
+        ..
+    } = action
+    {
+        if granted_ability.is_none()
+            && grant.is_none()
+            && observation.roots.iter().any(|root| {
+                root.card_id == source.card_db_id
+                    && root.root
+                        == crate::rules_meaning_fishing_pole_v39::RootV39::PrintedEquip {
+                            ability_index: u16::from(*ability_index),
+                        }
+            })
+        {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            return Ok(format!("Activate {} equip (printed cost {{2}}): attach this Equipment to target creature you control", handles.name(source)?));
+        }
+    }
+    if let A::ActivateAbility { actor, source, .. } = action {
+        if let Some(grant) = grant {
+            if *actor != human {
+                return Err(Error::UnsupportedPrompt);
+            }
+            let name = handles.name(source)?;
+            if grant.fishing {
+                return Ok(format!("Activate Fishing Pole-granted ability of {name}: printed cost {{1}}, tap this creature, and tap the chosen actual attached Fishing Pole; put one bait counter on that original Pole at resolution"));
+            }
+            return Ok(format!(
+                "Activate granted ability of {name}: {}: {}",
+                activation_cost(&grant.cost, &name)?,
+                describe_effect(&grant.effect)?
+            ));
         }
     }
     let parts = super::life_ward_v8::ProjectionPartsV8 {

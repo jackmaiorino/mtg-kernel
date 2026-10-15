@@ -62,33 +62,37 @@ pub enum ErrorV1 {
     IdentityMismatch,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    h.update(SCHEMA.as_bytes());
-    for (path, source) in [
-        (
-            "meaning",
-            include_str!("rules_meaning_frenzied_goblin_v1.rs"),
-        ),
-        ("attack_authority", include_str!("frenzied_goblin_v1.rs")),
-        ("restriction", include_str!("sower_of_chaos_v1.rs")),
-        (
-            "resolution_authority",
-            include_str!("effect/frenzied_goblin_resolution_v1.rs"),
-        ),
-        ("trigger", include_str!("trigger.rs")),
-        ("effect", include_str!("effect.rs")),
-        ("engine", include_str!("engine.rs")),
-        ("event", include_str!("event.rs")),
-        ("state", include_str!("state.rs")),
-        ("card_def", include_str!("card_def.rs")),
-        ("build", include_str!("../build.rs")),
-    ] {
-        h.update([0]);
-        h.update(path.as_bytes());
-        h.update([0]);
-        h.update(source.as_bytes());
-    }
-    hex_digest(h.finalize())
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        h.update(SCHEMA.as_bytes());
+        for (path, source) in [
+            (
+                "meaning",
+                include_str!("rules_meaning_frenzied_goblin_v1.rs"),
+            ),
+            ("attack_authority", include_str!("frenzied_goblin_v1.rs")),
+            ("restriction", include_str!("sower_of_chaos_v1.rs")),
+            (
+                "resolution_authority",
+                include_str!("effect/frenzied_goblin_resolution_v1.rs"),
+            ),
+            ("trigger", include_str!("trigger.rs")),
+            ("effect", include_str!("effect.rs")),
+            ("engine", include_str!("engine.rs")),
+            ("event", include_str!("event.rs")),
+            ("state", include_str!("state.rs")),
+            ("card_def", include_str!("card_def.rs")),
+            ("build", include_str!("../build.rs")),
+        ] {
+            h.update([0]);
+            h.update(path.as_bytes());
+            h.update([0]);
+            h.update(source.as_bytes());
+        }
+        hex_digest(h.finalize())
+    })
+    .clone()
 }
 fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
     bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()

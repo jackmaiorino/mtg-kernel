@@ -1,0 +1,9 @@
+# Hunter, Eaten Alive and Panda catalog profile v83
+
+Prepared record identity for 442 definitions. CI38534634485 at `0e3828699e65c3f6bd9ea1fcea564f80f9699494` retained actual Limited generator output: catalog `32e7edda8186d908`, generated-source SHA256 `54aa0efc1f8b6791eab62d0bd759b4dcab21b0beb9b1423bda4b055916de66ba`. The complete source, Limited job log and generation receipt are retained and byte-verified on C/E. Artifact11879148884 came from the Limited job's always step after cancellation; generation is observed, compilation and runtime completion are not claimed.
+
+The unchanged runtime-catalog file input has SHA256 `68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851`. Current runtime export is not yet observed. The later optional-row repair changes no generator inputs. The profile update changes no catalog metadata, definition IDs or effect recipes; successor CI must verify the actual live hash and runtime-catalog constants.
+
+Append `FdnHunterEatenPandaBatch`, its literal pair and classifier entry. Preserve all predecessor literals, variant order, classifiers and record formats, including v82's actual439 identity. The current canary and fixture classify as v83. V82 remains canonically readable, while publisher and resume fixtures require the existing live-identity refusal before store writes or interpretation. A review found the science loop could bootstrap before those downstream refusals; it now checks live identity before bootstrap, with a v82 regression requiring no store creation. Default/Standard profile identities remain unchanged.
+
+This is neither gameplay acceptance nor model admission. Current printing, mixed-consumer, privacy, restore, legacy and profile checks remain pending. Issue110 remains open; accepted default coverage stays 221 Full / 1 Partial / 64 Missing from PR252 until the candidate is qualified and integrated. Unregistered Season, Conqueror and Fake custody remain separate unfinished work.

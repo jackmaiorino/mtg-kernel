@@ -33,34 +33,38 @@ pub struct MeaningV1 {
     pub model_and_sampler_admitted: bool,
 }
 pub fn producer_sha256_v1() -> String {
-    let mut h = Sha256::new();
-    for s in [
-        SCHEMA,
-        include_str!("rules_meaning_crystal_ordering_v1.rs"),
-        include_str!("rules_meaning_crystal_barricade_v1.rs"),
-        include_str!("crystal_barricade_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("effect.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("gorehorn_crystal_v1.rs"),
-        include_str!("gorehorn_damage_v1.rs"),
-        include_str!("raid_entry_custody_v1.rs"),
-        include_str!("fixed_source_damage_v3.rs"),
-        include_str!("equipment_damage_source_v4.rs"),
-        include_str!("rules_meaning_heartfire_v1.rs"),
-        include_str!("creature_stats_lki_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("event.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-    ] {
-        h.update([0]);
-        h.update(s.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for s in [
+            SCHEMA,
+            include_str!("rules_meaning_crystal_ordering_v1.rs"),
+            include_str!("rules_meaning_crystal_barricade_v1.rs"),
+            include_str!("crystal_barricade_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("effect.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("gorehorn_crystal_v1.rs"),
+            include_str!("gorehorn_damage_v1.rs"),
+            include_str!("raid_entry_custody_v1.rs"),
+            include_str!("fixed_source_damage_v3.rs"),
+            include_str!("equipment_damage_source_v4.rs"),
+            include_str!("rules_meaning_heartfire_v1.rs"),
+            include_str!("creature_stats_lki_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("event.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+        ] {
+            h.update([0]);
+            h.update(s.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn selected() -> Result<MeaningV1, String> {
     use crate::rules_meaning_crystal_barricade_v1::{live_selector, meaning, StaticRootV1};

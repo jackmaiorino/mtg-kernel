@@ -411,7 +411,7 @@ fn accepted_nyxborn_x_and_bestow_entry_characteristics_precede_actual_draw_captu
                 .iter()
                 .filter(|event| {
                     matches!(event,
-                    CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:4}
+                    CommittedEvent::PlusOneCountersAdded {object,zone_change_count,player,count:4, ..}
                     if *object==hydra && *zone_change_count==generation && *player==actor)
                 })
                 .count();

@@ -7,6 +7,18 @@ fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+        return true;
+    }
+    if crate::ajani_full_v42::lifecycle::requires_successor(state) {
+        return true;
+    }
+    if crate::fishing_pole_v39::lifecycle::requires_successor(state) {
+        return true;
+    }
+    if crate::krenko_v1::requires_successor(state) {
+        return true;
+    }
     if crate::arahbo_v1::requires_successor(state)
         || state
             .engine
@@ -267,6 +279,14 @@ fn redeterminize_with_library_plan_inner(
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
     classified: bool,
 ) -> Result<(), Error> {
+    // Refuse before even the first hidden-owner permutation, including empty pools.
+    if crate::bloodthirsty_conqueror_v49::has_history(state) {
+        return Err(if classified {
+            Error::HiddenReferenceConflict
+        } else {
+            Error::HiddenStateContract
+        });
+    }
     if state.extra_turn_v1.is_some()
         || state.engine.event_history.iter().any(|event| {
             matches!(
@@ -542,10 +562,21 @@ mod tests {
                     assert!(conflicts(&state, &[source], None));
                 }
             }
-            // Removing new typed ownership removes this new restriction.
+            // Removing the pending/stack root does not erase its independently
+            // retained departure-color authority. The unmigrated sampler must
+            // still refuse changing that historical physical source.
             state.stack.clear();
             state.engine.pending_triggers.clear();
-            assert!(!conflicts(&state, &[source], None));
+            assert!(state.engine.event_history.iter().any(|event|
+                matches!(event, crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 {snapshot,..}
+                    if snapshot.source.source==source)));
+            assert!(conflicts(&state, &[source], None));
+            let before = state.clone();
+            assert_eq!(
+                redeterminize_with_library_plan_classified(&mut state, actor, 991, None),
+                Err(Error::HiddenReferenceConflict)
+            );
+            assert_eq!(state, before);
         }
     }
     #[test]
@@ -580,6 +611,97 @@ mod tests {
                 Err(Error::HiddenStateContract)
             );
             assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn retained_conqueror_amount_only_history_refuses_before_sampling_after_restore() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let Some(original) =
+                crate::bloodthirsty_conqueror_v49::tests::amount_only_sampler_state(actor)
+            else {
+                continue;
+            };
+            for restored in [false, true] {
+                let mut state = if restored {
+                    serde_json::from_slice(&serde_json::to_vec(&original).unwrap()).unwrap()
+                } else {
+                    original.clone()
+                };
+                assert!(state.engine.event_log.is_empty());
+                assert!(conflicts(&state, &[], None));
+                assert!(super::super::effect_refs::conflicts(&state, &[], None));
+                let bytes = serde_json::to_vec(&state).unwrap();
+                assert_eq!(
+                    redeterminize(&mut state, actor, 49),
+                    Err(Error::HiddenStateContract)
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+                assert_eq!(
+                    redeterminize_with_library_plan_classified(&mut state, actor, 49, None),
+                    Err(Error::HiddenReferenceConflict)
+                );
+                assert_eq!(serde_json::to_vec(&state).unwrap(), bytes);
+            }
+        }
+    }
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    #[ignore = "genuine Conqueror registration and native qualification belong to parent"]
+    fn genuine_resolved_and_countered_conqueror_history_remains_unsampleable_without_live_or_transient_root(
+    ) {
+        use crate::bloodthirsty_conqueror_v49::{self as conqueror, tests::future_printed};
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for counter in [false, true] {
+                let (mut state, source) = future_printed::paid(actor);
+                crate::event::propose_and_commit(
+                    &mut state,
+                    crate::event::ProposedEvent::life_loss(actor.opponent(), 3),
+                );
+                crate::engine::advance_until_decision(&mut state);
+                let id = state
+                    .stack
+                    .iter()
+                    .find(|item| {
+                        item.source == source
+                            && item
+                                .inline_effect
+                                .as_ref()
+                                .is_some_and(|op| conqueror::custody::binding(op).is_some())
+                    })
+                    .unwrap()
+                    .v4
+                    .stack_item_id;
+                if counter {
+                    crate::engine::counter_stack_item_by_id(&mut state, id).unwrap();
+                }
+                future_printed::finish(&mut state);
+                assert!(!state.stack.iter().any(|item| item
+                    .inline_effect
+                    .as_ref()
+                    .is_some_and(|op| conqueror::custody::binding(op).is_some())));
+                assert!(!state.engine.event_log.iter().any(|event| matches!(
+                    event,
+                    crate::event::CommittedEvent::ConquerorCapturedV49 { .. }
+                )));
+                assert_eq!(
+                    state.players[actor.index()].life,
+                    if counter { 20 } else { 23 }
+                );
+                conqueror::validate(&state).unwrap();
+                let mut restored =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                let bytes = serde_json::to_vec(&restored).unwrap();
+                assert!(conflicts(&restored, &[], None));
+                assert_eq!(
+                    redeterminize(&mut restored, actor, 50),
+                    Err(Error::HiddenStateContract)
+                );
+                assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+            }
         }
     }
 }

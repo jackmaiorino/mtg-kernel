@@ -406,6 +406,9 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
         }
         match activation_target_filter {
             crate::card_def::ActivationTargetFilter::TargetSpecOnly => {}
+            crate::card_def::ActivationTargetFilter::CreatureSubtype(_) => {
+                out.atoms.push(Atom::Opaque);
+            }
             crate::card_def::ActivationTargetFilter::CreatureBlockedBySource => {
                 out.target(TargetAtom::Object {
                     obj: ObjF::Typed(CardTypeF::Creature),
@@ -441,6 +444,8 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         starting_loyalty,
         enters_with_plus_one_counters,
         controlled_counter_keyword,
+        game_outcome_protection_v1,
+        controlled_creature_grant,
         is_land,
         produces_mana,
         colors,
@@ -489,12 +494,33 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         animation,
         activated_ability_generic_reductions,
         combat_static_rules,
+        as_enters_color_choice_v1,
+        chosen_color_creature_boost_v1,
+        damage_replacement_v1,
+        token_counter_replacement_v48,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
     } = def;
 
+    assert!(
+        token_counter_replacement_v48.is_none(),
+        "effect token and counter replacement requires its precise successor"
+    );
+
+    assert!(
+        damage_replacement_v1.is_none(),
+        "damage multiplier requires its exact successor"
+    );
     let mut printed = Vec::new();
+    assert!(
+        game_outcome_protection_v1.is_none(),
+        "game-outcome prohibition requires its precise successor"
+    );
+    assert!(
+        as_enters_color_choice_v1.is_none() && chosen_color_creature_boost_v1.is_none(),
+        "as-enters color and chosen-color anthem require their precise successor"
+    );
     for &t in types.iter() {
         printed.push(PrintedF::Type(t.into()));
     }
@@ -1077,6 +1103,17 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                         .keyword(keyword),
                 );
             }
+        });
+    }
+    if let Some(grant) = controlled_creature_grant {
+        walk.rec(
+            "controlled_creature_grant",
+            json!([grant.keywords.0, grant.protection_color_mask]),
+        );
+        walk.opaque
+            .push("live controlled-creature keyword and color-protection descriptor");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
         });
     }
     if crate::engine::static_counter_keyword_controller_turn_only_for(name) {

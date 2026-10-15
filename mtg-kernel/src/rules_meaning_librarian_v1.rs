@@ -71,28 +71,32 @@ pub enum ErrorV1 {
     IdentityMismatch,
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_librarian_v1.rs"),
-        include_str!("mild_mannered_librarian_v1.rs"),
-        include_str!("librarian_activation_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("engine.rs"),
-        include_str!("effect.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("trigger.rs"),
-        include_str!("card_def.rs"),
-        include_str!("mana.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_librarian_v1.rs"),
+            include_str!("mild_mannered_librarian_v1.rs"),
+            include_str!("librarian_activation_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("engine.rs"),
+            include_str!("effect.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("trigger.rs"),
+            include_str!("card_def.rs"),
+            include_str!("mana.rs"),
+            include_str!("../build.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(
@@ -163,6 +167,7 @@ pub fn meaning(selector: &SelectorV1, card_id: u16, root: RootV1) -> Result<Mean
         || def.starting_loyalty.is_some()
         || def.enters_with_plus_one_counters.is_some()
         || def.controlled_counter_keyword.is_some()
+        || def.controlled_creature_grant.is_some()
         || def.is_land
         || !def.produces_mana.is_empty()
         || (def.mana_ability)().is_some()

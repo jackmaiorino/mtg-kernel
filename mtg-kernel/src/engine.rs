@@ -39,6 +39,7 @@
 //! (`begin_cast`), before targets/modes/costs, so `finalize_cast` only
 //! fills in the placeholder `begin_cast` already pushed.
 
+pub mod mandatory_cast_cost_v1;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
@@ -296,6 +297,14 @@ pub struct EngineState {
         skip_serializing_if = "crate::linked_aura_operation_v1::StateV1::is_empty"
     )]
     pub linked_aura_operation_v1: crate::linked_aura_operation_v1::StateV1,
+    /// Synchronous typed Inspiration owner; excluded from snapshots and Hash input.
+    #[serde(skip)]
+    pub(crate) inspiration_runtime_v1: effect::InspirationRuntimeV1,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::twinflame_tyrant_v1::combat::StateV38::is_empty"
+    )]
+    pub twinflame_combat_v38: crate::twinflame_tyrant_v1::combat::StateV38,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -817,6 +826,8 @@ pub enum ChosenCreatureCostZoneV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory_additional_cost: Option<mandatory_cast_cost_v1::ChoiceV1>,
     pub spell: ObjectId,
     /// Exact physical source incarnation and stack provenance captured after
     /// 601.2a moved the announced card. This must exactly equal the untouched
@@ -939,6 +950,10 @@ impl std::hash::Hash for PendingCast {
         std::hash::Hash::hash(&self.x_value, state);
         std::hash::Hash::hash(&self.chosen_creature_cost_zone, state);
         std::hash::Hash::hash(&self.chosen_creature_cost, state);
+        if let Some(choice) = self.mandatory_additional_cost {
+            std::hash::Hash::hash(&"mandatory_additional_cost/v1", state);
+            std::hash::Hash::hash(&choice, state);
+        }
         if !self.convoke_chosen.is_empty() || self.convoke_finished {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
             std::hash::Hash::hash(&self.convoke_chosen, state);
@@ -1570,6 +1585,12 @@ pub enum Decision {
         spell: ObjectId,
         can_decline: bool,
     },
+    /// Genuine as-enters replacement choice, before any entry roster commits.
+    ChooseEntryColorV36 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        colors: [ManaColor; 5],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1770,6 +1791,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::PermanentCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
@@ -2038,7 +2060,8 @@ fn validate_physical_spell_cast_origin(
         .engine
         .pending_cast
         .as_ref()
-        .is_some_and(|pending| pending.spell == item.source);
+        .is_some_and(|pending| pending.spell == item.source)
+        || mandatory_cast_cost_v1::linked_placeholder(state, item)?;
     if if is_pending_placeholder {
         origin.finalized_method.is_some()
     } else {
@@ -2057,6 +2080,7 @@ fn validate_physical_spell_cast_origin(
     {
         return Err("variable spell lost its finalized physical-source kicker authority".into());
     }
+    mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2777,6 +2801,14 @@ fn validate_spell_sourced_trigger(
         }
         return Ok(());
     }
+    if item
+        .inline_effect
+        .as_ref()
+        .and_then(crate::faebloom_trick_v43::capture_of)
+        .is_some()
+    {
+        return crate::faebloom_trick_v43::validate_trigger_metadata(state, item);
+    }
     if let Some(EffectOp::CreateStormCopies { binding }) = item.inline_effect.as_ref() {
         if contract != binding.source_contract
             || item.source != binding.source_contract.source
@@ -3117,6 +3149,19 @@ fn triggered_ability_targeting_source(
     source_contract: Option<AbilitySourceContractV4>,
     effect: &EffectOp,
 ) -> Option<TargetingSource> {
+    if let EffectOp::FaebloomTapFromCaptureV43 {
+        source: original, ..
+    } = effect
+    {
+        return Some(TargetingSource {
+            object: original.source,
+            card_def: original.card_def,
+            zone: original.zone,
+            zone_change_count: original.zone_change_count,
+            other_than: None,
+            original_source_incarnation_only: false,
+        });
+    }
     if matches!(effect, EffectOp::ResolveInitiativeTrigger { .. }) {
         return None;
     }
@@ -3825,6 +3870,41 @@ fn legal_targets_for_controller_from_source(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(maximum) => {
+            // A historical source is required even after it has left. This
+            // matches the pinned reference's AnotherPredicate physical-card
+            // exclusion; it must not be dropped when the source is absent.
+            let Some(source) = source else {
+                return Vec::new();
+            };
+            state.players[controller.index()]
+                .graveyard
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    state.objects.try_get(id).is_some_and(|object| {
+                        id != source.object
+                            && object.owner == controller
+                            && object.zone == Zone::Graveyard
+                            && !object.v4.is_token
+                            && object.spell_copy_origin.is_none()
+                            && card_def::CARD_DEFS
+                                .get(usize::from(object.card_def))
+                                .is_some_and(|definition| {
+                                    definition.has_type(CardType::Creature)
+                                        && i32::from(definition.mana_value) <= maximum
+                                        // Bear is not yet materialized into
+                                        // historical closed-pool changeling
+                                        // vectors. Its CDA still excludes the
+                                        // card without changing those bytes.
+                                        && !definition.changeling
+                                })
+                            && !has_effective_subtype(state, id, card_def::Subtype::Bear)
+                    })
+                })
+                .map(Target::Object)
+                .collect()
+        }
         TargetSpec::PermanentCardInOwnGraveyard => state.players[controller.index()]
             .graveyard
             .iter()
@@ -3896,6 +3976,16 @@ fn legal_targets_for_controller_from_source(
         });
     }
     if let Some(source) = source {
+        let Ok(colors) = crate::controlled_creature_grants_v1::targeting_source_colors(
+            state,
+            source.object,
+            source.card_def,
+            source.zone,
+            source.zone_change_count,
+        ) else {
+            return Vec::new();
+        };
+        targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
     }
@@ -4271,6 +4361,15 @@ fn activation_legal_targets_with_source_lki(
     .into_iter()
     .filter(|target| match ability.activation_target_filter {
         ActivationTargetFilter::TargetSpecOnly => true,
+        ActivationTargetFilter::CreatureSubtype(subtype) => match target {
+            Target::Object(object) => state.objects.try_get(*object).is_some_and(|live| {
+                card_def::CARD_DEFS[live.card_def as usize]
+                    .types
+                    .contains(&CardType::Creature)
+                    && has_effective_subtype(state, *object, subtype)
+            }),
+            _ => false,
+        },
         ActivationTargetFilter::CreatureBlockedBySource => {
             let Target::Object(attacker) = target else {
                 return false;
@@ -4540,6 +4639,24 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
 /// Samples one reusable board-dependent value from current state. Effects
 /// and mana abilities call this at resolution/activation time so intervening
 /// battlefield changes are reflected exactly once.
+/// The shared full-width membership query; callers choose their own numeric transport.
+pub(crate) fn controlled_permanents_with_subtype(
+    state: &GameState,
+    controller: PlayerId,
+    subtype: card_def::Subtype,
+) -> impl Iterator<Item = ObjectId> + '_ {
+    state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(move |object| {
+            let live = state.objects.get(*object);
+            live.controller == controller
+                && live.zone == Zone::Battlefield
+                && has_effective_subtype(state, *object, subtype)
+        })
+}
+
 pub(crate) fn evaluate_dynamic_value(
     state: &GameState,
     value: DynamicValueDef,
@@ -4547,6 +4664,7 @@ pub(crate) fn evaluate_dynamic_value(
 ) -> i32 {
     let count = match value {
         DynamicValueDef::Fixed(value) => return value,
+        DynamicValueDef::ControllerLifeTotal => return state.players[controller.index()].life,
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
@@ -4554,17 +4672,9 @@ pub(crate) fn evaluate_dynamic_value(
                 object.zone == Zone::Battlefield && has_effective_subtype(state, *id, subtype)
             })
             .count(),
-        DynamicValueDef::ControlledPermanentsWithSubtype(subtype) => state.players
-            [controller.index()]
-        .battlefield
-        .iter()
-        .filter(|&&object| {
-            let live = state.objects.get(object);
-            live.controller == controller
-                && live.zone == Zone::Battlefield
-                && has_effective_subtype(state, object, subtype)
-        })
-        .count(),
+        DynamicValueDef::ControlledPermanentsWithSubtype(subtype) => {
+            controlled_permanents_with_subtype(state, controller, subtype).count()
+        }
         DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => state.players
             [controller.index()]
         .graveyard
@@ -4739,6 +4849,7 @@ fn validate_counter_removal_prefix(
 fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
     components.iter().find_map(|component| match component {
         CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
+        CostComponent::TapFishingPoleAttachedToSource => Some(card_def::Subtype::Equipment),
         _ => None,
     })
 }
@@ -4976,7 +5087,12 @@ fn payable_activation_cost_object_candidates(
     let Some(subtype) = activation_tap_cost_subtype(components) else {
         return Vec::new();
     };
-    activation_cost_object_candidates(player, source, subtype, state, &[])
+    let candidates = if crate::fishing_pole_v39::named_cost(components) {
+        crate::fishing_pole_v39::cost_candidates(state, player, source)
+    } else {
+        activation_cost_object_candidates(player, source, subtype, state, &[])
+    };
+    candidates
         .into_iter()
         .filter(|candidate| {
             activation_mana_payment(components, player, source, state).is_none_or(|cost| {
@@ -5067,6 +5183,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
 
     for component in components {
         match component {
+            CostComponent::SacrificeCreatureOrPayMana(_) => return false,
             CostComponent::Mana(cost) => {
                 if mana.is_some() || saw_source_changing_component {
                     return false;
@@ -5126,7 +5243,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 }
                 pay_life_count += 1;
             }
-            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | CostComponent::TapFishingPoleAttachedToSource => {
                 tap_other_permanent_count += 1;
                 saw_source_changing_component = true;
             }
@@ -5434,6 +5552,9 @@ fn can_pay_components(
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
                 !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
             }
+            CostComponent::TapFishingPoleAttachedToSource => {
+                !crate::fishing_pole_v39::cost_candidates(state, player, source).is_empty()
+            }
             CostComponent::TapUntappedControlledPermanent(filter) => {
                 !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
             }
@@ -5457,6 +5578,7 @@ fn can_pay_components(
                         .has_type(*card_type)
                 })
             }
+            CostComponent::SacrificeCreatureOrPayMana(_) => false,
             CostComponent::Crew(required) => {
                 crew_candidates(state, player, source, &[])
                     .iter()
@@ -5557,6 +5679,12 @@ fn validate_cost_component_choices_v1(
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::Loyalty(delta) if !crate::planeswalker_v1::loyalty(state, source).is_some_and(|loyalty| *delta >= 0 || loyalty >= delta.unsigned_abs()))
+    }) {
+        return None;
+    }
+    if crate::doubling_season_v48::requires_successor(state) && components.iter().any(|component| {
+        matches!(component, CostComponent::Loyalty(delta) if crate::planeswalker_v1::quote_loyalty_change_v48(
+            state, source, *delta, crate::doubling_season_v48::CounterOriginV48::Cost).is_err())
     }) {
         return None;
     }
@@ -5746,15 +5874,14 @@ fn validate_cost_component_choices_v1(
             return None;
         }
     }
-    let tap_other_subtype = components.iter().find_map(|component| match component {
-        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
-        _ => None,
-    });
+    let tap_other_subtype = activation_tap_cost_subtype(components);
     if let Some(subtype) = tap_other_subtype {
-        if object_cost_chosen.len() != 1
-            || !activation_cost_object_candidates(player, source, subtype, state, &[])
-                .contains(&object_cost_chosen[0])
-        {
+        let candidates = if crate::fishing_pole_v39::named_cost(components) {
+            crate::fishing_pole_v39::cost_candidates(state, player, source)
+        } else {
+            activation_cost_object_candidates(player, source, subtype, state, &[])
+        };
+        if object_cost_chosen.len() != 1 || !candidates.contains(&object_cost_chosen[0]) {
             return None;
         }
     }
@@ -5968,7 +6095,8 @@ fn commit_cost_components_from_plan_v1(
                 ProposedEvent::life_payment(player, i32::from(*amount)),
             ),
             CostComponent::DiscardCards(_) => {}
-            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | CostComponent::TapFishingPoleAttachedToSource => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
             CostComponent::TapUntappedControlledPermanent(_) => {
@@ -6010,8 +6138,9 @@ fn commit_cost_components_from_plan_v1(
             }
             CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand => {}
             CostComponent::Loyalty(delta) => {
-                crate::planeswalker_v1::change_loyalty(state, source, *delta);
+                crate::planeswalker_v1::pay_loyalty_cost(state, source, *delta);
             }
+            CostComponent::SacrificeCreatureOrPayMana(_) => return None,
             CostComponent::LoyaltyX => return None, // resolved to a concrete cost before payment
             CostComponent::Crew(_) => {
                 crate::standard_cards_v1::record_crew(state, source, object_cost_chosen);
@@ -6678,6 +6807,12 @@ fn controlled_permanent_sacrifice_needed(
         {
             return Some(sacrifice);
         }
+    }
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana == Some(false))
+    {
+        return Some((1, PermanentFilter::Creature));
     }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
@@ -7561,6 +7696,31 @@ fn pending_cast_quote_v1(
     )
 }
 
+/// Scoped quote adapter for the exact printed Divine successor. It returns
+/// genuine prepared mana plans, not a guessed sum of printed costs.
+pub(crate) fn divine_pending_quote_v44(
+    state: &GameState,
+    kicked: bool,
+) -> Result<Option<mana::PaymentPlan>, String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .ok_or("Divine pending cast absent")?;
+    validate_pending_cast(state, pending)?;
+    let selector = crate::rules_meaning_divine_v44::live_selector()?;
+    crate::rules_meaning_divine_v44::meaning(&selector, pending.source_contract.card_def)?;
+    let def = &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)];
+    let Some(payment) = pending_cast_quote_v1(def, pending, CastMethodV4::Normal, kicked, 0, state)
+    else {
+        return Ok(None);
+    };
+    if !payment.delve_exiled.is_empty() || !payment.convoke_tapped.is_empty() {
+        return Err("Divine quote contains an unrepresented nonmana payment".into());
+    }
+    Ok(Some(payment.mana))
+}
+
 fn maximum_payable_x(
     def: &card_def::CardDef,
     pending: &PendingCast,
@@ -8255,6 +8415,11 @@ pub(crate) fn available_mana_ability_choices_into(
         return;
     }
 
+    if crate::heraldic_banner_v1::owns_definition(object.card_def)
+        && crate::heraldic_banner_v1::authenticated_color(state, source).is_err()
+    {
+        return;
+    }
     let mut primary = ManaColorSetV1::new();
     def.primary_mana_ability_choices_into(object.v4.chosen_color, &mut primary);
     let primary_payable = if let Some(rich) = def.mana_ability_def {
@@ -8264,6 +8429,13 @@ pub(crate) fn available_mana_ability_choices_into(
     };
     if primary_payable {
         for &color in primary.as_slice() {
+            if crate::heraldic_banner_v1::owns_definition(object.card_def)
+                && state.players[player.index()].mana_pool[color.pool_index()]
+                    .checked_add(1)
+                    .is_none()
+            {
+                continue;
+            }
             if let Some(rich) = def.mana_ability_def {
                 if rich.amount == ManaAbilityAmountDef::EachControlledPermanentColor {
                     if rich.cost != ManaAbilityCostDef::TapSelf
@@ -8374,6 +8546,11 @@ fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u1
 /// abilities only if none of that permanent's loyalty abilities has been
 /// activated this turn.
 fn loyalty_ability_activated_this_turn(state: &GameState, source: ObjectId) -> bool {
+    if crate::ajani_full_v42::selected_definition(state.objects.get(source).card_def)
+        && crate::ajani_full_v42::lifecycle::used(state, source)
+    {
+        return true;
+    }
     let object = state.objects.get(source);
     let abilities = card_def::CARD_DEFS[object.card_def as usize].activated_abilities;
     object.v4.ability_uses_this_turn.iter().any(|entry| {
@@ -8609,6 +8786,35 @@ fn activate_mana_ability_for(
             return Err("mana ability result exceeds the pool capacity".to_string());
         }
 
+        // A counter in a mana-ability cost is not an effect counter. Only
+        // an actual other counter replacement can make Season applicable
+        // (614.16). Quote native storage before any payment or activation.
+        let minus_toughness_after = if rich.cost == ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf
+        {
+            let count = if crate::doubling_season_v48::requires_successor(state) {
+                crate::doubling_season_v48::counter_amount(
+                    state,
+                    source,
+                    player,
+                    crate::doubling_season_v48::CounterOriginV48::Cost,
+                    1,
+                )?
+            } else {
+                1
+            };
+            Some(
+                state
+                    .objects
+                    .get(source)
+                    .counters
+                    .minus0_minus1
+                    .checked_add(i16::try_from(count).map_err(|_| "-0/-1 counter cost overflow")?)
+                    .ok_or("-0/-1 counter count overflow")?,
+            )
+        } else {
+            None
+        };
+
         if let Some(plan) = &mana_plan {
             pay_plan(state, player, plan);
         }
@@ -8628,10 +8834,8 @@ fn activate_mana_ability_for(
                 );
             }
             ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
-                let counters = &mut state.objects.get_mut(source).counters.minus0_minus1;
-                *counters = counters
-                    .checked_add(1)
-                    .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+                state.objects.get_mut(source).counters.minus0_minus1 =
+                    minus_toughness_after.expect("counter cost was preflighted");
             }
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
@@ -8811,6 +9015,18 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                         && activation_target_prefix_can_complete(id, &granted, &[], state)
                     {
                         out.push((id, granted_index));
+                    }
+                }
+                if let Some(granted) = crate::fishing_pole_v39::granted_ability(state, id) {
+                    let index = def.activated_abilities.len()
+                        + usize::from(equipped_granted_activated_ability(state, id).is_some());
+                    if let Ok(index) = u8::try_from(index) {
+                        if !crate::standard_cards_v1::activations_locked(state, id)
+                            && can_pay_activation_components(granted.cost, player, id, state)
+                            && activation_target_prefix_can_complete(id, &granted, &[], state)
+                        {
+                            out.push((id, index));
+                        }
                     }
                 }
                 // Agatha's Soul Cauldron's granted abilities follow
@@ -9019,6 +9235,13 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_legends_v1::skrelv_blocks(state, attacker, id) {
                 return false;
             }
+            if crate::controlled_creature_grants_v1::protects_from_colors(
+                state,
+                attacker,
+                object_color_mask(state, id),
+            ) {
+                return false;
+            }
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
                 return false;
             }
@@ -9097,6 +9320,53 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+        || crate::doubling_season_v48::validate_token_journals(state).is_err()
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if let Err(_error) = crate::fiendish_panda_v1::validate_state(state) {
+        #[cfg(test)]
+        eprintln!("Panda prework validation rejected: {_error}");
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if mandatory_cast_cost_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if crate::high_society_hunter_custody_v45::validate(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
+    if crate::faebloom_trick_v43::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if crate::controlled_creature_grants_v1::validate_color_history(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if crate::heraldic_banner_v1::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if let Err(source) = event::validate_exile_if_dies_replacements(state) {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         state.engine.halted = Some((mechanic, source));
@@ -9107,24 +9377,68 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         || crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || crate::zul_ashur_v1::validate_state(state).is_err()
+        || effect::validate_inspiration_resolution(state).is_err()
         || effect::crystal_prevention_v1::validate(state).is_err()
         || effect::validate_vampire_gourmand_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
         return Decision::Halted { mechanic, source };
     }
+    if crate::twinflame_tyrant_v1::combat::has_pending(state)
+        && effect::validate_pending_effect_choice(state).is_err()
+    {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    match crate::twinflame_tyrant_v1::combat::decision(state) {
+        Ok(Some(decision)) => return decision,
+        Ok(None) => {}
+        Err(_) => {
+            let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+            let source = ObjectId(0);
+            state.engine.halted = Some((mechanic, source));
+            return Decision::Halted { mechanic, source };
+        }
+    }
     crate::linked_aura_operation_v1::advance(state)
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
+    if crate::high_society_hunter_custody_v45::validate(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Decision::Halted {
+            mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+            source: ObjectId(0),
+        };
+    }
+    if crate::faebloom_trick_v43::validate_state(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     // Refuse lost captured Raid owners before refresh, legend, SBA or automatic work.
     if crate::source_power_activation_v1::validate_state(state).is_err()
         || crate::raid_entry_v1::validate_state(state).is_err()
         || crate::gorehorn_damage_v1::validate_state(state).is_err()
         || crate::equipment_damage_source_v4::validate_state(state).is_err()
+        || crate::zul_ashur_v1::validate_state(state).is_err()
+        || effect::validate_inspiration_resolution(state).is_err()
         || effect::validate_vampire_gourmand_state(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -9177,6 +9491,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
     // before automatic step/cleanup work can mutate a restored malformed state.
     if crate::garruks_uprising_v1::validate_state(state).is_err()
         || crate::arahbo_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
     {
         state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
         return Decision::Halted {
@@ -9200,7 +9517,11 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             source,
         };
     }
-    if crate::librarian_activation_v1::validate_state(state).is_err() {
+    if crate::librarian_activation_v1::validate_state(state).is_err()
+        || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
+        || crate::krenko_v1::validate_state(state).is_err()
+        || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -9256,6 +9577,15 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             continue;
         }
 
+        match crate::twinflame_tyrant_v1::combat::decision(state) {
+            Ok(Some(decision)) => return decision,
+            Ok(None) => {}
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                continue;
+            }
+        }
         if crate::combat_damage_v1::has_pending_assignment(state) {
             match crate::combat_damage_v1::drain_or_decide(state) {
                 Ok(Some(decision)) => return decision,
@@ -10244,6 +10574,24 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let hunter_owner =
+        match crate::high_society_hunter_custody_v45::acquire(state, &item, false, false) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        };
+    let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, &item, false)
+    {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let squad_owner = match effect::acquire_squad_rallier_resolution_owner(state, &item, false) {
         Ok(owner) => owner,
         Err(_) => {
@@ -10305,7 +10653,11 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = crystal_owner.as_ref() {
+    let progress = if let Some(owner) = hunter_owner.as_ref() {
+        crate::high_society_hunter_custody_v45::resume_owned(state, owner)
+    } else if let Some(owner) = inspiration_owner.as_ref() {
+        effect::resume_owned_inspiration_resolution(state, owner)
+    } else if let Some(owner) = crystal_owner.as_ref() {
         effect::crystal_prevention_v1::resume_owned(state, owner)
     } else if let Some(owner) = squad_owner.as_ref() {
         effect::resume_owned_squad_rallier_resolution(state, owner)
@@ -10335,7 +10687,21 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             crate::source_power_activation_v1::finish(state, &item);
-            if finish_resolved_stack_item(state, completed.as_ref()).is_err() {
+            let finished = if let Some(owner) = inspiration_owner.as_ref() {
+                effect::finish_owned_inspiration_resolution(
+                    state,
+                    owner,
+                    completed.as_ref(),
+                    |state| {
+                        let departure =
+                            plan_spell_departure(state, completed.as_ref(), Zone::Graveyard)?;
+                        apply_spell_departure(state, departure)
+                    },
+                )
+            } else {
+                finish_resolved_stack_item(state, completed.as_ref())
+            };
+            if finished.is_err() {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
                 return None;
@@ -10438,6 +10804,7 @@ pub(crate) fn validate_pending_cast(
     pending: &PendingCast,
 ) -> Result<(), String> {
     resolution_cast_v1::validate_pending_child(state, pending)?;
+    mandatory_cast_cost_v1::validate_pending(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11498,6 +11865,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana.is_none())
+    {
+        let choices = mandatory_cast_cost_v1::branches(state, &pending);
+        if choices.len() == 1 {
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .mandatory_additional_cost
+                .as_mut()
+                .unwrap()
+                .pay_mana = Some(choices[0]);
+            return drain_pending_cast_or_decide(state);
+        }
+        if choices.is_empty() {
+            let method = finalized_cast_method(&pending, staged_method, def);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, method);
+            return None;
+        }
+        return Some(Decision::ChooseEffectOption {
+            player: pending.controller,
+            source: pending.spell,
+            option_count: 2,
+        });
+    }
     if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(&pending, def) {
         if (pending.sacrifice_chosen.len() as u8) < needed {
             let candidates = sacrificeable_controlled_permanents(
@@ -11514,6 +11910,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 return None;
             }
             if candidates.len() <= 1 {
+                if let Some(&object) = candidates.first() {
+                    mandatory_cast_cost_v1::bind_creature(state, &pending, object)
+                        .expect("validated mandatory sacrifice candidate");
+                }
                 state
                     .engine
                     .pending_cast
@@ -12123,7 +12523,9 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 source: pending.source,
             });
         }
-        if candidates.len() == 1 {
+        // V39 binds the granting Pole through its explicit named-cost input,
+        // including a singleton menu, before either tap or mana is collected.
+        if candidates.len() == 1 && !crate::fishing_pole_v39::named_cost(ability.cost) {
             let chosen = candidates[0];
             let object = state.objects.get(chosen);
             let binding = EffectObjectBinding {
@@ -12584,7 +12986,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
 
         let pending = state.engine.pending_triggers[0].clone();
-        if validate_pending_trigger(state, &pending).is_err() {
+        if let Err(_error) = validate_pending_trigger(state, &pending) {
+            #[cfg(test)]
+            eprintln!("Pending trigger validation rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -12614,6 +13018,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
             if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+                || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
             {
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
@@ -12650,6 +13055,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 if crate::stromkirk_dispatch_v1::unavailable(state, &pending).is_err()
                     || crate::ashroot_dispatch_v2::unavailable(state, &pending).is_err()
                     || crate::raid_entry_custody_v1::record_drop(state, &pending).is_err()
+                    || crate::fiendish_panda_v1::custody::unavailable(state, &pending).is_err()
                 {
                     state.engine.halted = Some((
                         UnsupportedMechanic::InvalidEffectContinuation,
@@ -12680,7 +13086,9 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
 
         let pending = state.engine.pending_triggers.remove(0);
-        if push_trigger_onto_stack(state, pending.clone()).is_err() {
+        if let Err(_error) = push_trigger_onto_stack(state, pending.clone()) {
+            #[cfg(test)]
+            eprintln!("Trigger placement rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
@@ -12699,9 +13107,12 @@ fn pending_trigger_modes(
 ) -> Option<Vec<(TargetSpec, EffectOp)>> {
     let source = state.objects.try_get(pending.source)?;
     trigger::unselected_trigger_modes(
-        pending
-            .source_contract
-            .map_or(source.card_def, |contract| contract.card_def),
+        match &pending.effect {
+            EffectOp::FaebloomTapFromCaptureV43 { source, .. } => source.card_def,
+            _ => pending
+                .source_contract
+                .map_or(source.card_def, |contract| contract.card_def),
+        },
         &pending.effect,
     )
 }
@@ -12771,9 +13182,12 @@ pub(crate) fn validate_pending_trigger(
         .try_get(pending.source)
         .ok_or("pending targeted trigger source is missing")?;
     let expected = trigger::target_spec_for_trigger(
-        pending
-            .source_contract
-            .map_or(source.card_def, |contract| contract.card_def),
+        match &pending.effect {
+            EffectOp::FaebloomTapFromCaptureV43 { source, .. } => source.card_def,
+            _ => pending
+                .source_contract
+                .map_or(source.card_def, |contract| contract.card_def),
+        },
         &pending.effect,
     )
     .ok_or("pending targeted trigger has no matching definition-owned ability")?;
@@ -12799,9 +13213,11 @@ pub(crate) fn validate_pending_trigger(
         ) || pending
             .source_contract
             .is_some_and(|source| crate::gorehorn_damage_v1::owns_definition(source.card_def))
+            || crate::faebloom_trick_v43::capture_of(&pending.effect).is_some()
             || matches!(
                 expected,
                 TargetSpec::UpToTwoCardsInSingleGraveyard
+                    | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::UpToOneOtherCreature
                     | TargetSpec::AnotherAttackingCreature
                     | TargetSpec::UpToOneOtherControlledPermanent
@@ -12851,6 +13267,7 @@ fn log_final_targeting_events(
     if item.targets.len() != item.v4.target_contracts.len() {
         return Err("final targeting vectors no longer have parallel contracts".to_string());
     }
+    let zul_graveyard_targeting = crate::zul_ashur_v1::final_graveyard_targeting(state, item)?;
 
     let mut seen = Vec::new();
     for contract in &item.v4.target_contracts {
@@ -12865,6 +13282,7 @@ fn log_final_targeting_events(
         };
         if zone != Zone::Battlefield
             && !(cfg!(feature = "standard-magezero-fixtures") && zone == Zone::Stack)
+            && !(zul_graveyard_targeting && zone == Zone::Graveyard)
         {
             continue;
         }
@@ -12879,6 +13297,8 @@ fn log_final_targeting_events(
             stack_item_id,
             item.controller,
         );
+        let targeted_event = state.engine.event_history.len() - 1;
+        crate::faebloom_trick_v43::record_target_input(state, stack_item_id, targeted_event)?;
     }
     // A copy is neither cast nor put on the stack by its controller's
     // announcement, so retargeting one never commits a crime.
@@ -12896,6 +13316,9 @@ fn pending_trigger_spell_source_contract(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<StackSourceContractV4>, String> {
+    if let Some(index) = crate::faebloom_trick_v43::capture_of(&pending.effect) {
+        return crate::faebloom_trick_v43::source_at(state, index).map(Some);
+    }
     if pending.is_madness_offer || pending.source_contract.is_some() {
         return Ok(None);
     }
@@ -13157,13 +13580,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         crate::authority_of_the_consuls_v1::publish(state, &published)?;
     }
     let finalized = state.stack.last().expect("trigger just published").clone();
+    crate::faebloom_trick_v43::publish_trigger(state, &finalized)?;
     crate::garruks_uprising_v1::publish(state, &finalized)?;
     crate::arahbo_v1::publish(state, &finalized)?;
+    crate::fishing_pole_v39::lifecycle::publish_trigger(state, &finalized)?;
     crate::ashroot_dispatch_v2::publish(state, &finalized)?;
     crate::wildwood_capture_v1::publish(state, &finalized);
     effect::frenzied_goblin_resolution_v1::publish(state)?;
     let gourmand_item = state.stack.last().expect("trigger just published").clone();
     crate::vampire_gourmand_dispatch_v2::publish(state, &gourmand_item)?;
+    crate::high_society_hunter_custody_v45::publish(state, &finalized)?;
+    crate::fiendish_panda_v1::custody::publish(state, &finalized)?;
+    crate::bloodthirsty_conqueror_v49::custody::publish(state, &finalized)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -13381,7 +13809,17 @@ fn triggered_stack_item_expected_target_spec(
     }
 
     crate::garruks_uprising_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::bloodthirsty_conqueror_v49::validate_source(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
+    crate::fishing_pole_v39::lifecycle::validate_source(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
     crate::authority_of_the_consuls_v1::validate_source(
         state,
         inline_effect,
@@ -13390,6 +13828,20 @@ fn triggered_stack_item_expected_target_spec(
     crate::cerberus_capture_v1::validate_source(state, inline_effect, ability_source_contract)?;
 
     crate::vampire_gourmand_v1::validate_source(state, source_card_def, ability_source_contract)?;
+    crate::high_society_hunter_custody_v45::normalize_root(
+        state,
+        inline_effect,
+        ability_source_contract,
+    )?;
+    if crate::high_society_hunter_v1::owns_definition(source_card_def)
+        && item.v4.granted_by.is_none()
+        && *inline_effect == crate::high_society_hunter_v1::attack_program()
+    {
+        crate::high_society_hunter_v1::validate_source(
+            state,
+            ability_source_contract.ok_or("Hunter trigger lost its original source")?,
+        )?;
+    }
     #[cfg(feature = "standard-magezero-fixtures")]
     if matches!(
         inline_effect,
@@ -13657,6 +14109,9 @@ pub(crate) fn validated_stack_item_target_spec(
     validate_spell_stack_source(state, item)?;
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
+    crate::ajani_full_v42::lifecycle::validate_item(state, item)?;
+    crate::krenko_v1::validate_item(state, item)?;
+    crate::fishing_pole_v39::lifecycle::validate_item(state, item)?;
     validated_stack_item_target_metadata(item, state)
 }
 
@@ -13672,7 +14127,8 @@ fn validated_stack_item_target_metadata(
     if state.engine.pending_cast.as_ref().is_some_and(|pending| {
         item.kind == StackItemKind::Spell
             && item.v4.source_contract == Some(pending.source_contract)
-    }) {
+    }) || mandatory_cast_cost_v1::linked_placeholder(state, item)?
+    {
         if item.kind != StackItemKind::Spell
             || item.inline_effect.is_some()
             || item.madness_offer
@@ -13875,12 +14331,25 @@ fn validated_stack_item_target_metadata(
             crate::self_reflection_v1::normalize_historical_target(state, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
+            || item
+                .inline_effect
+                .as_ref()
+                .and_then(crate::faebloom_trick_v43::capture_of)
+                .is_some()
         {
             effect::temporary_control_v1::normalize_historical_target(state, contract)
         } else {
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )?
         {
             return Err("stack target contract is structurally malformed".to_string());
         }
@@ -13942,10 +14411,22 @@ fn validated_stack_item_target_metadata(
     Ok(Some(spec))
 }
 
-fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool, String> {
+pub(crate) fn stack_targets_still_legal(
+    item: &StackItem,
+    state: &GameState,
+) -> Result<bool, String> {
     let Some(spec) = validated_stack_item_target_spec(item, state)? else {
         return Ok(true);
     };
+    if item.kind == StackItemKind::ActivatedAbility
+        && item.v4.granted_by.is_none()
+        && item
+            .v4
+            .ability_source_contract
+            .is_some_and(|s| crate::zul_ashur_v1::owns_definition(s.card_def))
+    {
+        return Ok(crate::zul_ashur_v1::target_legal(state, item));
+    }
     if spec == TargetSpec::CreatureThenUpToOneAttachedEquipment {
         return Ok(crate::fiery_annihilation_v1::target_legalities(
             state,
@@ -13984,6 +14465,11 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
             crate::self_reflection_v1::target_matches_live(state, target, contract)
         } else if effect::temporary_control_v1::owns_spell(state, item)
             || crate::stromkirk_bloodthief_v1::owns_item(item)
+            || item
+                .inline_effect
+                .as_ref()
+                .and_then(crate::faebloom_trick_v43::capture_of)
+                .is_some()
         {
             target_contract_matches_live(
                 state,
@@ -13993,96 +14479,99 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
         } else {
             target_contract_matches_live(state, target, contract)
         };
-        let legal_now = match item.kind {
-            StackItemKind::ActivatedAbility => {
-                let ability_index = item
-                    .v4
-                    .activated_ability_index
-                    .ok_or("activated stack item lost its definition-owned ability index")?;
-                let source_contract = validated_ability_source_contract(state, item)?;
-                let ability = resolved_stack_activated_ability(
-                    state,
-                    source_contract,
-                    ability_index,
-                    item.v4.granted_by,
-                    item.v4.cauldron_grant,
-                )?;
-                let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
-                    live.zone_change_count != source_contract.zone_change_count
-                        || live.zone != source_contract.zone
-                });
-                if crate::fixed_source_damage_v3::tracked(state, item) {
-                    crate::fixed_source_damage_v3::legal_targets(
+        let legal_now =
+            match item.kind {
+                StackItemKind::ActivatedAbility => {
+                    let ability_index = item
+                        .v4
+                        .activated_ability_index
+                        .ok_or("activated stack item lost its definition-owned ability index")?;
+                    let source_contract = validated_ability_source_contract(state, item)?;
+                    let ability = resolved_stack_activated_ability(
                         state,
-                        crate::fixed_source_damage_v3::damage_source(
+                        source_contract,
+                        ability_index,
+                        item.v4.granted_by,
+                        item.v4.cauldron_grant,
+                    )?;
+                    let source_departed = state.objects.try_get(item.source).is_none_or(|live| {
+                        live.zone_change_count != source_contract.zone_change_count
+                            || live.zone != source_contract.zone
+                    });
+                    if crate::fixed_source_damage_v3::tracked(state, item) {
+                        crate::fixed_source_damage_v3::legal_targets(
                             state,
-                            item.source,
-                            item.v4.stack_item_id,
-                        )?,
-                    )
-                    .contains(&target)
-                } else if matches!(
-                    item.inline_effect.as_ref(),
-                    Some(EffectOp::StandardV1(
-                        crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
-                    ))
-                ) {
-                    crate::source_power_activation_v1::legal_targets(
-                        state,
-                        crate::source_power_activation_v1::damage_source(
-                            state,
-                            item.source,
-                            item.v4.stack_item_id,
-                        )?,
-                    )
-                    .contains(&target)
-                } else {
-                    activation_legal_targets_with_source_lki(
-                        item.source,
-                        &ability,
-                        &chosen,
-                        source_departed,
-                        state,
-                    )
-                    .contains(&target)
-                }
-            }
-            _ => legal_targets_for_controller_from_source(
-                spec,
-                &chosen,
-                item.controller,
-                match item.kind {
-                    StackItemKind::Spell => Some(TargetingSource {
-                        object: item.source,
-                        card_def: state.objects.get(item.source).card_def,
-                        zone: state.objects.get(item.source).zone,
-                        zone_change_count: state.objects.get(item.source).zone_change_count,
-                        other_than: None,
-                        original_source_incarnation_only: false,
-                    }),
-                    StackItemKind::TriggeredAbility => {
-                        let source_contract = item
-                            .v4
-                            .ability_source_contract
-                            .ok_or("triggered stack item lost its source incarnation")?;
-                        let effect = item
-                            .inline_effect
-                            .as_ref()
-                            .ok_or("triggered stack item lost its effect program")?;
-                        triggered_ability_targeting_source(
-                            item.source,
-                            Some(source_contract),
-                            effect,
+                            crate::fixed_source_damage_v3::damage_source(
+                                state,
+                                item.source,
+                                item.v4.stack_item_id,
+                            )?,
                         )
+                        .contains(&target)
+                    } else if matches!(
+                        item.inline_effect.as_ref(),
+                        Some(EffectOp::StandardV1(
+                            crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+                        ))
+                    ) {
+                        crate::source_power_activation_v1::legal_targets(
+                            state,
+                            crate::source_power_activation_v1::damage_source(
+                                state,
+                                item.source,
+                                item.v4.stack_item_id,
+                            )?,
+                        )
+                        .contains(&target)
+                    } else {
+                        activation_legal_targets_with_source_lki(
+                            item.source,
+                            &ability,
+                            &chosen,
+                            source_departed,
+                            state,
+                        )
+                        .contains(&target)
                     }
-                    StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
-                        unreachable!("handled or untargeted")
-                    }
-                },
-                state,
-            )
-            .contains(&target),
-        };
+                }
+                _ => legal_targets_for_controller_from_source(
+                    spec,
+                    &chosen,
+                    item.controller,
+                    match item.kind {
+                        StackItemKind::Spell => Some(TargetingSource {
+                            object: item.source,
+                            card_def: state.objects.get(item.source).card_def,
+                            zone: state.objects.get(item.source).zone,
+                            zone_change_count: state.objects.get(item.source).zone_change_count,
+                            other_than: None,
+                            original_source_incarnation_only: false,
+                        }),
+                        StackItemKind::TriggeredAbility => {
+                            let effect = item
+                                .inline_effect
+                                .as_ref()
+                                .ok_or("triggered stack item lost its effect program")?;
+                            let source_contract =
+                                if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+                                    // This reflexive retains its genuine spell source contract.
+                                    // Full metadata and capture authority were authenticated above.
+                                    None
+                                } else {
+                                    Some(item.v4.ability_source_contract.ok_or(
+                                        "triggered stack item lost its source incarnation",
+                                    )?)
+                                };
+                            triggered_ability_targeting_source(item.source, source_contract, effect)
+                        }
+                        StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
+                            unreachable!("handled or untargeted")
+                        }
+                    },
+                    state,
+                )
+                .contains(&target),
+            };
         any_legal |= same_incarnation && legal_now;
         chosen.push(target);
     }
@@ -14132,6 +14621,12 @@ fn plan_spell_departure(
 }
 
 fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Result<(), String> {
+    let faebloom_source = match &departure {
+        SpellDeparture::Move { source, .. } | SpellDeparture::Cease { source } => *source,
+    };
+    let faebloom_departure = crate::faebloom_trick_v43::departure_candidate(state, faebloom_source);
+    let faebloom_start = state.engine.event_history.len();
+    let mut faebloom_ceased = false;
     match departure {
         SpellDeparture::Move { source, to_zone } => {
             event::propose_and_commit(state, ProposedEvent::zone_change(source, to_zone));
@@ -14148,12 +14643,21 @@ fn apply_spell_departure(state: &mut GameState, departure: SpellDeparture) -> Re
                         .v4
                         .source_contract
                         .is_some_and(|contract| contract.zone_change_count == live_generation)
-            }) && !event::cease_to_exist(state, source)
-            {
+            }) && {
+                let ceased = event::cease_to_exist(state, source);
+                faebloom_ceased = ceased;
+                !ceased
+            } {
                 return Err("the virtual spell copy could not cease to exist".to_string());
             }
         }
     }
+    crate::faebloom_trick_v43::record_departure(
+        state,
+        faebloom_departure,
+        faebloom_start,
+        faebloom_ceased,
+    )?;
     Ok(())
 }
 
@@ -14167,6 +14671,9 @@ pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
+    crate::ajani_full_v42::lifecycle::validate_state(state)?;
+    crate::krenko_v1::validate_state(state)?;
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     if stack_item_id == StackItemId::default() {
         return Err("cannot counter an unstamped stack incarnation".to_string());
     }
@@ -14182,6 +14689,11 @@ pub(crate) fn counter_stack_item_by_id(
         _ => return Err("duplicate private stack-incarnation ids".to_string()),
     };
     let item = state.stack[position].clone();
+    let hunter_counter_owner =
+        crate::high_society_hunter_custody_v45::acquire(state, &item, false, true)?;
+    let panda_counter_owner = crate::fiendish_panda_v1::custody::acquire(state, &item)?;
+    let conqueror_counter_owner =
+        crate::bloodthirsty_conqueror_v49::custody::acquire(state, &item)?;
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     let gourmand_counter_owner =
         crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
@@ -14206,10 +14718,15 @@ pub(crate) fn counter_stack_item_by_id(
     let banishing_owner = crate::banishing_light_v1::acquire(state, &item)?;
     let librarian_counter_owner =
         crate::librarian_activation_v1::acquire_counter_owner(state, &item)?;
+    let ajani_counter_owner = crate::ajani_full_v42::lifecycle::acquire(state, &item)?;
+    let krenko_counter_owner = crate::krenko_v1::acquire(state, &item)?;
+    let fishing_counter_owner = crate::fishing_pole_v39::lifecycle::acquire(state, &item)?;
     let ashroot_owner = crate::ashroot_dispatch_v2::acquire(state, &item)?;
     let gorehorn_owner = crate::gorehorn_damage_v1::acquire_owner(state, &item)?;
     let equipment_owner = crate::equipment_damage_source_v4::counter_owner(state, &item)?;
+    let zul_owner = crate::zul_ashur_v1::acquire(state, &item)?;
     let raid_counter_owner = crate::raid_entry_custody_v1::counter_owner(state, &item)?;
+    let faebloom_counter_owner = crate::faebloom_trick_v43::acquire(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     if temporal_owner.is_some() && item.is_copy {
         if let Some(plan) = departure.take() {
@@ -14218,6 +14735,12 @@ pub(crate) fn counter_stack_item_by_id(
     } else {
         state.stack.remove(position);
     }
+    crate::ajani_full_v42::lifecycle::record_removed(state, ajani_counter_owner.as_ref(), true)?;
+    crate::krenko_v1::record_input(
+        state,
+        krenko_counter_owner.as_ref(),
+        crate::krenko_v1::RemovalV1::Countered,
+    )?;
     if let Some(owner) = arahbo_counter_owner {
         crate::arahbo_v1::record_counter_input(state, &owner)?;
         crate::arahbo_v1::counter_removed(state, owner)?;
@@ -14227,6 +14750,13 @@ pub(crate) fn counter_stack_item_by_id(
     }
     crate::ashroot_dispatch_v2::counter(state, ashroot_owner.as_ref())?;
 
+    if let Some(owner) = faebloom_counter_owner {
+        crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::Countered,
+        )?;
+    }
     crate::extra_turn_v1::record_countered(state, temporal_owner);
     crate::banishing_light_v1::record_removed(
         state,
@@ -14240,9 +14770,28 @@ pub(crate) fn counter_stack_item_by_id(
         gourmand_counter_owner.as_ref(),
         &item,
     )?;
+    crate::high_society_hunter_custody_v45::counter_removed(
+        state,
+        hunter_counter_owner.as_ref(),
+        &item,
+    )?;
 
+    crate::fiendish_panda_v1::custody::counter_removed(state, panda_counter_owner.as_ref(), &item)?;
+    crate::bloodthirsty_conqueror_v49::custody::counter_removed(
+        state,
+        conqueror_counter_owner.as_ref(),
+        &item,
+    )?;
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
     crate::equipment_damage_source_v4::record_countered(state, equipment_owner)?;
+    if let Some(owner) = zul_owner {
+        crate::zul_ashur_v1::record_removal_input(
+            state,
+            &owner,
+            crate::zul_ashur_v1::OutcomeV1::Countered,
+        )?;
+        crate::zul_ashur_v1::remove_owned(state, owner, crate::zul_ashur_v1::OutcomeV1::Countered)?;
+    }
     crate::gorehorn_damage_v1::record_removed(
         state,
         gorehorn_owner,
@@ -14263,6 +14812,14 @@ pub(crate) fn counter_stack_item_by_id(
     crate::authority_of_the_consuls_v1::record_countered(state, &item);
     crate::cerberus_capture_v1::record_countered(state, &item);
     crate::librarian_activation_v1::record_countered(state, &item, librarian_counter_owner)?;
+    if let Some(owner) = ajani_counter_owner {
+        crate::ajani_full_v42::lifecycle::complete(state, owner, None)?;
+    }
+    crate::krenko_v1::countered(state, krenko_counter_owner)?;
+    crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_counter_owner.as_ref(), true)?;
+    if let Some(owner) = fishing_counter_owner {
+        crate::fishing_pole_v39::lifecycle::complete(state, owner, None)?;
+    }
     crate::librarian_activation_v1::finish(state, &item);
     crate::authority_of_the_consuls_v1::finish(state, &item);
     crate::cerberus_capture_v1::finish(state, &item);
@@ -14375,6 +14932,18 @@ pub(crate) fn apply_live_stack_spell_departure(
     validate_spell_stack_source(state, &item)?;
     let departure = plan_spell_departure(state, &item, requested_zone)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    if let Some(owner) = crate::faebloom_trick_v43::acquire(state, &item)? {
+        state
+            .stack
+            .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id);
+        crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::OtherDeparture {
+                zone: requested_zone,
+            },
+        )?;
+    }
     apply_spell_departure(state, departure)?;
     crate::extra_turn_v1::record_other_departure(state, temporal_owner);
     Ok(true)
@@ -14390,15 +14959,21 @@ fn execute_resolving_program(
     extra_owners: (
         Option<&effect::VampireGourmandResolutionOwnerV1>,
         Option<&effect::crystal_prevention_v1::OwnerV1>,
+        Option<&effect::InspirationResolutionOwnerV1>,
+        Option<&crate::high_society_hunter_custody_v45::OwnerV45>,
     ),
 ) -> ResolutionProgress {
-    let (gourmand_owner, crystal_owner) = extra_owners;
+    let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
         return ResolutionProgress::Complete;
     }
 
-    let progress = if let Some(owner) = crystal_owner {
+    let progress = if let Some(owner) = hunter_owner {
+        crate::high_society_hunter_custody_v45::begin_owned(state, ctx, owner)
+    } else if let Some(owner) = inspiration_owner {
+        effect::begin_owned_inspiration_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = crystal_owner {
         effect::crystal_prevention_v1::begin_owned(state, program, ctx, owner)
     } else if let Some(owner) = squad_owner {
         effect::begin_owned_squad_rallier_resolution(state, program, ctx, owner)
@@ -14411,7 +14986,11 @@ fn execute_resolving_program(
     };
     match progress {
         Ok(effect::ResumableProgress::Complete(completed))
-            if if let Some(owner) = crystal_owner {
+            if if let Some(owner) = hunter_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = inspiration_owner {
+                owner.completion_matches(&completed)
+            } else if let Some(owner) = crystal_owner {
                 owner.completion_matches(&completed)
             } else if let Some(owner) = squad_owner {
                 owner.completion_matches(&completed)
@@ -14433,6 +15012,8 @@ fn execute_resolving_program(
                 || frenzied_owner.is_some()
                 || gourmand_owner.is_some()
                 || crystal_owner.is_some()
+                || inspiration_owner.is_some()
+                || hunter_owner.is_some()
             {
                 state
                     .engine
@@ -14498,6 +15079,49 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .last()
         .expect("resolve_top_of_stack called with an empty stack");
     let resolving_source = item.source;
+    let hunter_owner =
+        match crate::high_society_hunter_custody_v45::acquire(state, item, true, false) {
+            Ok(owner) => owner,
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Hunter resolution acquisition rejected: {_error}");
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
+    let conqueror_owner = match crate::bloodthirsty_conqueror_v49::custody::acquire(state, item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let inspiration_owner = match effect::acquire_inspiration_resolution_owner(state, item, true) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
         Err(_) => {
@@ -14662,6 +15286,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let zul_owner = match crate::zul_ashur_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let banishing_source_present = current
         .v4
         .ability_source_contract
@@ -14687,6 +15321,53 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let ajani_owner = match crate::ajani_full_v42::lifecycle::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let krenko_owner = match crate::krenko_v1::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    if crate::fishing_pole_v39::lifecycle::preflight_resolution(state, &current).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+    let fishing_owner = match crate::fishing_pole_v39::lifecycle::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
+    let faebloom_owner = match crate::faebloom_trick_v43::acquire(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -14702,6 +15383,38 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         .stack
         .pop()
         .expect("resolve_top_of_stack called with an empty stack");
+    if crate::ajani_full_v42::lifecycle::record_removed(state, ajani_owner.as_ref(), false).is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+    if crate::krenko_v1::record_input(
+        state,
+        krenko_owner.as_ref(),
+        crate::krenko_v1::RemovalV1::Resolving,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+
+    if crate::fishing_pole_v39::lifecycle::removed_input(state, fishing_owner.as_ref(), false)
+        .is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            resolving_source,
+        ));
+        return ResolutionProgress::Suspended;
+    }
+
     crate::banishing_light_v1::record_removed(
         state,
         banishing_owner,
@@ -14742,6 +15455,85 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = conqueror_owner.as_ref() {
+        if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
+            state,
+            owner,
+            &item,
+            &ctx,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = panda_owner.as_ref() {
+        if crate::fiendish_panda_v1::custody::resolve_owned(
+            state,
+            owner,
+            &item,
+            &ctx,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = faebloom_owner {
+        if crate::faebloom_trick_v43::resolve(
+            state,
+            owner,
+            crate::faebloom_trick_v43::RemovalV43::Resolving {
+                target_legal: targets_legal,
+            },
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        // The owned family resolver applies creation or the reflexive tap.
+        // A spell still performs its final ordinary departure afterward.
+        if finish_resolved_stack_item(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = fishing_owner {
+        if crate::fishing_pole_v39::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = ajani_owner {
+        if crate::ajani_full_v42::lifecycle::complete(state, owner, Some(&ctx)).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = krenko_owner {
+        if crate::krenko_v1::resolve(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = arahbo_owner {
         if crate::arahbo_v1::resolve_removed(state, owner, &ctx).is_err() {
             state.engine.halted =
@@ -14752,6 +15544,23 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if let Some(owner) = garruk_owner {
         if crate::garruks_uprising_v1::resolve_removed(state, owner, &ctx).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = zul_owner {
+        let outcome = if targets_legal {
+            crate::zul_ashur_v1::OutcomeV1::Resolved
+        } else {
+            crate::zul_ashur_v1::OutcomeV1::NoLegalTarget
+        };
+        if crate::zul_ashur_v1::record_removal_input(state, &owner, outcome)
+            .and_then(|()| crate::zul_ashur_v1::remove_owned(state, owner, outcome))
+            .is_err()
+        {
+            state.stack.push(item.clone());
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -14888,7 +15697,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                     &effect,
                     squad_owner.as_ref(),
                     frenzied_owner.as_ref(),
-                    (gourmand_owner.as_ref(), crystal_owner.as_ref()),
+                    (
+                        gourmand_owner.as_ref(),
+                        crystal_owner.as_ref(),
+                        inspiration_owner.as_ref(),
+                        hunter_owner.as_ref(),
+                    ),
                 )
             };
         if progress == ResolutionProgress::Complete {
@@ -14974,10 +15788,28 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             &program,
             squad_owner.as_ref(),
             frenzied_owner.as_ref(),
-            (gourmand_owner.as_ref(), crystal_owner.as_ref()),
+            (
+                gourmand_owner.as_ref(),
+                crystal_owner.as_ref(),
+                inspiration_owner.as_ref(),
+                hunter_owner.as_ref(),
+            ),
         ) == ResolutionProgress::Suspended
         {
             return ResolutionProgress::Suspended;
+        }
+        if let Some(owner) = inspiration_owner.as_ref() {
+            if effect::finish_owned_inspiration_resolution(state, owner, &item, |state| {
+                let departure = plan_spell_departure(state, &item, Zone::Graveyard)?;
+                apply_spell_departure(state, departure)
+            })
+            .is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            }
+            return ResolutionProgress::Complete;
         }
     }
     // Convoke's creature count carries over onto the permanent.
@@ -15008,8 +15840,12 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     {
         state.objects.get_mut(item.source).v4.warped_v1 = true;
     }
-    // Impending: it enters with its time counters.
-    if item.v4.cast_method == Some(CastMethodV4::Alternative)
+    // The V48 entry owner has already installed these before entry observers.
+    // Keep the absent-component path unchanged.
+    if !initialized_entry
+        .as_ref()
+        .is_some_and(|owner| owner.initializes_time_counters())
+        && item.v4.cast_method == Some(CastMethodV4::Alternative)
         && state.objects.get(item.source).zone == Zone::Battlefield
     {
         if let Some(card_def::AltCostCondition::ImpendingFromHand { time_counters }) =
@@ -15141,7 +15977,8 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
     if state.step == Step::Cleanup
-        && (crate::ashroot_dispatch_v2::has_active(state)
+        && (crate::zul_ashur_v1::has_active(state)
+            || crate::ashroot_dispatch_v2::has_active(state)
             || state.engine.active_replacements.iter().any(|r| {
                 matches!(
                     r.kind,
@@ -15291,6 +16128,8 @@ pub(crate) fn attempt_untap(state: &mut GameState, object: ObjectId) -> bool {
         return false;
     }
     live.tapped = false;
+    let original = AbilitySourceContractV4::capture(state, object);
+    crate::fishing_pole_v39::lifecycle::record_untap(state, original);
     crate::standard_cards_v1::release_untapped_locks(state);
     true
 }
@@ -15367,6 +16206,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             crate::standard_keywords_v1::advance_day_night(state, previous_active);
             crate::life_gain_turn_v1::reset_at_untap(state);
             crate::life_loss_turn_v1::reset_at_untap(state);
+            crate::ajani_full_v42::lifecycle::begin_turn(state);
             crate::standard_creatures_v1::begin_turn(state);
             state.players[0].spells_cast_this_turn = 0;
             state.players[1].spells_cast_this_turn = 0;
@@ -15485,7 +16325,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
                     continue;
                 }
-                event::add_lore_counters(state, saga, 1).expect("supported Saga counters fit");
+                event::add_lore_counters_rule(state, saga, 1).expect("supported Saga counters fit");
             }
             collect_and_queue_triggers(state);
         }
@@ -15589,6 +16429,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                 return;
             }
+            if crate::ajani_full_v42::lifecycle::cleanup(state).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             state.engine.until_end_of_turn.clear();
             if let Err(source) = event::expire_exile_if_dies_replacements(state) {
                 state.engine.halted =
@@ -15626,6 +16471,13 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     PlayPermissionExpiry::LaterTurn { .. }
                     | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
                 });
+            if crate::zul_ashur_v1::note_cleanup(state).is_err()
+                || crate::zul_ashur_v1::expire(state).is_err()
+            {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                return;
+            }
             let hand_size = state.players[p.index()].hand.len();
             if hand_size > 7 {
                 state.engine.pending_discard = Some(PendingDiscard {
@@ -16011,6 +16863,11 @@ pub fn damage_is_prevented_by_protection(
         object.zone == Zone::Battlefield
             && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
                 && object_is_monocolored(state, source))
+                || crate::controlled_creature_grants_v1::protects_from_colors(
+                    state,
+                    target,
+                    object_color_mask(state, source),
+                )
                 || crate::standard_legends_v1::katilda_protected_from(state, target, source))
     })
 }
@@ -16158,6 +17015,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         power += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     power += controlled_creature_boost_v1(state, id).0;
+    power += crate::heraldic_banner_v1::controlled_boost(state, id).0;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -16222,6 +17080,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         toughness += crate::standard_legends_v1::jodah_bonus(state, id);
     }
     toughness += controlled_creature_boost_v1(state, id).1;
+    toughness += crate::heraldic_banner_v1::controlled_boost(state, id).1;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -16357,6 +17216,9 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                     .has(kw)
         })
     {
+        return true;
+    }
+    if crate::controlled_creature_grants_v1::grants_keyword(state, id, kw) {
         return true;
     }
     if crate::garruks_uprising_v1::grants_keyword(state, id, kw) {
@@ -16690,6 +17552,9 @@ fn equipped_granted_activated_ability_with_equipment(
     host: ObjectId,
 ) -> Option<(ObjectId, card_def::ActivatedAbilityDef)> {
     attached_equipment_profiles(state, host).find_map(|(equipment_id, equipment)| {
+        if crate::fishing_pole_v39::selected_definition(state.objects.get(equipment_id).card_def) {
+            return None;
+        }
         equipment
             .granted_activated_ability
             .map(|granted| (equipment_id, synthesized_granted_activated_ability(granted)))
@@ -16735,6 +17600,13 @@ pub(crate) fn resolved_activated_ability(
     let def = card_def::CARD_DEFS.get(card_def_idx as usize)?;
     if let Some(ability) = def.activated_abilities.get(ability_index as usize) {
         return Some(*ability);
+    }
+    let pole_index = def.activated_abilities.len()
+        + usize::from(equipped_granted_activated_ability(state, source).is_some());
+    if usize::from(ability_index) == pole_index {
+        if let Some(ability) = crate::fishing_pole_v39::granted_ability(state, source) {
+            return Some(ability);
+        }
     }
     if ability_index as usize != def.activated_abilities.len() {
         return crate::standard_cards_v1::cauldron_granted_abilities(state, source)
@@ -16800,7 +17672,9 @@ fn resolved_stack_activated_ability(
         }
         return Ok(*ability);
     }
-    if ability_index as usize > def.activated_abilities.len() {
+    let fishing_grant = granted_by
+        .is_some_and(|grant| crate::fishing_pole_v39::selected_definition(grant.card_def));
+    if ability_index as usize > def.activated_abilities.len() && !fishing_grant {
         return Err("Cauldron stack item lost frozen ability provenance".into());
     }
     let equipment = granted_by.ok_or("granted activated ability lost its equipment provenance")?;
@@ -16928,7 +17802,9 @@ fn combat_has_first_or_double_strike(state: &GameState) -> bool {
 /// needs to flip a keyword bit, not restructure this function.
 fn deal_combat_damage(state: &mut GameState) {
     if combat_has_first_or_double_strike(state) {
-        combat_damage_wave(state, true);
+        if combat_damage_wave(state, true) {
+            return;
+        }
         trigger::sba_fixed_point(state);
         combat_damage_wave(state, false);
     } else {
@@ -16957,7 +17833,7 @@ fn is_still_in_combat(state: &GameState, id: ObjectId) -> bool {
     state.objects.get(id).zone == Zone::Battlefield
 }
 
-fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
+fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) -> bool {
     let attackers = state.engine.combat.attackers.clone();
     let blocked_by = state.engine.combat.blocked_by.clone();
     let mut events = Vec::new();
@@ -16998,12 +17874,29 @@ fn combat_damage_wave(state: &mut GameState, first_strike_wave: bool) {
         }
     }
 
-    commit_combat_damage_events(state, events);
+    commit_combat_damage_events_inner(
+        state,
+        events,
+        first_strike_wave && state.engine.combat.foundations_v1.is_none(),
+    )
 }
 
+pub(crate) fn resume_legacy_combat_normal_v38(state: &mut GameState) {
+    trigger::sba_fixed_point(state);
+    if state.engine.halted.is_none() {
+        combat_damage_wave(state, false);
+    }
+}
 pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<ProposedEvent>) {
+    commit_combat_damage_events_inner(state, events, false);
+}
+fn commit_combat_damage_events_inner(
+    state: &mut GameState,
+    events: Vec<ProposedEvent>,
+    legacy_normal_after: bool,
+) -> bool {
     let event_start = state.engine.event_log.len();
-    let events = events
+    let events: Vec<ProposedEvent> = events
         .into_iter()
         .map(|mut event| {
             if let ProposedEvent::Damage(damage) = &mut event {
@@ -17012,7 +17905,20 @@ pub(crate) fn commit_combat_damage_events(state: &mut GameState, events: Vec<Pro
             event
         })
         .collect();
+    match crate::twinflame_tyrant_v1::combat::begin(state, &events, legacy_normal_after) {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            return true;
+        }
+    }
     event::propose_and_commit_batch(state, events);
+    finish_combat_damage_events_v38(state, event_start);
+    false
+}
+pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start: usize) {
     let combat_player_damage = state.engine.event_log[event_start..]
         .iter()
         .filter_map(|event| match *event {
@@ -17294,6 +18200,7 @@ enum PendingCastActionStage {
     Discard,
     AwaitEngineAdvance,
     ChooseConvoke,
+    ChooseMandatoryAdditionalCost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17349,6 +18256,12 @@ fn pending_cast_action_stage(
     }
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);
+    }
+    if pending
+        .mandatory_additional_cost
+        .is_some_and(|choice| choice.pay_mana.is_none())
+    {
+        return Ok(PendingCastActionStage::ChooseMandatoryAdditionalCost);
     }
     if pending.sacrifice_chosen.len() < usize::from(sacrifice_lands_needed(pending, def)) {
         return Ok(PendingCastActionStage::ChooseCostTarget);
@@ -17436,7 +18349,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             PendingCastActionStage::ChooseBargainPermanent,
             Action::ChooseCostTarget(_)
         ) | (
-            PendingCastActionStage::ChooseAdditionalCostZone,
+            PendingCastActionStage::ChooseAdditionalCostZone
+                | PendingCastActionStage::ChooseMandatoryAdditionalCost,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseXValue,
@@ -17533,6 +18447,29 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::bloodthirsty_conqueror_v49::validate(state)?;
+    crate::doubling_season_v48::validate_token_journals(state)?;
+    crate::fiendish_panda_v1::validate_state(state)?;
+    mandatory_cast_cost_v1::validate_state(state)?;
+    crate::high_society_hunter_custody_v45::validate(state)?;
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
+    crate::ajani_full_v42::lifecycle::validate_state(state)?;
+    crate::krenko_v1::validate_state(state)?;
+    crate::fishing_pole_v39::lifecycle::validate_state(state)?;
+    crate::twinflame_tyrant_v1::combat::validate(state)?;
+    if crate::twinflame_tyrant_v1::combat::has_pending(state) {
+        crate::heraldic_banner_v1::validate_state(state)?;
+        event::validate_exile_if_dies_replacements(state).map_err(|source| {
+            format!("invalid exile-if-dies replacement authority for {source:?}")
+        })?;
+        effect::validate_pending_effect_choice(state)?;
+        return match action {
+            Action::ChooseEffectOption(index) => {
+                crate::twinflame_tyrant_v1::combat::answer(state, index)
+            }
+            _ => Err("only the actual combat replacement/allocation menu may be answered".into()),
+        };
+    }
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     crate::linked_aura_operation_v1::step(state, action)
@@ -17542,6 +18479,8 @@ pub(crate) fn step_without_linked_aura_v1(
     state: &mut GameState,
     action: Action,
 ) -> Result<(), String> {
+    crate::high_society_hunter_custody_v45::validate(state)?;
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
     event::validate_exile_if_dies_replacements(state)
         .map_err(|source| format!("invalid exile-if-dies replacement authority for {source:?}"))?;
     // A restored continuation must be valid before any action can mutate
@@ -18436,6 +19375,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                         "{id} is not a legal permanent-sacrifice cost candidate"
                     ));
                 }
+                mandatory_cast_cost_v1::bind_creature(state, &pending, id)?;
                 state
                     .engine
                     .pending_cast
@@ -18953,6 +19893,9 @@ pub(crate) fn copy_spell_for(
     copy.v4.optional_additional_cost_paid = None;
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
+    }
     Some((copy_source, copy_stack_item))
 }
 
@@ -19036,6 +19979,9 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
     );
     state.stack.push(copy);
     crate::extra_turn_v1::record_publication(state, copy_stack_item);
+    if crate::faebloom_trick_v43::publish_spell(state, copy_stack_item).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, copy_source));
+    }
     (copy_source, copy_stack_item)
 }
 
@@ -19659,6 +20605,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             let declaration = state.engine.event_history.len() - 1;
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
+            crate::high_society_hunter_v1::capture_attack(state, declaration);
         }
     }
     if !state.engine.combat.attackers.is_empty() {
@@ -19935,6 +20882,9 @@ fn apply_pending_cast_effect_option(
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
+        PendingCastActionStage::ChooseMandatoryAdditionalCost => {
+            mandatory_cast_cost_v1::answer(state, &pending, option_index)
+        }
         PendingCastActionStage::ChooseAdditionalCostZone => {
             let zone = match option_index {
                 0 => ChosenCreatureCostZoneV1::Battlefield,
@@ -19998,7 +20948,15 @@ fn play_land(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_child(state, id, player, true, owned_resolution_parent)?;
     let ctx = ExecCtx::no_targets(id, player);
-    if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
+    if crate::doubling_season_v48::requires_successor(state) {
+        // Playing a land remains a special action even under a resolution-time
+        // play permission. Its entry is not an effect placing counters.
+        let mut event = ProposedEvent::zone_change_to_battlefield_under_controller(id, player);
+        if let ProposedEvent::ZoneChange(change) = &mut event {
+            change.counter_origin_v48 = Some(crate::doubling_season_v48::CounterOriginV48::Rule);
+        }
+        event::propose_and_commit(state, event);
+    } else if resolution_cast_v1::permit(state, id).is_some_and(|p| p.land) {
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
@@ -20315,6 +21273,7 @@ fn begin_cast_ex(
         chosen_creature_cost: None,
         convoke_chosen: Vec::new(),
         convoke_finished: false,
+        mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
     });
 }
 
@@ -20414,6 +21373,7 @@ fn finalize_owned_cast(
         None
     };
     crate::standard_cards_v1::clear_payment_sources(state);
+    let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
 
     let mut paid_cost_objects = object_cost_chosen;
@@ -20504,6 +21464,11 @@ fn finalize_owned_cast(
         chosen_creature_cost,
         variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)
             .then_some(was_kicked),
+        mandatory_additional_cost: mandatory_cast_cost_v1::paid_choice(
+            mandatory_payment_input,
+            &pending,
+            &paid_cost_refs,
+        )?,
     });
     let finalized_source_contract =
         StackSourceContractV4::capture(state, pending.spell, cast_method);
@@ -20546,6 +21511,7 @@ fn finalize_owned_cast(
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
+    mandatory_cast_cost_v1::record_paid(state, finalized_source_contract);
     state.players[pending.controller.index()].spells_cast_this_turn = state.players
         [pending.controller.index()]
     .spells_cast_this_turn
@@ -20553,6 +21519,7 @@ fn finalize_owned_cast(
     log_final_targeting_events(state, stack_item_id)?;
     event::log_spell_cast(state, pending.spell, pending.controller);
     crate::extra_turn_v1::record_publication(state, stack_item_id);
+    crate::faebloom_trick_v43::publish_spell(state, stack_item_id)?;
     if matches!(
         paid_optional_additional_cost,
         Some(OptionalAdditionalCostDef::Casualty(_))
@@ -20757,6 +21724,16 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
+    let ajani_payment_owner = match crate::ajani_full_v42::lifecycle::acquire_payment(state) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                staged.source,
+            ));
+            return;
+        }
+    };
     let fixed_payment_owner = match crate::fixed_source_damage_v3::acquire_payment(state) {
         Ok(owner) => owner,
         Err(_) => {
@@ -20780,6 +21757,7 @@ fn finalize_activation(state: &mut GameState) {
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let mut frozen = freeze_activation_source(state, &pending, ability);
+    frozen.ajani_payment_owner = ajani_payment_owner;
     let ability = &ability;
     let mut discarded = Vec::new();
     if ability
@@ -20889,6 +21867,9 @@ struct FrozenActivationSource {
     source: AbilitySourceContractV4,
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
+    payment_history_start: usize,
+    fishing_ability_index: u8,
+    ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
 }
 
 fn freeze_activation_source(
@@ -20900,6 +21881,12 @@ fn freeze_activation_source(
     let granted_by = if let Some(grant) = pending.cauldron_grant.0 {
         debug_assert_eq!(grant.host, source);
         Some(grant.donor)
+    } else if crate::fishing_pole_v39::named_cost(ability.cost) {
+        let chosen = pending
+            .object_cost_chosen
+            .first()
+            .expect("validated named Pole cost has its exact selected grant");
+        Some(AbilitySourceContractV4::capture(state, chosen.object))
     } else if pending.ability_index as usize
         == card_def::CARD_DEFS[source.card_def as usize]
             .activated_abilities
@@ -20917,6 +21904,9 @@ fn freeze_activation_source(
         source,
         granted_by,
         fixed_departure: None,
+        payment_history_start: state.engine.event_history.len(),
+        fishing_ability_index: pending.ability_index,
+        ajani_payment_owner: None,
     }
 }
 
@@ -21030,7 +22020,56 @@ fn push_paid_activation(
     });
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
+    if crate::krenko_v1::record_paid(
+        state,
+        stack_item_id,
+        frozen.payment_history_start,
+        frozen.source,
+    )
+    .is_err()
+        || crate::fishing_pole_v39::lifecycle::record_paid(
+            state,
+            stack_item_id,
+            frozen.payment_history_start,
+            frozen.source,
+            frozen.granted_by,
+            frozen.fishing_ability_index,
+        )
+        .is_err()
+        || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     crate::fixed_source_damage_v3::record_paid(state, stack_item_id, frozen.fixed_departure);
+    // Final targeting validates mandatory paid ownership. Ajani's original
+    // payment and use must be recorded before that finalized-row boundary.
+    let ajani_paid = frozen.ajani_payment_owner.is_some();
+    if ajani_paid {
+        if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+            state
+                .objects
+                .get_mut(pending.source)
+                .v4
+                .note_ability_use(AbilityKindV4::Activated, pending.ability_index as u16);
+        }
+        if crate::ajani_full_v42::lifecycle::record_paid(
+            state,
+            stack_item_id,
+            frozen.ajani_payment_owner,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    }
     if log_final_targeting_events(state, stack_item_id).is_err() {
         state.engine.halted = Some((
             UnsupportedMechanic::InvalidEffectContinuation,
@@ -21042,7 +22081,9 @@ fn push_paid_activation(
     // state. Never stamp the old activation onto Lorien's new graveyard
     // incarnation (or any sacrificed/exiled source); the stack provenance
     // above owns that historical fact instead.
-    if state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count {
+    if !ajani_paid
+        && state.objects.get(pending.source).zone_change_count == pending.source_zone_change_count
+    {
         state
             .objects
             .get_mut(pending.source)
@@ -28101,6 +29142,9 @@ mod ashroot_declaration_boundary_tests;
 
 #[cfg(test)]
 mod shroud_target_tests;
+
+#[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
+mod fiendish_panda_targeting_tests;
 
 #[cfg(all(
     test,

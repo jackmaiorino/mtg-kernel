@@ -88,7 +88,10 @@ fn run_away_primitive_batches_both_owner_hand_moves_in_either_target_order_and_r
                             .hand
                             .contains(&object));
                     }
-                    let moves = &current.engine.event_history[before..];
+                    let moves = current.engine.event_history[before..]
+                        .iter()
+                        .filter(|event| matches!(event, event::CommittedEvent::ZoneChange { .. }))
+                        .collect::<Vec<_>>();
                     assert_eq!(moves.len(), 2);
                     for (index, target) in ctx.targets.iter().enumerate() {
                         let Target::Object(object) = target else {
@@ -96,7 +99,7 @@ fn run_away_primitive_batches_both_owner_hand_moves_in_either_target_order_and_r
                         };
                         let object_index = objects.iter().position(|id| id == object).unwrap();
                         assert!(
-                            matches!(moves[index], event::CommittedEvent::ZoneChange { object: moved, from: Zone::Battlefield, to: Zone::Hand, controller_before } if moved == *object && controller_before == controllers[object_index])
+                            matches!(*moves[index], event::CommittedEvent::ZoneChange { object: moved, from: Zone::Battlefield, to: Zone::Hand, controller_before } if moved == *object && controller_before == controllers[object_index])
                         );
                     }
                 }

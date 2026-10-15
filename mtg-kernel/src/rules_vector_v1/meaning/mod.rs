@@ -84,6 +84,25 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+        | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
+        EffectOp::KrenkoCreateGoblinsV1
+        | EffectOp::AjaniLoyaltyV42 { ability_index: _ }
+        | EffectOp::FishingPoleAddBaitV39
+        | EffectOp::BindFishingPoleUntapV39
+        | EffectOp::FishingPoleUntapV39 {
+            capture_history_index: _,
+        } => {
+            // These roots require their private paid or captured owner. Frozen
+            // V1 cannot express that authority or the exact bound continuation.
+            out.atoms.push(Atom::Opaque);
+        }
+        EffectOp::HighSocietyHunterFromCaptureV45 { .. }
+        | EffectOp::FaebloomCreateFaeriesV43
+        | EffectOp::FaebloomTapFromCaptureV43 { .. } => {
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::ExileGraveyardTargetThenGrowSourceIfCreature => {
             // Pre-move creature type and exact source identity have no v1 facets.
             out.atoms.push(Atom::Opaque);
@@ -326,6 +345,34 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
 #[cfg(test)]
 mod standard_completion_tests {
     use super::*;
+
+    #[test]
+    fn private_limited_roots_keep_exact_programs_opaque_without_dispatch_panics() {
+        for op in [
+            EffectOp::KrenkoCreateGoblinsV1,
+            EffectOp::AjaniLoyaltyV42 { ability_index: 0 },
+            EffectOp::AjaniLoyaltyV42 { ability_index: 1 },
+            EffectOp::AjaniLoyaltyV42 { ability_index: 2 },
+            EffectOp::FishingPoleAddBaitV39,
+            EffectOp::BindFishingPoleUntapV39,
+            EffectOp::FishingPoleUntapV39 {
+                capture_history_index: 17,
+            },
+        ] {
+            let encoded = serde_json::to_vec(&op).unwrap();
+            let decoded: EffectOp = serde_json::from_slice(&encoded).unwrap();
+            let mut out = Collector::default();
+            effect_op(
+                &decoded,
+                &Env {
+                    target_spec: TargetSpec::None,
+                },
+                &mut out,
+            );
+            assert_eq!(out.atoms, [Atom::Opaque], "{decoded:?}");
+            assert_eq!(serde_json::to_vec(&decoded).unwrap(), encoded);
+        }
+    }
 
     #[test]
     fn resolution_cast_and_land_play_have_distinct_destinations_without_persistent_permission() {

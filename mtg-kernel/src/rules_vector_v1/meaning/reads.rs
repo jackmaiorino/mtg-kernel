@@ -334,6 +334,12 @@ pub(crate) fn dynamic_value(value: DynamicValueDef, out: &mut Collector) -> AmtF
             AmtF::Dynamic
         }
         DynamicValueDef::Fixed(n) => AmtF::fixed(i64::from(n)),
+        DynamicValueDef::ControllerLifeTotal => {
+            // Frozen count/read vocabulary cannot encode a player's signed life
+            // total as a token quantity. The precise Ajani successor owns it.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
         DynamicValueDef::DistinctManaValuesAmongControlledNonlandPermanents => {
             out.read(
                 RelF::You,

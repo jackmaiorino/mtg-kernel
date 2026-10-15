@@ -1,0 +1,29 @@
+{
+  "sources": [
+    {
+      "pin": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+      "path": "Mage.Sets/src/mage/cards/f/FaebloomTrick.java",
+      "git_blob": "0ed1ff1329682c175ae26c8e437aec2f9e728c96",
+      "bytes": 2006,
+      "sha256": "ad6f83ace5df8bcb757e0ae874f632372d1ca065c77c24cac991f7ff85cab099"
+    },
+    {
+      "pin": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+      "path": "Mage/src/main/java/mage/game/permanent/token/FaerieToken.java",
+      "git_blob": "692893f068511b0adbc3aca919d7a0b1f352f620",
+      "bytes": 742,
+      "sha256": "434518af008341b6e9700fdab2f3df2e1fb10e758c89eb67c485317bffd0088a"
+    }
+  ],
+  "printing": {
+    "name": "Faebloom Trick",
+    "mana_cost": "2U",
+    "types": [
+      "Instant"
+    ],
+    "initial_targets": "none",
+    "creation": "two 1/1 blue Faerie creature tokens with flying",
+    "reflexive": "when you do, tap target creature an opponent controls"
+  },
+  "status": "unregistered source-only; native and V43 consumers pending"
+}

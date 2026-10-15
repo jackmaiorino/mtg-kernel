@@ -217,10 +217,35 @@ mod fdn {
         // V1 deliberately refuses the new variable-target definition. Compare
         // every supported record and vector rather than invoking its whole-table
         // builder on an incompatible current catalog or weakening that refusal.
+        let precise_successors = crate::card_def::CARD_DEFS
+            .iter()
+            .enumerate()
+            .filter(|(_, def)| {
+                def.token_counter_replacement_v48.is_some()
+                    || def.damage_replacement_v1.is_some()
+                    || def.game_outcome_protection_v1.is_some()
+                    || def.as_enters_color_choice_v1.is_some()
+                    || def.chosen_color_creature_boost_v1.is_some()
+                    || def.keywords.has(crate::card_def::Keywords::SHROUD)
+            })
+            .map(|(id, _)| id as u16)
+            .collect::<Vec<_>>();
+        // These definitions have no V1 record to preserve. Keep its explicit
+        // refusal, while comparing every remaining supported record below.
+        for &id in &precise_successors {
+            assert!(
+                std::panic::catch_unwind(|| crate::rules_vector_v1::sources::card_rules(id))
+                    .is_err()
+            );
+            assert!(std::panic::catch_unwind(|| {
+                crate::rules_vector_v1::vectorize::card_feature_counts(id)
+            })
+            .is_err());
+        }
         let snapshot = || {
             (0..crate::card_def::CARD_DEFS.len())
                 .map(|id| id as u16)
-                .filter(|id| !excluded.contains(id))
+                .filter(|id| !excluded.contains(id) && !precise_successors.contains(id))
                 .map(|id| {
                     (
                         id,

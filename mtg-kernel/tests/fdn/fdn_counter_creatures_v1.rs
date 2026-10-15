@@ -435,6 +435,7 @@ fn hydra_entry_and_each_doubling_emit_one_exact_counter_event() {
                 zone_change_count,
                 player,
                 count,
+                ..
             } if *object == hydra => Some((*zone_change_count, *player, *count)),
             _ => None,
         })

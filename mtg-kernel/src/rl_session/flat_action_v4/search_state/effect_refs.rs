@@ -52,6 +52,10 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            AjaniLoyaltyV42 { .. }
+            | FiendishPandaCounterFromCaptureV1 { .. }
+            | ConquerorGainFromCaptureV49 { .. }
+            | FiendishPandaReturnFromCaptureV1 { .. } => true,
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
                 let crate::event::CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else { return true; };
@@ -172,6 +176,8 @@ impl Scan<'_> {
             | BindGarrukEtbDrawV1
             | BindGarrukPowerEntryDrawV1
             | GarrukDrawFromCaptureV1 {..}
+            | HighSocietyHunterFromCaptureV45 { .. }
+            | FaebloomCreateFaeriesV43 | FaebloomTapFromCaptureV43 { .. }
             | BindAuthorityEntryGainLifeV1
             | AuthorityEntryGainLifeV1 { .. }
             | ExileTopChooseOneUntilNextTurn { .. }
@@ -181,6 +187,10 @@ impl Scan<'_> {
             | LookTopMayKeepOneRestGraveyard { .. }
             | TakeExtraTurnAfterThisOneV1
             | CreateControlledCreatureTargetCopyV1
+            | KrenkoCreateGoblinsV1
+            | FishingPoleAddBaitV39
+            | BindFishingPoleUntapV39
+            | FishingPoleUntapV39 { .. }
             | FieryAnnihilation
             | DoubleTargetPowerUntilEndOfTurn { .. }
             | DrawForCounteredCreaturesThenGrantKeywordUntilEndOfTurn { .. }
@@ -960,12 +970,34 @@ pub(super) fn conflicts(
     pool: &[ObjectId],
     plan: Option<&crate::effect::library_choice_search_v2::Plan>,
 ) -> bool {
+    // Both retained original-world mechanisms require their qualified sampler.
+    if crate::bloodthirsty_conqueror_v49::has_history(state)
+        || crate::doubling_season_v48::requires_successor(state)
+    {
+        return true;
+    }
+    if state
+        .engine
+        .event_history
+        .iter()
+        .any(|e| matches!(e, crate::event::CommittedEvent::FaebloomJournalV43 { .. }))
+    {
+        return true;
+    }
+    if !state.engine.twinflame_combat_v38.is_empty() {
+        return true;
+    }
     // This sampler has no qualified migration for the independently retained
     // payment, removal and completion ownership of a Librarian activation.
     if state.engine.event_history.iter().any(|event| {
         matches!(
             event,
-            crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+            crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+                | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
                 | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
@@ -995,6 +1027,37 @@ pub(super) fn conflicts(
                 | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
                 | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+                | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
+                | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
+                | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+                | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+                | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
+                | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
+                | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
+                | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+                | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
+                | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+                | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+                | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
         )
     }) {
         return true;
@@ -1082,7 +1145,8 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
-            StromkirkEndStepObserversV1 { .. }
+            AjaniJournalV42 { .. }
+            | StromkirkEndStepObserversV1 { .. }
             | StromkirkTriggerCaptureV2 { .. }
             | StromkirkCollectedV2 { .. }
             | StromkirkPublishedV2 { .. }
@@ -1093,7 +1157,12 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            CrystalPreventionBoundaryV1 { .. }
+            BannerEntryOperationStartedV1 { .. }
+            | BannerEntryColorCapturedV1 { .. }
+            | BannerEntryColorChosenV1 { .. }
+            | BannerEntryColorCommittedV1 { .. }
+            | BannerEntryOperationCompletedV1 { .. }
+            | CrystalPreventionBoundaryV1 { .. }
             | CrystalShieldOperationV1 { .. }
             | CrystalExecutionV1 { .. }
             | CrystalDamageOperationV3 { .. }
@@ -1225,7 +1294,17 @@ pub(super) fn conflicts(
             }
             InitiativeTrigger { binding } => s.raw(binding.source.source),
             MonarchTrigger { binding } => s.raw(binding.source.source),
-            LibrarianActivationCommittedV1 { .. }
+            KrenkoPaidV1 { .. }
+            | KrenkoPaymentInputV1 { .. }
+            | FishingPoleJournalV39 { .. }
+            | HighSocietyHunterAttackCaptureV1 { .. }
+            | HighSocietyHunterAttackCollectedV1 { .. }
+            | HighSocietyHunterJournalV45 { .. }
+            | KrenkoRemovalInputV1 { .. }
+            | KrenkoRemovedV1 { .. }
+            | KrenkoSampleV1 { .. }
+            | KrenkoCompletedV1 { .. }
+            | LibrarianActivationCommittedV1 { .. }
             | LibrarianActivationCounterRemovalV1 { .. }
             | LibrarianActivationOperationV1 { .. }
             | LibrarianActivationFinishedV1 { .. } => true,
@@ -1268,6 +1347,14 @@ pub(super) fn conflicts(
             | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
             | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+            | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
             | SquadRallierResolutionBoundaryV1 { .. }
             | SowerRestrictionInstalledV1 { .. }
             | SowerRestrictionExpiredV1 { .. }
@@ -1310,7 +1397,20 @@ pub(super) fn conflicts(
             | CrimeCommitted { .. }
             | BeginningOfCombat { .. }
             | BeginningEndStep { .. }
-            | BeginningPrecombatMainV1 { .. } => false,
+            | BeginningPrecombatMainV1 { .. }
+            // This receipt is history-only. Active snapshot references are
+            // already visited through the owning pending continuation above.
+            | InspirationResolutionBoundaryV1 { .. } => false,
+            TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
+            | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
+                | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }
+                | MandatoryCastPaymentV1 { .. } | MandatoryCastPaymentInputV1 { .. }
+                | FiendishPandaLifeGainCaptureV1 { .. }
+                | FiendishPandaDeathCaptureV1 { .. }
+                | FiendishPandaCaptureCollectedV1 { .. }
+                | FiendishPandaJournalV1 { .. }
+                | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
+                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } => true,
         }
     })
 }
@@ -1387,6 +1487,7 @@ mod tests {
                 zone_change_count: state.objects.get(object).zone_change_count,
                 player: PlayerId::P1,
                 count: 1,
+                replacement_input_v48: Default::default(),
             });
         assert!(conflicts(&state, &[object], None));
         assert!(!conflicts(&state, &[other], None));

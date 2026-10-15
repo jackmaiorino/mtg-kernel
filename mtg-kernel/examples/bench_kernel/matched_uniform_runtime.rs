@@ -1229,8 +1229,8 @@ fn normalize_source_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     Ok(normalized)
 }
 
-fn semantic_category(semantic: &ActionSemanticV1) -> &'static str {
-    match semantic {
+fn semantic_category(semantic: &ActionSemanticV1) -> Result<&'static str, String> {
+    Ok(match semantic {
         ActionSemanticV1::Pass { .. } => "pass",
         ActionSemanticV1::PlayLand { .. } => "play_land",
         ActionSemanticV1::CastSpell { .. } => "cast_spell",
@@ -1271,7 +1271,13 @@ fn semantic_category(semantic: &ActionSemanticV1) -> &'static str {
         ActionSemanticV1::ChooseLondonBottom { .. } => "choose_london_bottom",
         #[cfg(feature = "limited-fdn-fixtures")]
         ActionSemanticV1::ChooseTriggerOrderNext { .. } => "choose_trigger_order_next",
-    }
+        ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseDivineKickerV44 { .. }
+        | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+        | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
+            return Err("matched-uniform frozen benchmark requires a separate successor for entry-color and Divine variable-cast decisions".into());
+        }
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -1408,6 +1414,9 @@ fn validate_deck(
                         if action.selected_index as usize != rank {
                             return Err("full-v5 canonical ranks are not dense".into());
                         }
+                        // Refuse any unrepresented member of the full menu
+                        // before policy selection, even when the first is Pass.
+                        semantic_category(&action.semantic)?;
                     }
                     let full_selection = full_policy.select(full_shape)?;
                     let fast_selection = fast_policy.select(fast_decision)?;
@@ -1420,7 +1429,7 @@ fn validate_deck(
                     validate_selected_semantic(&full_decision, full_selection)?;
                     let selected =
                         &full_decision.legal_actions[full_selection.selected_index as usize];
-                    let category = semantic_category(&full_decision.legal_actions[0].semantic);
+                    let category = semantic_category(&full_decision.legal_actions[0].semantic)?;
                     *categories.entry(category.to_string()).or_default() += 1;
                     let semantic_bytes =
                         serde_json::to_vec(&full_semantics).map_err(|error| error.to_string())?;

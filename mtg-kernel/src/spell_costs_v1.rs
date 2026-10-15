@@ -173,7 +173,13 @@ impl SelectedSpellManaCostsV1 {
         };
         let original_groups = base
             .into_iter()
-            .chain(definition.additional_cost)
+            .chain(definition.additional_cost.map(|group| {
+                if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
+                    self.component_groups.last().copied().unwrap_or(group)
+                } else {
+                    group
+                }
+            }))
             .collect::<Vec<_>>();
         if original_groups != self.component_groups {
             return None;
@@ -198,10 +204,11 @@ impl SelectedSpellManaCostsV1 {
         } else {
             chosen.to_vec()
         };
-        let additional_owns_objects = definition.additional_cost.is_some_and(|components| {
-            super::controlled_permanent_sacrifice_in(components).is_some()
-                || super::tap_permanent_filter_in(components).is_some()
-        });
+        let additional_owns_objects = definition.additional_cost.is_some()
+            && original_groups.last().is_some_and(|components| {
+                super::controlled_permanent_sacrifice_in(components).is_some()
+                    || super::tap_permanent_filter_in(components).is_some()
+            });
         let mut chosen_by_group = Vec::with_capacity(original_groups.len());
         if base.is_some() {
             chosen_by_group.push(if additional_owns_objects {
@@ -476,6 +483,25 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.costs.push(definition.kicker_cost?);
     }
     if let Some(additional) = definition.additional_cost {
+        let additional = if let Some(mana) = super::mandatory_cast_cost_v1::mana_branch(definition)
+        {
+            let sacrifice = state.engine.pending_cast.as_ref().is_some_and(|pending| {
+                state.objects.try_get(pending.spell).is_some_and(|object| {
+                    card_def::CARD_DEFS
+                        .get(usize::from(object.card_def))
+                        .is_some_and(|original| std::ptr::eq(definition, original))
+                }) && pending
+                    .mandatory_additional_cost
+                    .is_some_and(|choice| choice.pay_mana == Some(false))
+            });
+            if sacrifice {
+                super::mandatory_cast_cost_v1::SACRIFICE
+            } else {
+                mana
+            }
+        } else {
+            additional
+        };
         selected.components(additional);
     }
     Some(selected)
@@ -521,6 +547,68 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
+    if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
+        let choice = state
+            .engine
+            .pending_cast
+            .as_ref()
+            .filter(|pending| pending.spell == source)
+            .and_then(|pending| pending.mandatory_additional_cost)
+            .and_then(|choice| choice.pay_mana);
+        return [false, true]
+            .into_iter()
+            .filter(|branch| choice.is_none_or(|selected| selected == *branch))
+            .find_map(|branch| {
+                selected_spell_quote_branch_v1(
+                    definition,
+                    source,
+                    origin_zone,
+                    method,
+                    kicked,
+                    mode,
+                    x,
+                    targets,
+                    chosen_prefix,
+                    player,
+                    state,
+                    reserved_graveyard,
+                    Some(branch),
+                )
+            });
+    }
+    selected_spell_quote_branch_v1(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        x,
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_branch_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    forced_branch: Option<bool>,
+) -> Option<SpellManaPaymentV1> {
     if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
         return None;
     }
@@ -534,7 +622,7 @@ pub(super) fn selected_spell_quote_v1(
     {
         return None;
     }
-    let selected = selected_spell_mana_costs_for_source_v1(
+    let mut selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,
         (method, kicked, mode),
@@ -542,6 +630,18 @@ pub(super) fn selected_spell_quote_v1(
         player,
         state,
     )?;
+    if let Some(pay_mana) = forced_branch {
+        let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
+        let original = selected.component_groups.pop()?;
+        if let [CostComponent::Mana(_)] = original {
+            selected.costs.pop()?;
+        }
+        selected.components(if pay_mana {
+            mana
+        } else {
+            super::mandatory_cast_cost_v1::SACRIFICE
+        });
+    }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     let mut family = None;
     let mut discard_count = 0usize;
@@ -904,6 +1004,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     prepared.additional =
         prepare_spell_nonmana_v1(&projected, player, source, &groups[base_count..])?;
     prepared.additional.apply(&mut projected, player, source);
+    super::mandatory_cast_cost_v1::validate_paid_creature(&projected, pending).ok()?;
     if let Some(kind) = optional_kind {
         if pending
             .optional_additional_cost_chosen

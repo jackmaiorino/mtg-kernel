@@ -1,0 +1,13 @@
+{
+  "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "files": {
+    "Mage.Sets/src/mage/cards/k/KrenkoMobBoss.java": {
+      "bytes": 1926,
+      "sha256": "821b8d533834f1f4a251f70caeb4e5662c0421de7c233a2b6e53215ffc36674b"
+    },
+    "Mage/src/main/java/mage/game/permanent/token/GoblinToken.java": {
+      "bytes": 999,
+      "sha256": "16e001f88ad007f0445ce679eea218189f6c226eced65a5144fe17dfe7a72131"
+    }
+  }
+}

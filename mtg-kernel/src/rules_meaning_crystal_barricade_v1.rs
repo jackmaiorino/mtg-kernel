@@ -65,28 +65,32 @@ pub enum ErrorV1 {
     IdentityMismatch,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for (path, source) in [
-        (
-            "meaning",
-            include_str!("rules_meaning_crystal_barricade_v1.rs"),
-        ),
-        ("static", include_str!("crystal_barricade_v1.rs")),
-        (
-            "characteristics",
-            include_str!("continuous_characteristics_v1.rs"),
-        ),
-        ("engine", include_str!("engine.rs")),
-        ("event", include_str!("event.rs")),
-        ("card_def", include_str!("card_def.rs")),
-        ("build", include_str!("../build.rs")),
-    ] {
-        h.update(path.as_bytes());
-        h.update([0]);
-        h.update(source.as_bytes());
-        h.update([0]);
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for (path, source) in [
+            (
+                "meaning",
+                include_str!("rules_meaning_crystal_barricade_v1.rs"),
+            ),
+            ("static", include_str!("crystal_barricade_v1.rs")),
+            (
+                "characteristics",
+                include_str!("continuous_characteristics_v1.rs"),
+            ),
+            ("engine", include_str!("engine.rs")),
+            ("event", include_str!("event.rs")),
+            ("card_def", include_str!("card_def.rs")),
+            ("build", include_str!("../build.rs")),
+        ] {
+            h.update(path.as_bytes());
+            h.update([0]);
+            h.update(source.as_bytes());
+            h.update([0]);
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV1, ErrorV1> {
     if !cfg!(all(

@@ -346,6 +346,154 @@ type ProjectedArahboV31 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::arahbo_public_v1::ArahboObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.entry_occurrences {
+        handles.insert(&row.entrant_at_entry)?;
+        handles.insert(&row.observer_at_entry)?;
+    }
+    for row in &observation.active_sources {
+        handles.insert(&row.source)?;
+        for recipient in &row.other_controlled_cat_creatures {
+            handles.insert(recipient)?;
+        }
+    }
+    for row in &observation.linked_exile.triggers {
+        handles.insert(&row.source_at_entry)?;
+    }
+    for row in &observation.linked_exile.links {
+        handles.insert(&row.source_at_entry)?;
+        handles.insert(&row.exiled_recipient)?;
+    }
+    if let Some(choice) = &observation.linked_exile.attachment_choice {
+        handles.insert(&choice.aura)?;
+        for host in &choice.legal_hosts {
+            handles.insert(host)?;
+        }
+    }
+    for row in &observation.linked_exile.confirmed_attachments {
+        handles.insert(&row.aura)?;
+        if let Some(host) = &row.current_chosen_host {
+            handles.insert(host)?;
+        }
+    }
+    for row in &observation.entry_occurrences {
+        if let Some(token) = &row.created_token {
+            handles.insert(token)?;
+        }
+    }
+    for row in &observation.garruk_occurrences {
+        handles.insert(&row.entrant_at_entry)?;
+        handles.insert(&row.observer_at_entry)?;
+    }
+    for row in &observation.garruk_active_sources {
+        handles.insert(&row.source)?;
+        for recipient in &row.controlled_creatures_have_trample {
+            handles.insert(recipient)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::arahbo_public_v1::ArahboObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanArahboExtensionsV31, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::arahbo_public_v1::ArahboObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    label(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanArahboExtensionsV31,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.entry_occurrences {
+        unary
+            .entry(row.entrant_at_entry.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.active_sources {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.linked_exile.triggers {
+        unary
+            .entry(row.source_at_entry.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.linked_exile.links {
+        let facts = visible::without_handles(row)?;
+        unary
+            .entry(row.source_at_entry.handle.clone())
+            .or_default()
+            .push(facts.clone());
+        unary
+            .entry(row.exiled_recipient.handle.clone())
+            .or_default()
+            .push(facts);
+    }
+    if let Some(row) = &extension.linked_exile.attachment_choice {
+        unary
+            .entry(row.aura.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        for host in &row.legal_hosts {
+            unary
+                .entry(host.handle.clone())
+                .or_default()
+                .push("legal_untargeted_attachment_host".into());
+        }
+    }
+    for row in &extension.linked_exile.confirmed_attachments {
+        let facts = visible::without_handles(row)?;
+        unary
+            .entry(row.aura.handle.clone())
+            .or_default()
+            .push(facts.clone());
+        if let Some(host) = &row.current_chosen_host {
+            unary.entry(host.handle.clone()).or_default().push(facts);
+        }
+    }
+    for row in &extension.garruk_occurrences {
+        unary
+            .entry(row.entrant_at_entry.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.garruk_active_sources {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    Ok(())
+}
 fn project_base(
     observation: &ArahboObservationV1,
     actions: &[ActionSemanticV1],

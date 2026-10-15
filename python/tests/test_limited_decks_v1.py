@@ -41,11 +41,114 @@ class LimitedDeckTest(unittest.TestCase):
                          [self.registry["Forest"].card_id] * 38
                          + [self.registry["Dwynen, Gilt-Leaf Daen"].card_id] * 2)
 
-    def test_reference_planeswalker_is_partial_and_refused(self) -> None:
+    def test_reference_planeswalker_full_candidate_preserves_id_and_resolves(self) -> None:
         deck = limited.parse_dck((FIXTURES / "FDN_reference_planeswalker.dck").read_text())
-        self.assertEqual(limited.card_status("Ajani, Caller of the Pride", self.registry), "partial")
-        with self.assertRaisesRegex(ValueError, "partial"):
-            limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(limited.card_status("Ajani, Caller of the Pride", self.registry), "full")
+        self.assertEqual(len(limited.resolve_mainboard(deck, self.registry)), 40)
+        self.assertEqual(self.registry["Ajani, Caller of the Pride"].card_id, 215)
+
+    def test_hunter_eaten_panda_candidate_preserves_prior_registry_and_resolves_real_decks(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        prefix = json.dumps(records[:247], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "106363f2efffdc1206de1a1f3e95b539297bd355ad078cba5a92f6f2c13a9e9e")
+        candidates = [("High-Society Hunter", 439, "hunter"),
+                      ("Eaten Alive", 440, "eaten_alive"),
+                      ("Fiendish Panda", 441, "panda")]
+        self.assertEqual([row["name"] for row in records[247:]],
+                         [name for name, _, _ in candidates])
+        for name, card_id, slug in candidates:
+            with self.subTest(name=name):
+                self.assertEqual(self.registry[name].card_id, card_id)
+                deck = limited.parse_dck((FIXTURES / f"FDN_reference_{slug}.dck").read_text())
+                ids = limited.resolve_mainboard(deck, self.registry)
+                self.assertEqual(len(ids), 40)
+                self.assertEqual(ids.count(card_id), 4)
+                self.assertNotIn(437, ids)
+
+    def test_full_ajani_candidate_preserves_prior_prefix_and_distinct_token_dependency(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual(len(self.registry), 442)
+        self.assertEqual(len(records), 250)
+        original = json.loads(json.dumps(records[:245]))
+        ajani = original[215 - 192]
+        self.assertEqual(ajani["name"], "Ajani, Caller of the Pride")
+        self.assertEqual(ajani["engine_capability"], "full")
+        self.assertEqual(ajani["starting_loyalty"], 4)
+        self.assertEqual(ajani["mana_cost"], "{1}{W}{W}")
+        ajani["engine_capability"] = "partial"
+        ajani["mechanics"] = ["loyalty_reference_only"]
+        ajani["decks"].remove("FDN_reference_ajani_full.dck")
+        encoded = json.dumps(original, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(encoded).hexdigest(),
+                         "729b7c85a9faf915f73681db3e1b6917ce7b92397feaf310a52943d454165ad8")
+        token = records[245]
+        self.assertEqual(self.registry[token["name"]].card_id, 437)
+        self.assertEqual(token["name"], "Ajani Cat Token")
+        self.assertEqual(token["object_name"], "Cat Token")
+        self.assertEqual((token["power"], token["toughness"], token["colors"], token["subtypes"]),
+                         (2, 2, ["W"], ["Cat"]))
+        self.assertTrue(token["is_token"])
+        old_cat = next(row for row in records if row["name"] == "Cat Token")
+        self.assertEqual((old_cat["power"], old_cat["toughness"]), (1, 1))
+        with self.assertRaisesRegex(ValueError, "token"):
+            limited.resolve_mainboard(limited.parse_dck("39 Plains" + chr(10) + "1 Ajani Cat Token"), self.registry)
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        self.assertEqual(len(frozen["card_names"]), 286)
+        self.assertEqual(len(frozen["token_dependencies"]), 24)
+        self.assertEqual([edge["name"] for edge in frozen["token_dependencies"]
+                          if "Ajani, Caller of the Pride" in edge["required_by"]], ["Cat"])
+        self.assertNotIn(token["name"], frozen["card_names"])
+        for relative, expected in [
+            ("data/cards_v1.json", "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14"),
+            ("data/standard/magezero_v1/cards_v1.json", "577a51fd8f0490a74ffeb49ac1e39d6675955fc53960a7b40a21e684057d9f37"),
+            ("data/limited/fdn_v1/booster_pool_v1.json", "3cf2926c75797fb164489128b715da4264793b9b7ca4ad149fef63516ab89155"),
+            ("data/limited/fdn_v1/card_names.json", "5d63a3ec34306202897eb413a56dff78d07e55960459a5b5c2934cf3a2db315d"),
+        ]:
+            self.assertEqual(hashlib.sha256((REPO_ROOT / relative).read_bytes()).hexdigest(), expected)
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_ajani_full.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [215] * 4)
+        for name in ["Savannah Lions", "Helpful Hunter", "Sun-Blessed Healer", "Banishing Light"]:
+            self.assertEqual(ids.count(self.registry[name].card_id), 4)
+        self.assertEqual(ids.count(self.registry["Plains"].card_id), 20)
+        self.assertNotIn(437, ids)
+
+    def test_faebloom_candidate_appends_exact_printing_and_reuses_existing_faerie(self) -> None:
+        records = json.loads((FIXTURES / "cards_v1.json").read_bytes())["cards"]
+        self.assertEqual(len(records), 250)
+        self.assertEqual(len(self.registry), 442)
+        prefix = json.dumps(records[:246], sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False).encode()
+        self.assertEqual(hashlib.sha256(prefix).hexdigest(),
+                         "8bbb2bb37734dc2d149d852385ce91fd4fcf5ed2234881662610fe242bf73d6c")
+        card = records[246]
+        self.assertEqual(card["name"], "Faebloom Trick")
+        self.assertEqual(self.registry[card["name"]].card_id, 438)
+        self.assertEqual(card["engine_capability"], "full")
+        self.assertEqual((card["mana_cost"], card["mana_value"], card["colors"], card["types"]),
+                         ("{2}{U}", 3, ["U"], ["Instant"]))
+        token = next(row for row in records if row["name"] == "Faerie Token")
+        self.assertEqual((token["power"], token["toughness"], token["colors"], token["subtypes"]),
+                         (1, 1, ["U"], ["Faerie"]))
+        self.assertIn("flying", token["mechanics"])
+        self.assertTrue(token["is_token"])
+        frozen = json.loads((FIXTURES / "booster_pool_v1.json").read_bytes())
+        self.assertEqual((len(frozen["card_names"]), len(frozen["token_dependencies"])), (286, 24))
+        self.assertIn(card["name"], frozen["card_names"])
+        self.assertEqual([edge["name"] for edge in frozen["token_dependencies"]
+                          if card["name"] in edge["required_by"]], ["Faerie"])
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_faebloom_trick.dck").read_text())
+        ids = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(ids), 40)
+        self.assertEqual(ids[:4], [438] * 4)
+        self.assertEqual(ids.count(self.registry["Island"].card_id), 20)
+        for name in ["Spectral Sailor", "Mocking Sprite", "Fleeting Distraction", "Inspiration from Beyond"]:
+            self.assertEqual(ids.count(self.registry[name].card_id), 4)
+        self.assertNotIn(self.registry["Faerie Token"].card_id, ids)
+        self.assertEqual(self.registry["Ajani Cat Token"].card_id, 437)
 
     def test_reference_keyword_creatures_resolve_all_forty_copies(self) -> None:
         deck = limited.parse_dck((FIXTURES / "FDN_reference_keyword_creatures.dck").read_text())
@@ -215,6 +318,84 @@ class LimitedDeckTest(unittest.TestCase):
         self.assertEqual(resolved.count(self.registry["Llanowar Elves"].card_id), 4)
         for name in ["Plains", "Mountain", "Forest"]:
             self.assertEqual(resolved.count(self.registry[name].card_id), 8)
+
+    def test_krenko_reference_resolves_real_goblin_companions_and_appended_identity(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_krenko_mob_boss.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Krenko, Mob Boss"].card_id, 426)
+        self.assertEqual(resolved[:4], [426] * 4)
+        for name in ["Goblin Boarders", "Goblin Surprise", "Lightning Bolt"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Mountain"].card_id), 24)
+
+    def test_zul_reference_resolves_printed_and_changeling_zombies_with_real_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_zul_ashur.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Zul Ashur, Lich Lord"].card_id, 427)
+        self.assertEqual(resolved[:4], [427] * 4)
+        for name in ["Diregraf Ghoul", "Webweaver Changeling", "Stab"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        for name in ["Swamp", "Forest"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 12)
+
+    def test_soulstone_kellan_reference_uses_registered_cards_and_real_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_soulstone_kellan.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Soulstone Sanctuary"].card_id, 428)
+        self.assertEqual(self.registry["Kellan, Planar Trailblazer"].card_id, 429)
+        self.assertEqual(resolved[:8], [428] * 4 + [429] * 4)
+        for name in ["Frenzied Goblin", "Lightning Bolt", "Goblin Boarders"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Mountain"].card_id), 20)
+
+    def test_banner_reference_resolves_real_color_creatures_and_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_heraldic_banner.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Heraldic Banner"].card_id, 430)
+        self.assertEqual(resolved[:4], [430] * 4)
+        for name in ["Kellan, Planar Trailblazer", "Soulstone Sanctuary", "Goblin Boarders", "Savannah Lions"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        for name in ["Mountain", "Plains"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 10)
+
+    def test_inspiration_reference_uses_real_instant_sorcery_and_mana(self) -> None:
+        deck = limited.parse_dck((FIXTURES / "FDN_reference_inspiration_from_beyond.dck").read_text(encoding="utf-8"))
+        resolved = limited.resolve_mainboard(deck, self.registry)
+        self.assertEqual(len(resolved), 40)
+        self.assertEqual(self.registry["Inspiration from Beyond"].card_id, 431)
+        self.assertEqual(resolved[:4], [431] * 4)
+        for name in ["Think Twice", "Refute", "Uncharted Voyage"]:
+            self.assertEqual(resolved.count(self.registry[name].card_id), 4)
+        self.assertEqual(resolved.count(self.registry["Island"].card_id), 24)
+
+    def test_outcome_memorial_fishing_and_twinflame_reference_decks_resolve_reserved_ids(self) -> None:
+        cases = [
+            ("herald_of_eternal_dawn", "Herald of Eternal Dawn", 432,
+             ["Savannah Lions", "Helpful Hunter", "Sun-Blessed Healer", "Banishing Light"], "Plains"),
+            ("akromas_memorial", "Akroma's Memorial", 433,
+             ["Llanowar Elves", "Webweaver Changeling", "Mossborn Hydra", "Garruk's Uprising"], "Forest"),
+            ("fishing_pole", "Fishing Pole", 434,
+             ["Llanowar Elves", "Quirion Ranger", "Viridian Longbow", "Scavenging Ooze"], "Forest"),
+            ("twinflame_tyrant", "Twinflame Tyrant", 436,
+             ["Lightning Bolt", "Fanatical Firebrand", "Heartfire Immolator", "Gorehorn Raider"], "Mountain"),
+        ]
+        for suffix, name, card_id, spells, land in cases:
+            with self.subTest(name=name):
+                deck = limited.parse_dck((FIXTURES / f"FDN_reference_{suffix}.dck").read_text(encoding="utf-8"))
+                resolved = limited.resolve_mainboard(deck, self.registry)
+                self.assertEqual(len(resolved), 40)
+                self.assertEqual(self.registry[name].card_id, card_id)
+                self.assertEqual(resolved[:4], [card_id] * 4)
+                for spell in spells:
+                    self.assertEqual(resolved.count(self.registry[spell].card_id), 4)
+                self.assertEqual(resolved.count(self.registry[land].card_id), 20)
+                self.assertNotIn(self.registry["Fish Token"].card_id, resolved)
+        self.assertEqual(self.registry["Fish Token"].card_id, 435)
+        self.assertTrue(self.registry["Fish Token"].is_token)
 
     def test_original_decks_are_40_cards_and_fully_resolve(self) -> None:
         for filename, supported_copies, source_sha256 in [
@@ -418,7 +599,7 @@ class LimitedDeckTest(unittest.TestCase):
         decks = [limited.parse_dck(path.read_text(encoding="utf-8")) for path in sorted(FIXTURES.glob("FDN_top_*.dck"))]
         report = limited.inventory(names, self.registry, decks)
         self.assertEqual(report["reference_card_count"], report["required_card_count"])
-        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 221)
+        self.assertEqual(sum(card["status"] == "full" for card in report["cards"]), 236)
         self.assertEqual(sum(card["fixture_copies"] > 0 and card["status"] != "full"
                              for card in report["cards"]), 0)
 

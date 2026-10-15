@@ -209,6 +209,7 @@ fn actual_copy_of_hidden_creature_uses_neutral_pre_entry_definition_and_public_n
                             object,
                             token_def,
                             controller,
+                            ..
                         } = event
                         {
                             Some((*object, *token_def, *controller))
@@ -590,6 +591,7 @@ fn actual_paid_arahbo_copy_is_token_before_all_entry_observers_and_keeps_self_on
                         object,
                         token_def,
                         controller,
+                        ..
                     } if *token_def == arahbo_definition && *controller == actor => Some(*object),
                     _ => None,
                 })

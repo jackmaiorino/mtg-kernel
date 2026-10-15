@@ -381,3 +381,91 @@ fn registered_snap_keeps_its_true_land_choice_on_the_nondamage_path() {
 ))]
 #[path = "crystal_prevention_owned_frame_tests.rs"]
 mod owned_frame;
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[ignore = "future actual Doubling Season registration required"]
+fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+        let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            crate::event::ProposedEvent::zone_change(season, Zone::Battlefield),
+        );
+        let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+        let dealer = put(&mut state, actor, "Savannah Lions", Zone::Battlefield);
+        let recipient = put(
+            &mut state,
+            actor.opponent(),
+            "Twinblade Paladin",
+            Zone::Battlefield,
+        );
+        let bite = crate::card_def::card_id_by_name("Bite Down").unwrap();
+        let mut op = (crate::card_def::CARD_DEFS[usize::from(bite)].spell_effect)().unwrap();
+        let EffectOp::CreatureTargetPowerDamage { plus1_plus1, .. } = &mut op else {
+            panic!("actual Bite Down target contract changed")
+        };
+        // Explicit counter-bearing power-damage primitive using the genuine
+        // target contract. This is not a claimed Bite Down printed counter
+        // ability or an invented registered Infectious Bite definition.
+        assert_eq!(*plus1_plus1, 0);
+        *plus1_plus1 = 1;
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.targets = vec![Target::Object(dealer), Target::Object(recipient)];
+        ctx.target_contracts = ctx
+            .targets
+            .iter()
+            .map(|target| crate::state::StackTargetContractV4::capture(&state, *target))
+            .collect();
+        let original = serde_json::to_vec(&state).unwrap();
+        let mut result = None;
+        for _ in 0..3 {
+            let mut branch: GameState = serde_json::from_slice(&original).unwrap();
+            let previous = branch.engine.event_history.len() - 1;
+            let capture = capture_creature_power(&mut branch, &ctx, &op, &[]).unwrap();
+            let until = branch.engine.event_history.len();
+            assert_eq!(branch.objects.get(dealer).counters.plus1_plus1, 2);
+            assert_eq!(capture.counter_history.len(), 1);
+            assert_eq!(capture.signed_power, 4);
+            validate_creature_power_capture(&branch, &capture, &ctx, &op, &[], previous, until)
+                .unwrap();
+            let mut rewritten = capture.clone();
+            rewritten
+                .source_after
+                .as_mut()
+                .unwrap()
+                .counters
+                .plus1_plus1 = 1;
+            let before = serde_json::to_vec(&branch).unwrap();
+            assert!(validate_creature_power_capture(
+                &branch,
+                &rewritten,
+                &ctx,
+                &op,
+                &[],
+                previous,
+                until
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&branch).unwrap(), before);
+            crate::doubling_season_v48::validate_token_journals(&branch).unwrap();
+            let damage = capture.damage.as_ref().unwrap().proposed();
+            crate::event::propose_and_commit(
+                &mut branch,
+                crate::event::ProposedEvent::Damage(damage),
+            );
+            assert_eq!(branch.objects.get(recipient).damage, 4);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&branch).unwrap()).unwrap();
+            assert_eq!(restored, branch);
+            if let Some(expected) = &result {
+                assert_eq!(&branch, expected);
+            }
+            result = Some(branch);
+        }
+    }
+}

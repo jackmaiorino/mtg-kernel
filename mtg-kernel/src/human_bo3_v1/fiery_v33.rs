@@ -291,6 +291,82 @@ type ProjectedFieryV33 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::fiery_observation_v1::FieryObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    if let Some(pending) = &observation.facts.pending_cast_targets {
+        handles.insert(&pending.announced_source)?;
+    }
+    for row in &observation.facts.death_replacements {
+        handles.insert(&row.source_at_resolution)?;
+    }
+    if let Some(menu) = &observation.cast_menu {
+        for r in &menu.legal {
+            handles.insert(r)?;
+        }
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::fiery_observation_v1::FieryObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanFieryExtensionsV33, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::fiery_observation_v1::FieryObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_fiery_v33(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanFieryExtensionsV33,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.death_replacements {
+        unary
+            .entry(row.source_at_resolution.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+        if let Some(card) = &row.original_target.current_visible_card {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push(visible::without_handles(row)?);
+        }
+    }
+    if let Some(pending) = &extension.pending_targets {
+        unary
+            .entry(pending.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(pending)?);
+        for card in &pending.legal {
+            unary
+                .entry(card.handle.clone())
+                .or_default()
+                .push("fiery_legal_target".into());
+        }
+    }
+    Ok(())
+}
 fn project_base(
     observation: &FieryObservationV1,
     actions: &[ActionSemanticV1],

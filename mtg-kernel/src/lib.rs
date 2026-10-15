@@ -34,12 +34,17 @@ compile_error!(
     "native-training-store-v2-production requires Windows MSVC x86_64/aarch64 release without debug assertions"
 );
 
+pub mod eaten_observation_v46;
+pub mod eaten_public_v46;
+
 pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
 pub mod attack_target_v1;
 pub mod banishing_light_v1;
+pub mod banner_observation_v1;
+pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
@@ -50,6 +55,14 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod fake_your_own_death_v50;
+pub mod fiendish_panda_v1;
+pub mod game_outcome_observation_v41;
+pub mod game_outcome_protection_public_v1;
+pub mod game_outcome_protection_v1;
+pub mod heraldic_banner_v1;
+pub mod inspiration_observation_v1;
+pub(crate) mod krenko_v1;
 pub mod legend_rule_v1;
 mod librarian_activation_v1;
 pub mod librarian_public_v1;
@@ -58,7 +71,12 @@ pub mod linked_aura_return_v1;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;
+pub mod panda_observation_v47;
+pub mod panda_public_v47;
 pub mod planeswalker_v1;
+pub mod rules_meaning_fiendish_panda_v1;
+pub mod rules_meaning_game_outcome_protection_v1;
+pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
 mod soul_shackled_zombie_v1;
 pub mod standard_cards_v1;
@@ -85,6 +103,9 @@ pub mod authority_public_v1;
 #[allow(dead_code)]
 pub(crate) mod common_model_snapshot_v1;
 pub mod crystal_public_v1;
+mod divine_actions_v44;
+pub mod divine_observation_v44;
+pub mod divine_public_v44;
 pub mod effect;
 pub mod employment_public_v1;
 pub mod engine;
@@ -99,18 +120,29 @@ mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
+pub mod rules_meaning_divine_v44;
+pub mod rules_meaning_zul_ashur_v1;
+pub mod zul_ashur_observation_v1;
+pub mod zul_ashur_public_v1;
+mod zul_ashur_v1;
 
 pub mod gourmand_public_v1;
 
 mod fiery_annihilation_v1;
 pub mod fiery_public_v1;
+pub(crate) mod high_society_hunter_custody_v45;
+pub mod high_society_hunter_public_v45;
+pub(crate) mod high_society_hunter_v1;
 pub mod human_opening_v1;
+pub mod hunter_observation_v45;
 pub mod native_expanded_training_run_v1;
 mod raid_entry_custody_v1;
 mod raid_entry_v1;
+pub mod rules_meaning_bloodthirsty_conqueror_v49;
 pub mod rules_meaning_crystal_ordering_v1;
 pub mod rules_meaning_fiery_v1;
 pub mod rules_meaning_gourmand_v1;
+pub mod rules_meaning_high_society_hunter_v1;
 mod source_power_activation_v1;
 pub mod sower_of_chaos_v1;
 pub mod sower_public_v1;
@@ -164,6 +196,7 @@ pub mod unclamped_softmax_sampler_v1;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
+pub mod limited_common_session_v1;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;
@@ -561,6 +594,7 @@ pub(crate) mod public_stack_features_v1;
 pub mod rules_meaning_ashroot_v1;
 pub mod rules_meaning_crystal_barricade_v1;
 pub mod rules_meaning_frenzied_goblin_v1;
+pub mod rules_meaning_inspiration_v1;
 pub mod rules_meaning_searslicer_v1;
 pub mod rules_meaning_self_reflection_v1;
 pub mod rules_meaning_sower_v1;
@@ -613,3 +647,44 @@ pub mod rules_meaning_strongbox_v1;
 pub mod strongbox_public_v1;
 
 pub mod fiery_observation_v1;
+
+pub mod krenko_observation_v1;
+pub mod krenko_public_v1;
+pub mod rules_meaning_krenko_v1;
+
+pub mod faebloom_public_v43;
+pub mod faebloom_trick_v43;
+pub mod fishing_pole_observation_v39;
+pub mod fishing_pole_public_v39;
+pub(crate) mod fishing_pole_v39;
+pub mod rules_meaning_faebloom_v43;
+pub mod rules_meaning_fishing_pole_v39;
+
+pub mod ajani_full_v42;
+pub mod akroma_early_public_v40;
+pub mod akroma_family_public_v40;
+pub mod akroma_public_v1;
+pub mod conqueror_observation_v49;
+pub mod conqueror_public_v49;
+pub mod controlled_creature_grants_v1;
+pub mod doubling_season_v48;
+pub mod rules_meaning_akroma_v1;
+pub mod rules_meaning_doubling_season_v48;
+pub mod twinflame_observation_v1;
+pub mod twinflame_tyrant_v1;
+
+pub mod rules_meaning_ajani_v42;
+
+pub mod ajani_public_v42;
+
+pub mod ajani_observation_v42;
+
+pub mod faebloom_observation_v43;
+
+pub mod eaten_alive_v1;
+pub mod rules_meaning_eaten_alive_v1;
+
+pub mod doubling_season_public_v48;
+pub mod season_observation_v48;
+
+pub mod season_token_attachment_v48;

@@ -68,7 +68,7 @@ pub fn producer_sha256_v1() -> String {
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
-fn roots() -> Result<Vec<crate::rules_meaning_raid_entry_v1::MeaningV1>, String> {
+pub(crate) fn roots() -> Result<Vec<crate::rules_meaning_raid_entry_v1::MeaningV1>, String> {
     let mut roots = Vec::new();
     if let Ok(selector) = crate::rules_meaning_raid_entry_v1::selector_v1() {
         for name in ["Gorehorn Raider", "Gutless Plunderer"] {

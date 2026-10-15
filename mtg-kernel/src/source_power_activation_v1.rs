@@ -261,6 +261,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_state(state)?;
     crate::equipment_damage_source_v4::validate_state(state)?;
+    crate::zul_ashur_v1::validate_state(state)?;
     crate::fixed_source_damage_v3::validate_state(state)?;
     // The operation owns a mandatory payment receipt. Receipt presence cannot
     // decide whether its live activation is validated: deletion must refuse
@@ -422,6 +423,11 @@ pub(crate) fn protected(
                 target,
                 crate::card_def::Keywords::PROTECTION_FROM_MONOCOLORED,
             ) && (facts.color_mask & 0x1f).count_ones() == 1
+                || crate::controlled_creature_grants_v1::protects_from_colors(
+                    state,
+                    target,
+                    facts.color_mask,
+                )
                 || crate::standard_legends_v1::katilda_protected_from_historical(
                     state,
                     target,

@@ -34,6 +34,7 @@ fn counter_event(
         zone_change_count: state.objects.get(object).zone_change_count,
         player: placing,
         count,
+        replacement_input_v48: Default::default(),
     }
 }
 #[test]

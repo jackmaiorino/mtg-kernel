@@ -93,7 +93,7 @@ pub struct SavedRaidDamageSourceV4 {
     pub lifelink: bool,
     pub deathtouch: bool,
 }
-type DamageOriginV3 = (
+pub(crate) type DamageOriginV3 = (
     CardStableRefV1,
     Option<SavedDamageSourceV1>,
     Option<SavedFixedDamageSourceV3>,
@@ -209,7 +209,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     Ok(())
 }
-fn public_ref(
+pub(crate) fn public_ref(
     state: &GameState,
     id: crate::ids::ObjectId,
 ) -> Result<CardStableRefV1, RlContractError> {
@@ -227,7 +227,7 @@ fn public_ref(
     }
     crate::sower_restriction_capture_v1::masked_ref(id, o)
 }
-fn damage_origin(
+pub(crate) fn damage_origin(
     state: &GameState,
     choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
 ) -> Result<DamageOriginV3, RlContractError> {
@@ -366,9 +366,16 @@ fn damage_origin(
         None,
     ))
 }
-fn discard_menu(
+pub(crate) fn discard_menu(
     state: &GameState,
     actor: PlayerId,
+) -> Result<Option<DiscardMenuV2>, RlContractError> {
+    discard_menu_inner(state, actor, false)
+}
+pub(crate) fn discard_menu_inner(
+    state: &GameState,
+    actor: PlayerId,
+    accept_akroma: bool,
 ) -> Result<Option<DiscardMenuV2>, RlContractError> {
     if !crate::effect::crystal_prevention_v1::is_discard_choice(state) {
         return Ok(None);
@@ -381,12 +388,19 @@ fn discard_menu(
     }
     Ok(Some(DiscardMenuV2 {
         chooser: actor.into(),
-        source: crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?,
+        source: if accept_akroma {
+            crate::rl::akroma_crystal_resolving_source_ref_v40(state, &pending.resolving_item)?
+        } else {
+            crate::rl::crystal_resolving_source_ref(state, &pending.resolving_item)?
+        },
         maximum_cards: 1,
         draws_if_discarded: 1,
     }))
 }
 fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
+    menu_inner(state, false)
+}
+fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
     use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
     let Some(PendingEffectChoice::ChooseOption {
@@ -405,6 +419,7 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     };
     let options = choice.options.iter().map(|option| {
         let (kind, id, amount) = match option {
+            PreventionV1::Multiplier(source) => ("multiplier", source.source, None),
             PreventionV1::Barricade(source) => ("barricade", source.source, None),
             PreventionV1::Protection(target) => ("protection", target.object, None),
             PreventionV1::Replacement(r) => match r.kind {
@@ -425,10 +440,17 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
     Ok(Some(MenuV1 {
         chooser: choice.chooser.into(),
         source,
-        resolving_source: crate::rl::crystal_resolving_source_ref(
-            state,
-            &state.engine.pending_effect.as_ref().unwrap().resolving_item,
-        )?,
+        resolving_source: if accept_akroma {
+            crate::rl::akroma_crystal_resolving_source_ref_v40(
+                state,
+                &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+            )?
+        } else {
+            crate::rl::crystal_resolving_source_ref(
+                state,
+                &state.engine.pending_effect.as_ref().unwrap().resolving_item,
+            )?
+        },
         source_history,
         fixed_source_history,
         raid_source_history,
@@ -452,6 +474,162 @@ fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
         remaining_damage: choice.remaining_amount,
         options,
     }))
+}
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CrystalObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+    )
+}
+pub(crate) fn parts_for_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CrystalObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullAjaniV42,
+    )
+}
+pub(crate) fn parts_for_faebloom_v43(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<CrystalObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
+    )
+}
+pub(crate) fn parts_for_common_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<CrystalObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    validate_state(state).map_err(RlContractError)?;
+    let project_menu = !crate::twinflame_observation_v1::owns_family_menu(state);
+    let optional_discard_menu = if project_menu {
+        discard_menu_inner(state, actor, true)?
+    } else {
+        None
+    };
+    let optional_fight_menu =
+        if project_menu && crate::effect::crystal_prevention_v1::is_program_choice(state) {
+            let pending = state
+                .engine
+                .pending_effect
+                .as_ref()
+                .ok_or_else(|| RlContractError("Crystal optional fight absent".into()))?;
+            Some(ProgramMenuV3 {
+                chooser: pending.ctx.controller.into(),
+                source: crate::rl::akroma_crystal_resolving_source_ref_v40(
+                    state,
+                    &pending.resolving_item,
+                )?,
+                decline_index: 0,
+                fight_index: 1,
+                requires_original_source_creature: true,
+            })
+        } else {
+            None
+        };
+    let mut static_sources = Vec::new();
+    for (id, o) in state.objects.iter() {
+        if crate::crystal_barricade_v1::is_active_source(state, id) {
+            static_sources.push(StaticSourceV1 {
+                source: public_ref(state, id)?,
+                controller: o.controller.into(),
+            });
+        }
+    }
+    let base = crate::rl::common_family_observation_storage_scoped(
+        (scope, state),
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let o = CrystalObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        static_sources,
+        prevention_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
+            None
+        } else {
+            menu_inner(state, true)?
+        },
+        optional_discard_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
+            None
+        } else {
+            optional_discard_menu
+        },
+        optional_fight_menu: if crate::twinflame_observation_v1::owns_family_menu(state) {
+            None
+        } else {
+            optional_fight_menu
+        },
+        equipment_damage_sources: crate::equipment_damage_source_v4::public_sources(state)
+            .map_err(RlContractError)?,
+        projection_sha256: String::new(),
+    };
+    Ok(o)
 }
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(

@@ -1,0 +1,24 @@
+{
+  "schema": "fdn_inspiration_from_beyond_prepared_v1",
+  "disposition": "unregistered_source_only",
+  "not_generator_input": true,
+  "source_base": "ad53a6ad861df50baa6208c4e9146f2dfd4d7145",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "cards": [{
+    "name": "Inspiration from Beyond",
+    "mana_cost": "{2}{U}",
+    "mana_value": 3,
+    "colors": ["U"],
+    "types": ["Sorcery"],
+    "subtypes": [],
+    "supertypes": [],
+    "power": null,
+    "toughness": null,
+    "is_land": false,
+    "produces_mana": [],
+    "sideboard_only": false,
+    "complexity": "moderate",
+    "mechanics": ["mill", "graveyard_return", "flashback"],
+    "java_file": "Mage.Sets/src/mage/cards/i/InspirationFromBeyond.java"
+  }]
+}

@@ -66,6 +66,8 @@ pub struct Counters {
     pub charge: i32,
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub net: i32,
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub bait: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -87,6 +89,7 @@ impl Counters {
             || self.oil != 0
             || self.charge != 0
             || self.net != 0
+            || self.bait != 0
     }
 }
 
@@ -114,6 +117,10 @@ impl std::hash::Hash for Counters {
         if self.net != 0 {
             b"net_v1".hash(state);
             self.net.hash(state);
+        }
+        if self.bait != 0 {
+            b"bait_v39".hash(state);
+            self.bait.hash(state);
         }
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);
@@ -1044,12 +1051,18 @@ pub struct FinalizedCastBindingV1 {
     pub chosen_creature_cost: Option<PaidCostRefV4>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variable_targeting_kicked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mandatory_additional_cost: Option<crate::engine::mandatory_cast_cost_v1::PaidV1>,
 }
 
 impl std::hash::Hash for FinalizedCastBindingV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.x_value.hash(state);
         self.chosen_creature_cost.hash(state);
+        if let Some(choice) = self.mandatory_additional_cost {
+            "mandatory_additional_cost/v1".hash(state);
+            choice.hash(state);
+        }
         if let Some(kicked) = self.variable_targeting_kicked {
             "variable_targeting_kicked/v1".hash(state);
             kicked.hash(state);
@@ -1339,6 +1352,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureCardInOwnGraveyard
                     | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::PermanentCardInOwnGraveyard
                     | TargetSpec::CardInOwnGraveyardWithAnySubtype(_),
                 0,
@@ -1506,6 +1520,45 @@ pub struct StackStateV4 {
     pub fixed_damage_paid_v3: FixedDamagePaidV3,
     #[serde(default, skip_serializing_if = "EquipmentDamagePublishedV4::is_empty")]
     pub equipment_damage_published_v4: EquipmentDamagePublishedV4,
+    /// Intrinsic started custody; absence preserves predecessor bytes and Hash input.
+    #[serde(default, skip_serializing_if = "InspirationStartedV1::is_empty")]
+    pub inspiration_started_v1: InspirationStartedV1,
+    #[serde(default, skip_serializing_if = "HighSocietyHunterStartedV45::is_empty")]
+    pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
+}
+/// Empty writes no historical bytes or Hash domain. The pointer owns one
+/// original Hunter publication after its real engine removal has started.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HighSocietyHunterStartedV45(pub Option<u64>);
+impl HighSocietyHunterStartedV45 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for HighSocietyHunterStartedV45 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "high-society-hunter-started/v45".hash(state);
+            index.hash(state);
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InspirationStartedV1(pub Option<u32>);
+impl InspirationStartedV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for InspirationStartedV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(index) = self.0 {
+            "inspiration-started/v1".hash(state);
+            index.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2541,6 +2594,7 @@ impl GameState {
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
+        crate::ajani_full_v42::lifecycle::begin_turn(&mut state);
         state
     }
 
@@ -2814,7 +2868,20 @@ impl GameState {
         if changed_host {
             crate::standard_cards_v1::aegis_attached(self, source, host_link);
         }
-        self.validate_attachment_relations()
+        self.validate_attachment_relations()?;
+        if crate::doubling_season_v48::requires_successor(self) {
+            crate::season_token_attachment_v48::record(
+                self,
+                crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {
+                    source: ObjectLinkV4 {
+                        object: source,
+                        zone_change_count: source_zone_change_count,
+                    },
+                    host: host_link,
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Returns the acting observer's currently valid, position-sorted facts
@@ -4709,6 +4776,7 @@ mod tests {
             chosen_creature_cost: None,
             convoke_chosen: Vec::new(),
             convoke_finished: false,
+            mandatory_additional_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

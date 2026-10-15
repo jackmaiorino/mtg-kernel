@@ -209,6 +209,56 @@ type ProjectedAshrootV27 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::ashroot_public_v1::AshrootObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.power_contexts {
+        handles.insert(&row.source_at_attack)?;
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::ashroot_public_v1::AshrootObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanAshrootExtensionsV27, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::ashroot_public_v1::AshrootObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    label(action, observation, handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanAshrootExtensionsV27,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.power_contexts {
+        unary
+            .entry(row.source_at_attack.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    Ok(())
+}
 fn project_base(
     observation: &AshrootObservationV1,
     actions: &[ActionSemanticV1],

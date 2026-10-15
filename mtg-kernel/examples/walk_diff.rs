@@ -1249,6 +1249,7 @@ fn decision_player_for(d: &SurfaceDecision, state: &GameState) -> Option<PlayerI
     match d {
         SurfaceDecision::Decision(Decision::CastSpellOrPass { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseTargets { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCostTargets { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
@@ -1732,7 +1733,9 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::Crew(_)
             | card_def::CostComponent::RemoveChargeCounterFromSelf
             | card_def::CostComponent::ExileCraftArtifactMaterial
-            | card_def::CostComponent::RemoveNetCounterFromSelf) => {
+            | card_def::CostComponent::RemoveNetCounterFromSelf
+            | card_def::CostComponent::TapFishingPoleAttachedToSource
+            | card_def::CostComponent::SacrificeCreatureOrPayMana(_)) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }
@@ -1825,6 +1828,7 @@ fn decision_texts(
     p1_name: &str,
 ) -> Option<(&'static str, Vec<String>)> {
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => None,
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => None,
         SurfaceDecision::Decision(Decision::CastSpellOrPass {
@@ -2009,6 +2013,9 @@ fn apply_by_indices(
         .first()
         .ok_or("apply_by_indices:no-chosen-indices")?;
     match decision {
+        SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
+            Err("apply_by_indices:unsupported-banner-entry-color-protocol".to_string())
+        }
         SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
         | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
             Err("apply_by_indices:unsupported-variable-cast-protocol".to_string())

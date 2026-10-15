@@ -36,21 +36,38 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub(crate) mod ajani_v42;
+pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
 pub(crate) mod ashroot_v27;
 pub(crate) mod authority_v17;
 pub(crate) mod banishing_v26;
+pub(crate) mod banner_v36;
 mod bloom_tender_v24;
 pub mod census_future_v2;
 pub(crate) mod cerberus_v19;
+pub(crate) mod conqueror_v49;
 pub(crate) mod crystal_v22;
+pub(crate) mod divine_v44;
+pub(crate) mod eaten_v46;
 pub(crate) mod employment_v18;
 pub mod extra_turn_v23;
+pub(crate) mod faebloom_v43;
 pub(crate) mod fiery_v33;
+pub(crate) mod fishing_pole_v39;
 pub(crate) mod frenzied_v15;
+pub(crate) mod game_outcome_v41;
 pub(crate) mod garruk_v30;
 pub(crate) mod gourmand_v29;
+pub(crate) mod hunter_v45;
+pub(crate) mod inspiration_v37;
+pub(crate) mod krenko_v34;
+mod limited_common_v1;
+pub(crate) mod panda_v47;
+pub(crate) mod season_v48;
 pub(crate) mod strongbox_v32;
+pub(crate) mod twinflame_v38;
+pub(crate) mod zul_ashur_v35;
 
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
@@ -318,6 +335,7 @@ pub(crate) mod heartfire_v12;
 pub(crate) mod raid_entry_v21;
 mod raid_v9;
 mod soul_shackled_zombie_v13;
+pub(crate) use soul_shackled_zombie_v13::context_for_akroma_v40 as akroma_zombie_context_v40;
 pub mod variable_cast_v1;
 #[cfg(test)]
 pub(crate) use flat_action_v3::{
@@ -1176,7 +1194,11 @@ where
         ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
         | ActionSemanticV1::ChooseLondonBottom { .. }
-        | ActionSemanticV1::ChooseAttackTarget { .. } => {
+        | ActionSemanticV1::ChooseAttackTarget { .. }
+        | ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseDivineKickerV44 { .. }
+        | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+        | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -1807,20 +1829,16 @@ fn flat_validate_current_decision_relations_v1(
                     definition.activated_abilities.get(*ability_index as usize)
                 {
                     ability.activation_zone
-                } else if *ability_index as usize == definition.activated_abilities.len() {
-                    // The engine reserves exactly the next slot for an
-                    // equipment-granted battlefield ability. The authoritative
-                    // origin check below still requires that actual offer.
-                    Zone::Battlefield
-                } else if crate::standard_cards_v1::capture_cauldron_grant(
+                } else if let Some(ability) = crate::engine::resolved_activated_ability(
+                    object.card_def,
+                    *ability_index,
                     state,
                     ObjectId(source.arena_id),
-                    *ability_index,
-                )
-                .0
-                .is_some()
-                {
-                    Zone::Battlefield
+                ) {
+                    // Ordinary Equipment and Fishing Pole grants have distinct slots.
+                    // Resolve the exact current grant; the origin check below
+                    // still requires that actual ordered engine offer.
+                    ability.activation_zone
                 } else {
                     return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
                 };
@@ -1915,10 +1933,62 @@ fn flat_validate_origin_decision_v1(
     current: &FastActorCurrentDecisionV1,
     state: &crate::state::GameState,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_akroma_inner(current, state, false)
+}
+fn flat_validate_origin_decision_akroma_inner(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_origin_decision_common_scoped_v42(
+        current,
+        state,
+        accept_akroma,
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+    )
+}
+fn flat_validate_origin_decision_common_scoped_v42(
+    current: &FastActorCurrentDecisionV1,
+    state: &crate::state::GameState,
+    accept_akroma: bool,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
     use crate::engine::Action;
     use crate::surface::SurfaceAction;
 
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if (if scope == crate::rl::CommonProjectionScopeV42::ConquerorV49 {
+        crate::conqueror_observation_v49::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::SeasonV48 {
+        crate::season_observation_v48::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::PandaV47 {
+        crate::panda_observation_v47::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::EatenV46 {
+        crate::eaten_observation_v46::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::FullFaebloomV43 {
+        crate::faebloom_observation_v43::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::HunterV45 {
+        crate::hunter_observation_v45::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::DivineV44 {
+        crate::divine_observation_v44::validate_state(state)
+    } else if scope == crate::rl::CommonProjectionScopeV42::FullAjaniV42 {
+        crate::ajani_observation_v42::validate_state(state)
+    } else if accept_akroma {
+        crate::akroma_public_v1::validate_state(state)
+    } else {
+        crate::controlled_creature_grants_v1::require_legacy_consumer_supported(state).and_then(
+            |()| {
+                crate::game_outcome_protection_v1::require_legacy_consumer_supported(
+                    state,
+                    Some(current.actor),
+                )
+            },
+        )
+    })
+    .is_err()
+    {
+        return Err(invalid());
+    }
     match &current.origin_decision {
         PolicyDecisionV5::AttackerInclusion {
             player,
@@ -2705,6 +2775,7 @@ fn flat_validate_origin_decision_v1(
         }
         Decision::ChooseVariableCastTargets { .. }
         | Decision::ChooseVariableCastKicker { .. }
+        | Decision::ChooseEntryColorV36 { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
@@ -2854,7 +2925,11 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::ChooseLegendPermanent { .. }
             | ActionSemanticV1::ChooseLondonMulligan { .. }
             | ActionSemanticV1::ChooseLondonBottom { .. }
-            | ActionSemanticV1::ChooseAttackTarget { .. },
+            | ActionSemanticV1::ChooseAttackTarget { .. }
+            | ActionSemanticV1::ChooseEntryColorV36 { .. }
+            | ActionSemanticV1::ChooseDivineKickerV44 { .. }
+            | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+            | ActionSemanticV1::FinishDivineTargetsV44 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -3297,6 +3372,40 @@ fn flat_validate_current_binding_header_v1(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_current_binding_header_akroma_inner(session, current, false)
+}
+fn flat_validate_current_binding_header_akroma_inner(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if crate::faebloom_trick_v43::requires_successor(&session.state, Some(current.actor))
+        && (!accept_akroma
+            || !matches!(
+                session.flat_action_contract_mode,
+                FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
+            ))
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+    if !accept_akroma
+        && crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+    if !accept_akroma && session.is_common_v40() {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+
     if current.environment_revision != session.environment_revision
         || current.bound_policy_step_count != session.policy_step_count
         || current.bound_physical_decision_count != session.physical_decision_count
@@ -3305,6 +3414,32 @@ fn flat_validate_current_binding_header_v1(
     }
     if current.candidates.is_empty() {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    if accept_akroma
+        && matches!(
+            session.flat_action_contract_mode,
+            FlatActionContractModeV1::HunterV45
+                | FlatActionContractModeV1::EatenV46
+                | FlatActionContractModeV1::PandaV47
+                | FlatActionContractModeV1::SeasonV48
+                | FlatActionContractModeV1::ConquerorV49
+        )
+        && session
+            .surface
+            .validate_hunter_order_header_v45(
+                &session.state,
+                session.environment_revision,
+                &current.origin_decision,
+                (current.substep_index, current.substep_count),
+            )
+            .map_err(|_| FlatActionDecisionSliceErrorV1::InvalidDecisionRelation)?
+    {
+        if current.origin_decision.actor(&session.state) != Some(current.actor)
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+        {
+            return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+        }
+        return Ok(());
     }
     flat_validate_current_decision_relations_v1(current, &session.state)
 }
@@ -3356,6 +3491,15 @@ fn flat_validate_current_binding_header_v2(
         return flat_validate_current_binding_header_v1(session, current);
     }
     let invalid = || FlatActionDecisionSliceErrorV1::InvalidDecisionRelation;
+    if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&session.state)
+        .is_err()
+        || crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
+    {
+        return Err(invalid());
+    }
     let raw = core_policy_action_candidates_v5(&current.origin_decision, &session.state)
         .map_err(|_| invalid())?;
     let original = FastActorCurrentDecisionV1 {
@@ -4312,6 +4456,26 @@ fn flat_validate_expected_decision_v1(
     current: &FastActorCurrentDecisionV1,
     expected: FastActorDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    flat_validate_expected_decision_akroma_inner(session, current, expected, false)
+}
+fn flat_validate_expected_decision_akroma_inner(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+    expected: FastActorDecisionV1,
+    accept_akroma: bool,
+) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if !accept_akroma
+        && crate::game_outcome_protection_v1::requires_successor(
+            &session.state,
+            Some(current.actor),
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+    if !accept_akroma && session.is_common_v40() {
+        return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+    }
+
     if expected.episode_id != session.episode_id {
         return Err(FlatActionDecisionSliceErrorV1::StaleEpisodeBinding);
     }
@@ -4332,19 +4496,44 @@ fn flat_validate_expected_decision_v1(
     }
     // The frozen flat formats cannot represent these extended mechanics or
     // numeric ranges. Refuse before publishing any incomplete buffers.
-    if (crate::fiery_annihilation_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33)
+    if crate::twinflame_tyrant_v1::requires_successor(&session.state)
+        && !matches!(
+            session.flat_action_contract_mode,
+            FlatActionContractModeV1::TwinflameV38
+                | FlatActionContractModeV1::AkromaV40
+                | FlatActionContractModeV1::LimitedCommonV1
+                | FlatActionContractModeV1::AjaniV42
+                | FlatActionContractModeV1::FaebloomV43
+                | FlatActionContractModeV1::DivineV44
+                | FlatActionContractModeV1::HunterV45
+                | FlatActionContractModeV1::EatenV46
+                | FlatActionContractModeV1::PandaV47
+                | FlatActionContractModeV1::SeasonV48
+                | FlatActionContractModeV1::ConquerorV49
+        )
+    {
+        return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
+    }
+    if (crate::fishing_pole_v39::lifecycle::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39 && !session.is_common_v40())
+        || (crate::inspiration_observation_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37 && !session.is_common_v40())
+        || (crate::krenko_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34 && !session.is_common_v40())
+        || (crate::zul_ashur_v1::requires_successor(&session.state) && session.flat_action_contract_mode != FlatActionContractModeV1::ZulAshurV35 && !session.is_common_v40())
+        || (crate::heraldic_banner_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::BannerV36 && !session.is_common_v40())
+        || (crate::fiery_annihilation_v1::requires_successor(&session.state)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40())
         || (crate::combat_static_rules_v1::requires_successor(&session.state)
-        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25)
+        && session.flat_action_contract_mode != FlatActionContractModeV1::JuggernautV25 && !session.is_common_v40())
         || session.state.objects.iter().any(|(_, object)| {
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
-    }) || session.state.planeswalkers_v1.is_some()
+    }) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
         || session.state.trigger_uses_v1.is_some()
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
-                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => true,
-                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33,
+                crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49),
+                crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. } => session.flat_action_contract_mode != FlatActionContractModeV1::FieryV33 && !session.is_common_v40(),
                 _ => false,
             }
         })
@@ -4468,6 +4657,22 @@ enum FlatActionContractModeV1 {
     ArahboV31,
     StrongboxV32,
     FieryV33,
+    KrenkoV34,
+    ZulAshurV35,
+    BannerV36,
+    InspirationV37,
+    AkromaV40,
+    FishingPoleV39,
+    TwinflameV38,
+    LimitedCommonV1,
+    AjaniV42,
+    FaebloomV43,
+    DivineV44,
+    HunterV45,
+    EatenV46,
+    PandaV47,
+    SeasonV48,
+    ConquerorV49,
 }
 
 /// In-process actor lane that preserves the v5 policy surface and transition
@@ -5422,7 +5627,177 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        // The frozen Episode transport has no original loss-batch facts.
+        // Refuse before its policy surface can collect or resolve a real root.
+        if crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state).is_err() {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:conqueror_v49_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::doubling_season_v48::require_legacy_visible(
+            &self.state,
+            self.state.priority_player,
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:doubling_season_v48_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::fiendish_panda_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fiendish_panda_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
+            &self.state,
+            Some(self.state.priority_player),
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:mandatory_additional_cost_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::faebloom_trick_v43::requires_successor(&self.state, None) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:faebloom_v43_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::ajani_full_v42::lifecycle::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:ajani_v42_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::twinflame_tyrant_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+            .is_err()
+            || crate::game_outcome_protection_v1::requires_successor(&self.state, None)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::fishing_pole_v39::lifecycle::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fishing_pole_v39_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if crate::inspiration_observation_v1::requires_successor(&self.state) {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:inspiration_v37_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
+            || crate::heraldic_banner_v1::requires_successor(&self.state)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banner_v36_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
         self.current = None;
+        if crate::krenko_v1::requires_successor(&self.state) {
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:krenko_v34_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::arahbo_v1::requires_successor(&self.state) {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -6821,6 +7196,8 @@ impl FastActorSessionV1 {
             return Err(KernelNativeSearchErrorV1::InvalidDecision);
         };
         let actor = current.actor;
+        crate::fiendish_panda_v1::require_legacy_supported(&self.state, Some(actor))
+            .map_err(|_| KernelNativeSearchErrorV1::HiddenStateContract)?;
         let before_observation = self.flat_policy_observation_v2(expected)?;
         let before_semantics = self
             .diagnostic_current_action_semantics()
@@ -7032,8 +7409,80 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            crate::conqueror_observation_v49::validate_state(&self.state)
+        } else {
+            crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state)
+        }
+        .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
+
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49
+        ) {
+            crate::doubling_season_v48::require_legacy_visible(
+                &self.state,
+                self.current
+                    .as_ref()
+                    .map_or(self.state.priority_player, |current| current.actor),
+            )
+            .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
+        }
+
+        if !self.is_common_v40()
+            && crate::game_outcome_protection_v1::requires_successor(
+                &self.state,
+                self.current.as_ref().map(|current| current.actor),
+            )
+        {
+            return Err(session_error(
+                RlSessionErrorCode::StaleEnvironmentBinding,
+                "unrepresented game-outcome protection requires common successor",
+            ));
+        }
+        if self.is_common_v40() {
+            let current = self.current.as_ref().ok_or_else(|| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "missing Akroma current decision",
+                )
+            })?;
+            let mut rederived = current.clone();
+            if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+                conqueror_v49::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
+                season_v48::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::PandaV47 {
+                panda_v47::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
+                eaten_v46::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                hunter_v45::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+                divine_v44::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
+                faebloom_v43::prepare_current(self, &mut rederived)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42 {
+                ajani_v42::prepare_current(self, &mut rederived)
+            } else {
+                akroma_v40::prepare_current(self, &mut rederived)
+            }
+            .map_err(|_| {
+                session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "invalid Akroma complete binding",
+                )
+            })?;
+            if rederived.candidates != current.candidates {
+                return Err(session_error(
+                    RlSessionErrorCode::StaleEnvironmentBinding,
+                    "changed Akroma complete menu",
+                ));
+            }
+        }
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+            && !self.is_common_v40()
         {
             return Err(session_error(
                 RlSessionErrorCode::StaleEnvironmentBinding,
@@ -7168,8 +7617,304 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            crate::conqueror_observation_v49::validate_state(&self.state)
+        } else {
+            crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state)
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:conqueror_v49_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if !matches!(
+            self.flat_action_contract_mode,
+            FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49
+        ) && crate::doubling_season_v48::require_legacy_visible(
+            &self.state,
+            self.state.priority_player,
+        )
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:doubling_season_v48_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            crate::conqueror_observation_v49::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
+            crate::season_observation_v48::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::PandaV47 {
+            crate::panda_observation_v47::validate_state(&self.state)
+        } else {
+            crate::fiendish_panda_v1::require_legacy_supported(
+                &self.state,
+                Some(self.state.priority_player),
+            )
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fiendish_panda_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            crate::conqueror_observation_v49::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
+            crate::season_observation_v48::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::PandaV47 {
+            crate::panda_observation_v47::validate_state(&self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
+            crate::eaten_observation_v46::validate_state(&self.state)
+        } else {
+            crate::engine::mandatory_cast_cost_v1::require_legacy_supported(
+                &self.state,
+                Some(self.state.priority_player),
+            )
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:mandatory_additional_cost_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if (crate::faebloom_trick_v43::requires_successor(&self.state, None)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
+            ))
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43
+                && crate::faebloom_observation_v43::validate_state(&self.state).is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:faebloom_v43_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (crate::ajani_full_v42::lifecycle::requires_successor(&self.state)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::AjaniV42
+                    | FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
+            ))
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42
+                && crate::ajani_observation_v42::validate_state(&self.state).is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:ajani_v42_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (crate::twinflame_tyrant_v1::requires_successor(&self.state)
+            && !matches!(
+                self.flat_action_contract_mode,
+                FlatActionContractModeV1::TwinflameV38
+                    | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
+                    | FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
+            ))
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::TwinflameV38
+                && crate::twinflame_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:twinflame_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if !self.is_common_v40()
+            && crate::game_outcome_protection_v1::requires_successor(&self.state, None)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:game_outcome_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (if self.is_common_v40() {
+            if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+                crate::conqueror_observation_v49::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
+                crate::season_observation_v48::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::PandaV47 {
+                crate::panda_observation_v47::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
+                crate::eaten_observation_v46::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+                crate::hunter_observation_v45::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+                crate::divine_observation_v44::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::FaebloomV43 {
+                crate::faebloom_observation_v43::validate_state(&self.state)
+            } else if self.flat_action_contract_mode == FlatActionContractModeV1::AjaniV42 {
+                crate::ajani_observation_v42::validate_state(&self.state)
+            } else {
+                crate::akroma_public_v1::validate_state(&self.state)
+            }
+        } else {
+            crate::controlled_creature_grants_v1::require_legacy_consumer_supported(&self.state)
+        })
+        .is_err()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:controlled_creature_grant_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (crate::fishing_pole_v39::lifecycle::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::FishingPoleV39
+            && !self.is_common_v40())
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::FishingPoleV39
+                && crate::fishing_pole_observation_v39::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:fishing_pole_v39_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+        if (crate::inspiration_observation_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::InspirationV37
+            && !self.is_common_v40())
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37
+                && crate::inspiration_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:inspiration_v37_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::heraldic_banner_v1::validate_state(&self.state).is_err()
+            || (self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36
+                && crate::banner_observation_v1::validate_projection_authority(&self.state)
+                    .is_err())
+            || (crate::heraldic_banner_v1::requires_successor(&self.state)
+                && self.flat_action_contract_mode != FlatActionContractModeV1::BannerV36
+                && !self.is_common_v40())
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:banner_v36_authority_or_transport".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
+
+        if crate::krenko_v1::requires_successor(&self.state)
+            && self.flat_action_contract_mode != FlatActionContractModeV1::KrenkoV34
+            && !self.is_common_v40()
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                "fail_closed:krenko_v34_successor_required".into(),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         if crate::arahbo_v1::requires_successor(&self.state)
             && self.flat_action_contract_mode != FlatActionContractModeV1::ArahboV31
+            && !self.is_common_v40()
         {
             self.current = None;
             self.terminal = Some(halted_terminal(
@@ -7185,7 +7930,18 @@ impl FastActorSessionV1 {
         if crate::garruks_uprising_v1::requires_successor(&self.state)
             && !matches!(
                 self.flat_action_contract_mode,
-                FlatActionContractModeV1::GarrukV30 | FlatActionContractModeV1::ArahboV31
+                FlatActionContractModeV1::GarrukV30
+                    | FlatActionContractModeV1::ArahboV31
+                    | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
+                    | FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
             )
         {
             self.current = None;
@@ -7202,6 +7958,7 @@ impl FastActorSessionV1 {
         self.current = None;
         if self.state.extra_turn_v1.is_some()
             && self.flat_action_contract_mode != FlatActionContractModeV1::ExtraTurnV23
+            && !self.is_common_v40()
         {
             self.terminal = Some(halted_terminal(
                 &self.deck_ids,
@@ -7236,6 +7993,16 @@ impl FastActorSessionV1 {
                 FlatActionContractModeV1::BanishingV26
                     | FlatActionContractModeV1::GarrukV30
                     | FlatActionContractModeV1::ArahboV31
+                    | FlatActionContractModeV1::AkromaV40
+                    | FlatActionContractModeV1::LimitedCommonV1
+                    | FlatActionContractModeV1::AjaniV42
+                    | FlatActionContractModeV1::FaebloomV43
+                    | FlatActionContractModeV1::DivineV44
+                    | FlatActionContractModeV1::HunterV45
+                    | FlatActionContractModeV1::EatenV46
+                    | FlatActionContractModeV1::PandaV47
+                    | FlatActionContractModeV1::SeasonV48
+                    | FlatActionContractModeV1::ConquerorV49
             )
         {
             self.terminal = Some(halted_terminal(
@@ -7277,7 +8044,33 @@ impl FastActorSessionV1 {
             }
             _ => {}
         }
-        let (substep_index, substep_count) = surfaced.substep();
+        let (substep_index, substep_count) =
+            match self.surface.hunter_order_substeps_v45(&self.state) {
+                Ok(Some(substeps))
+                    if matches!(
+                        self.flat_action_contract_mode,
+                        FlatActionContractModeV1::HunterV45
+                            | FlatActionContractModeV1::EatenV46
+                            | FlatActionContractModeV1::PandaV47
+                            | FlatActionContractModeV1::SeasonV48
+                            | FlatActionContractModeV1::ConquerorV49
+                    ) =>
+                {
+                    substeps
+                }
+                Ok(None) => surfaced.substep(),
+                _ => {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        "fail_closed:Hunter trigger ordering".into(),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            };
         if substep_index == 0 && self.physical_decision_count >= self.max_physical_decisions {
             let _ = self.surface.discard_unanswered_scan();
             self.terminal = Some(truncated_terminal(
@@ -7319,7 +8112,28 @@ impl FastActorSessionV1 {
             ));
             return;
         };
-        let candidates = core_policy_action_candidates_v5(&surfaced, &self.state).and_then(|raw| {
+        let raw = if self.flat_action_contract_mode == FlatActionContractModeV1::ConquerorV49 {
+            conqueror_v49::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::SeasonV48 {
+            season_v48::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::PandaV47 {
+            panda_v47::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::EatenV46 {
+            eaten_v46::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::HunterV45 {
+            hunter_v45::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::DivineV44 {
+            divine_v44::actual_candidates(&surfaced, &self.state, &self.surface)
+        } else if self.is_common_v40() {
+            akroma_v40::actual_candidates(&surfaced, &self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::InspirationV37 {
+            inspiration_v37::actual_candidates(&surfaced, &self.state)
+        } else if self.flat_action_contract_mode == FlatActionContractModeV1::BannerV36 {
+            banner_v36::actual_candidates(&surfaced, &self.state)
+        } else {
+            core_policy_action_candidates_v5(&surfaced, &self.state)
+        };
+        let candidates = raw.and_then(|raw| {
             if self.flat_action_contract_mode == FlatActionContractModeV1::V2 {
                 flat_scan_menu_v2(&self.surface, &self.state, &surfaced, raw)
                     .map_err(RlContractError)
@@ -7537,6 +8351,187 @@ impl FastActorSessionV1 {
                     return;
                 }
             }
+            FlatActionContractModeV1::TwinflameV38 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = twinflame_v38::prepare_current(self, &mut current) {
+                    self.current = None;
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:twinflame_v38:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AjaniV42 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = ajani_v42::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:ajani_v42:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FaebloomV43 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = faebloom_v43::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:faebloom_v43:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::HunterV45 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = hunter_v45::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:hunter_v45:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ConquerorV49 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = conqueror_v49::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:conqueror_v49:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::SeasonV48 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = season_v48::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:season_v48:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::PandaV47 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = panda_v47::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:panda_v47:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::EatenV46 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = eaten_v46::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:eaten_v46:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::DivineV44 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = divine_v44::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:divine_v44:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::AkromaV40 | FlatActionContractModeV1::LimitedCommonV1 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = akroma_v40::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:akroma_v40:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::InspirationV37 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = inspiration_v37::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:inspiration_v37:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::BannerV36 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = banner_v36::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:banner_v36:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
             FlatActionContractModeV1::FieryV33 => {
                 self.flat_action_cache_spare = None;
                 self.flat_action_cache_spare_v2 = None;
@@ -7546,6 +8541,51 @@ impl FastActorSessionV1 {
                         self.deck_hashes,
                         self.episode_id,
                         format!("fail_closed:fiery_v33:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::KrenkoV34 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = krenko_v34::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:krenko_v34:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::FishingPoleV39 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = fishing_pole_v39::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:fishing_pole_v39:{error:?}"),
+                        self.policy_step_count,
+                        self.physical_decision_count,
+                    ));
+                    return;
+                }
+            }
+            FlatActionContractModeV1::ZulAshurV35 => {
+                self.flat_action_cache_spare = None;
+                self.flat_action_cache_spare_v2 = None;
+                if let Err(error) = zul_ashur_v35::prepare_current(self, &mut current) {
+                    self.terminal = Some(halted_terminal(
+                        &self.deck_ids,
+                        self.deck_hashes,
+                        self.episode_id,
+                        format!("fail_closed:zul_ashur_v35:{error:?}"),
                         self.policy_step_count,
                         self.physical_decision_count,
                     ));

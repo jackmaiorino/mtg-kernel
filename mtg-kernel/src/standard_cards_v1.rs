@@ -539,6 +539,7 @@ pub enum StandardOpV1 {
     SourceLastPowerDamageV1,
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
+    ZulAshurPermissionV1,
 }
 
 impl StandardOpV1 {
@@ -674,8 +675,29 @@ fn transform_resolving_source(ctx: &ExecCtx, state: &mut GameState) {
     }
 }
 
+pub(crate) fn register_reflection_delayed_sacrifice(
+    state: &mut GameState,
+    binding: EffectObjectBinding,
+    source: crate::state::AbilitySourceContractV4,
+) {
+    let standard = state.standard_v1.get_or_insert_with(Default::default);
+    standard.reflection_delayed_bindings.push((binding, source));
+    standard
+        .hasty_copies
+        .push((binding.object, binding.expected_zone_change_count));
+    standard
+        .end_step_sacrifices
+        .push((binding.object, binding.expected_zone_change_count, source));
+}
+
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::ZulAshurPermissionV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         StandardOpV1::UntapCapturedSourceV1 => {
             crate::slumbering_cerberus_v1::untap_captured_source(ctx, state);
         }
@@ -1047,7 +1069,11 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         StandardOpV1::ExileTargetCardWithSource => exile_card_with_source(ctx, state),
         StandardOpV1::AddLoyaltyToSource { amount } => {
             if source_incarnation_live(ctx, state) {
-                crate::planeswalker_v1::change_loyalty(state, ctx.source, i32::from(*amount));
+                crate::planeswalker_v1::change_loyalty_effect(
+                    state,
+                    ctx.source,
+                    i32::from(*amount),
+                );
             }
         }
         StandardOpV1::ShuffleNonlandPermanentsIntoLibraries { player } => {
@@ -1117,6 +1143,35 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             {
                 return;
             }
+            if crate::doubling_season_v48::requires_successor(state) {
+                let live = state.objects.get(object);
+                let (definition, face) = if live.v4.face_down_v1.is_some() {
+                    let Some(anonymous) = crate::card_def::card_id_by_name(
+                        crate::self_reflection_v1::ANONYMOUS_BLUEPRINT,
+                    )
+                    .filter(|id| crate::self_reflection_v1::anonymous_blueprint_is_exact(*id)) else {
+                        return;
+                    };
+                    (anonymous, 0)
+                } else {
+                    (live.card_def, live.v4.face_index)
+                };
+                let source = ctx.ability_source_contract.unwrap_or_else(|| {
+                    crate::state::AbilitySourceContractV4::capture(state, ctx.source)
+                });
+                let mut proposal = ProposedEvent::create_token(definition, ctx.controller);
+                if let ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.entry_face_index = (face != 0).then_some(face);
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        copied: true,
+                        haste_until_end_of_turn: true,
+                        sacrifice_at_end_step: Some(source),
+                        ..Default::default()
+                    });
+                }
+                event::propose_and_commit_batch(state, vec![proposal]);
+                return;
+            }
             if let Some(token) = create_token_copy(state, object, ctx.controller) {
                 let incarnation = (token, state.objects.get(token).zone_change_count);
                 let source = ctx.ability_source_contract.unwrap_or_else(|| {
@@ -1127,12 +1182,7 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     expected_zone: Zone::Battlefield,
                     expected_zone_change_count: incarnation.1,
                 };
-                let standard = state.standard_v1.get_or_insert_with(Default::default);
-                standard.reflection_delayed_bindings.push((binding, source));
-                standard.hasty_copies.push(incarnation);
-                standard
-                    .end_step_sacrifices
-                    .push((incarnation.0, incarnation.1, source));
+                register_reflection_delayed_sacrifice(state, binding, source);
             }
         }
         StandardOpV1::SacrificeSourceAtEndStep => {
@@ -1204,8 +1254,65 @@ pub(crate) fn create_token_copy(
     original: ObjectId,
     controller: PlayerId,
 ) -> Option<ObjectId> {
+    if !crate::linked_aura_operation_v1::locally_owned(state)
+        && crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+    {
+        if state.objects.get(original).zone != Zone::Battlefield
+            || state.objects.get(original).v4.face_down_v1.is_some()
+        {
+            return None;
+        }
+        let source = crate::state::AbilitySourceContractV4::capture(state, original);
+        let history_start = state.engine.event_history.len();
+        crate::linked_aura_operation_v1::event(
+            state,
+            crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller },
+        );
+        return state.engine.event_history[history_start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            });
+    }
+    create_token_copy_without_banner_owner(state, original, controller)
+}
+
+pub(crate) fn create_token_copy_without_banner_owner(
+    state: &mut GameState,
+    original: ObjectId,
+    controller: PlayerId,
+) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
+    if crate::doubling_season_v48::requires_successor(state) {
+        let (card_def, face) = if live.v4.face_down_v1.is_some() {
+            let anonymous =
+                crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)?;
+            if !crate::self_reflection_v1::anonymous_blueprint_is_exact(anonymous) {
+                return None;
+            }
+            (anonymous, 0)
+        } else {
+            (card_def, face)
+        };
+        let mut proposal = ProposedEvent::create_token(card_def, controller);
+        if let ProposedEvent::CreateToken(token) = &mut proposal {
+            token.entry_face_index = (face != 0).then_some(face);
+            token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                copied: true,
+                ..Default::default()
+            });
+        }
+        let start = state.engine.event_history.len();
+        event::propose_and_commit_batch(state, vec![proposal]);
+        return state.engine.event_history[start..]
+            .iter()
+            .find_map(|event| match event {
+                CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            });
+    }
     let start = state.engine.event_log.len();
     event::propose_and_commit(state, ProposedEvent::create_token(card_def, controller));
     let created = state.engine.event_log[start..]
@@ -2736,6 +2843,41 @@ pub(crate) fn scale_counters(state: &GameState, player: PlayerId, count: i32) ->
     (0..doublings).fold(count, |count, _| count.saturating_mul(2))
 }
 
+pub(crate) fn counter_modifier_doublings_v48(state: &GameState, player: PlayerId) -> u32 {
+    controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)
+}
+
+/// Checked signed placement for the explicitly selected replacement component.
+/// Old callers retain their historical scalar arithmetic.
+pub(crate) fn scale_counters_checked_v48(
+    state: &GameState,
+    player: PlayerId,
+    count: i32,
+) -> Result<i32, String> {
+    if count < 0 {
+        return Err("negative counter modifier input".into());
+    }
+    (0..controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)).try_fold(count, |amount, _| {
+        amount
+            .checked_mul(2)
+            .ok_or_else(|| "counter modifier overflow".into())
+    })
+}
+
+/// Native-width loyalty placement. The signed helper remains unchanged for
+/// old callers; the V48 transfer adapter must not narrow an unsigned ledger.
+pub(crate) fn scale_loyalty_counters_v48(
+    state: &GameState,
+    player: PlayerId,
+    count: u32,
+) -> Result<u32, String> {
+    (0..controlled_classes_at(state, player, INNKEEPERS_TALENT, 3)).try_fold(count, |amount, _| {
+        amount
+            .checked_mul(2)
+            .ok_or_else(|| "loyalty modifier overflow".into())
+    })
+}
+
 /// Whether `object` has any counters on it.
 fn has_counters(state: &GameState, object: ObjectId) -> bool {
     let live = state.objects.get(object);
@@ -2835,11 +2977,15 @@ pub(crate) fn graveyard_cast_granted(
     holder: PlayerId,
     zone_change_count: u32,
 ) -> bool {
-    state.standard_v1.as_ref().is_some_and(|standard| {
-        standard
-            .graveyard_casts
-            .contains(&(object, zone_change_count, holder, state.turn_key_v1()))
-    })
+    crate::zul_ashur_v1::permission(state, object, holder, zone_change_count)
+        || state.standard_v1.as_ref().is_some_and(|standard| {
+            standard.graveyard_casts.contains(&(
+                object,
+                zone_change_count,
+                holder,
+                state.turn_key_v1(),
+            ))
+        })
 }
 
 fn gain_one_life() -> EffectOp {
@@ -4277,13 +4423,32 @@ pub(crate) fn begin_turn(state: &mut GameState) {
 }
 
 /// These counters are placed as the permanent enters, before its ETB trigger.
-pub(crate) fn initialize_entry_counters(state: &mut GameState, object: ObjectId) {
+pub(crate) fn initialize_entry_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let live = state.objects.get(object);
     let name = CARD_DEFS[live.card_def as usize].name;
-    if live.v4.face_index != 0 {
+    if live.v4.face_index != 0 || !matches!(name, "Braided Net" | "Reckoner Bankbuster") {
         return;
     }
-    let count = scale_counters(state, live.controller, 3);
+    if (crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty()))
+        && !crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+    {
+        return;
+    }
+    let count = match crate::doubling_season_v48::entry_amount(state, input, live.controller, 3) {
+        Ok(count) => count,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    };
     match name {
         "Braided Net" => state.objects.get_mut(object).counters.net = count,
         "Reckoner Bankbuster" => state.objects.get_mut(object).counters.charge = count,

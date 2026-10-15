@@ -53,54 +53,58 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("fiery_observation_v1.rs"),
-        include_str!("rules_meaning_fiery_v1.rs"),
-        include_str!("fiery_public_v1.rs"),
-        include_str!("fiery_annihilation_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("source_power_activation_v1.rs"),
-        include_str!("gorehorn_damage_v1.rs"),
-        include_str!("effect/squad_rallier_resolution_v1.rs"),
-        include_str!("raid_entry_v1.rs"),
-        include_str!("raid_entry_custody_v1.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("engine.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("extra_turn_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("rl.rs"),
-        include_str!("rl_session.rs"),
-        include_str!("rl_session/fiery_v33.rs"),
-        include_str!("human_bo3_v1/fiery_v33.rs"),
-        include_str!("human_bo3_v1/labels.rs"),
-        include_str!("human_bo3_v1/visible.rs"),
-        include_str!("human_bo3_v1/life_ward_v8.rs"),
-        include_str!("policy_observation_v8.rs"),
-        include_str!("policy_observation_v7.rs"),
-        include_str!("rl_session/flat_action_v3.rs"),
-        include_str!("rl_session/flat_action_v4.rs"),
-        include_str!("policy_surface_v5.rs"),
-        include_str!("surface_v2.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_keywords_v1.rs"),
-        include_str!("standard_legends_v1.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("fiery_observation_v1.rs"),
+            include_str!("rules_meaning_fiery_v1.rs"),
+            include_str!("fiery_public_v1.rs"),
+            include_str!("fiery_annihilation_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("source_power_activation_v1.rs"),
+            include_str!("gorehorn_damage_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
+            include_str!("raid_entry_v1.rs"),
+            include_str!("raid_entry_custody_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("engine.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("extra_turn_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("rl.rs"),
+            include_str!("rl_session.rs"),
+            include_str!("rl_session/fiery_v33.rs"),
+            include_str!("human_bo3_v1/fiery_v33.rs"),
+            include_str!("human_bo3_v1/labels.rs"),
+            include_str!("human_bo3_v1/visible.rs"),
+            include_str!("human_bo3_v1/life_ward_v8.rs"),
+            include_str!("policy_observation_v8.rs"),
+            include_str!("policy_observation_v7.rs"),
+            include_str!("rl_session/flat_action_v3.rs"),
+            include_str!("rl_session/flat_action_v4.rs"),
+            include_str!("policy_surface_v5.rs"),
+            include_str!("surface_v2.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_keywords_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 fn commitment(observation: &FieryObservationV1) -> Result<String, RlContractError> {
     let mut value = serde_json::to_value(observation)?;
@@ -152,6 +156,112 @@ fn roots() -> Result<Vec<RootV1>, RlContractError> {
         spell_mode: 0,
         root_sha256: meaning.root_sha256,
     }])
+}
+// V40 consumes these private typed parts; standalone predecessors retain their refusal path.
+pub(crate) fn parts_for_akroma_v40(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<FieryObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+    )
+}
+pub(crate) fn parts_for_ajani_v42(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<FieryObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullAjaniV42,
+    )
+}
+pub(crate) fn parts_for_faebloom_v43(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+) -> Result<FieryObservationV1, RlContractError> {
+    parts_for_common_scope(
+        state,
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        substep,
+        crate::rl::CommonProjectionScopeV42::FullFaebloomV43,
+    )
+}
+pub(crate) fn parts_for_common_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step_index: u64,
+    physical_decision_id: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<FieryObservationV1, RlContractError> {
+    let (substep_index, substep_count) = substep;
+
+    validate_projection_authority(state)?;
+    let base = crate::rl::common_family_observation_storage_scoped(
+        (scope, state),
+        surface,
+        actor,
+        step_index,
+        physical_decision_id,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let base = storage.base;
+    let observation = FieryObservationV1 {
+        schema: String::new(),
+        producer_sha256: String::new(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        facts: crate::fiery_public_v1::facts_v1(state)?,
+        cast_menu: cast_menu(state)?,
+        roots: roots()?,
+        projection_sha256: String::new(),
+    };
+    Ok(observation)
 }
 #[allow(clippy::too_many_arguments)]
 pub fn observe_v1(

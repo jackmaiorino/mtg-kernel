@@ -61,6 +61,14 @@ pub use raid_v9::*;
 pub use soul_shackled_zombie_v13::*;
 pub use visible::*;
 
+pub mod conqueror_v49;
+pub mod eaten_v46;
+pub mod panda_v47;
+pub mod season_v48;
+pub use panda_v47::{
+    HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,
+};
+
 use crate::rl::PlayerSeatV1;
 use crate::rl_session::{FastActorDecisionV1, FastActorSessionV1, FlatActionDecisionBindingV3};
 use serde::{Deserialize, Serialize};
@@ -278,14 +286,72 @@ impl HumanDecisionProjectorV1 {
     }
 }
 
+mod inspiration_v37;
+mod twinflame_v38;
+pub use inspiration_v37::*;
+pub use twinflame_v38::{
+    HumanDecisionTwinflameV38, HumanTwinflameExtensionsV38, HumanTwinflameProjectorV38,
+    HumanTwinflameSessionV38, HumanTwinflameSnapshotV38,
+};
+mod banner_v36;
 mod fiery_v33;
+mod zul_ashur_v35;
+pub use banner_v36::*;
 pub use fiery_v33::*;
+mod fishing_pole_v39;
+mod krenko_v34;
+pub use fishing_pole_v39::*;
+pub use krenko_v34::*;
+pub use zul_ashur_v35::*;
 
 mod strongbox_v32;
 pub use strongbox_v32::*;
 
+mod banishing_v26;
+pub use banishing_v26::*;
+
+mod akroma_early_v40;
+mod akroma_families_v40;
+pub use akroma_early_v40::{HumanEarlyV40, HumanZombieContextV40};
+mod akroma_v40;
+mod game_outcome_family_v40;
+mod game_outcome_v41;
+mod limited_common_v1;
+pub use akroma_families_v40::HumanFamilyV40;
+pub use akroma_v40::{
+    HumanAkromaExtensionsV40, HumanAkromaGrantV40, HumanAkromaProjectorV40, HumanAkromaSessionV40,
+    HumanAkromaSnapshotV40, HumanColorDepartureV40, HumanDecisionAkromaV40,
+};
+pub use game_outcome_family_v40::{HumanGameOutcomeFamilyV40, HumanGameOutcomeRulesV40};
+pub use game_outcome_v41::{
+    HumanDecisionGameOutcomeV41, HumanGameOutcomeExtensionsV41, HumanGameOutcomeProjectorV41,
+    HumanGameOutcomeSessionV41, HumanGameOutcomeSnapshotV41, HumanGameOutcomeSourceV41,
+};
+pub(crate) use limited_common_v1::project_limited_common_v1;
+pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
+
+pub mod ajani_v42;
+pub use ajani_v42::{
+    HumanAjaniProjectorV42, HumanAjaniSessionV42, HumanAjaniSnapshotV42, HumanDecisionAjaniV42,
+};
+
+pub mod divine_v44;
+pub mod hunter_v45;
+pub use hunter_v45::{
+    HumanDecisionHunterV45, HumanHunterProjectorV45, HumanHunterSessionV45, HumanHunterSnapshotV45,
+};
+pub mod faebloom_v43;
+pub use divine_v44::{
+    HumanDecisionDivineV44, HumanDivineProjectorV44, HumanDivineSessionV44, HumanDivineSnapshotV44,
+};
+pub use faebloom_v43::{
+    HumanDecisionFaebloomV43, HumanFaebloomProjectorV43, HumanFaebloomSessionV43,
+    HumanFaebloomSnapshotV43,
+};
+
 #[cfg(test)]
 mod tests;
 
-mod banishing_v26;
-pub use banishing_v26::*;
+pub use eaten_v46::{
+    HumanDecisionEatenV46, HumanEatenProjectorV46, HumanEatenSessionV46, HumanEatenSnapshotV46,
+};

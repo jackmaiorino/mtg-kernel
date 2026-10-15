@@ -157,13 +157,26 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import hashlib
           import re
           for path in sorted(Path('target/release/build').glob('mtg-kernel-*/out/card_defs.rs')):
-              source = path.read_text()
+              raw = path.read_bytes()
+              source = raw.decode('utf-8')
               match = re.search(r'pub const KERNEL_CARDDB_HASH: u64 = (0x[0-9a-f]+)', source)
+              count = re.search(r'pub static CARD_DEFS: \[CardDef; (\d+)\]', source)
               if match:
-                  print(path, match.group(1), flush=True)
+                  print(path, match.group(1), 'definitions=' + (count.group(1) if count else 'unknown'),
+                        'sha256=' + hashlib.sha256(raw).hexdigest(), flush=True)
           PY
+
+      - name: Retain generated catalog source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/release/build/mtg-kernel-*/out/card_defs.rs
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Hosted runners have no CUDA device, so behavioral CUDA gates run
       # under the local merge protocol; this step still fails closed on any
@@ -332,6 +345,34 @@ jobs:
           python python/tools/run_rust_lib_filters.py --features standard-magezero-fixtures card_def:: cauldron_grants_v1:: rl::legacy_hash_v1:: human_bo3_v1::visible::standard:: resolution_cast_v1:: finalized_case_cast_rejects_a_restored_prior_incarnation_grant engine::standard_spell_copy::tests:: frozen_encoder_rejects_creature_upgrades_in_every_public_zone frozen_encoder_rejects_known_face_down_identities frozen_encoder_rejects_private_face_down_knowledge face_down_crew_payment_reference captured_disguise_stack_target standard_face_down_public_refs channel_payment_preserves_printed_ability_discount counter_removal_payment_accepts_repeated_creature crew_payment_reserves_its_contributors event::tests::heartfire_death_respects_the_pre_zone_change_ability_snapshot engine::legacy_attack_hash_baseline_tests:: engine::anytarget_planeswalker_tests:: native_flat_tensorizer_v5::tests::known_face_down_knowledge_refuses_frozen_successor_encoders effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: rl_session::heartfire_v12:: human_bo3_v1::sower_v14:: human_bo3_v1::heartfire_v12:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: human_bo3_v1::frenzied_v15:: human_bo3_v1::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: human_bo3_v1::authority_v17:: human_bo3_v1::employment_v18:: human_bo3_v1::cerberus_v19::
           python python/tools/run_rust_integration_tests.py standard_integration --features standard-magezero-fixtures
 
+      - name: Report generated Limited catalog
+        if: always() && matrix.group == 'limited' && matrix.os == 'ubuntu-24.04'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+          import re
+          root = Path(os.environ.get('CARGO_TARGET_DIR', 'target')) / 'release/build'
+          for path in sorted(root.glob('mtg-kernel-*/out/card_defs.rs')):
+              raw = path.read_bytes()
+              source = raw.decode('utf-8')
+              match = re.search(r'pub const KERNEL_CARDDB_HASH: u64 = (0x[0-9a-f]+)', source)
+              count = re.search(r'pub static CARD_DEFS: \[CardDef; (\d+)\]', source)
+              if match:
+                  print(path, match.group(1), 'definitions=' + (count.group(1) if count else 'unknown'),
+                        'sha256=' + hashlib.sha256(raw).hexdigest(), flush=True)
+          PY
+
+      - name: Retain generated Limited catalog source
+        if: always() && matrix.group == 'limited' && matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-limited-catalog-source-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.CARGO_TARGET_DIR || 'target' }}/release/build/mtg-kernel-*/out/card_defs.rs
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Run Rust release tests
         if: matrix.group == 'workspace'
         run: python python/tools/run_rust_workspace_tests.py --no-fail-fast
@@ -358,12 +399,34 @@ jobs:
         if: matrix.group == 'limited'
         run: |
           python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: high_society_hunter_ hunter_observation_v45:: rl_session::hunter_v45:: eaten_alive_v1:: eaten_observation_v46:: eaten_public_v46:: rl_session::eaten_v46:: engine::fiendish_panda_targeting_tests:: fiendish_panda_v1:: panda_public_v47:: rl_session::panda_v47::
 
       - name: Validate FDN profiles under the native Store feature
         if: matrix.group == 'limited-store'
         run: |
           python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" pre_fdn_profile prior_fdn_batch fdn_profile_record_round_trips effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19::
+
+      - name: Validate new FDN family cores and owned consumers
+        if: ${{ !cancelled() && matrix.group == 'limited' }}
+        run: |
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures krenko_v1:: krenko_public_v1:: krenko_observation_v1:: rules_meaning_krenko_v1:: rl_session::krenko_v34:: zul_ashur_v1:: zul_ashur_public_v1:: zul_ashur_observation_v1:: rules_meaning_zul_ashur_v1:: rl_session::zul_ashur_v35:: heraldic_banner_v1:: banner_observation_v1:: rules_meaning_heraldic_banner_v1:: rl_session::banner_v36:: effect::inspiration_resolution_v1:: inspiration_observation_v1:: rules_meaning_inspiration_v1:: rl_session::inspiration_v37:: controlled_creature_grants_v1:: twinflame_tyrant_v1:: twinflame_observation_v1:: rl_session::twinflame_v38:: fishing_pole_v39:: fishing_pole_public_v39:: fishing_pole_observation_v39:: rules_meaning_fishing_pole_v39:: rl_session::fishing_pole_v39:: game_outcome_protection_v1:: game_outcome_protection_public_v1:: game_outcome_observation_v41:: rules_meaning_game_outcome_protection_v1:: rl_session::game_outcome_v41:: ajani_full_v42:: ajani_public_v42:: ajani_observation_v42:: rules_meaning_ajani_v42:: rl_session::ajani_v42:: faebloom_trick_v43:: faebloom_public_v43:: faebloom_observation_v43:: rules_meaning_faebloom_v43:: rl_session::faebloom_v43:: fake_your_own_death_v50::
+
+      - name: Validate ordinary departures under the native Store feature
+        if: matrix.group == 'limited-store'
+        run: |
+          python python/tools/run_rust_lib_filters.py --features "limited-fdn-fixtures native-training-store-v2-production" ordinary_departure_retains_color_proof actual_grant_source_still_requires_successor
+
+      - name: Validate Limited common server and Python client
+        if: ${{ !cancelled() && matrix.group == 'limited' }}
+        run: |
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_common_session_v1::
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
+          # Profile the existing two replays to separate Python work from engine waits.
+          MTG_LIMITED_COMMON_TIMING_V1=1 python -m cProfile -s cumulative python/tools/check_limited_common_client_v1.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env$binary_suffix"
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'

@@ -1,0 +1,420 @@
+{
+  "status": "enabled_source_only_unrun",
+  "source_base": "4796f0c10460ed8fd847ed61647149f2d7d0f5b6",
+  "groups": [
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_paid_herald_prevents_life_poison_and_empty_draw_losses_with_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_herald_control_and_simultaneous_lethal_departure_preserve_loss_scope_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_empty_draw_and_herald_lethal_damage_in_one_sba_pass_do_not_replay_the_prevented_loss",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_opponent_turn_flash_payment_and_paid_counter_response_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_witness_protection_removes_herald_prohibition_and_restore_keeps_the_loss_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_paid_herald_public_scope_rejects_forgery_and_hides_private_identity_with_restore",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_paid_herald_legend_pass_preserves_predeparture_loss_scope_and_restore",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_paid_herald_copy_allocator_primitive_retains_prohibition_after_original_leaves",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/game_outcome_protection_v1/tests.rs",
+      "function": "actual_involuntary_employment_moves_loss_protection_to_new_controller_with_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/rules_meaning_game_outcome_protection_v1.rs",
+      "function": "actual_registered_printed_prohibition_rederives_every_fact",
+      "prior_ignore": "#[ignore = \"requires genuine Herald registration and native qualification\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/human_bo3_v1/game_outcome_v41.rs",
+      "function": "herald_source_uses_the_exact_shared_canonical_battlefield_handle",
+      "prior_ignore": "#[ignore = \"requires registered Herald; physical battlefield ordering projection fixture\"]"
+    },
+    {
+      "family": "Herald",
+      "file": "mtg-kernel/src/rl_session/game_outcome_v41.rs",
+      "function": "paid_herald_common_facts_binding_and_legacy_refusal_before_work_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual registered Herald and genuine paid spell fixture\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "actual_seven_mana_cast_five_keywords_two_protections_late_entry_and_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "actual_flash_response_fizzles_announced_bolt_and_refuses_old_projections_readonly",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "debt_real_black_equipment_targeting_damage_and_prevention_override_restore",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "current_control_layer_timestamp_departure_reentry_and_restored_queries",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "genuine_blocker_validation_refuses_flying_black_red_and_allows_blue_restore",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/controlled_creature_grants_v1/tests.rs",
+      "function": "prebatch_color_lki_preserves_green_original_after_reentry_and_missing_receipts_refuse",
+      "prior_ignore": "#[ignore = \"requires actual Akroma registration; source preparation only\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/rules_meaning_akroma_v1.rs",
+      "function": "actual_two_roots_and_all_meaning_fields_reconstruct",
+      "prior_ignore": "#[ignore = \"requires genuine unregistered Akroma definition; native unrun\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/akroma_public_v1.rs",
+      "function": "original_hidden_departure_masks_private_definition_after_later_reentry_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Akroma catalog; typed face-down primitive is not an admitted disguise spell\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_history_tests.rs",
+      "function": "actual_memorial_copied_heartfire_crystal_three_family_replacement_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Akroma registration; actual Heartfire/Crystal roots and labeled shield primitive remain\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_history_tests.rs",
+      "function": "actual_memorial_copied_heartfire_union_uses_original_public_source_and_damage_facts_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Akroma registration; real Heartfire and typed copy provenance are unchanged\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_mixed_tests.rs",
+      "function": "actual_akroma_employment_union_canonical_control_facts_and_owning_replay_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Akroma registration; actual Employment cast/target/pay/resolve remain mandatory\"]"
+    },
+    {
+      "family": "Akroma",
+      "file": "mtg-kernel/src/rl_session/akroma_v40_mixed_tests.rs",
+      "function": "actual_memorial_and_employment_control_grants_full_union_and_legacy_refusal_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Akroma registration; real Employment source and costs stay unchanged\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "printed_cast_equip_named_cost_first_and_zero_bait_real_untap_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "multiple_bait_remove_exactly_one_and_explicit_effect_untap_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "multiple_poles_foreign_named_cost_short_mana_sickness_and_longbow_remain_distinct_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "source_and_host_departure_control_change_and_exact_counter_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "original_pole_departure_reentry_does_not_receive_bait_or_fish_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "untap_uncollected_pending_live_beneficiary_counter_balance_and_completed_replay_refuse_readonly_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "genuine_natural_untap_and_stun_replacement_mandatory_trigger_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "actual_registered_quirion_return_forest_cost_untaps_equipped_host_and_original_owner_gets_fish_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "original_untap_controller_survives_host_departure_and_pole_control_change_with_coherent_capture_forgery_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "actual_witness_suppresses_granted_bait_but_not_equipment_own_untap_trigger_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "manufactured_counter_operation_completion_requires_real_original_removal_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "genuine_copied_pole_grant_and_original_controller_untap_survive_departure_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "genuine_copied_pole_leaves_before_untap_resolution_keeps_public_original_and_creates_no_fish",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "original_hidden_host_mask_survives_real_paid_grant_departure_and_restoration_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole, Fish and neutral sentinel registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "private_underlying_pole_is_not_enumerated_as_a_public_current_pole_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "real_mixed_family_binding_keeps_named_pole_and_longbow_grants_distinct_and_readonly_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine future Fishing/Fish and Akroma registrations\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine future Fishing/Fish and Akroma registrations\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/fishing_pole_v39/future.rs",
+      "function": "actual_mixed_copied_pole_untap_original_controller_history_and_human_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine future Fishing/Fish and Akroma registrations\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/rules_meaning_fishing_pole_v39.rs",
+      "function": "actual_four_roots_reconstruct_complete_ordered_facts_and_refuse_every_forgery",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/human_bo3_v1/fishing_pole_v39/tests.rs",
+      "function": "real_cast_equip_named_bait_menu_restore_retry_and_old_mode_refusal_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/human_bo3_v1/fishing_pole_v39/tests.rs",
+      "function": "genuine_untap_fish_public_lifecycle_departed_host_historical_relation_and_private_forgeries_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Fishing",
+      "file": "mtg-kernel/src/human_bo3_v1/fishing_pole_v39/tests.rs",
+      "function": "actual_attached_fishing_hidden_hand_substitution_and_foreign_menu_readonly_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual future Fishing Pole and Fish Token registration\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_cast_player_damage_multiple_live_sources_and_restore_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_damage_recipient_control_zero_combat_and_consumable_order_refusal_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "genuine_bolt_owned_scalar_order_has_zero_or_three_damage_and_retained_input_proof_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "genuine_bushwhack_batch_orders_both_players_before_damage_and_binds_outcomes_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_combat_shared_player_shield_orders_packets_before_simultaneous_damage_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_gorehorn_raid_without_numeric_prevention_uses_owned_doubled_outcome_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_sure_strike_and_double_strike_have_two_owned_combat_waves_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "real_bite_down_owned_menu_refuses_overflow_before_mutation_and_accepts_prevention_first_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "large_real_bite_down_with_guaranteed_barricade_prevention_commits_zero_without_overflow_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_lotleth_dynamic_damage_samples_original_graveyard_before_ordering_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "genuine_cast_into_fire_multi_target_ordering_and_returned_target_exclusion_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "genuine_fiery_opaque_program_finishes_equipment_and_shield_after_actual_replacement_answer_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "large_genuine_bushwhack_full_prevention_retains_other_packet_lifelink_and_replay_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "actual_bolt_queries_current_tyrant_controller_suppression_departure_and_return_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_tyrant_v1/tests.rs",
+      "function": "genuine_stolen_firebrand_captured_damage_controller_survives_sacrifice_and_reentry_both_seats",
+      "prior_ignore": "#[ignore = \"true Twinflame printing remains unregistered\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/twinflame_observation_v1.rs",
+      "function": "genuine_scalar_public_player_permanent_bound_options_and_old_refusal_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual Twinflame registration\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/twinflame_v38/tests.rs",
+      "function": "genuine_scalar_owning_human_order_target_mask_restore_and_readonly_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual Twinflame registration\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/twinflame_v38/tests.rs",
+      "function": "genuine_shared_shield_human_combat_allocation_completion_restore_and_readonly_both_seats",
+      "prior_ignore": "#[ignore = \"requires actual Twinflame registration\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_history_tests.rs",
+      "function": "actual_twinflame_copied_heartfire_order_history_private_binding_and_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Twinflame registration; actual copied Heartfire payment and V40 history route\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_history_tests.rs",
+      "function": "actual_twinflame_incinerating_discard_parts_and_owning_decline_pay_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Twinflame registration; actual Incinerating Blast optional discard DTO and owning choices\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_mixed_tests.rs",
+      "function": "actual_employment_twinflame_union_order_privacy_retry_and_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Twinflame registration; real Employment installation and Bolt resolution\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/human_bo3_v1/akroma_v40_mixed_tests.rs",
+      "function": "actual_twinflame_shared_combat_allocation_in_union_restore_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Twinflame registration; real shared combat wave and owning V40 actions\"]"
+    },
+    {
+      "family": "Twinflame",
+      "file": "mtg-kernel/src/rl_session/akroma_v40_mixed_tests.rs",
+      "function": "actual_employment_twinflame_full_family_and_ordered_owner_binding_both_seats",
+      "prior_ignore": "#[ignore = \"requires genuine Twinflame registration; actual Employment and Bolt paths are retained\"]"
+    }
+  ]
+}

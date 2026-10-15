@@ -116,6 +116,15 @@ pub struct ZoneChangeProposed {
     /// Optional controller for a battlefield return whose effect says
     /// "under your control" rather than the ordinary owner-controlled rule.
     pub battlefield_controller: Option<PlayerId>,
+    /// Actual played lands retain their rule-action counter origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter_origin_v48: Option<crate::doubling_season_v48::CounterOriginV48>,
+    /// Already quoted effect stun placement, installed as this permanent enters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_stun_v48: Option<i16>,
+    /// Original X placement and optional actual host of an effect entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_x_v48: Option<crate::doubling_season_v48::EffectXEntryV48>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -158,7 +167,14 @@ pub struct CreateTokenProposed {
     pub controller: PlayerId,
     /// Initialize a copied transformed face before entry replacements and observers.
     pub entry_face_index: Option<u8>,
+    #[serde(default, skip_serializing_if = "token_entry_untapped_v48")]
+    pub entry_tapped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization_v48: Option<crate::doubling_season_v48::TokenEntryV48>,
     pub touched_by: Vec<ReplacementId>,
+}
+fn token_entry_untapped_v48(value: &bool) -> bool {
+    !*value
 }
 
 /// Flips a permanent's face in place, with no zone change: the same
@@ -208,6 +224,9 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -221,6 +240,9 @@ impl ProposedEvent {
             force_battlefield_tapped: true,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -234,6 +256,9 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -250,6 +275,9 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -276,6 +304,9 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -305,6 +336,9 @@ impl ProposedEvent {
             force_battlefield_tapped: false,
             battlefield_face_index: Some(face_index),
             battlefield_controller: Some(controller),
+            counter_origin_v48: None,
+            battlefield_stun_v48: None,
+            battlefield_x_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -351,6 +385,8 @@ impl ProposedEvent {
             token_def,
             controller,
             entry_face_index: None,
+            entry_tapped: false,
+            initialization_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -359,6 +395,8 @@ impl ProposedEvent {
             token_def,
             controller,
             entry_face_index: Some(1),
+            entry_tapped: false,
+            initialization_v48: None,
             touched_by: Vec::new(),
         })
     }
@@ -446,6 +484,11 @@ pub enum CommittedEvent {
         object: ObjectId,
         token_def: u16,
         controller: PlayerId,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::doubling_season_v48::TokenInputRefV48::is_none"
+        )]
+        replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48,
     },
     /// Logged by `engine::finalize_cast` the moment a spell is placed on
     /// the stack (not routed through `propose_and_commit`: casting a spell
@@ -546,13 +589,19 @@ pub enum CommittedEvent {
         zone_change_count: u32,
         player: PlayerId,
         count: i32,
+        #[serde(
+            default,
+            skip_serializing_if = "crate::doubling_season_v48::CounterInputRefV48::is_none"
+        )]
+        replacement_input_v48: crate::doubling_season_v48::CounterInputRefV48,
     },
     /// Morbid is captured when this step begins, before any later death.
     BeginningEndStep {
         active_player: PlayerId,
         creature_died_this_turn: bool,
     },
-    /// Immediately precedes a departure whose printed abilities were absent.
+    /// Precedes a departure whose printed abilities were absent, before any
+    /// exact departure-color snapshot for the same incarnation.
     PrintedAbilitiesRemovedBeforeZoneChange {
         object: ObjectId,
         zone_change_count: u32,
@@ -1205,6 +1254,198 @@ pub enum CommittedEvent {
     EquipmentDamageCounterRemovalV4 {
         removal: Box<crate::equipment_damage_source_v4::CounterRemovalV4>,
     },
+    KrenkoPaidV1 {
+        paid: Box<crate::krenko_v1::PaidV1>,
+    },
+    KrenkoRemovedV1 {
+        removed: Box<crate::krenko_v1::RemovedV1>,
+    },
+    KrenkoSampleV1 {
+        sample: Box<crate::krenko_v1::SampleV1>,
+    },
+    KrenkoCompletedV1 {
+        completed: Box<crate::krenko_v1::CompletedV1>,
+    },
+    KrenkoRemovalInputV1 {
+        input: Box<crate::krenko_v1::RemovalInputV1>,
+    },
+    KrenkoPaymentInputV1 {
+        input: Box<crate::krenko_v1::PaymentInputV1>,
+    },
+    ZulAshurPublishedV1 {
+        publication: Box<crate::zul_ashur_v1::PublicationV1>,
+    },
+    ZulAshurRemovedV1 {
+        removal: Box<crate::zul_ashur_v1::RemovalV1>,
+    },
+    ZulAshurInstalledV1 {
+        installation: Box<crate::zul_ashur_v1::InstallationV1>,
+    },
+    ZulAshurCleanupEnteredV1 {
+        index: u32,
+        turn: u32,
+        active_player: PlayerId,
+    },
+    ZulAshurCleanupV1 {
+        cleanup: Box<crate::zul_ashur_v1::CleanupV1>,
+    },
+    ZulAshurExpiredV1 {
+        expiry: crate::zul_ashur_v1::ExpiryV1,
+    },
+    ZulAshurRemovalInputV1 {
+        input: Box<crate::zul_ashur_v1::RemovalInputV1>,
+    },
+    BannerEntryOperationStartedV1 {
+        operation: Box<crate::linked_aura_operation_v1::OperationV1>,
+        original_sha256: String,
+    },
+    BannerEntryColorCapturedV1 {
+        operation: u32,
+        choice: Box<crate::heraldic_banner_v1::ChoiceV1>,
+    },
+    BannerEntryColorChosenV1 {
+        capture: u32,
+        color: crate::mana::ManaColor,
+    },
+    BannerEntryColorCommittedV1 {
+        entered: Box<crate::heraldic_banner_v1::EnteredV1>,
+    },
+    BannerEntryOperationCompletedV1 {
+        operation: u32,
+        entries: Vec<u32>,
+    },
+    /// Independent engine-published lifecycle boundary for the exact
+    /// mill-three/mandatory instant-or-sorcery return definition program.
+    /// History-only: never projected as a trigger event or public card fact.
+    InspirationResolutionBoundaryV1 {
+        receipt: crate::effect::InspirationResolutionReceiptV1,
+    },
+    InspirationResolutionInputV1 {
+        input: Box<crate::effect::InspirationInputV1>,
+    },
+    InspirationResolutionOperationV1 {
+        operation: Box<crate::effect::InspirationOperationV1>,
+    },
+    InspirationEngineDepartureV1 {
+        departure: Box<crate::effect::InspirationDepartureV1>,
+    },
+    ProtectionSourceColorDepartureV1 {
+        snapshot: crate::controlled_creature_grants_v1::DepartureColorV1,
+        departure_history_index: u64,
+    },
+    FishingPoleJournalV39 {
+        journal: Box<crate::fishing_pole_v39::lifecycle::JournalV39>,
+    },
+    TwinflameReplacementInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::ordering::AnswerInputV38>,
+    },
+    TwinflameReplacementOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::ordering::AnswerOperationV38>,
+    },
+    TwinflameDamagePreparationV38 {
+        preparation: Box<crate::twinflame_tyrant_v1::ordering::PreparationV38>,
+    },
+    TwinflameCombatPublishedV38 {
+        publication: Box<crate::twinflame_tyrant_v1::combat::PublicationV38>,
+    },
+    TwinflameCombatInputV38 {
+        input: Box<crate::twinflame_tyrant_v1::combat::InputV38>,
+    },
+    TwinflameCombatOperationV38 {
+        operation: Box<crate::twinflame_tyrant_v1::combat::OperationV38>,
+    },
+    TwinflameDynamicDamageSampleV38 {
+        sample: Box<crate::twinflame_tyrant_v1::sampling::SampleV38>,
+    },
+    TwinflameFieryCaptureV38 {
+        capture: Box<crate::twinflame_tyrant_v1::fiery::CaptureV38>,
+    },
+    TwinflameFieryFinishedV38 {
+        operation: Box<crate::twinflame_tyrant_v1::fiery::FinishV38>,
+    },
+    AjaniJournalV42 {
+        journal: Box<crate::ajani_full_v42::lifecycle::JournalV42>,
+    },
+    FaebloomJournalV43 {
+        journal: Box<crate::faebloom_trick_v43::JournalV43>,
+    },
+    /// Original attack-time identity; actual declaration is an independent occurrence.
+    HighSocietyHunterAttackCaptureV1 {
+        declaration_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+        turn_key: u32,
+        active_player: PlayerId,
+    },
+    HighSocietyHunterAttackCollectedV1 {
+        capture_history_index: u64,
+    },
+    /// Private original finalized payment. Not a replayable trigger event.
+    MandatoryCastPaymentV1 {
+        source: crate::state::StackSourceContractV4,
+        choice: crate::engine::mandatory_cast_cost_v1::PaidV1,
+        item: Box<crate::state::StackItem>,
+    },
+    MandatoryCastPaymentInputV1 {
+        pending: Box<crate::engine::PendingCast>,
+        item: Box<crate::state::StackItem>,
+    },
+    HighSocietyHunterJournalV45 {
+        journal: Box<crate::high_society_hunter_custody_v45::JournalV45>,
+    },
+    FiendishPandaLifeGainCaptureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        gain_history_index: u64,
+        amount: i32,
+    },
+    FiendishPandaDeathCaptureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        departure_history_index: u64,
+        power: i32,
+    },
+    FiendishPandaCaptureCollectedV1 {
+        capture_history_index: u64,
+    },
+    FiendishPandaJournalV1 {
+        journal: Box<crate::fiendish_panda_v1::custody::JournalV1>,
+    },
+    TokenCreationReplacementV48 {
+        creation: Box<crate::doubling_season_v48::TokenCreationV48>,
+    },
+    PlusCounterReplacementV48 {
+        placement: Box<crate::doubling_season_v48::PlusCounterPlacementV48>,
+    },
+    TokenCreationInputV48 {
+        input: Box<crate::doubling_season_v48::TokenInputV48>,
+    },
+    TokenAttachmentJournalV48 {
+        journal: Box<crate::season_token_attachment_v48::JournalV48>,
+    },
+    BaitTransferInputV48 {
+        input: Box<crate::doubling_season_v48::BaitTransferInputV48>,
+    },
+    BaitTransferAppliedV48 {
+        placement: Box<crate::doubling_season_v48::BaitTransferAppliedV48>,
+    },
+    PlusCounterInputV48 {
+        input: Box<crate::doubling_season_v48::PlusCounterInputV48>,
+    },
+    /// Private original simultaneous player-loss operation, never a public trigger event.
+    ConquerorLossBatchV49 {
+        batch: Box<crate::bloodthirsty_conqueror_v49::BatchV49>,
+    },
+    ConquerorCapturedV49 {
+        batch_history_index: u64,
+        observer_index: u64,
+    },
+    ConquerorCollectedV49 {
+        capture_history_index: u64,
+    },
+    ConquerorJournalV49 {
+        journal: Box<crate::bloodthirsty_conqueror_v49::custody::JournalV49>,
+    },
+    ConquerorObserverInputV49 {
+        input: Box<crate::bloodthirsty_conqueror_v49::ObserverInputV49>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1249,24 +1490,60 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     state.counter_lki_v1 = (!entries.is_empty()).then_some(entries);
 }
 
-fn initialize_entry_counters(state: &mut GameState, object: ObjectId, kicked: bool) {
+fn initialize_entry_lore_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) -> Result<(), String> {
+    let live = state.objects.get(object);
+    let def = &crate::card_def::CARD_DEFS[usize::from(live.card_def)];
+    if !(crate::doubling_season_v48::requires_successor(state)
+        || input.is_some_and(|input| !input.seasons.is_empty()))
+        || live.v4.face_down_v1.is_some()
+        || live.v4.face_index != 0
+        || def.saga.is_none()
+    {
+        return Ok(());
+    }
+    let count = crate::doubling_season_v48::entry_amount(state, input, live.controller, 1)?;
+    state.objects.get_mut(object).counters.lore =
+        i16::try_from(count).map_err(|_| "entry lore count overflow")?;
+    Ok(())
+}
+
+fn initialize_entry_counters(
+    state: &mut GameState,
+    object: ObjectId,
+    kicked: bool,
+    counter_input: Option<&crate::doubling_season_v48::ReplacementInputV48>,
+) {
     let live = state.objects.get(object);
     let definition = &crate::card_def::CARD_DEFS[live.card_def as usize];
     if definition.is_executable() {
         if let Some(entry) = definition.enters_with_plus_one_counters {
             if !entry.if_kicked || kicked {
-                #[cfg(feature = "standard-magezero-fixtures")]
-                let entry_count =
-                    crate::standard_cards_v1::scale_counters(state, live.controller, entry.count);
-                #[cfg(not(feature = "standard-magezero-fixtures"))]
-                let entry_count = entry.count;
+                let entry_count = match crate::doubling_season_v48::entry_amount(
+                    state,
+                    counter_input,
+                    live.controller,
+                    entry.count,
+                ) {
+                    Ok(count) => count,
+                    Err(_) => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
+                        return;
+                    }
+                };
                 state.objects.get_mut(object).counters.plus1_plus1 = entry_count;
             }
         }
     }
-    crate::fdn_raid_v1::apply_entry_counters(state, object);
+    crate::fdn_raid_v1::apply_entry_counters(state, object, counter_input);
     #[cfg(feature = "standard-magezero-fixtures")]
-    crate::standard_statics_v1::apply_conditional_entry_counters(state, object);
+    crate::standard_statics_v1::apply_conditional_entry_counters(state, object, counter_input);
 }
 
 pub(crate) fn log_plus_one_counters_added(
@@ -1274,6 +1551,15 @@ pub(crate) fn log_plus_one_counters_added(
     object: ObjectId,
     player: PlayerId,
     count: i32,
+) {
+    log_plus_one_counters_added_with_input_v48(state, object, player, count, None);
+}
+fn log_plus_one_counters_added_with_input_v48(
+    state: &mut GameState,
+    object: ObjectId,
+    player: PlayerId,
+    count: i32,
+    input: Option<u64>,
 ) {
     if count <= 0 || !cfg!(feature = "limited-fdn-fixtures") {
         return;
@@ -1283,6 +1569,7 @@ pub(crate) fn log_plus_one_counters_added(
         zone_change_count: state.objects.get(object).zone_change_count,
         player,
         count,
+        replacement_input_v48: crate::doubling_season_v48::CounterInputRefV48(input),
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed.clone());
@@ -1300,15 +1587,66 @@ pub(crate) fn add_plus_one_counters(
     if live.zone != Zone::Battlefield || count < 0 {
         return Err("invalid +1/+1 counter placement".to_string());
     }
-    #[cfg(feature = "standard-magezero-fixtures")]
-    let count = crate::standard_cards_v1::scale_counters(state, player, count);
+    let original = count;
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller);
+    let count = crate::doubling_season_v48::counter_amount(
+        state,
+        object,
+        player,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+        count,
+    )?;
     let total = live
         .counters
         .plus1_plus1
         .checked_add(count)
         .ok_or("+1/+1 counter overflow")?;
+    let before = live.counters.plus1_plus1;
+    let recipient = crate::state::ObjectLinkV4 {
+        object,
+        zone_change_count: live.zone_change_count,
+    };
+    let replacement_input = if original > 0 && !replacement.seasons.is_empty() {
+        Some(crate::doubling_season_v48::PlusCounterInputV48::capture(
+            state, object, player, original,
+        )?)
+    } else {
+        None
+    };
+    let input_index = replacement_input.map(|mut input| {
+        input.index = state.engine.event_history.len() as u64;
+        let at = input.index;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PlusCounterInputV48 {
+                input: Box::new(input),
+            });
+        at
+    });
     state.objects.get_mut(object).counters.plus1_plus1 = total;
-    log_plus_one_counters_added(state, object, player, count);
+    let counter_event = state.engine.event_history.len() as u64;
+    log_plus_one_counters_added_with_input_v48(state, object, player, count, input_index);
+    if let Some(input) = input_index {
+        let index = state.engine.event_history.len() as u64;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::PlusCounterReplacementV48 {
+                placement: Box::new(crate::doubling_season_v48::PlusCounterPlacementV48 {
+                    index,
+                    input,
+                    recipient,
+                    actor: player,
+                    replacement,
+                    original,
+                    before,
+                    after: total,
+                    counter_event,
+                }),
+            });
+    }
     Ok(())
 }
 
@@ -1359,6 +1697,13 @@ pub fn apply_replacements(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
+        if crate::twinflame_tyrant_v1::replace(state, damage).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
         crate::standard_cards_v1::replace_damage(state, damage);
     }
     if let ProposedEvent::Damage(damage) = &proposed {
@@ -1932,7 +2277,42 @@ pub(crate) fn propose_and_commit_crystal_owned(
     if !owner.permits_damage(state, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, ctx, op, path)
+    prepare_commit_crystal_damage(state, damage, ctx, op, path, owner)
+}
+/// Genuine opaque Fiery final instruction under the same removed-item loan.
+/// Any selected linked-Aura operation must retain its surrounding owning replay.
+pub(crate) fn propose_and_commit_twinflame_fiery_equipment_owned(
+    state: &mut GameState,
+    capture: &crate::twinflame_tyrant_v1::fiery::CaptureV38,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+) -> Result<(), String> {
+    let Some(crate::state::Target::Object(equipment)) = capture.ctx.targets.get(1) else {
+        return Err("Fiery equipment instruction lost actual selected object".into());
+    };
+    if !capture.legal[1]
+        || owner
+            .packet_before(
+                state,
+                &capture.ctx,
+                &crate::effect::EffectOp::FieryAnnihilation,
+                &capture.path,
+            )
+            .is_none_or(|(_, item)| item != *capture.item)
+        || !matches!(state.engine.event_history.get(capture.index as usize),Some(CommittedEvent::TwinflameFieryCaptureV38{capture:original}) if original.as_ref()==capture)
+        || crate::linked_aura_operation_v1::needs_surrounding_operation_owner(state)
+    {
+        return Err(
+            "Fiery equipment instruction lost private original or linked-operation owner".into(),
+        );
+    }
+    propose_and_commit_inner(
+        state,
+        ProposedEvent::zone_change(*equipment, crate::state::Zone::Exile),
+    );
+    if state.engine.halted.is_some() {
+        return Err("Fiery actual equipment exile halted".into());
+    }
+    Ok(())
 }
 pub(crate) fn propose_and_commit_crystal_power_owned(
     state: &mut GameState,
@@ -1943,16 +2323,78 @@ pub(crate) fn propose_and_commit_crystal_power_owned(
     if !owner.permits_creature_power(state, capture, &ProposedEvent::Damage(damage.clone())) {
         return Err("Crystal chosen-power damage lost private removed-item authority".into());
     }
-    prepare_commit_crystal_damage(state, damage, &capture.ctx, &capture.op, &capture.path)
+    prepare_commit_crystal_damage(
+        state,
+        damage,
+        &capture.ctx,
+        &capture.op,
+        &capture.path,
+        owner,
+    )
 }
 /// Separate actual interpreter operation. Completion alone cannot invent its
 /// replacement preparation or omit its accepted positive/fully-prevented result.
+pub(crate) fn twinflame_packet_lifelink_player(
+    state: &GameState,
+    damage: DamageProposed,
+) -> Option<PlayerId> {
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
+pub(crate) fn twinflame_lifelink_player(
+    state: &GameState,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Option<PlayerId> {
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    lifelink_gain_for(state, &ProposedEvent::Damage(damage)).map(|(player, _)| player)
+}
+pub(crate) fn commit_twinflame_ordered_scalar(
+    state: &mut GameState,
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
+    before: &crate::effect::EffectContinuation,
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<(u32, Option<u32>), String> {
+    if !owner.permits_replacement_answer(state, before)
+        || choice.remaining_amount <= 0
+        || !choice.options.is_empty()
+        || choice.batch.is_some()
+    {
+        return Err("ordered positive packet lacks genuine scalar answer owner".into());
+    }
+    let mut damage =
+        match ProposedEvent::damage(choice.source, choice.target, choice.remaining_amount) {
+            ProposedEvent::Damage(d) => d,
+            _ => unreachable!(),
+        };
+    damage.historical_source = choice.historical_source;
+    damage.touched_by = choice.touched.clone();
+    let proposed = ProposedEvent::Damage(damage);
+    let gain = lifelink_gain_for(state, &proposed);
+    let at = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "ordered damage index overflow")?;
+    commit(state, proposed);
+    let gain_at = if let Some((player, amount)) = gain {
+        let index = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "ordered gain index overflow")?;
+        commit(state, ProposedEvent::life_gain(player, amount));
+        Some(index)
+    } else {
+        None
+    };
+    Ok((at, gain_at))
+}
+
 fn prepare_commit_crystal_damage(
     state: &mut GameState,
     damage: DamageProposed,
     ctx: &crate::effect::ExecCtx,
     op: &crate::effect::EffectOp,
     path: &[u16],
+    owner: &crate::effect::crystal_prevention_v1::OwnerV1,
 ) -> Result<u32, String> {
     use crate::effect::crystal_prevention_v1::{BatchDamageV2, DamageOperationV3};
     if crate::effect::temporary_control_v1::authority::validate(state).is_err()
@@ -1969,7 +2411,46 @@ fn prepare_commit_crystal_damage(
         touched: damage.touched_by.clone(),
     };
     let historical_source = damage.historical_source;
-    let prepared = apply_replacements(state, ProposedEvent::Damage(damage));
+    let mut guaranteed_zero = false;
+    if preventers.iter().any(|o| {
+        matches!(
+            o,
+            crate::effect::crystal_prevention_v1::PreventionV1::Multiplier(_)
+        )
+    }) {
+        let (previous, item) = owner
+            .packet_before(state, ctx, op, path)
+            .ok_or("multiplier preparation lacks genuine removed owner")?;
+        let preparation = crate::twinflame_tyrant_v1::ordering::PreparationV38 {
+            index: u32::try_from(state.engine.event_history.len())
+                .map_err(|_| "multiplier preparation index overflow")?,
+            previous,
+            item: Box::new(item),
+            ctx: ctx.clone(),
+            op: op.clone(),
+            path: path.to_vec(),
+            input: original.clone(),
+            historical_source,
+            options: preventers.clone(),
+            lifelink_player: lifelink_gain_for(state, &ProposedEvent::Damage(damage.clone()))
+                .map(|(p, _)| p),
+        };
+        guaranteed_zero = crate::twinflame_tyrant_v1::ordering::prepared_amount(&preparation)? == 0;
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::TwinflameDamagePreparationV38 {
+                preparation: Box::new(preparation),
+            });
+    }
+    // Full prevention commutes to the exact zero result, even when an
+    // unchosen multiplier-first intermediate exceeds the damage representation.
+    // Its independently published options/preparation remain mandatory proof.
+    let prepared = if guaranteed_zero {
+        None
+    } else {
+        apply_replacements(state, ProposedEvent::Damage(damage))
+    };
     if state.engine.halted.is_some() {
         return Err("Crystal damage preparation halted".into());
     }
@@ -2064,6 +2545,11 @@ pub(crate) fn propose_and_commit_crystal_life_gain_owned(
 }
 fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     if crate::effect::temporary_control_v1::authority::validate(state).is_err() {
+        return;
+    }
+    if matches!(&event,ProposedEvent::CreateToken(t) if !crate::doubling_season_v48::sources(state,t.controller).is_empty())
+    {
+        batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
     if let Some(final_event) = apply_replacements(state, event) {
@@ -2213,7 +2699,7 @@ fn commit_with_ability_lki_and_entry_batch(
     event: ProposedEvent,
     abilities_removed_before: Option<bool>,
     frozen_death_captures: Option<Vec<CommittedEvent>>,
-    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
     entry_batches: (
         Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
@@ -2223,7 +2709,130 @@ fn commit_with_ability_lki_and_entry_batch(
         bool,
     ),
 ) {
+    commit_with_entry_batch_and_source_color(
+        state,
+        event,
+        abilities_removed_before,
+        frozen_death_captures,
+        authority_batch,
+        entry_batches,
+        (entry_context, None, None, None),
+    );
+}
+type EntryContextWithSourceColorV1 = (
+    (
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        bool,
+    ),
+    Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
+    Option<crate::doubling_season_v48::ReplacementInputV48>,
+    Option<u64>,
+);
+fn commit_with_entry_batch_and_source_color(
+    state: &mut GameState,
+    event: ProposedEvent,
+    abilities_removed_before: Option<bool>,
+    frozen_death_captures: Option<Vec<CommittedEvent>>,
+    mut authority_batch: Option<&mut crate::authority_of_the_consuls_v1::EntryBatchV1>,
+    entry_batches: (
+        Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
+        Option<&mut crate::arahbo_v1::EntryBatchV1>,
+    ),
+    entry_context: EntryContextWithSourceColorV1,
+) {
+    let (mut entry_context, frozen_source_color, frozen_counter_input, token_input_index) =
+        entry_context;
+    if let ProposedEvent::ZoneChange(change) = &event {
+        if let Some(request) = change.battlefield_x_v48.as_ref() {
+            if change.to_zone != Zone::Battlefield || request.original < 0 {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+            let entry = entry_context
+                .0
+                .get_or_insert_with(|| (change.object, Default::default()));
+            if entry.0 != change.object
+                || entry
+                    .1
+                    .x_counters
+                    .is_some_and(|count| count != request.original)
+                || entry
+                    .1
+                    .attached_to
+                    .is_some_and(|host| Some(host) != request.host)
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+            entry.1.x_counters = Some(request.original);
+            entry.1.attached_to = request.host;
+            entry.1.bestowed = request.host.is_some();
+        }
+    }
+    let counter_input =
+        frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
+    let season_entry_active = crate::doubling_season_v48::requires_successor(state)
+        || counter_input
+            .as_ref()
+            .is_some_and(|input| !input.seasons.is_empty());
+    if let Some(input) = counter_input.as_ref() {
+        let (definition, kicked, face_down, x, time) = match &event {
+            ProposedEvent::CreateToken(token) => (token.token_def, false, false, None, None),
+            ProposedEvent::ZoneChange(change) => {
+                let live = state.objects.get(change.object);
+                let characteristics = entry_context.0.as_ref().map(|(_, entry)| entry);
+                (
+                    live.card_def,
+                    live.zone == Zone::Stack
+                        && state.engine.pending_kicked_source == Some(change.object),
+                    characteristics.is_some_and(|entry| entry.face_down.is_some()),
+                    characteristics.and_then(|entry| entry.x_counters),
+                    characteristics.and_then(|entry| entry.time_counters),
+                )
+            }
+            _ => unreachable!("entry input only exists for entering permanents"),
+        };
+        if crate::doubling_season_v48::preflight_entry_definition(
+            state,
+            definition,
+            input,
+            (kicked, x, face_down, time),
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+
+    match crate::linked_aura_operation_v1::prepare_entry_colors(state, std::slice::from_ref(&event))
+    {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    let entry_color_proposal = event.clone();
+    let source_color = frozen_source_color
+        .or_else(|| crate::controlled_creature_grants_v1::capture_departure_color(state, &event));
     let (entering_characteristics, defer_raid_entry) = entry_context;
+    let conqueror_single = (!defer_raid_entry)
+        .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
+        .flatten();
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
@@ -2434,10 +3043,18 @@ fn commit_with_ability_lki_and_entry_batch(
                     authority_batch
                         .as_ref()
                         .map(|batch| batch.observers.as_slice()),
-                    entering_characteristics
-                        .as_ref()
-                        .filter(|(object, _)| *object == z.object)
-                        .map(|(_, face)| *face),
+                    {
+                        let mut entry = entering_characteristics
+                            .as_ref()
+                            .filter(|(object, _)| *object == z.object)
+                            .map(|(_, face)| *face);
+                        if let Some(stun) = z.battlefield_stun_v48 {
+                            entry.get_or_insert_with(Default::default).stun_counters_v48 =
+                                Some(stun);
+                        }
+                        entry
+                    },
+                    counter_input.as_ref(),
                 ),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -2567,7 +3184,8 @@ fn commit_with_ability_lki_and_entry_batch(
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
             }
             state.players[t.controller.index()].battlefield.push(object);
-            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller)
+            let enters_tapped = t.entry_tapped
+                || permanent_enters_battlefield_tapped(state, object, t.controller)
                 || authority_batch.as_ref().map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -2586,11 +3204,95 @@ fn commit_with_ability_lki_and_entry_batch(
                     },
                 );
             state.objects.get_mut(object).tapped = enters_tapped;
-            initialize_entry_counters(state, object, false);
+            if let Some(init) = &t.initialization_v48 {
+                if let Some(host) = init.attached_to {
+                    // Legality and incarnation were checked for the whole roster
+                    // before any entry. This is untargeted attachment on entry.
+                    if state
+                        .attach_object_exact(object, 0, host.object, host.zone_change_count)
+                        .is_err()
+                    {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
+                        return;
+                    }
+                }
+                if init.haste_until_end_of_turn {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                            object_id: object,
+                            object_zone_change_count: 0,
+                            layer: crate::engine::Layers::ABILITY_ADDING,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            keywords: crate::card_def::Keywords::HASTE,
+                        },
+                    );
+                }
+                if let Some(source) = init.sacrifice_at_end_step {
+                    let binding = crate::effect::EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: 0,
+                    };
+                    crate::standard_cards_v1::register_reflection_delayed_sacrifice(
+                        state, binding, source,
+                    );
+                }
+                if init.attacking
+                    && state.engine.combat.attackers_declared
+                    && state.active_player == t.controller
+                    && matches!(
+                        state.step,
+                        crate::state::Step::DeclareAttackers
+                            | crate::state::Step::DeclareBlockers
+                            | crate::state::Step::CombatDamage
+                    )
+                {
+                    state.engine.combat.attackers.push(object);
+                }
+            }
+            initialize_entry_counters(state, object, false, counter_input.as_ref());
+            if season_entry_active {
+                crate::standard_cards_v1::initialize_entry_counters(
+                    state,
+                    object,
+                    counter_input.as_ref(),
+                );
+            }
+            if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return;
+            }
+            if let Some(init) = &t.initialization_v48 {
+                if init.plus_one_counters > 0 {
+                    let amount = crate::doubling_season_v48::entry_amount(
+                        state,
+                        counter_input.as_ref(),
+                        t.controller,
+                        init.plus_one_counters,
+                    )
+                    .expect("initialized token counter roster preflighted");
+                    state.objects.get_mut(object).counters.plus1_plus1 += amount;
+                }
+            }
+            if crate::ajani_full_v42::selected_definition(t.token_def) {
+                crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
+                crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
+            }
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
                 controller: t.controller,
+                replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48(
+                    token_input_index,
+                ),
             }
         }
         ProposedEvent::Transform(t) if t.face_index == 0 => {
@@ -2642,19 +3344,24 @@ fn commit_with_ability_lki_and_entry_batch(
             }
         }
     };
-    let saga_entered = matches!(
-        committed,
+    let saga_source = match &committed {
         CommittedEvent::ZoneChange {
             object,
             to: Zone::Battlefield,
             ..
-        } if state.objects.get(object).v4.face_index == 0
-            && crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
-                .saga
-                .is_some()
-    );
-    let saga_source = match &committed {
-        CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
+        }
+        | CommittedEvent::CreateToken { object, .. }
+            if state.objects.get(*object).v4.face_index == 0
+                && (!season_entry_active
+                    || state.objects.get(*object).v4.face_down_v1.is_none())
+                && crate::card_def::CARD_DEFS[usize::from(state.objects.get(*object).card_def)]
+                    .saga
+                    .is_some()
+                && (matches!(&committed, CommittedEvent::ZoneChange { .. })
+                    || season_entry_active) =>
+        {
+            Some(*object)
+        }
         _ => None,
     };
     let entry_counter_object = match &committed {
@@ -2684,6 +3391,12 @@ fn commit_with_ability_lki_and_entry_batch(
         | CommittedEvent::CreateToken { object, .. } => Some(*object),
         _ => None,
     };
+    if let Some(snapshot) = source_color.filter(|snapshot| {
+        matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
+            if *object == snapshot.source.source && *to != Zone::Battlefield)
+    }) {
+        crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
+    }
     state.engine.event_log.push(committed.clone());
     let committed_death = matches!(
         committed,
@@ -2695,10 +3408,30 @@ fn commit_with_ability_lki_and_entry_batch(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if let Some(object) = entry_counter_object {
+        if crate::linked_aura_operation_v1::commit_entry_color(
+            state,
+            &entry_color_proposal,
+            object,
+            entry_history_index,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                object,
+            ));
+            return;
+        }
+    }
     crate::banishing_light_v1::record_entry(state, entry_history_index);
     crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
+    if let Some(batch) = conqueror_single {
+        batch.finish(state);
+    }
     if committed_death {
-        for capture in death_captures {
+        for mut capture in death_captures {
+            crate::fiendish_panda_v1::bind_departure(&mut capture, entry_history_index);
             state.engine.event_log.push(capture.clone());
             state.engine.event_history.push(capture);
         }
@@ -2743,15 +3476,42 @@ fn commit_with_ability_lki_and_entry_batch(
         }
     }
     crate::life_gain_turn_v1::capture_committed_gain(state);
+    // The predecessor first-gain hook consumes the actual last LifeGain.
+    // Panda uses its original index and can then append its own markers.
+    crate::fiendish_panda_v1::record_gain(state, entry_history_index);
     if let Some(object) = entry_counter_object {
-        crate::standard_cards_v1::initialize_entry_counters(state, object);
+        if !season_entry_active {
+            crate::standard_cards_v1::initialize_entry_counters(
+                state,
+                object,
+                counter_input.as_ref(),
+            );
+        }
         let live = state.objects.get(object);
         let count = live.counters.plus1_plus1;
         let controller = live.controller;
         log_plus_one_counters_added(state, object, controller, count);
     }
     if let Some(source) = saga_source {
-        add_lore_counters(state, source, 1).expect("new Saga counters fit");
+        if season_entry_active {
+            let live = state.objects.get(source);
+            let chapters = crate::card_def::CARD_DEFS[usize::from(live.card_def)]
+                .saga
+                .as_ref()
+                .filter(|_| {
+                    crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                })
+                .map_or(0, |saga| saga.chapter_effects.len());
+            let count = live
+                .counters
+                .lore
+                .min(i16::try_from(chapters).unwrap_or(i16::MAX));
+            for chapter in 1..=count {
+                log_saga_chapter(state, source, chapter as u8);
+            }
+        } else {
+            add_lore_counters(state, source, 1).expect("new Saga counters fit");
+        }
     }
 }
 
@@ -2789,6 +3549,51 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
+    let (events, token_requests) = match crate::doubling_season_v48::expand_tokens(state, events) {
+        Ok(expanded) => expanded,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
+    if crate::doubling_season_v48::preflight_entry_roster(state, &events).is_err()
+        || crate::doubling_season_v48::preflight_token_initialization(state, &events).is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    let token_input =
+        match crate::doubling_season_v48::TokenInputV48::capture(state, &token_requests) {
+            Ok(input) => input,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
+    // Validate the entire replacement roster before any shield or packet mutates.
+    if let Some(source) = events.iter().find_map(|event| match event {
+        ProposedEvent::Damage(damage)
+            if crate::twinflame_tyrant_v1::validate_commuting_damage(state, damage).is_err() =>
+        {
+            Some(damage.source)
+        }
+        _ => None,
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
+    }
     let garruk_batch = crate::garruks_uprising_v1::EntryBatchV1::capture();
     let arahbo_batch = crate::arahbo_v1::EntryBatchV1::capture();
     let raid_history_start = state.engine.event_history.len();
@@ -2827,6 +3632,8 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
             arahbo_batch,
             attachments,
             raid_history_start,
+            token_input,
+            token_requests,
         },
     );
 }
@@ -2851,8 +3658,33 @@ pub(crate) fn commit_crystal_prepared_batch(
         arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
         attachments: Vec::new(),
         raid_history_start: state.engine.event_history.len(),
+        token_input: None,
+        token_requests: Vec::new(),
     };
     commit_batch_survivors(state, survivors, authority_batch, context);
+}
+pub(crate) fn commit_twinflame_prepared_combat(
+    state: &mut GameState,
+    survivors: Vec<ProposedEvent>,
+    owner: &crate::twinflame_tyrant_v1::combat::OwnerV38,
+) -> Result<(), String> {
+    if !owner.permits(state, &survivors) {
+        return Err("combat prepared commit lost private actual wave owner".into());
+    }
+    let authority = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    let context = EntryBatchCommitContextV1 {
+        garruk_batch: crate::garruks_uprising_v1::EntryBatchV1::capture(),
+        arahbo_batch: crate::arahbo_v1::EntryBatchV1::capture(),
+        attachments: Vec::new(),
+        raid_history_start: state.engine.event_history.len(),
+        token_input: None,
+        token_requests: Vec::new(),
+    };
+    commit_batch_survivors(state, survivors, authority, context);
+    if state.engine.halted.is_some() {
+        return Err("actual combat prepared commit halted".into());
+    }
+    Ok(())
 }
 struct EntryBatchCommitContextV1 {
     garruk_batch: Option<crate::garruks_uprising_v1::EntryBatchV1>,
@@ -2862,6 +3694,8 @@ struct EntryBatchCommitContextV1 {
         crate::effect::EffectObjectBinding,
     )>,
     raid_history_start: usize,
+    token_input: Option<crate::doubling_season_v48::TokenInputV48>,
+    token_requests: Vec<crate::doubling_season_v48::TokenRequestV48>,
 }
 fn commit_batch_survivors(
     state: &mut GameState,
@@ -2869,12 +3703,38 @@ fn commit_batch_survivors(
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
 ) {
+    if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
+        || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
+    match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    }
+    let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
         mut arahbo_batch,
         attachments,
         raid_history_start,
+        token_input,
+        token_requests,
     } = context;
+    let token_input_index =
+        token_input.map(|input| crate::doubling_season_v48::record_token_input(state, input));
+    let token_history_start = state.engine.event_history.len();
     #[cfg(feature = "standard-magezero-fixtures")]
     for event in &survivors {
         if let ProposedEvent::ZoneChange(change) = event {
@@ -2915,6 +3775,14 @@ fn commit_batch_survivors(
             lifelink_gains.push((damage.source, player, amount));
         }
     }
+    let source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        survivors
+            .iter()
+            .filter_map(|event| {
+                crate::controlled_creature_grants_v1::capture_departure_color(state, event)
+            })
+            .collect::<Vec<_>>()
+    });
     let mut death_captures = crate::creature_death_capture_v1::enabled().then(|| {
         survivors
             .iter()
@@ -2922,6 +3790,11 @@ fn commit_batch_survivors(
             .collect::<Vec<_>>()
             .into_iter()
     });
+    let mut counter_inputs = survivors
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>()
+        .into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
@@ -2937,32 +3810,42 @@ fn commit_batch_survivors(
             })
             .collect::<Vec<_>>();
         for (event, removed) in survivors.into_iter().zip(ability_removals) {
+            let counter_input = counter_inputs
+                .next()
+                .expect("one entry counter input per batch member");
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki_and_entry_batch(
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
+            commit_with_entry_batch_and_source_color(
                 state,
                 event,
                 Some(removed),
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                (None, true),
+                ((None, true), frozen_color, counter_input, token_input_index),
             );
         }
     } else {
         for event in survivors {
+            let counter_input = counter_inputs
+                .next()
+                .expect("one entry counter input per batch member");
             let captures = death_captures
                 .as_mut()
                 .map(|captures| captures.next().expect("one capture per batch member"));
-            commit_with_ability_lki_and_entry_batch(
+            let frozen_color = source_colors.as_ref().and_then(|colors| colors.iter().find(|snapshot|
+                matches!(&event, ProposedEvent::ZoneChange(change) if change.object == snapshot.source.source)).cloned());
+            commit_with_entry_batch_and_source_color(
                 state,
                 event,
                 None,
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                (None, true),
+                ((None, true), frozen_color, counter_input, token_input_index),
             );
         }
     }
@@ -3001,6 +3884,27 @@ fn commit_batch_survivors(
     for (_, player, amount) in lifelink_gains {
         commit(state, ProposedEvent::life_gain(player, amount));
     }
+    if state.engine.halted.is_none() {
+        if let Some(input) = token_input_index {
+            if crate::doubling_season_v48::record_token_creation(
+                state,
+                token_history_start,
+                input,
+                token_requests,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
+    }
+    if let Some(batch) = conqueror_batch {
+        batch.finish(state);
+    }
     crate::linked_aura_operation_v1::end_batch(state);
 }
 
@@ -3023,6 +3927,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        chosen
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     let captures = chosen
         .iter()
         .map(|id| {
@@ -3033,11 +3949,20 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         })
         .collect::<Vec<_>>();
     for (&id, captures) in chosen.iter().zip(captures) {
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
         log_sacrifice(state, id);
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
-            commit_with_ability_lki(state, event, None, Some(captures));
+            commit_with_entry_batch_and_source_color(
+                state,
+                event,
+                None,
+                Some(captures),
+                None,
+                (None, None),
+                ((None, false), frozen_color, None, None),
+            );
         }
     }
 }
@@ -3060,9 +3985,34 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
             .collect::<Vec<_>>(),
     );
+    let mut source_colors = crate::controlled_creature_grants_v1::enabled().then(|| {
+        dying
+            .iter()
+            .map(|id| {
+                crate::controlled_creature_grants_v1::capture_departure_color(
+                    state,
+                    &ProposedEvent::zone_change(*id, Zone::Graveyard),
+                )
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    });
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
-            commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+            if frozen_color.is_some() {
+                commit_with_entry_batch_and_source_color(
+                    state,
+                    ProposedEvent::zone_change(id, Zone::Graveyard),
+                    None,
+                    None,
+                    None,
+                    (None, None),
+                    ((None, false), frozen_color, None, None),
+                );
+            } else {
+                commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            }
         }
         crate::linked_aura_operation_v1::end_batch(state);
         return;
@@ -3076,7 +4026,16 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .map(|event| crate::creature_death_capture_v1::capture(state, event))
         .collect::<Vec<_>>();
     for (event, captures) in events.into_iter().zip(captures) {
-        commit_with_ability_lki(state, event, None, Some(captures));
+        let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        commit_with_entry_batch_and_source_color(
+            state,
+            event,
+            None,
+            Some(captures),
+            None,
+            (None, None),
+            ((None, false), frozen_color, None, None),
+        );
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }
@@ -3335,9 +4294,10 @@ fn commit_zone_change(
     entry_context: (
         Option<&[crate::state::AbilitySourceContractV4]>,
         Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
+        Option<&crate::doubling_season_v48::ReplacementInputV48>,
     ),
 ) {
-    let (authority_observers, entering_characteristics) = entry_context;
+    let (authority_observers, entering_characteristics, counter_input) = entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -3451,6 +4411,14 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // 707.10f: a resolving permanent spell copy becomes a token. This
+        // is a zone entry, not token creation, so no creation replacement applies.
+        if from_zone == Zone::Stack
+            && to_zone == Zone::Battlefield
+            && obj.spell_copy_origin.is_some()
+        {
+            obj.v4.is_token = true;
+        }
         if to_zone == Zone::Battlefield {
             if let Some(face_down) = entering_face_down {
                 obj.v4.face_down_v1 = Some(face_down);
@@ -3536,13 +4504,89 @@ fn commit_zone_change(
         }
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
-            initialize_entry_counters(state, id, kicked);
+            initialize_entry_counters(state, id, kicked, counter_input);
+        }
+        if initialize_entry_lore_v48(state, id, counter_input).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                id,
+            ));
+            return;
+        }
+        if crate::doubling_season_v48::requires_successor(state)
+            || counter_input.is_some_and(|input| !input.seasons.is_empty())
+        {
+            crate::standard_cards_v1::initialize_entry_counters(state, id, counter_input);
+        }
+        if let Some(stun) = entering_characteristics.and_then(|entry| entry.stun_counters_v48) {
+            state.objects.get_mut(id).counters.stun = stun;
+        }
+        if let Some(count) = entering_characteristics.and_then(|entry| entry.time_counters) {
+            let controller = state.objects.get(id).controller;
+            let placed = crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input,
+                controller,
+                i32::from(count),
+            )
+            .and_then(|n| u8::try_from(n).map_err(|_| "entry time counter overflow".into()));
+            match placed {
+                Ok(placed) => state.objects.get_mut(id).v4.time_counters_v1 = placed,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
         }
         if let Some(count) = entering_characteristics.and_then(|entry| entry.x_counters) {
-            state.objects.get_mut(id).counters.plus1_plus1 = count;
+            let controller = state.objects.get(id).controller;
+            let count = match crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input,
+                controller,
+                count,
+            ) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            };
+            let total = if crate::doubling_season_v48::requires_successor(state)
+                || counter_input.is_some_and(|input| !input.seasons.is_empty())
+            {
+                match state
+                    .objects
+                    .get(id)
+                    .counters
+                    .plus1_plus1
+                    .checked_add(count)
+                {
+                    Some(total) => total,
+                    None => {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            id,
+                        ));
+                        return;
+                    }
+                }
+            } else {
+                count
+            };
+            state.objects.get_mut(id).counters.plus1_plus1 = total;
         }
     }
-    crate::planeswalker_v1::after_zone_change(state, id);
+    crate::planeswalker_v1::after_zone_change(state, id, counter_input);
+    if to_zone == Zone::Battlefield {
+        crate::ajani_full_v42::lifecycle::initialize_entry(state, id);
+    }
     if to_zone == Zone::Library {
         let position = state.players[owner.index()]
             .library
@@ -3779,8 +4823,39 @@ pub(crate) fn add_lore_counters(
     source: ObjectId,
     amount: i16,
 ) -> Result<(), String> {
+    add_lore_counters_with_origin(
+        state,
+        source,
+        amount,
+        crate::doubling_season_v48::CounterOriginV48::Effect,
+    )
+}
+pub(crate) fn add_lore_counters_rule(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+) -> Result<(), String> {
+    add_lore_counters_with_origin(
+        state,
+        source,
+        amount,
+        crate::doubling_season_v48::CounterOriginV48::Rule,
+    )
+}
+fn add_lore_counters_with_origin(
+    state: &mut GameState,
+    source: ObjectId,
+    amount: i16,
+    origin: crate::doubling_season_v48::CounterOriginV48,
+) -> Result<(), String> {
     let live = state.objects.get(source);
-    let count = crate::standard_cards_v1::scale_counters(state, live.controller, i32::from(amount));
+    let count = crate::doubling_season_v48::counter_amount(
+        state,
+        source,
+        live.controller,
+        origin,
+        i32::from(amount),
+    )?;
     let before = live.counters.lore;
     let after = before
         .checked_add(i16::try_from(count).map_err(|_| "lore count overflow")?)
@@ -4572,6 +5647,73 @@ mod arahbo_entry_tests {
             assert!(state.engine.event_history[start..].iter().any(|event|matches!(event,CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.root==RootV1::OtherNontokenCatEntry)));
             settle(&mut state);
             assert_eq!(state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::CreateToken {token_def,..} if Some(*token_def)==crate::card_def::card_id_by_name("Cat Token"))).count(),2);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod season_time_entry_tests_v48 {
+    use super::*;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+    #[test]
+    #[ignore = "future actual Doubling Season registration required"]
+    fn genuine_time_entry_primitive_preflights_original_board_before_mutation_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for seasons in [1, 6] {
+                let mut state = ready_state_for(actor);
+                for _ in 0..seasons {
+                    let source = put(&mut state, actor, "Doubling Season", Zone::Hand);
+                    propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                    assert!(state.engine.halted.is_none());
+                }
+                let entrant = put(&mut state, actor, "Forest", Zone::Hand);
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    let before = branch.clone();
+                    // Actual central entry primitive on a physical permanent;
+                    // this does not give Forest a fictional Impending ability.
+                    commit_with_ability_lki_and_entry_batch(
+                        branch,
+                        ProposedEvent::zone_change(entrant, Zone::Battlefield),
+                        None,
+                        None,
+                        None,
+                        (None, None),
+                        (
+                            Some((
+                                entrant,
+                                crate::garruks_uprising_v1::EntryCharacteristicsV1 {
+                                    time_counters: Some(4),
+                                    ..Default::default()
+                                },
+                            )),
+                            false,
+                        ),
+                    );
+                    if seasons == 1 {
+                        assert!(branch.engine.halted.is_none());
+                        assert_eq!(branch.objects.get(entrant).zone, Zone::Battlefield);
+                        assert_eq!(branch.objects.get(entrant).v4.time_counters_v1, 8);
+                    } else {
+                        assert_eq!(
+                            branch.engine.halted.as_ref().map(|x| x.0),
+                            Some(crate::engine::UnsupportedMechanic::InvalidEffectContinuation)
+                        );
+                        branch.engine.halted = None;
+                        assert_eq!(*branch, before);
+                    }
+                }
+                assert_eq!(state, restored);
+            }
         }
     }
 }

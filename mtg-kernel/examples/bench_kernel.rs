@@ -226,6 +226,9 @@ fn random_action_for_decision(
     rng: &mut SplitMix64,
 ) -> Action {
     match decision {
+        Decision::ChooseEntryColorV36 { colors, .. } => {
+            Action::ChooseEffectOption(rng_below(rng, colors.len()) as u16)
+        }
         Decision::CastSpellOrPass {
             castable_spells,
             mana_abilities,

@@ -341,6 +341,9 @@ pub enum Subtype {
     Ooze,
     /// Prepared Sower source; choice-array admission remains separate.
     Devil,
+    /// Appended for the unregistered Fiendish Panda target grammar. Existing
+    /// creature-choice projections stay frozen until printed registration.
+    Bear,
 }
 
 impl Subtype {
@@ -827,6 +830,7 @@ impl Subtype {
                 | Subtype::Minotaur
                 | Subtype::Ooze
                 | Subtype::Devil
+                | Subtype::Bear
         )
     }
 }
@@ -1066,6 +1070,10 @@ pub enum TargetSpec {
     UpToTwoCardsInSingleGraveyard,
     /// Fiery Annihilation: mandatory creature, optional attached Equipment.
     CreatureThenUpToOneAttachedEquipment,
+    /// Exactly one other nontoken, non-Bear creature card in the controller's
+    /// graveyard. The signed bound is captured source power, not a fixed
+    /// printed mana value. A negative bound offers no targets.
+    AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
 }
 
 impl TargetSpec {
@@ -1159,6 +1167,7 @@ impl TargetSpec {
             TargetSpec::CardInGraveyards => 65,
             TargetSpec::UpToTwoCardsInSingleGraveyard => 66,
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
+            TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
         }
     }
 }
@@ -1394,6 +1403,14 @@ pub enum CostComponent {
     /// `standard_cards_v1`'s per-incarnation state.
     RemoveNetCounterFromSelf,
     RemoveChargeCounterFromSelf,
+    /// Identifies one actual Pole grant and taps that payer-controlled Pole
+    /// attached to this exact host. This is a named source cost, not a spell
+    /// target or an unrestricted artifact-tap cost.
+    TapFishingPoleAttachedToSource,
+    /// Mandatory additional cost, announced independently of the printed cost.
+    /// The mana branch contains exactly one Mana component; the other branch
+    /// sacrifices one currently controlled creature, without targeting it.
+    SacrificeCreatureOrPayMana(&'static [CostComponent]),
 }
 
 impl CostComponent {
@@ -1595,6 +1612,7 @@ impl ActivatedAbilityDef {
 pub enum ActivationTargetFilter {
     TargetSpecOnly,
     CreatureBlockedBySource,
+    CreatureSubtype(Subtype),
 }
 
 /// Cost paid by one printed mana ability. Special mana costs live here rather
@@ -1669,6 +1687,8 @@ pub enum DynamicValueDef {
     /// Count distinct mana values among currently controlled nonland
     /// battlefield permanents. Tokens participate, and X is zero off-stack.
     DistinctManaValuesAmongControlledNonlandPermanents,
+    /// Current life total of the captured evaluating controller.
+    ControllerLifeTotal,
 }
 
 /// Two subtypes a *single* permanent must carry at once, e.g. the Urza's
@@ -1951,6 +1971,10 @@ fn longbow_ping() -> EffectOp {
     }
 }
 
+pub(crate) fn fishing_pole_bait() -> EffectOp {
+    EffectOp::FishingPoleAddBaitV39
+}
+
 /// Reusable static and triggered grants produced by an attached Equipment.
 /// The attachment relation itself is incarnation-bound in `state.rs`; this
 /// definition contains only printed characteristics and granted abilities.
@@ -2008,6 +2032,46 @@ impl CombatStaticRulesDef {
     };
 }
 
+/// A genuine pre-entry choice. `None` on CardDef means no such choice and
+/// remains distinct from the older land descriptor's excluded color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AsEntersColorChoiceDefV1 {
+    AnyWubrg,
+}
+
+/// A printed continuous power/toughness modification using the source's
+/// own pre-entry color choice and its current controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChosenColorCreatureBoostDefV1 {
+    pub power: i16,
+    pub toughness: i16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GameOutcomeProtectionDefV1 {
+    ControllerCannotLoseAndOpponentsCannotWin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlledCreatureGrantDef {
+    pub keywords: Keywords,
+    /// WUBRG color bits, evaluated against all source colors.
+    pub protection_color_mask: u8,
+}
+
+/// Printed damage replacement evaluated from each live source's current controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DamageReplacementDefV1 {
+    DoubleControlledSourceToOpponent,
+}
+
+/// Token creation and counter placement are distinct replacement events.
+/// Counter payments are not effect counter placements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TokenCounterReplacementDefV48 {
+    DoubleEffectTokensAndControlledPermanentCounters,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2043,6 +2107,10 @@ pub struct CardDef {
     pub enters_with_plus_one_counters: Option<EntersWithPlusOneCountersDef>,
     /// Continuously grants this keyword to controlled creatures with +1/+1 counters.
     pub controlled_counter_keyword: Option<Keywords>,
+    /// Printed prohibition on game outcomes, independent of creature keywords.
+    pub game_outcome_protection_v1: Option<GameOutcomeProtectionDefV1>,
+    /// Immutable continuous grants to every currently controlled creature.
+    pub controlled_creature_grant: Option<ControlledCreatureGrantDef>,
     pub is_land: bool,
     pub produces_mana: &'static [ManaColor],
     /// This card's color identity per 105.1/202.2 (the color of mana
@@ -2223,6 +2291,10 @@ pub struct CardDef {
     pub activated_ability_generic_reductions: &'static [ActivatedAbilityGenericReductionDef],
     /// Printed combat rules, active only on the live front-face creature.
     pub combat_static_rules: CombatStaticRulesDef,
+    pub as_enters_color_choice_v1: Option<AsEntersColorChoiceDefV1>,
+    pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
+    pub damage_replacement_v1: Option<DamageReplacementDefV1>,
+    pub token_counter_replacement_v48: Option<TokenCounterReplacementDefV48>,
 }
 
 impl CardDef {
@@ -2624,16 +2696,37 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 425 (Crystal after Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
+        // batches append through id 441 (Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                426
+                442
             } else {
                 192
             }
         );
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        {
+            assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
+            assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
+            assert_eq!(card_id_by_name("Soulstone Sanctuary"), Some(428));
+            assert_eq!(card_id_by_name("Kellan, Planar Trailblazer"), Some(429));
+            assert_eq!(card_id_by_name("Heraldic Banner"), Some(430));
+            assert_eq!(card_id_by_name("Inspiration from Beyond"), Some(431));
+            assert_eq!(card_id_by_name("Herald of Eternal Dawn"), Some(432));
+            assert_eq!(card_id_by_name("Akroma's Memorial"), Some(433));
+            assert_eq!(card_id_by_name("Fishing Pole"), Some(434));
+            assert_eq!(card_id_by_name("Fish Token"), Some(435));
+            assert_eq!(card_id_by_name("Twinflame Tyrant"), Some(436));
+            assert_eq!(card_id_by_name("Ajani Cat Token"), Some(437));
+            assert_eq!(card_id_by_name("Ajani, Caller of the Pride"), Some(215));
+            assert_eq!(CARD_DEFS[215].capability, CardCapability::Full);
+        }
     }
 
     #[test]
@@ -2797,8 +2890,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v81_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x88c0_d510_de5b_6cea;
+    fn card_db_hash_v84_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x7821_9e60_a949_c923;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3048,8 +3141,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the explicitly partial reference planeswalker is excluded"
+            CARD_DEFS.len(),
+            "the Limited Ajani reference now uses its full loyalty owner"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[

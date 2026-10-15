@@ -1,0 +1,33 @@
+{
+  "definition": {
+    "name": "Krenko, Mob Boss",
+    "mana_cost": "{2}{R}{R}",
+    "mana_value": 4,
+    "colors": [
+      "R"
+    ],
+    "types": [
+      "Creature"
+    ],
+    "subtypes": [
+      "Goblin",
+      "Warrior"
+    ],
+    "supertypes": [
+      "Legendary"
+    ],
+    "power": 3,
+    "toughness": 3,
+    "is_land": false,
+    "produces_mana": [],
+    "is_token": false,
+    "java_file": "Mage.Sets/src/mage/cards/k/KrenkoMobBoss.java"
+  },
+  "primary_source": {
+    "repository": "XMage",
+    "commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+    "path": "Mage.Sets/src/mage/cards/k/KrenkoMobBoss.java",
+    "token": "Mage/src/main/java/mage/game/permanent/token/GoblinToken.java"
+  },
+  "disposition": "UNREGISTERED source preparation; no catalog/profile ID or capability admission"
+}

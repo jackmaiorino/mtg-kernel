@@ -3809,9 +3809,22 @@ fn standard_program_for(name: &str) -> Option<Special> {
             "LookTopPickToHandBottomRest(Controller,Fixed(4),pick=1,rest=Chosen)",
             "EffectOp::LookTopPickToHandBottomRest { player: PlayerRef::Controller, count: crate::effect::LibraryLookCount::Fixed(4), pick: 1, choose_rest_order: true }",
         ),
+        // Mill three, then make a mandatory non-targeted own-graveyard choice.
+        // Flashback {5}{U}{U} is modeled in `flashback_for`.
+        "Faebloom Trick" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
+            "None", "FaebloomCreateFaeriesV43", "EffectOp::FaebloomCreateFaeriesV43",
+        ),
+        "Eaten Alive" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => program(
+            "CreatureOrPlaneswalker", "MoveObject(Target0,Exile)",
+            "crate::eaten_alive_v1::program()",
+        ),
+        "Inspiration from Beyond" => program(
+            "None",
+            "Sequence(MillCards(Controller,3),SelectObjectsV1(Controller,Graveyard,InstantOrSorcery,1,1,Hand))",
+            "EffectOp::Sequence(vec![EffectOp::MillCards { player: PlayerRef::Controller, count: 3 }, EffectOp::SelectObjectsV1 { rule:crate::effect::ObjectSelectionRuleV1 { player:PlayerRef::Controller, zone:Zone::Graveyard, any_player:false, filter:crate::effect::ObjectSelectionFilterV1::InstantOrSorcery, min:1, max:1, action:crate::effect::ObjectSelectionActionV1::MoveTo(Zone::Hand) } }])",
+        ),
         // Look at the top X cards of your library, where X is the amount of
-        // mana spent to cast this spell. Put two of them into your hand and
-        // the rest on the bottom of your library in a random order.
+        // mana spent to cast this spell. Put two into hand, rest randomly below.
         // Flashback {5}{U}{U} is modeled in `flashback_for`.
         "Memory Deluge" => program(
             "None",
@@ -4132,6 +4145,24 @@ fn keywords_for(card: &CardJson) -> String {
         keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
+        "Herald of Eternal Dawn"
+            if cfg!(all(
+                feature = "limited-fdn-fixtures",
+                not(feature = "standard-magezero-fixtures")
+            )) =>
+        {
+            keywords.push("Keywords::FLASH");
+            keywords.push("Keywords::FLYING");
+        }
+        "Bloodthirsty Conqueror"
+            if cfg!(all(
+                feature = "limited-fdn-fixtures",
+                not(feature = "standard-magezero-fixtures")
+            )) =>
+        {
+            keywords.push("Keywords::FLYING");
+            keywords.push("Keywords::DEATHTOUCH");
+        }
         "Faerie Dreamthief" => keywords.push("Keywords::FLYING"),
         "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" | "Ashroot Animist" => {
             keywords.push("Keywords::TRAMPLE")
@@ -4193,6 +4224,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Billowing Shriekmass"
         | "Dreadwing Scavenger"
         | "Arbiter of Woe"
+        | "High-Society Hunter"
         | "Skyship Buccaneer" => keywords.push("Keywords::FLYING"),
         "Generous Ent"
         | "Writhing Chrysalis"
@@ -4237,6 +4269,7 @@ fn keywords_for(card: &CardJson) -> String {
                 "Keywords::LIFELINK",
             ]);
         }
+        "Twinflame Tyrant" => keywords.push("Keywords::FLYING"),
         "Elfsworn Giant" => keywords.push("Keywords::REACH"),
         "Eager Trufflesnout" => keywords.push("Keywords::TRAMPLE"),
         _ => {}
@@ -4408,6 +4441,41 @@ fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
 
 fn mana_ability_includes_chosen_color(name: &str) -> bool {
     matches!(name, "Citadel Gate" | "Sea Gate")
+        || (cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) && name == "Heraldic Banner")
+}
+
+fn as_enters_color_choice_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Heraldic Banner"
+    {
+        "Some(AsEntersColorChoiceDefV1::AnyWubrg)"
+    } else {
+        "None"
+    }
+}
+fn damage_replacement_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Twinflame Tyrant"
+    {
+        "Some(DamageReplacementDefV1::DoubleControlledSourceToOpponent)"
+    } else {
+        "None"
+    }
+}
+
+fn chosen_color_creature_boost_v1(name: &str) -> &'static str {
+    if as_enters_color_choice_v1(name) != "None" {
+        "Some(ChosenColorCreatureBoostDefV1 { power: 1, toughness: 0 })"
+    } else {
+        "None"
+    }
 }
 
 fn as_enters_choose_color_other_than(name: &str) -> &'static str {
@@ -4440,6 +4508,7 @@ fn additional_mana_abilities_for(name: &str) -> String {
 fn object_name_for(name: &str) -> &str {
     match name {
         "Nameless Creature Copy Token" => "",
+        "Ajani Cat Token" => "Cat Token",
         "Monster Role Token" => "Monster",
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         "Homunculus Horde Token" => "Homunculus Horde",
@@ -4581,11 +4650,33 @@ fn enters_with_plus_one_counters_for(name: &str) -> &'static str {
     }
 }
 
+fn controlled_creature_grant_for(name: &str) -> &'static str {
+    if cfg!(feature = "standard-magezero-fixtures") || !cfg!(feature = "limited-fdn-fixtures") {
+        return "None";
+    }
+    match name {
+        "Akroma's Memorial" => {
+            "Some(ControlledCreatureGrantDef { keywords: Keywords(61), protection_color_mask: 12 })"
+        }
+        _ => "None",
+    }
+}
 fn controlled_counter_keyword_for(name: &str) -> &'static str {
     match name {
         "Gnarlid Colony" => "Some(Keywords::TRAMPLE)",
         "Inspiring Paladin" => "Some(Keywords::FIRST_STRIKE)",
         _ => "None",
+    }
+}
+
+fn game_outcome_protection_for(name: &str) -> &'static str {
+    if env::var_os("CARGO_FEATURE_LIMITED_FDN_FIXTURES").is_some()
+        && !standard_magezero_fixtures()
+        && name == "Herald of Eternal Dawn"
+    {
+        "Some(GameOutcomeProtectionDefV1::ControllerCannotLoseAndOpponentsCannotWin)"
+    } else {
+        "None"
     }
 }
 
@@ -4613,6 +4704,7 @@ fn alt_cost_for(name: &str) -> &'static str {
 /// cast this spell, discard a card.").
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
+        "Eaten Alive" if cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures"))) => "Some(crate::eaten_alive_v1::ADDITIONAL)",
         "Grab the Prize" | "Thrill of Possibility" | "Big Score" => "Some(&[CostComponent::DiscardCards(1)])",
         "Arbiter of Woe" => "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Creature }])",
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
@@ -4679,7 +4771,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        "Memory Deluge" => {
+        "Memory Deluge" | "Inspiration from Beyond" => {
             let (pips, generic, x_count) = parse_cost("{5}{U}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
@@ -4774,6 +4866,45 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
         return recipes;
     }
     match name {
+        "AjaniFullV42" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(1)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::counter_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToOneCreature)",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(-3)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::strike_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "Creature",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Loyalty(-8)],
+                effect: AbilityEffectRecipe::StandardProgram("crate::ajani_full_v42::cats_program"),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: true,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
+        "Krenko, Mob Boss" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::StandardProgram("crate::krenko_v1::program"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Zul Ashur, Lich Lord" => &[ActivatedAbilityRecipe { cost: &[AbilityCostRecipe::Tap], effect: AbilityEffectRecipe::StandardProgram("crate::zul_ashur_v1::recipe"), activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "CreatureCardInOwnGraveyard", activation_target_filter: "CreatureSubtype(Subtype::Zombie)", max_activations_per_turn: None }],
         "Mild-Mannered Librarian" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{3}{G}")],
             effect: AbilityEffectRecipe::StandardProgram("crate::mild_mannered_librarian_v1::program_v1"),
@@ -5585,6 +5716,18 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             max_activations_per_turn: None,
         }],
         "Hunter's Blowgun" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Fishing Pole" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
                 generic: 2,
@@ -6420,6 +6563,19 @@ fn activated_ability_face_for(name: &str, index: usize) -> Option<u8> {
 /// Rust source for a card's activated abilities. `canonical` omits the
 /// face of single-faced abilities so earlier catalogs keep their card
 /// database identity byte for byte.
+// Only an explicitly admitted full record selects this preparation. The
+// historical Partial record still passes its original name and emits &[];
+// no active metadata, numeric ID or catalog capability is changed here.
+fn activated_recipe_key(card: &CardJson) -> &str {
+    if card.name == "Ajani, Caller of the Pride"
+        && card.engine_capability == EngineCapabilityJson::Full
+    {
+        "AjaniFullV42"
+    } else {
+        &card.name
+    }
+}
+
 fn activated_abilities_src(name: &str, canonical: bool) -> String {
     let recipes = activated_ability_recipes_for(name);
     if recipes.is_empty() {
@@ -6737,6 +6893,7 @@ fn ward_cost_for(name: &str) -> &'static str {
         "Axebane Ferox" => "Some(WardCostDef::CollectEvidence(4))",
         "Brutal Cathar" => "Some(WardCostDef::BackFacePayLife(3))",
         "Sire of Seven Deaths" => "Some(WardCostDef::PayLife(7))",
+        "Zul Ashur, Lich Lord" => "Some(WardCostDef::PayLife(2))",
         "Graveyard Trespasser" => "Some(WardCostDef::DiscardCard)",
         _ => build_standard_v1::ward_cost_for(name),
     }
@@ -6769,6 +6926,7 @@ fn equipment_for(name: &str) -> &'static str {
         "Swiftfoot Boots" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::HEXPROOF.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Cori-Steel Cutter" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::TRAMPLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Viridian Longbow" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: Some(GrantedActivatedAbilityDef { cost: &[CostComponent::Tap], target_spec: TargetSpec::AnyTarget, effect: longbow_ping }) })",
+        "Fishing Pole" => "Some(crate::fishing_pole_v39::profile())",
         _ => build_standard_v1::equipment_for(name),
     }
 }
@@ -6834,6 +6992,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Ashroot Animist" => "attack:another_controlled_creature:trample_and_boost_until_cleanup:power_sample_once_resolution:same_source_or_actual_departure_lki:nonnegative:exact_source_target_incarnations",
         "Frenzied Goblin" => "source_declared_attacker:target_creature_at_placement:may_pay_R_at_resolution:if_paid_exact_target_cannot_block_until_cleanup:captured_controller:full_target_recheck",
         "Vampire Gourmand" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_draw_controller:1_and_exact_source_cannot_be_blocked_until_cleanup",
+        "Bloodthirsty Conqueror" => "actual_opponent_positive_life_loss_operation:sum_by_player:post_event_active_source_before_SBA:mandatory_saved_amount_gain_original_controller:exact_occurrence_publication_removal_gain_completion",
+        "High-Society Hunter" => "source_declared_attacker:untargeted:captured_controller_may_sacrifice_another_creature_at_resolution:if_successful_counter_exact_original_source:+1/+1;prebatch_each_other_nontoken_creature_dies:any_controller:draw_captured_source_controller:1:including_simultaneous_source_death",
         "Wardens of the Cycle" => "controller_end_step:intervening_if_creature_died_this_turn:mode_at_placement:gain_controller_life:2|draw_controller:1_then_lose_controller_life:1:recheck_morbid_in_each_branch:untargeted",
         "Archmage of Runes" => "cast_instant_or_sorcery:draw_controller:1",
         "Billowing Shriekmass" => "etb:mill_controller_library:3:private_ordering_exact_incarnations",
@@ -6925,6 +7085,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Grappling Kraken" => "controlled_land_enters:target_opponent_controlled_creature:tap_then_stun_counter:1:exact_incarnation",
         "Rune-Scarred Demon" => "etb:search_library_any_card_to_hand_unrevealed",
         "Elvish Regrower" => "etb:return_target_own_graveyard_permanent_card_to_hand",
+        "Fiendish Panda" => "positive_controller_life_gain_event:counter_exact_original_source:1;self_creature_death:return_another_target_non_bear_own_graveyard_creature_card_mv_at_most_original_last_battlefield_signed_power",
         "Vampire Soulcaller" => "etb:return_target_own_graveyard_creature_card_to_hand;static:cant_block:printed_source_abilities",
         "Soul-Shackled Zombie" => "etb:exile_up_to_two_targets_from_single_graveyard:if_creature_actually_exiled_each_opponent_loses_two_controller_gains_two",
         "Ambush Wolf" => "etb:exile_up_to_one_target_graveyard_card",
@@ -7551,7 +7712,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // others silently stale.
     let mut activated_effects = Vec::new();
     for card in cards {
-        for recipe in activated_ability_recipes_for(&card.name) {
+        for recipe in activated_ability_recipes_for(activated_recipe_key(card)) {
             if !activated_effects.contains(&recipe.effect) {
                 activated_effects.push(recipe.effect);
             }
@@ -9808,7 +9969,10 @@ fn codegen(cards: &[CardJson]) -> String {
         if executable && !c.is_token {
             // A land without a mana ability must still have printed rules
             // text the kernel executes (Evolving Wilds' fetch ability).
-            if c.is_land && !has_mana_program && activated_ability_recipes_for(&c.name).is_empty() {
+            if c.is_land
+                && !has_mana_program
+                && activated_ability_recipes_for(activated_recipe_key(c)).is_empty()
+            {
                 panic!(
                     "cards_v1.json: executable land {:?} has no generated mana program",
                     c.name
@@ -9888,7 +10052,19 @@ fn codegen(cards: &[CardJson]) -> String {
             controlled_counter_keyword_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        controlled_creature_grant: {},",
+            controlled_creature_grant_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
+        writeln!(
+            out,
+            "        game_outcome_protection_v1: {},",
+            game_outcome_protection_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
         writeln!(out, "        alt_cost: {},", alt_cost_for(&c.name)).unwrap();
@@ -9903,7 +10079,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(
             out,
             "        activated_abilities: {},",
-            activated_abilities_for(&c.name)
+            activated_abilities_for(activated_recipe_key(c))
         )
         .unwrap();
         writeln!(out, "        plot_cost: {},", plot_cost_for(&c.name)).unwrap();
@@ -10101,6 +10277,46 @@ fn codegen(cards: &[CardJson]) -> String {
             combat_static_rules_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        as_enters_color_choice_v1: {},",
+            if executable {
+                as_enters_color_choice_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        chosen_color_creature_boost_v1: {},",
+            if executable {
+                chosen_color_creature_boost_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        damage_replacement_v1: {},",
+            if executable {
+                damage_replacement_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        token_counter_replacement_v48: {},",
+            if executable && c.name == "Doubling Season" {
+                "Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)"
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10218,9 +10434,17 @@ fn codegen(cards: &[CardJson]) -> String {
         if c.name == "Goblin Boarders" {
             canon.push_str(";raid_entry_counters=controller_declared_attackers_this_turn:round_and_active_seat:printed_abilities_active:plus_one_counter:1:before_entry_events_and_sbas");
         }
+        let creature_grant = controlled_creature_grant_for(&c.name);
+        if creature_grant != "None" {
+            canon.push_str(&format!(";controlled_creature_grant={creature_grant}"));
+        }
         let counter_keyword = controlled_counter_keyword_for(&c.name);
         if counter_keyword != "None" {
             canon.push_str(&format!(";controlled_counter_keyword={counter_keyword}"));
+        }
+        let outcome_protection = game_outcome_protection_for(&c.name);
+        if outcome_protection != "None" {
+            canon.push_str(&format!(";game_outcome_protection_v1={outcome_protection}"));
         }
         canon.push('|');
         canon.push_str(if c.is_land { "L" } else { "-" });
@@ -10304,6 +10528,23 @@ fn codegen(cards: &[CardJson]) -> String {
             },
         );
         canon.push('|');
+        // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
+            canon.push_str(
+                "token_counter_replacement_v48=DoubleEffectTokensAndControlledPermanentCounters|",
+            );
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && as_enters_color_choice_v1(&c.name) != "None"
+        {
+            canon
+                .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && damage_replacement_v1(&c.name) != "None"
+        {
+            canon.push_str("damage_replacement_v1=DoubleControlledSourceToOpponent|");
+        }
         canon.push_str("as_enters_choose_color_other_than=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
             as_enters_choose_color_other_than(&c.name)
@@ -10427,7 +10668,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&special_for(&c.name).canonical_token());
         canon.push('|');
         canon.push_str("activated=");
-        canon.push_str(&activated_abilities_token(&c.name));
+        canon.push_str(&activated_abilities_token(activated_recipe_key(c)));
         canon.push('|');
         canon.push_str("escape=");
         canon.push_str(&escape_for(&c.name));
@@ -10590,6 +10831,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Shark" => "Subtype::Shark",
         "Elk" => "Subtype::Elk",
         "Demon" => "Subtype::Demon",
+        "Bear" => "Subtype::Bear",
         "Scout" => "Subtype::Scout",
         "Bat" => "Subtype::Bat",
         "Mercenary" => "Subtype::Mercenary",

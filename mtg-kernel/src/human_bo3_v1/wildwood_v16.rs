@@ -160,6 +160,57 @@ type ProjectedWildwoodV16 = (
     Vec<u32>,
 );
 
+// V40 uses the same typed safe fields; no predecessor artifact/input admission.
+pub(super) fn register_for_akroma_parts(
+    observation: &crate::wildwood_public_v1::WildwoodObservationV1,
+    handles: &mut Handles,
+) -> Result<(), Error> {
+    for row in &observation.projection.surface.stack {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.extensions.historical_public_sources {
+        handles.insert(&row.source)?;
+    }
+    for row in &observation.counter_occurrences {
+        handles.insert(&row.recipient_at_event)?;
+        handles.insert(&row.observer_at_event)?;
+    }
+    Ok(())
+}
+pub(super) fn state_for_akroma_parts(
+    observation: &crate::wildwood_public_v1::WildwoodObservationV1,
+    handles: &mut Handles,
+    human: PlayerSeatV1,
+) -> Result<HumanWildwoodExtensionsV16, Error> {
+    Ok(state(observation, handles, human)?.extensions)
+}
+pub(super) fn label_for_akroma_parts(
+    action: &ActionSemanticV1,
+    observation: &crate::wildwood_public_v1::WildwoodObservationV1,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<String, Error> {
+    super::labels::label_parts_v8(action, &parts(observation), handles, human)
+}
+
+pub(super) fn unary_for_akroma_parts(
+    extension: &HumanWildwoodExtensionsV16,
+    unary: &mut BTreeMap<String, Vec<String>>,
+) -> Result<(), Error> {
+    for row in &extension.predecessor.predecessor.ward_life_card_traits {
+        unary
+            .entry(row.source.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    for row in &extension.counter_occurrences {
+        unary
+            .entry(row.recipient_at_event.handle.clone())
+            .or_default()
+            .push(visible::without_handles(row)?);
+    }
+    Ok(())
+}
 fn project_base(
     observation: &WildwoodObservationV1,
     actions: &[ActionSemanticV1],

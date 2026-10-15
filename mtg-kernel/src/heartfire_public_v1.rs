@@ -67,6 +67,79 @@ fn digest(record: &HeartfirePublicObservationV1) -> Result<String, RlContractErr
         .map(|byte| format!("{byte:02x}"))
         .collect())
 }
+/// V40 uses a distinct common projection; no predecessor artifact is constructed.
+pub(crate) fn saved_for_akroma_v40(
+    state: &GameState,
+    projection: &crate::rl::PublicObservationProjectionV5,
+) -> Result<Vec<HeartfireSavedDamageV1>, RlContractError> {
+    crate::source_power_activation_v1::validate_state(state).map_err(RlContractError)?;
+    let mut saved_damage = Vec::new();
+    for (index, item) in state.stack.iter().enumerate() {
+        if !matches!(
+            item.inline_effect.as_ref(),
+            Some(crate::effect::EffectOp::StandardV1(
+                crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
+            ))
+        ) {
+            continue;
+        }
+        crate::source_power_activation_v1::validate_item(state, item).map_err(RlContractError)?;
+        let source = item
+            .v4
+            .ability_source_contract
+            .ok_or_else(|| RlContractError("Heartfire missing source contract".into()))?;
+        let local = item
+            .v4
+            .activated_ability_index
+            .ok_or_else(|| RlContractError("Heartfire missing printed selector".into()))?;
+        let root = rules_meaning_heartfire_v1::root_meaning(source.card_def, u32::from(local))
+            .map_err(|_| RlContractError("Heartfire unsupported selected root".into()))?;
+        let facts = crate::source_power_activation_v1::damage_source(
+            state,
+            item.source,
+            item.v4.stack_item_id,
+        )
+        .map_err(RlContractError)?;
+        let power = state
+            .engine
+            .event_history
+            .iter()
+            .find_map(|event| match event {
+                crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {
+                    item: saved,
+                    power,
+                    ..
+                } if saved.v4.stack_item_id == item.v4.stack_item_id => Some(*power),
+                _ => None,
+            })
+            .ok_or_else(|| RlContractError("Heartfire lost authenticated power receipt".into()))?;
+        let ordinal = u32::try_from(index)
+            .map_err(|_| RlContractError("Heartfire stack ordinal exceeds u32".into()))?;
+        let row = projection
+            .surface
+            .stack
+            .get(index)
+            .ok_or_else(|| RlContractError("Heartfire stack projection mismatch".into()))?;
+        if row.stack_index != ordinal
+            || row.controller != item.controller.into()
+            || row.stack_item_kind != StackItemKindV2::ActivatedAbility
+        {
+            return Err(RlContractError("Heartfire public producer mismatch".into()));
+        }
+        saved_damage.push(HeartfireSavedDamageV1 {
+            stack_index: ordinal,
+            root,
+            signed_departing_power: power,
+            damage_if_target_legal_before_prevention: power.max(0),
+            captured_controller: facts.source.controller.into(),
+            captured_color_mask: facts.color_mask,
+            captured_lifelink: facts.lifelink,
+            captured_deathtouch: facts.deathtouch,
+            captured_werewolf: facts.werewolf,
+        });
+    }
+    Ok(saved_damage)
+}
 pub(crate) fn from_authenticated_v9(
     state: &GameState,
     base: ObservationV9,

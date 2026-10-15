@@ -1,0 +1,26 @@
+{
+  "schema": "mtg-kernel/prepared-source/high-society-hunter/v1",
+  "status": "unregistered_unqualified",
+  "source_base": "af185b887d745cb2e5b287f18112bfc8e893e6dd",
+  "mage_commit": "a5c90fe180021e70e2a644ade00eeab07f857a40",
+  "mage_path": "Mage.Sets/src/mage/cards/h/HighSocietyHunter.java",
+  "mage_blob": "b61d6a510950574ee8f98ea420e7c267617a9bbf",
+  "mage_source_sha256": "ba5a6a0c6b3b0432f067de2263d78c9b6e4f568565329824760b3b061c4b5968",
+  "mage_source_bytes": 2297,
+  "wizards_release_notes": "https://magic.wizards.com/en/news/feature/foundations-release-notes",
+  "prepared_definition": {
+    "name": "High-Society Hunter",
+    "mana_cost": "{3}{B}{B}",
+    "colors": ["B"],
+    "types": ["Creature"],
+    "subtypes": ["Vampire", "Noble"],
+    "power": 5,
+    "toughness": 3,
+    "keywords": ["Flying"],
+    "attack_outcome": "optional_sacrifice_another_creature_then_counter_exact_original_source",
+    "death_outcome": "draw_original_event_controller_for_each_other_nontoken_creature_death"
+  },
+  "future_printed_groups": 7,
+  "future_printed_groups_ignored_until_registration": true,
+  "native_typecheck_gameplay_registration_model_search_sampler_qualified": false
+}

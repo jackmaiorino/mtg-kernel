@@ -346,9 +346,225 @@ mod printed {
     use crate::card_def::{card_id_by_name, CARD_DEFS};
     use crate::engine::{self, Action, Decision};
     use crate::event::{self, ProposedEvent};
+    use crate::human_bo3_v1::ajani_v42::{HumanAjaniProjectorV42, HumanAjaniSessionV42};
     use crate::ids::ObjectId;
     use crate::mana::ManaColor;
     use crate::state::Target;
+
+    fn full_expected(session: &HumanAjaniSessionV42) -> FastActorDecisionV1 {
+        match session.current_response() {
+            FastActorResponseV1::Decision(e) => e,
+            other => panic!("genuine Full recipient input: {other:?}"),
+        }
+    }
+    fn full_public(
+        session: &HumanAjaniSessionV42,
+    ) -> crate::ajani_observation_v42::AjaniObservationV42 {
+        let e = full_expected(session);
+        session
+            .fixture_core_v42()
+            .ajani_current_decision_input_v42(e, e.acting_player)
+            .unwrap()
+            .0
+    }
+    fn full_gameplay(session: &HumanAjaniSessionV42) -> (Vec<u8>, u64, u64) {
+        let core = session.fixture_core_v42();
+        (
+            serde_json::to_vec(core.ajani_fixture_state()).unwrap(),
+            core.policy_step_count(),
+            core.physical_decision_count(),
+        )
+    }
+    fn full_saved(
+        observation: &crate::ajani_observation_v42::AjaniObservationV42,
+    ) -> &[crate::heartfire_public_v1::HeartfireSavedDamageV1] {
+        observation
+            .families
+            .iter()
+            .find_map(|family| match family {
+                crate::akroma_family_public_v40::FamilyFactsV40::Early(facts) => {
+                    Some(facts.saved_heartfire_damage.as_slice())
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+    fn full_request(
+        prompt: &crate::human_bo3_v1::ajani_v42::HumanDecisionAjaniV42,
+        prefix: &str,
+    ) -> HumanActionRequestV1 {
+        let row = prompt
+            .actions
+            .iter()
+            .find(|row| row.label.starts_with(prefix))
+            .unwrap_or_else(|| {
+                panic!(
+                    "actual Full recipient action {prefix}: {:?}",
+                    prompt.actions
+                )
+            });
+        HumanActionRequestV1 {
+            prompt_seq: prompt.prompt_seq,
+            action_index: row.action_index,
+        }
+    }
+    fn resolve_full(
+        session: &mut HumanAjaniSessionV42,
+    ) -> crate::ajani_observation_v42::AjaniObservationV42 {
+        for _ in 0..40 {
+            let e = full_expected(session);
+            let (public, actions, binding) = session
+                .fixture_core_v42()
+                .ajani_current_decision_input_v42(e, e.acting_player)
+                .unwrap();
+            if session
+                .fixture_core_v42()
+                .ajani_fixture_state()
+                .stack
+                .is_empty()
+            {
+                return public;
+            }
+            let index = actions
+                .iter()
+                .position(|action| matches!(action, crate::rl::ActionSemanticV1::Pass { .. }))
+                .unwrap();
+            session
+                .fixture_core_v42()
+                .ajani_validate_bound_decision_v42(e, e.acting_player, &binding)
+                .unwrap();
+            session
+                .fixture_core_mut_v42()
+                .step(e.episode_id, e.step, u32::try_from(index).unwrap())
+                .unwrap();
+        }
+        panic!("actual Full recipient stack did not settle");
+    }
+    fn full_walker_activation(
+        state: GameState,
+        actor: PlayerId,
+        source: ObjectId,
+        target: ObjectId,
+        power: i32,
+        color: u8,
+    ) {
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(crate::planeswalker_v1::validate_heartfire_recipients_v12(&state).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        assert!(
+            FastActorSessionV1::from_human_v8_fixture_state(state.clone())
+                .into_heartfire_v12()
+                .is_err()
+        );
+        let mut session = HumanAjaniSessionV42::from_session(
+            FastActorSessionV1::from_ajani_v42_fixture_state(state),
+            actor.into(),
+        )
+        .unwrap();
+        let mut projector = HumanAjaniProjectorV42::new(actor.into());
+        let prompt = projector
+            .project_current(&session, full_expected(&session))
+            .unwrap();
+        assert_safe(&serde_json::to_value(&prompt).unwrap());
+        projector
+            .submit(
+                &mut session,
+                full_request(&prompt, "Activate Heartfire Immolator"),
+            )
+            .unwrap();
+        let mut selector = HumanAjaniProjectorV42::new(actor.into());
+        let target_prompt = selector
+            .project_current(&session, full_expected(&session))
+            .unwrap();
+        assert!(!target_prompt
+            .actions
+            .iter()
+            .any(|row| row.label.contains("Finish")));
+        assert!(full_saved(&full_public(&session)).is_empty());
+        let selection_snapshot = session.snapshot_v42();
+        let input = full_request(&target_prompt, "Target Ajani, Caller of the Pride");
+        selector.submit(&mut session, input.clone()).unwrap();
+        let announced_gameplay = full_gameplay(&session);
+        let announced = full_public(&session);
+        let saved = full_saved(&announced);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].signed_departing_power, power);
+        assert_eq!(
+            saved[0].damage_if_target_legal_before_prevention,
+            power.max(0)
+        );
+        assert_eq!(saved[0].captured_controller, actor.into());
+        assert_eq!(saved[0].captured_color_mask, color);
+        assert!(announced.projection.surface.graveyards[actor.index()]
+            .iter()
+            .any(|row| row.stable.arena_id == source.0));
+        let e = full_expected(&session);
+        let responder =
+            HumanAjaniSessionV42::from_session(session.fixture_core_v42().clone(), e.acting_player)
+                .unwrap();
+        let mut responder_projector = HumanAjaniProjectorV42::new(e.acting_player);
+        let pending = responder_projector.project_current(&responder, e).unwrap();
+        assert_safe(&serde_json::to_value(&pending).unwrap());
+        let visible_saved = pending
+            .state
+            .extensions
+            .families
+            .iter()
+            .find_map(|family| match family {
+                crate::human_bo3_v1::akroma_families_v40::HumanFamilyV40::Early(facts) => {
+                    Some(&facts.saved_heartfire_damage)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(visible_saved.len(), 1);
+        assert_eq!(visible_saved[0].source.name, "Heartfire Immolator");
+        let announced_snapshot = session.snapshot_v42();
+        let final_public = resolve_full(&mut session);
+        assert!(full_saved(&final_public).is_empty());
+        assert_eq!(
+            crate::planeswalker_v1::loyalty(
+                session.fixture_core_v42().ajani_fixture_state(),
+                target
+            ),
+            Some(4 - power.max(0) as u32)
+        );
+        let public_recipient = final_public
+            .projection
+            .surface
+            .engine_context
+            .planeswalkers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|row| row.permanent.arena_id == target.0)
+            .unwrap();
+        assert_eq!(public_recipient.loyalty, 4 - power.max(0) as u32);
+        let final_gameplay = full_gameplay(&session);
+        let prior_revision = full_expected(&session).environment_revision;
+        session.restore_v42(&announced_snapshot).unwrap();
+        assert!(full_expected(&session).environment_revision > prior_revision);
+        assert_eq!(full_gameplay(&session), announced_gameplay);
+        assert_eq!(full_public(&session), announced);
+        assert_eq!(resolve_full(&mut session), final_public);
+        assert_eq!(full_gameplay(&session), final_gameplay);
+        let prior_revision = full_expected(&session).environment_revision;
+        session.restore_v42(&selection_snapshot).unwrap();
+        assert!(full_expected(&session).environment_revision > prior_revision);
+        let before = session
+            .fixture_core_v42()
+            .privileged_core_environment_hash();
+        assert_eq!(
+            selector.submit(&mut session, input),
+            Err(Error::StaleDecision)
+        );
+        assert_eq!(
+            session
+                .fixture_core_v42()
+                .privileged_core_environment_hash(),
+            before
+        );
+    }
 
     fn ready(actor: PlayerId) -> GameState {
         let forest = card_id_by_name("Forest").unwrap();
@@ -428,7 +644,7 @@ mod printed {
     }
 
     #[test]
-    fn future_actual_cast_prowess_sacrifice_and_creature_or_partial_walker_damage_both_seats() {
+    fn actual_cast_prowess_sacrifice_and_creature_or_full_walker_damage_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             for walker in [false, true] {
                 for negative in [false, true] {
@@ -457,8 +673,7 @@ mod printed {
                     } else {
                         "Shivan Dragon"
                     };
-                    // Registered Partial Ajani supplies only a physical recipient.
-                    // No claim is made for its printed loyalty abilities/combat.
+                    // Physical recipient setup; Full Ajani uses its owning successor.
                     let target = if walker {
                         let target = put(&mut state, actor.opponent(), target_name, Zone::Hand);
                         event::propose_and_commit(
@@ -476,6 +691,10 @@ mod printed {
                     // A pass-only fast-session menu would resolve the ability
                     // before this fixture inspects its saved stack damage.
                     state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 2;
+                    if walker {
+                        full_walker_activation(state, actor, source, target, power, color);
+                        continue;
+                    }
                     let base = FastActorSessionV1::from_human_v8_fixture_state(state);
                     let predecessor = HumanRaidSessionV9::from_session(base.clone()).unwrap();
                     let mut session = HumanHeartfireSessionV12::from_session(base).unwrap();
@@ -483,13 +702,7 @@ mod printed {
                     assert_eq!(
                         HumanDecisionProjectorV9::new(actor.into())
                             .project_current(&predecessor, e),
-                        // V9 maps its frozen expected-state guard's planeswalker
-                        // refusal to StaleDecision before observation/labels.
-                        Err(if walker {
-                            Error::StaleDecision
-                        } else {
-                            Error::UnsupportedPrompt
-                        })
+                        Err(Error::UnsupportedPrompt)
                     );
                     let mut projector = HumanHeartfireProjectorV12::new(actor.into());
                     let prompt = projector.project_current(&session, e).unwrap();
@@ -544,27 +757,12 @@ mod printed {
                     let announced_snapshot = session.snapshot_v12();
                     let final_public = resolve_human(&mut session);
                     assert!(final_public.saved_damage.is_empty());
-                    if walker {
-                        let target_row = final_public
-                            .predecessor
-                            .projection
-                            .surface
-                            .engine_context
-                            .planeswalkers
-                            .as_ref()
-                            .unwrap()
-                            .iter()
-                            .find(|row| row.permanent.arena_id == target.0)
-                            .unwrap();
-                        assert_eq!(target_row.loyalty, 4 - power.max(0) as u32);
-                    } else {
-                        let target_row = final_public.predecessor.projection.surface.battlefield
-                            [actor.opponent().index()]
-                        .iter()
-                        .find(|row| row.stable.arena_id == target.0)
-                        .unwrap();
-                        assert_eq!(i32::from(target_row.damage), power.max(0));
-                    }
+                    let target_row = final_public.predecessor.projection.surface.battlefield
+                        [actor.opponent().index()]
+                    .iter()
+                    .find(|row| row.stable.arena_id == target.0)
+                    .unwrap();
+                    assert_eq!(i32::from(target_row.damage), power.max(0));
                     let final_hash = session.inner.privileged_core_environment_hash();
                     session.restore_v12(&announced_snapshot).unwrap();
                     assert_eq!(

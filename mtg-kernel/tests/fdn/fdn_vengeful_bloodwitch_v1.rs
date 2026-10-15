@@ -478,6 +478,8 @@ fn token_death_and_stolen_creature_death_use_controller_not_owner() {
                 token_def: card_id_by_name("Rabbit Token").unwrap(),
                 controller: player,
                 entry_face_index: None,
+                entry_tapped: false,
+                initialization_v48: None,
                 touched_by: Vec::new(),
             }),
         );

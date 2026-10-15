@@ -262,6 +262,10 @@ pub enum TriggerCondition {
     GarrukOwnEtbFerociousV1,
     GarrukControlledCreaturePowerEntryV1,
     ArahboThisOrOtherNontokenCatEntryV1,
+    FishingPoleEquippedCreatureUntappedV39,
+    /// Any OTHER nontoken effective creature death; captured on the prebatch battlefield.
+    OtherNontokenCreatureDies,
+    OpponentLosesLifeBatchV49,
 }
 
 pub struct TriggeredAbilityDef {
@@ -1598,6 +1602,14 @@ const GUTLESS_PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
     condition: TriggerCondition::EtbAfterControllerAttackedThisTurn,
     ..etb_trigger(gutless_plunderer_effect)
 }];
+fn fishing_pole_untap() -> EffectOp {
+    EffectOp::BindFishingPoleUntapV39
+}
+const FISHING_POLE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::FishingPoleEquippedCreatureUntappedV39,
+    ..etb_trigger(fishing_pole_untap)
+}];
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -3446,6 +3458,16 @@ const BLOOM_KIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     ..etb_trigger(bloom_kin_search)
 }];
 
+const HIGH_SOCIETY_HUNTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb_trigger(crate::high_society_hunter_v1::attack_program)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::OtherNontokenCreatureDies,
+        ..etb_trigger(crate::high_society_hunter_v1::death_program)
+    },
+];
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3526,6 +3548,8 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Grappling Kraken" => &GRAPPLING_KRAKEN_TRIGGERS,
         "Rune-Scarred Demon" => &RUNE_SCARRED_DEMON_TRIGGERS,
         "Elvish Regrower" => &ELVISH_REGROWER_TRIGGERS,
+        "Fiendish Panda" => &crate::fiendish_panda_v1::TRIGGERS,
+        "Bloodthirsty Conqueror" => &crate::bloodthirsty_conqueror_v49::TRIGGERS,
         "Vampire Soulcaller" => &VAMPIRE_SOULCALLER_TRIGGERS,
         "Affectionate Indrik" => &AFFECTIONATE_INDRIK_TRIGGERS,
         "Soul-Shackled Zombie" => &SOUL_SHACKLED_ZOMBIE_TRIGGERS,
@@ -3573,6 +3597,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
             not(feature = "standard-magezero-fixtures")
         ))]
         "Arahbo, the First Fang" => &ARAHBO_TRIGGERS,
+        "Fishing Pole" => &FISHING_POLE_TRIGGERS,
         "Garruk's Uprising" => &GARRUKS_UPRISING_TRIGGERS,
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
@@ -3582,6 +3607,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Frenzied Goblin" => &FRENZIED_GOBLIN_TRIGGERS,
         "Ashroot Animist" => &ASHROOT_ANIMIST_TRIGGERS,
         "Vampire Gourmand" => &VAMPIRE_GOURMAND_TRIGGERS,
+        "High-Society Hunter" => &HIGH_SOCIETY_HUNTER_TRIGGERS,
         "Webweaver Changeling" => &WEBWEAVER_CHANGELING_TRIGGERS,
         "Glint Hawk" => &GLINT_HAWK_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -3896,6 +3922,12 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
+        return *template == crate::bloodthirsty_conqueror_v49::recipe();
+    }
+    if let Some((_, attack)) = crate::high_society_hunter_custody_v45::binding(effect) {
+        return *template == crate::high_society_hunter_custody_v45::recipe(attack);
+    }
     if template == effect {
         return true;
     }
@@ -3980,6 +4012,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         ) => count == actual_count && max_taken == actual_max_taken,
         (EffectOp::BindAuthorityEntryGainLifeV1, EffectOp::AuthorityEntryGainLifeV1 { .. }) => true,
         (EffectOp::BindArahboCatEntryV1, EffectOp::ArahboTokenFromCaptureV1 { .. }) => true,
+        (EffectOp::BindFishingPoleUntapV39, EffectOp::FishingPoleUntapV39 { .. }) => true,
         (
             EffectOp::BindGarrukEtbDrawV1 | EffectOp::BindGarrukPowerEntryDrawV1,
             EffectOp::GarrukDrawFromCaptureV1 { .. },
@@ -4101,6 +4134,35 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
+        return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
+    if matches!(
+        effect,
+        EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
+            | EffectOp::FiendishPandaReturnFromCaptureV1 { .. }
+    ) {
+        return crate::fiendish_panda_v1::target_spec(card_def, effect);
+    }
+    if crate::high_society_hunter_custody_v45::binding(effect).is_some() {
+        return crate::high_society_hunter_v1::owns_definition(card_def)
+            .then_some(TargetSpec::None);
+    }
+    if crate::high_society_hunter_v1::owns_definition(card_def)
+        && (*effect == crate::high_society_hunter_v1::attack_program()
+            || *effect == crate::high_society_hunter_v1::death_program())
+    {
+        return Some(TargetSpec::None);
+    }
+    if crate::faebloom_trick_v43::capture_of(effect).is_some() {
+        return crate::faebloom_trick_v43::selected_definition(card_def)
+            .then_some(TargetSpec::OpponentControlledCreature);
+    }
+
+    if matches!(effect, EffectOp::FishingPoleUntapV39 { .. }) {
+        return crate::fishing_pole_v39::selected_definition(card_def).then_some(TargetSpec::None);
+    }
     if matches!(effect, EffectOp::ArahboTokenFromCaptureV1 { .. }) {
         return crate::arahbo_v1::selected_definition(card_def).then_some(TargetSpec::None);
     }
@@ -4376,6 +4438,12 @@ fn sba_fixed_point_with_protected_triggers(
     loop {
         #[cfg(feature = "standard-magezero-fixtures")]
         crate::standard_cards_v1::refresh_aegis_copies(state);
+        let protected_players = crate::game_outcome_protection_v1::protected_players(state);
+        let protected_draws_consumed =
+            crate::game_outcome_protection_v1::consume_protected_empty_draws(
+                state,
+                protected_players,
+            );
         if crate::legend_rule_v1::stage(state, protected_triggers) {
             return;
         }
@@ -4384,7 +4452,7 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::start_your_engines(state);
             crate::standard_keywords_v1::sync_day_night(state);
         }
-        let mut changed = false;
+        let mut changed = protected_draws_consumed;
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -4429,6 +4497,7 @@ fn sba_fixed_point_with_protected_triggers(
             changed = true;
         }
 
+        changed |= crate::controlled_creature_grants_v1::detach_illegal_nonauras(state);
         // 704.5m: an Aura attached to an illegal object or player, or not
         // attached at all, is put into its owner's graveyard. The current
         // attachment grammar supports creature Auras only and requires both
@@ -4441,6 +4510,17 @@ fn sba_fixed_point_with_protected_triggers(
                     return None;
                 }
                 let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+                if aura.v4.attached_to.is_some_and(|link| {
+                    crate::controlled_creature_grants_v1::protects_from_colors(
+                        state,
+                        link.object,
+                        crate::engine::object_color_mask(state, id),
+                    )
+                }) && (definition.attachment.is_some()
+                    || crate::standard_cards_v1::is_aura(definition))
+                {
+                    return Some(id);
+                }
                 if crate::standard_cards_v1::is_aura(definition) {
                     // This module's Auras: the enchant restriction includes
                     // control ("enchant creature you control").
@@ -4561,7 +4641,10 @@ fn sba_fixed_point_with_protected_triggers(
         // with ten or more poison counters loses.
         for p in [PlayerId::P0, PlayerId::P1] {
             let ps = &mut state.players[p.index()];
-            if !ps.has_lost && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10) {
+            if !protected_players[p.index()]
+                && !ps.has_lost
+                && (ps.life <= 0 || ps.drew_from_empty || ps.poison_counters.0 >= 10)
+            {
                 ps.has_lost = true;
                 changed = true;
             }
@@ -4685,9 +4768,11 @@ pub(crate) fn collect_and_process_with_waiting(
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
             crate::banishing_light_v1::discard_without_targets(state, pending);
-            if crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
+            if crate::faebloom_trick_v43::drop_unavailable(state, pending).is_err()
+                || crate::stromkirk_dispatch_v1::unavailable(state, pending).is_err()
                 || crate::ashroot_dispatch_v2::unavailable(state, pending).is_err()
                 || crate::raid_entry_custody_v1::record_drop(state, pending).is_err()
+                || crate::fiendish_panda_v1::custody::unavailable(state, pending).is_err()
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -4783,6 +4868,36 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::bloodthirsty_conqueror_v49::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::high_society_hunter_v1::collect_attacks(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::faebloom_trick_v43::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::stromkirk_dispatch_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4813,6 +4928,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::fiendish_panda_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::authority_of_the_consuls_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -4824,6 +4949,16 @@ fn triggers_from_events(
         }
     }
     match crate::garruks_uprising_v1::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::fishing_pole_v39::lifecycle::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((
@@ -5018,6 +5153,14 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if crate::fiendish_panda_v1::owns_definition(obj.card_def) {
+                    continue; // Both roots are captured at actual commit, before later operations/SBA.
+                }
+                if crate::high_society_hunter_v1::owns_definition(obj.card_def)
+                    && def.condition == TriggerCondition::Attacks
+                {
+                    continue; // The genuine attack capture owns this occurrence and full publication.
+                }
                 if (def.effect)() == EffectOp::BindAshrootAttackBoostV1 {
                     continue;
                 }
@@ -5050,6 +5193,8 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::OtherNontokenCreatureDies
+                        | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {
                     continue;
@@ -5111,9 +5256,32 @@ fn triggers_from_events(
                     {
                         continue;
                     }
-                    if uses_leave_lki && i.checked_sub(1).and_then(|index| events.get(index)).is_some_and(|event| matches!(event, CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange { object, .. } if *object == id)) {
-                    continue;
-                }
+                    let previous = i.checked_sub(1).and_then(|index| events.get(index));
+                    let printed_removed = match previous {
+                        Some(CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                            object,
+                            ..
+                        }) => *object == id,
+                        Some(CommittedEvent::ProtectionSourceColorDepartureV1 {
+                            snapshot, ..
+                        }) if snapshot.source.source == id
+                            && snapshot.source.zone == Zone::Battlefield
+                            && matches!(ev, CommittedEvent::ZoneChange {
+                                object, from: Zone::Battlefield, to, controller_before
+                            } if *object == id && *to != Zone::Battlefield
+                                && *controller_before == snapshot.source.controller) =>
+                        {
+                            matches!(i.checked_sub(2).and_then(|index| events.get(index)),
+                                Some(CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                    object, zone_change_count
+                                }) if *object == id
+                                    && *zone_change_count == snapshot.source.zone_change_count)
+                        }
+                        _ => false,
+                    };
+                    if uses_leave_lki && printed_removed {
+                        continue;
+                    }
                     let event_controller = match ev {
                         CommittedEvent::ZoneChange {
                             object,
@@ -5668,7 +5836,9 @@ fn trigger_matches(
     draws_this_turn_at_event: u32,
 ) -> bool {
     if cond == TriggerCondition::Attacks
-        && crate::vampire_gourmand_dispatch_v2::owns_definition(state.objects.get(source).card_def)
+        && (crate::vampire_gourmand_dispatch_v2::owns_definition(
+            state.objects.get(source).card_def,
+        ) || crate::high_society_hunter_v1::owns_definition(state.objects.get(source).card_def))
     {
         return false;
     }
@@ -5695,6 +5865,7 @@ fn trigger_matches(
                 zone_change_count,
                 player,
                 count,
+                ..
             },
         ) => {
             *object == source

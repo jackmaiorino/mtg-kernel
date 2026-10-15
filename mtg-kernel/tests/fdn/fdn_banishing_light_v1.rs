@@ -576,7 +576,7 @@ fn transferred_source_can_target_itself_and_returns_immediately_as_a_new_entry_b
 }
 
 #[test]
-fn known_partial_planeswalker_is_a_nonland_recipient_primitive_not_admitted_ajani_gameplay() {
+fn registered_ajani_is_a_nonland_recipient_and_returns_with_starting_loyalty() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let target = put(
@@ -586,10 +586,8 @@ fn known_partial_planeswalker_is_a_nonland_recipient_primitive_not_admitted_ajan
             Zone::Hand,
         );
         let definition = &CARD_DEFS[state.objects.get(target).card_def as usize];
-        assert!(
-            !definition.has_full_support(),
-            "this fixture must not invent Full Ajani admission"
-        );
+        assert!(definition.has_full_support());
+        assert_eq!(definition.activated_abilities.len(), 3);
         let starting = u32::from(definition.starting_loyalty.unwrap());
         event::propose_and_commit(
             &mut state,
