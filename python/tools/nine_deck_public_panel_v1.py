@@ -2,8 +2,10 @@
 
 The held-out opponents (V3 through the Legacy source with its adapters) load
 only in ``public_feature_evaluation_v1``, which plays best-of-three matches in
-one process. A panel case is one match; its game 1 is the preboard game the
-panel reads. Each case's game-one chooser is the case's starting player.
+one process. By default a panel case is one match; its game 1 is the preboard
+game the panel reads. Opt-in ``--game-one-only`` stops at that first natural
+terminal (including draws), without emitting a match outcome. Each case's
+game-one chooser is the case's starting player.
 
 Parallelism is across processes: the 1,944 cases are split into shard
 requests that run concurrently. Match files carry no paths or indices, so a
@@ -81,7 +83,7 @@ def candidate_source(source: dict) -> dict:
 
 
 def build(panel: str, candidate: dict, opponent: dict, decks: list[dict], out: Path, shards: int,
-          own_decks: tuple[int, ...] = tuple(range(ndb.DECKS))) -> dict:
+          own_decks: tuple[int, ...] = tuple(range(ndb.DECKS)), game_one_only: bool = False) -> dict:
     """Shard requests: per learner seat, the seat's cases split into ``shards`` contiguous requests."""
     out = Path(out)
     cases = ndb.panel_cases(own_decks)
@@ -100,18 +102,83 @@ def build(panel: str, candidate: dict, opponent: dict, decks: list[dict], out: P
             request = {"sources": sources, "matches": [case_match(case, decks) for case in part],
                        "cross_generation_evaluation": True, "capture_decisions": False,
                        "output_directory": str(out / "native" / name).replace("\\", "/")}
+            if game_one_only:
+                request["game_one_only"] = True
             requests.append({"name": name, "seat": seat, "cases": part,
                              "request": write_json(out / "requests" / f"{name}.json", request)})
     plan = {"schema": SCHEMA, "panel": panel, "candidate": candidate, "opponent": opponent,
             "own_decks": list(own_decks), "cases": len(cases), "requests": requests,
-            "schedule_sha256": schedule_digest(cases, opponent)}
+            "schedule_sha256": schedule_digest(cases, opponent, game_one_only)}
+    if game_one_only:
+        plan["game_one_only"] = True
     write_json(out / "plan.json", plan)
     return plan
 
 
-def schedule_digest(cases: list[dict], opponent: dict) -> str:
-    return sha256_bytes(json.dumps({"cases": cases, "opponent": opponent, "max_decisions": MAX_DECISIONS},
-                                   sort_keys=True).encode())
+def schedule_digest(cases: list[dict], opponent: dict, game_one_only: bool = False) -> str:
+    workload = {"cases": cases, "opponent": opponent, "max_decisions": MAX_DECISIONS}
+    if game_one_only:
+        workload["game_one_only"] = True
+    return sha256_bytes(json.dumps(workload, sort_keys=True).encode())
+
+
+def request_for_plan(plan: dict, item: dict) -> dict:
+    request = json.loads(checked(item["request"]).read_text(encoding="utf-8"))
+    if request.get("game_one_only", False) != plan.get("game_one_only", False):
+        raise ValueError("request evaluation mode differs from the plan")
+    return request
+
+
+def completion_for_request(request: dict) -> dict:
+    completion = json.loads((Path(request["output_directory"]) / "completion.json").read_text(encoding="utf-8"))
+    if completion.get("game_one_only", False) != request.get("game_one_only", False):
+        raise ValueError("completion evaluation mode differs from the request")
+    start_for_request(request)
+    return completion
+
+
+def command_identity(value):
+    """Compare parsed commands across serde's omitted optional/default fields."""
+    if isinstance(value, list):
+        return [command_identity(item) for item in value]
+    if isinstance(value, dict):
+        return {key: command_identity(item) for key, item in value.items()
+                if item is not None
+                and not (key in ("game_one_only", "terminal_audit_v1", "v3_spell_target_reference_adapter")
+                         and item is False)
+                and not (key == "opening_protocol" and item == "legacy_keep_seven_v1")}
+    return value
+
+
+def start_for_request(request: dict) -> None:
+    start = json.loads((Path(request["output_directory"]) / "start.json").read_text(encoding="utf-8"))
+    if start.get("schema") != "public-input-evaluation-start/v1" \
+            or command_identity(start.get("command")) != command_identity(request):
+        raise ValueError("native start command differs from the request (including evaluation mode)")
+
+
+def failed_physical_game(error: str, seed: int) -> int | None:
+    match = re.search(rf"match seed {seed}, game (\d+)(?:,|:)", error)
+    return int(match[1]) if match else None
+
+
+def recovery_for_request(request_path: Path) -> dict:
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    recovery = json.loads(request_path.with_suffix(".recovery.json").read_text(encoding="utf-8"))
+    if recovery["request"] != pin(request_path):
+        raise ValueError("recovery request pin differs from the request")
+    for segment in recovery["segments"]:
+        segment_request = json.loads(checked(segment["request"]).read_text(encoding="utf-8"))
+        expected = dict(request, matches=request["matches"][segment["start"]:],
+                        output_directory=segment["output_directory"])
+        if command_identity(segment_request) != command_identity(expected):
+            raise ValueError("recovery segment command differs from the request")
+        start_for_request(segment_request)
+    if request.get("game_one_only", False):
+        for failure in recovery["errors"]:
+            if failed_physical_game(failure["error"], failure["seed"]) != 1:
+                raise ValueError("game-one failure does not name physical game 1")
+    return recovery
 
 
 def run_one(executable: str, request: Path, token: str) -> bool:
@@ -156,14 +223,19 @@ def recover(executable: str, request_path: Path) -> dict:
     not depend on sharding (qualification parity), so continuations reproduce them."""
     request_path = Path(request_path)
     request = json.loads(request_path.read_text(encoding="utf-8"))
+    if request_path.with_suffix(".recovery.json").exists():
+        recovery_for_request(request_path)
     matches, base = request["matches"], request["output_directory"]
     segments, errors, start, current, k = [], [], 0, request_path, 0
     while True:
-        output = Path(json.loads(current.read_text(encoding="utf-8"))["output_directory"])
+        current_request = json.loads(current.read_text(encoding="utf-8"))
+        output = Path(current_request["output_directory"])
+        start_for_request(current_request)
         done = len(sorted(output.glob("match-*.json")))
         segments.append({"request": pin(current), "output_directory": str(output).replace("\\", "/"),
                          "start": start, "count": done})
         if (output / "completion.json").exists():
+            completion_for_request(json.loads(current.read_text(encoding="utf-8")))
             if start + done != len(matches):
                 raise RuntimeError(f"{output} completed {done} matches, expected {len(matches) - start}")
             break
@@ -175,6 +247,8 @@ def recover(executable: str, request_path: Path) -> dict:
         seed = matches[index]["config"]["seed"]
         if f"match seed {seed}," not in error:
             raise RuntimeError(f"{failure} does not name match {index} (seed {seed})")
+        if request.get("game_one_only", False) and failed_physical_game(error, seed) != 1:
+            raise ValueError("game-one failure does not name physical game 1")
         errors.append({"index": index, "seed": seed, "error": error})
         start = index + 1
         if start == len(matches):
@@ -192,8 +266,9 @@ def recover(executable: str, request_path: Path) -> dict:
 
 
 def match_hashes(request: Path) -> list[str]:
-    output = Path(json.loads(Path(request).read_text(encoding="utf-8"))["output_directory"])
-    completion = json.loads((output / "completion.json").read_text(encoding="utf-8"))
+    config = json.loads(Path(request).read_text(encoding="utf-8"))
+    output = Path(config["output_directory"])
+    completion = completion_for_request(config)
     files = sorted(output.glob("match-*.json"))
     hashes = [sha256_bytes(path.read_bytes()) for path in files]
     if hashes != completion["match_sha256"]:
@@ -203,7 +278,7 @@ def match_hashes(request: Path) -> list[str]:
 
 def qualify(plan_path: Path, sample: int, workers: list[int], root: Path, executable: str) -> dict:
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
-    first = json.loads(checked(plan["requests"][0]["request"]).read_text(encoding="utf-8"))
+    first = request_for_plan(plan, plan["requests"][0])
     matches = first["matches"][:sample]
     trials = []
     golden = None
@@ -227,6 +302,8 @@ def qualify(plan_path: Path, sample: int, workers: list[int], root: Path, execut
                "candidate_layout": candidate_layout(plan["candidate"]), "sample": sample, "trials": trials,
                "golden_match_sha256": golden, "selected_workers": max(
                    (t for t in trials if t["parity"]), key=lambda t: t["matches_per_second"])["workers"]}
+    if plan.get("game_one_only", False):
+        receipt["game_one_only"] = True
     write_json(Path(root) / "receipt.json", receipt)
     return receipt
 
@@ -246,14 +323,22 @@ def run(plan_path: Path, receipt_path: Path, executable: str) -> dict:
     receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
     if receipt["schema"] != RECEIPT or receipt["evaluator_sha256"] != sha256_bytes(Path(executable).read_bytes()) \
             or receipt["schedule_sha256"] != plan["schedule_sha256"] or receipt["opponent"] != plan["opponent"] \
-            or receipt["candidate_layout"] != candidate_layout(plan["candidate"]):
+            or receipt["candidate_layout"] != candidate_layout(plan["candidate"]) \
+            or receipt.get("game_one_only", False) != plan.get("game_one_only", False):
         raise SystemExit("qualification receipt does not cover this evaluator, schedule, opponent or model layout")
     if not all(trial["parity"] for trial in receipt["trials"]) or receipt["trials"][0]["workers"] != 1:
         raise SystemExit("receipt lacks a serial golden or parallel parity")
     paths = [checked(item["request"]) for item in plan["requests"]]
+    for item in plan["requests"]:
+        request_for_plan(plan, item)
     pending = []
     for path in paths:  # a resumed run keeps finished and failed outputs; a partial one is set aside
-        output = Path(json.loads(path.read_text(encoding="utf-8"))["output_directory"])
+        request = json.loads(path.read_text(encoding="utf-8"))
+        output = Path(request["output_directory"])
+        if (output / "completion.json").exists():
+            completion_for_request(request)
+        elif (output / "failure.json").exists():
+            start_for_request(request)
         if output.exists() and not (output / "completion.json").exists() and not (output / "failure.json").exists():
             output.rename(output.with_name(f"{output.name}.partial-{int(time.time())}"))
         if not output.exists():
@@ -264,6 +349,7 @@ def run(plan_path: Path, receipt_path: Path, executable: str) -> dict:
         output = Path(json.loads(path.read_text(encoding="utf-8"))["output_directory"])
         recovery = path.with_suffix(".recovery.json")
         if recovery.exists():
+            recovery_for_request(path)
             completions.append(pin(recovery))
         elif (output / "completion.json").exists():
             completions.append(pin(output / "completion.json"))
@@ -283,13 +369,14 @@ def rows(plan_path: Path) -> list[dict]:
     out = []
     for item in plan["requests"]:
         request_path = checked(item["request"])
-        request = json.loads(request_path.read_text(encoding="utf-8"))
+        request = request_for_plan(plan, item)
         recovery_path = request_path.with_suffix(".recovery.json")
         if recovery_path.exists():
-            recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+            recovery = recovery_for_request(request_path)
             segments = [(Path(s["output_directory"]), s["start"], s["count"]) for s in recovery["segments"]]
             errors = {e["index"]: e for e in recovery["errors"]}
         else:
+            start_for_request(request)
             segments, errors = [(Path(request["output_directory"]), 0, len(item["cases"]))], {}
         files = {}
         for output, start, count in segments:
@@ -305,15 +392,24 @@ def rows(plan_path: Path) -> list[dict]:
                    "seat": case["seat"], "seed": case["seed"]}
             if index in errors:
                 error = errors[index]["error"]
-                failed_game = re.search(rf"match seed {case['seed']}, game (\d+)", error)
-                if errors[index]["seed"] != case["seed"] or not failed_game:
+                failed_game = failed_physical_game(error, case["seed"])
+                if errors[index]["seed"] != case["seed"] or failed_game is None:
                     raise ValueError("technical termination does not match the plan")
+                if plan.get("game_one_only", False) and failed_game != 1:
+                    raise ValueError("game-one failure does not name physical game 1")
                 out.append({**row, "starting_player": case["starting_player"], "score": None, "complete": False,
-                            "technical": error.split(": ", 1)[-1][:160], "technical_game": int(failed_game[1]),
+                            "technical": error.split(": ", 1)[-1][:160], "technical_game": failed_game,
                             "match_sha256": None})
                 continue
             path = files[index]
             match = json.loads(path.read_text(encoding="utf-8"))
+            if plan.get("game_one_only", False):
+                if match.get("schema") != "public-input-evaluation-game-one/v1" \
+                        or match.get("game_one_only") is not True or len(match["games"]) != 1 \
+                        or "outcome" in match or match.get("sideboard_decisions") != []:
+                    raise ValueError("game-one result is not one natural game without a match outcome")
+            elif match.get("game_one_only", False):
+                raise ValueError("game-one result supplied for a BO3 plan")
             if match["match"]["config"]["seed"] != case["seed"]:
                 raise ValueError("match order differs from the plan")
             game = match["games"][0]
@@ -347,10 +443,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument("--plan", type=Path); sub.add_argument("--sample", type=int, default=16)
     sub.add_argument("--workers", default="1,2,4,8"); sub.add_argument("--root", type=Path)
     sub.add_argument("--receipt", type=Path); sub.add_argument("--executable")
+    sub.add_argument("--game-one-only", action="store_true")
     a = sub.parse_args(args.rest)
     if args.op == "build":
         plan = build(a.panel, json.loads(a.candidate.read_text()), json.loads(a.opponent.read_text()),
-                     ndb.load_decks(a.decks), a.out, a.shards)
+                     ndb.load_decks(a.decks), a.out, a.shards, game_one_only=a.game_one_only)
         print(json.dumps({"requests": len(plan["requests"]), "cases": plan["cases"]}))
     elif args.op == "qualify":
         print(json.dumps(qualify(a.plan, a.sample, [int(x) for x in a.workers.split(",")], a.root, a.executable)["trials"]))

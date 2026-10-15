@@ -246,6 +246,15 @@ struct Bo3ExecutionV1 {
     sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
 }
 
+/// A public evaluation may stop at the first natural terminal without
+/// completing a match. Such a prefix has no match outcome or match reward.
+struct SessionExecutionV1 {
+    config: LearnedBo3RunConfigV1,
+    outcome: Option<MatchOutcomeV1>,
+    games: Vec<LearnedBo3GameRecordV1>,
+    sideboard_decisions: Vec<LearnedBo3SideboardRecordV1>,
+}
+
 impl Bo3ExecutionV1 {
     fn into_legacy(
         self,
@@ -686,12 +695,39 @@ pub(crate) fn replay_game_session_v1(
 #[allow(clippy::too_many_arguments)]
 fn run_learned_bo3_session_v1(
     config: LearnedBo3RunConfigV1,
-    mut match_session: BestOfThreeDeckMatchV1,
+    match_session: BestOfThreeDeckMatchV1,
     model_provenance: Bo3ModelProvenanceV1<'_>,
     tags: &RemovalCounterspellTagsV1,
     play_policy: &mut dyn PairedBo1PolicyV1,
     sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
 ) -> Result<Bo3ExecutionV1, String> {
+    let played = run_learned_session_v1(
+        config,
+        match_session,
+        model_provenance,
+        tags,
+        play_policy,
+        sideboard_policies,
+        false,
+    )?;
+    Ok(Bo3ExecutionV1 {
+        config: played.config,
+        outcome: played.outcome.ok_or("completed match has no outcome")?,
+        games: played.games,
+        sideboard_decisions: played.sideboard_decisions,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_learned_session_v1(
+    config: LearnedBo3RunConfigV1,
+    mut match_session: BestOfThreeDeckMatchV1,
+    model_provenance: Bo3ModelProvenanceV1<'_>,
+    tags: &RemovalCounterspellTagsV1,
+    play_policy: &mut dyn PairedBo1PolicyV1,
+    sideboard_policies: [&mut dyn VisibleSideboardPolicyV1; 2],
+    game_one_only: bool,
+) -> Result<SessionExecutionV1, String> {
     let uses_v3 = play_policy.uses_observation_successor_v3();
     config.opening_protocol.validate_observation_mode(uses_v3)?;
     let registered = [PlayerId::P0, PlayerId::P1].map(|seat| {
@@ -709,9 +745,9 @@ fn run_learned_bo3_session_v1(
     loop {
         let (game_index, chooser) = match match_session.match_state().phase() {
             MatchPhaseV1::Complete { outcome } => {
-                return Ok(Bo3ExecutionV1 {
+                return Ok(SessionExecutionV1 {
                     config,
-                    outcome,
+                    outcome: Some(outcome),
                     games,
                     sideboard_decisions,
                 })
@@ -823,6 +859,14 @@ fn run_learned_bo3_session_v1(
         match_session
             .record_game_result_v1(outcome)
             .map_err(|error| error.to_string())?;
+        if game_one_only {
+            return Ok(SessionExecutionV1 {
+                config,
+                outcome: None,
+                games,
+                sideboard_decisions,
+            });
+        }
     }
 }
 
@@ -1175,6 +1219,105 @@ mod tests {
             r#"{"deck_ids":["Mountain","Island"],"seed":99,"game_one_chooser":0,"max_physical_games":3,"max_physical_decisions":256,"max_policy_steps":8192}"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn game_one_only_matches_bo3_first_game_without_sideboarding_or_extra_resets() {
+        // A legal 75 with no mana sources reaches natural deck-out without
+        // the large mana-action menus of all-basic-land decks. Every spell
+        // requires colored mana, and no card exceeds the four-copy limit.
+        let cards = [
+            "Annul",
+            "Avenging Hunter",
+            "Bind the Monster",
+            "Black Mage's Rod",
+            "Blood Fountain",
+            "Blue Elemental Blast",
+            "Brainstorm",
+            "Breath Weapon",
+            "Burning-Tree Emissary",
+            "Cast Down",
+            "Cast into the Fire",
+            "Chain Lightning",
+            "Cleansing Wildfire",
+            "Clockwork Percussionist",
+            "Counterspell",
+            "Cryogen Relic",
+            "Cryptic Serpent",
+            "Deem Inferior",
+            "Deep Analysis",
+        ]
+        .map(|name| crate::card_def::card_id_by_name(name).unwrap());
+        let mainboard = cards[..15].iter().flat_map(|card| [*card; 4]).collect();
+        let sideboard = cards[15..]
+            .iter()
+            .flat_map(|card| [*card; 4])
+            .take(15)
+            .collect();
+        let deck = RegisteredDeckV1::new_exact_v1("No mana", mainboard, sideboard).unwrap();
+        let registered = [deck.clone(), deck];
+        let tags = RemovalCounterspellTagsV1 {
+            requires_target: Default::default(),
+            is_counterspell: Default::default(),
+        };
+        let weights = "a".repeat(64);
+        let keep = |_: &LearnedSideboardInputV1, current: &DeckConfigurationV1| {
+            Ok((current.clone(), vec![SideboardActionV1::Done]))
+        };
+        for (generation, chooser) in [
+            (PlayPolicyGenerationV1::V3, PlayerId::P0),
+            (PlayPolicyGenerationV1::V4, PlayerId::P1),
+        ] {
+            let mut config = opening_test_config();
+            config.deck_ids = ["No mana".into(), "No mana".into()];
+            config.opening_protocol = Bo3OpeningProtocolV1::KeepSevenV2;
+            config.game_one_chooser = chooser;
+            config.max_physical_decisions = 4000;
+            let session =
+                || BestOfThreeDeckMatchV1::new_live_v1(registered.clone(), chooser).unwrap();
+            let mut full_policy = RoutingSpy::new_with_generation_v1(generation);
+            let (mut s0, mut s1) = (keep, keep);
+            let full = run_learned_bo3_session_v1(
+                config.clone(),
+                session(),
+                Bo3ModelProvenanceV1::Shared(&weights),
+                &tags,
+                &mut full_policy,
+                [&mut s0, &mut s1],
+            )
+            .unwrap();
+            let mut first_policy = RoutingSpy::new_with_generation_v1(generation);
+            let refuse =
+                |_: &LearnedSideboardInputV1,
+                 _: &DeckConfigurationV1|
+                 -> Result<(DeckConfigurationV1, Vec<SideboardActionV1>), String> {
+                    panic!("game-one evaluation must not invoke sideboarding")
+                };
+            let (mut s0, mut s1) = (refuse, refuse);
+            let first = run_learned_session_v1(
+                config,
+                session(),
+                Bo3ModelProvenanceV1::Shared(&weights),
+                &tags,
+                &mut first_policy,
+                [&mut s0, &mut s1],
+                true,
+            )
+            .unwrap();
+            assert!(first.outcome.is_none());
+            assert_eq!(first.games.len(), 1);
+            assert!(first.sideboard_decisions.is_empty());
+            assert_eq!(
+                serde_json::to_value(&first.games[0]).unwrap(),
+                serde_json::to_value(&full.games[0]).unwrap()
+            );
+            assert_eq!(first_policy.resets, full_policy.resets[..1]);
+            assert_eq!(
+                first_policy.actors,
+                full_policy.actors[..first_policy.actors.len()]
+            );
+            assert!(full_policy.resets.len() >= 2);
+        }
     }
 
     #[test]
