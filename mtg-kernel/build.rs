@@ -4482,6 +4482,20 @@ fn chosen_color_creature_boost_v1(name: &str) -> &'static str {
     }
 }
 
+/// Source preparation only: Elenda remains absent from the registry until its
+/// separate instant-source targeting contract has a complete executable recipe.
+fn starting_life_self_bonuses_v1(name: &str) -> &'static str {
+    if cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && name == "Elenda, Saint of Dusk"
+    {
+        "&[StartingLifeSelfBonusDefV1 { minimum_above_start: 1, power: 1, toughness: 1, keywords: Keywords::MENACE }, StartingLifeSelfBonusDefV1 { minimum_above_start: 10, power: 5, toughness: 5, keywords: Keywords::NONE }]"
+    } else {
+        "&[]"
+    }
+}
+
 fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     match name {
         "Citadel Gate" => "Some(ManaColor::W)",
@@ -10360,6 +10374,16 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        starting_life_self_bonuses_v1: {},",
+            if executable {
+                starting_life_self_bonuses_v1(&c.name)
+            } else {
+                "&[]"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10572,6 +10596,13 @@ fn codegen(cards: &[CardJson]) -> String {
         );
         canon.push('|');
         // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && starting_life_self_bonuses_v1(&c.name) != "&[]"
+        {
+            canon.push_str("starting_life_self_bonuses_v1=");
+            canon.push_str(starting_life_self_bonuses_v1(&c.name));
+            canon.push('|');
+        }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
             canon.push_str(
                 "token_counter_replacement_v48=DoubleEffectTokensAndControlledPermanentCounters|",

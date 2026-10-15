@@ -2072,6 +2072,18 @@ pub enum TokenCounterReplacementDefV48 {
     DoubleEffectTokensAndControlledPermanentCounters,
 }
 
+/// One additive, battlefield-only self bonus. The threshold reads the live
+/// controller's life against the supported game's `state::STARTING_LIFE`.
+/// Multiple satisfied entries all apply; later entries do not replace earlier
+/// bonuses. Losing printed abilities suppresses the entire descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StartingLifeSelfBonusDefV1 {
+    pub minimum_above_start: u16,
+    pub power: i16,
+    pub toughness: i16,
+    pub keywords: Keywords,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2295,6 +2307,8 @@ pub struct CardDef {
     pub chosen_color_creature_boost_v1: Option<ChosenColorCreatureBoostDefV1>,
     pub damage_replacement_v1: Option<DamageReplacementDefV1>,
     pub token_counter_replacement_v48: Option<TokenCounterReplacementDefV48>,
+    /// Empty adds no catalog identity token and preserves all prior recipes.
+    pub starting_life_self_bonuses_v1: &'static [StartingLifeSelfBonusDefV1],
 }
 
 impl CardDef {

@@ -17160,6 +17160,7 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     }
     power += controlled_creature_boost_v1(state, id).0;
     power += crate::heraldic_banner_v1::controlled_boost(state, id).0;
+    power += crate::starting_life_statics_v1::self_bonus(state, id).power;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -17225,6 +17226,7 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     }
     toughness += controlled_creature_boost_v1(state, id).1;
     toughness += crate::heraldic_banner_v1::controlled_boost(state, id).1;
+    toughness += crate::starting_life_statics_v1::self_bonus(state, id).toughness;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -17369,6 +17371,12 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return true;
     }
     if crate::standard_creatures_v1::keyword_granted(state, id, kw) {
+        return true;
+    }
+    if crate::starting_life_statics_v1::self_bonus(state, id)
+        .keywords
+        .has(kw)
+    {
         return true;
     }
     if printed_active
