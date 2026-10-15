@@ -418,6 +418,19 @@ def recover(executable: str, request_path: Path, guard=None) -> dict:
                       {"request": pin(request_path), "segments": segments, "errors": errors}, exclusive=guard is not None)
 
 
+def validate_saved_match(result, expected, game_one_only):
+    require(result["match"] == expected, "saved native case differs from request")
+    if game_one_only:
+        require(result.get("schema") == "public-input-evaluation-game-one/v1"
+                and result.get("game_one_only") is True and len(result["games"]) == 1
+                and "outcome" not in result and result.get("sideboard_decisions") == [],
+                "saved game-one result shape differs")
+    else:
+        require(result.get("schema") == "public-input-evaluation-match/v1"
+                and not result.get("game_one_only", False) and "outcome" in result,
+                "saved BO3 result shape differs")
+
+
 def match_hashes(request: Path, *, validate_cases: bool = False) -> list[str]:
     config = json.loads(Path(request).read_text(encoding="utf-8"))
     output = Path(config["output_directory"])
@@ -432,18 +445,34 @@ def match_hashes(request: Path, *, validate_cases: bool = False) -> list[str]:
                 "qualification native case count differs")
         for path, expected in zip(files, config["matches"]):
             result = json.loads(path.read_text(encoding="utf-8"))
-            require(result["match"] == expected, "qualification native case differs from request")
+            validate_saved_match(result, expected, config.get("game_one_only", False))
             if config.get("game_one_only", False):
-                require(result.get("schema") == "public-input-evaluation-game-one/v1"
-                        and result.get("game_one_only") is True and len(result["games"]) == 1
-                        and "outcome" not in result and result.get("sideboard_decisions") == [],
-                        "qualification game-one result shape differs")
                 require(completion["natural_games"] == len(files), "qualification natural-game count differs")
-            else:
-                require(result.get("schema") == "public-input-evaluation-match/v1"
-                        and not result.get("game_one_only", False) and "outcome" in result,
-                        "qualification BO3 result shape differs")
     return hashes
+
+
+def explicit_segment_files(request_path: Path, count: int) -> list[Path]:
+    """Validate a completed segment or a natural prefix before its recorded failure."""
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    output = Path(request["output_directory"])
+    found = sorted(output.glob("match-*.json"))
+    require([path.name for path in found] == [f"match-{index:06}.json" for index in range(count)],
+            "explicit segment prefix count/order differs")
+    if (output / "completion.json").exists():
+        match_hashes(request_path, validate_cases=True)
+        return found
+    start_for_request(request)
+    require((output / "failure.json").is_file() and count < len(request["matches"]),
+            "partial prefix lacks its original native failure")
+    failure = json.loads((output / "failure.json").read_text(encoding="utf-8"))
+    require(failed_physical_game(failure["error"], request["matches"][count]["config"]["seed"]) == 1,
+            "partial prefix failure differs from the next scheduled case")
+    start = json.loads((output / "start.json").read_text(encoding="utf-8"))
+    for path, expected in zip(found, request["matches"][:count]):
+        result = json.loads(path.read_text(encoding="utf-8"))
+        validate_saved_match(result, expected, True)
+        require(result["models"] == start["models"], "partial prefix model identity differs from native start")
+    return found
 
 
 def qualify(plan_path: Path, sample: int | None, workers: list[int], root: Path, executable: str,
@@ -651,24 +680,35 @@ def rows(plan_path: Path) -> list[dict]:
         recovery_path = request_path.with_suffix(".recovery.json")
         if recovery_path.exists():
             recovery = recovery_for_request(request_path)
-            segments = [(Path(s["output_directory"]), s["start"], s["count"]) for s in recovery["segments"]]
+            segments = [(Path(s["output_directory"]), s["start"], s["count"], checked(s["request"]))
+                        for s in recovery["segments"]]
             errors = {e["index"]: e for e in recovery["errors"]}
         else:
             start_for_request(request)
-            segments, errors = [(Path(request["output_directory"]), 0, len(item["cases"]))], {}
-        files = {}
-        for output, start, count in segments:
-            found = sorted(output.glob("match-*.json"))
+            segments, errors = [(Path(request["output_directory"]), 0, len(item["cases"]), request_path)], {}
+        files, request_bindings = {}, {}
+        for output, start, count, segment_request in segments:
+            found = (explicit_segment_files(segment_request, count) if "cases_input" in plan
+                     else sorted(output.glob("match-*.json")))
             if len(found) != count:
                 raise ValueError(f"{output} holds {len(found)} matches, expected {count}")
             files.update({start + i: path for i, path in enumerate(found)})
+            if "cases_input" in plan:
+                binding = pin(segment_request)
+                request_bindings.update({start + i: binding for i in range(count)})
+                if (output / "failure.json").exists():
+                    failure = json.loads((output / "failure.json").read_text(encoding="utf-8"))
+                    require(start + count in errors and errors[start + count]["error"] == failure["error"],
+                            "recovery technical termination differs from its native failure")
+                    request_bindings[start + count] = binding
         if sorted(list(files) + list(errors)) != list(range(len(item["cases"]))):
             raise ValueError(f"{request_path}: matches and technical terminations do not cover every case")
         for index, case in enumerate(item["cases"]):
             row = {"panel": plan["panel"], "checkpoint_sha256": plan["candidate"]["checkpoint"]["sha256"],
                    "own": case["own"], "other": case["other"], "seat": case["seat"], "seed": case["seed"]}
             if "cases_input" in plan:
-                row.update(plan["metadata"], family=case["family"])
+                require(index in request_bindings, "case lacks its original native request binding")
+                row.update(plan["metadata"], family=case["family"], request=request_bindings[index])
             else:
                 row["repeat"] = case["repeat"]
             if index in errors:
@@ -684,6 +724,8 @@ def rows(plan_path: Path) -> list[dict]:
                 continue
             path = files[index]
             match = json.loads(path.read_text(encoding="utf-8"))
+            if "cases_input" in plan:
+                validate_saved_match(match, case_match(case, plan["decks"]), True)
             if plan.get("game_one_only", False):
                 if match.get("schema") != "public-input-evaluation-game-one/v1" \
                         or match.get("game_one_only") is not True or len(match["games"]) != 1 \

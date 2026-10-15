@@ -20,7 +20,7 @@ p = pathlib.Path(sys.argv[1]); request = json.loads(p.read_text())
 out = pathlib.Path(request['output_directory']); out.mkdir()
 def save(name, value):
     p = out/name; p.write_text(json.dumps(value, sort_keys=True)); return hashlib.sha256(p.read_bytes()).hexdigest()
-save('start.json', {'schema':'public-input-evaluation-start/v1', 'command':request})
+save('start.json', {'schema':'public-input-evaluation-start/v1', 'command':request, 'models':request['sources']})
 mask, system = ctypes.c_size_t(), ctypes.c_size_t()
 api=ctypes.WinDLL('kernel32',use_last_error=True)
 api.GetCurrentProcess.restype=ctypes.c_void_p
@@ -33,7 +33,8 @@ for i, match in enumerate(request['matches']):
         sys.exit(1)
     winner = None if match['config']['seed'] % 3 == 0 else match['config']['seed'] % 2
     record = {'schema':'public-input-evaluation-game-one/v1', 'game_one_only':True,
-        'match':match, 'games':[{'start':{'starting_player':match['config']['game_one_chooser']}, 'winner':winner}],
+        'match':match, 'models':request['sources'],
+        'games':[{'start':{'starting_player':match['config']['game_one_chooser']}, 'winner':winner}],
         'sideboard_decisions':[], 'affinity':mask.value}
     hashes.append(save(f'match-{i:06}.json', record))
 save('completion.json', {'schema':'public-input-evaluation-completion/v1', 'game_one_only':True,
@@ -76,8 +77,87 @@ class Fixture(unittest.TestCase):
         return panel.build_from_cases('fixed',self.candidate,self.opponent,self.decks,self.root/name,2,
                                       self.schedule,{**self.metadata,**metadata})
 
+    def native_records(self, request, count=None, failure=None):
+        output=Path(request['output_directory']); output.mkdir(parents=True)
+        panel.write_json(output/'start.json',dict(schema='public-input-evaluation-start/v1',command=request,models=request['sources']))
+        count=len(request['matches']) if count is None else count
+        hashes=[]
+        for index, match in enumerate(request['matches'][:count]):
+            record=dict(schema='public-input-evaluation-game-one/v1',game_one_only=True,match=match,
+                        models=request['sources'],sideboard_decisions=[],games=[dict(
+                            start=dict(starting_player=match['config']['game_one_chooser']),winner=0)])
+            hashes.append(panel.write_json(output/f'match-{index:06}.json',record)['sha256'])
+        if failure is None:
+            panel.write_json(output/'completion.json',dict(schema='public-input-evaluation-completion/v1',
+                game_one_only=True,matches=count,natural_games=count,match_sha256=hashes))
+        else:
+            panel.write_json(output/'failure.json',dict(error=failure))
+        return output
+
 
 class Cases(Fixture):
+    def test_explicit_rows_reject_same_seed_wrong_case_and_modified_completed_result(self):
+        plan=self.build()
+        for item in plan['requests']:
+            self.native_records(panel.request_for_plan(plan,item))
+        item=plan['requests'][0]; request=panel.request_for_plan(plan,item)
+        index=next(i for i,c in enumerate(item['cases']) if c['own']!=c['other'])
+        path=Path(request['output_directory'])/f'match-{index:06}.json'
+        original=json.loads(path.read_text())
+        completion_path=path.parent/'completion.json'
+        completion=json.loads(completion_path.read_text())
+        for field in ('chooser','registered'):
+            changed=copy.deepcopy(original)
+            if field=='chooser':
+                changed['match']['config']['game_one_chooser']^=1
+            else:
+                changed['match']['registered'].reverse()
+            self.assertEqual(changed['match']['config']['seed'],original['match']['config']['seed'])
+            digest=panel.write_json(path,changed)['sha256']
+            altered=copy.deepcopy(completion); altered['match_sha256'][index]=digest
+            panel.write_json(completion_path,altered)
+            with self.assertRaisesRegex(ValueError,'native case differs'):
+                panel.rows(self.root/'panel/plan.json')
+        panel.write_json(path,original); panel.write_json(completion_path,completion)
+        changed=copy.deepcopy(original); changed['games'][0]['winner']=1
+        panel.write_json(path,changed)
+        with self.assertRaisesRegex(ValueError,'match files differ'):
+            panel.rows(self.root/'panel/plan.json')
+        panel.write_json(path,original)
+        self.assertEqual(len(panel.rows(self.root/'panel/plan.json')),972)
+
+    def test_explicit_rows_retain_bound_prefix_before_technical_failure(self):
+        plan=self.build()
+        first=plan['requests'][0]; request=panel.request_for_plan(plan,first)
+        seed=request['matches'][1]['config']['seed']
+        error=f'A versus B, match seed {seed}, game 1, environment seed 123: InvalidReference'
+        original_output=self.native_records(request,count=1,failure=error)
+        request_path=Path(first['request']['path'])
+        continuation=dict(request,matches=request['matches'][2:],output_directory=request['output_directory']+'-c1')
+        continuation_ref=panel.write_json(request_path.with_name('continuation.json'),continuation)
+        self.native_records(continuation)
+        panel.write_json(request_path.with_suffix('.recovery.json'),dict(request=first['request'],segments=[
+            dict(request=first['request'],output_directory=str(original_output),start=0,count=1),
+            dict(request=continuation_ref,output_directory=continuation['output_directory'],start=2,count=len(continuation['matches']))],
+            errors=[dict(index=1,seed=seed,error=error)]))
+        for item in plan['requests'][1:]:
+            self.native_records(panel.request_for_plan(plan,item))
+        rows=panel.rows(self.root/'panel/plan.json')
+        self.assertEqual(len(rows),972)
+        self.assertTrue(rows[0]['complete']); self.assertEqual(rows[0]['request'],first['request'])
+        self.assertFalse(rows[1]['complete']); self.assertIsNone(rows[1]['score'])
+        self.assertEqual(rows[1]['request'],first['request'])
+        self.assertEqual(rows[2]['request'],continuation_ref)
+        panel.write_json(original_output/'failure.json',dict(error=error+' modified'))
+        with self.assertRaisesRegex(ValueError,'differs from its native failure'):
+            panel.rows(self.root/'panel/plan.json')
+        panel.write_json(original_output/'failure.json',dict(error=error))
+        prefix=original_output/'match-000000.json'
+        changed=json.loads(prefix.read_text()); changed['match']['config']['game_one_chooser']^=1
+        panel.write_json(prefix,changed)
+        with self.assertRaisesRegex(ValueError,'native case differs'):
+            panel.rows(self.root/'panel/plan.json')
+
     def test_eight_plans_preserve_exact_7776_keys_without_seed_generation(self):
         keys=set()
         for lineage in ('r1','r2'):

@@ -98,3 +98,11 @@ first policy resets and captured `game_index == 1` decision rows. Whole BO3
 and game-one result hashes intentionally differ. Actual T1/H admission and
 this parity check remain required workload evidence; synthetic Python-child
 tests do not establish model admission or playing strength.
+
+Explicit row export verifies each completed segment's native completion mode,
+case count and ordered output hashes, and compares every saved match with its
+exact requested configuration and registered decks. A failed segment retains
+only its contiguous completed prefix after checking the native start, saved
+model identities, case binding and original failure. Recovery errors must
+match that failure record. Every explicit row carries its original segment
+request pin, including technical terminations; missing rows are not invented.
