@@ -5192,18 +5192,91 @@ fn payable_activation_cost_object_candidates(
 /// Deterministic mana-solver bridge for resolution-time optional payments.
 /// The owned color list lives in serializable `EffectOp` state; this helper
 /// materializes the borrowed `Cost` shape used by the ordinary cast payer.
+struct EffectManaPlan {
+    ordinary: mana::PaymentPlan,
+    treasures: Vec<(ObjectId, mana::ManaColor)>,
+}
+
+fn effect_mana_plan(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &GameState,
+) -> Option<EffectManaPlan> {
+    let pips = colored
+        .iter()
+        .copied()
+        .map(mana::Pip::Colored)
+        .collect::<Vec<_>>();
+    // Preserve every predecessor plan when floating mana/repeatable taps suffice.
+    if let Some(ordinary) = mana::can_pay_owned(&pips, generic, player, state) {
+        return Some(EffectManaPlan {
+            ordinary,
+            treasures: vec![],
+        });
+    }
+    let mut sources = mana::gather_sources(player, state);
+    let mut treasure_ids = Vec::new();
+    for &id in &state.players[player.index()].battlefield {
+        if sources.iter().any(|source| source.id == id) {
+            continue;
+        }
+        let live = state.objects.try_get(id)?;
+        let d = card_def::CARD_DEFS.get(usize::from(live.card_def))?;
+        // The exact supported one-shot recipe. Richer mana costs, restricted
+        // pools and overlapping granted abilities are not silent aliases.
+        if !d.is_executable()
+            || !d.has_full_support()
+            || !d.is_token
+            || d.name != "Treasure Token"
+            || d.mana_ability_def
+                != Some(card_def::ManaAbilityDef {
+                    cost: ManaAbilityCostDef::TapAndSacrificeSelf,
+                    amount: ManaAbilityAmountDef::Fixed(1),
+                    controller_damage: 0,
+                    max_activations_per_turn: None,
+                })
+            || !d.additional_mana_abilities.is_empty()
+            || !d.restricted_mana_abilities.is_empty()
+            || !crate::standard_legends_v1::katilda_mana_colors(state, id).is_empty()
+        {
+            continue;
+        }
+        let choices = available_mana_ability_choices(player, id, state);
+        if choices.is_empty() {
+            continue;
+        }
+        treasure_ids.push(id);
+        sources.push(mana::ManaSource {
+            id,
+            choices,
+            yield_per_tap: 1,
+        });
+    }
+    let plan = mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources)?;
+    let mut ordinary = plan.clone();
+    ordinary.taps.clear();
+    let mut treasures = Vec::new();
+    for (id, color) in plan.taps {
+        if treasure_ids.contains(&id) {
+            treasures.push((id, color));
+        } else {
+            ordinary.taps.push((id, color));
+        }
+    }
+    Some(EffectManaPlan {
+        ordinary,
+        treasures,
+    })
+}
+
 pub(crate) fn can_pay_effect_mana(
     player: PlayerId,
     colored: &[mana::ManaColor],
     generic: u8,
     state: &GameState,
 ) -> bool {
-    let pips = colored
-        .iter()
-        .copied()
-        .map(mana::Pip::Colored)
-        .collect::<Vec<_>>();
-    mana::can_pay_owned(&pips, generic, player, state).is_some()
+    effect_mana_plan(player, colored, generic, state).is_some()
 }
 
 /// Commits the exact deterministic plan preflighted by
@@ -5214,15 +5287,22 @@ pub(crate) fn pay_effect_mana(
     generic: u8,
     state: &mut GameState,
 ) -> bool {
-    let pips = colored
-        .iter()
-        .copied()
-        .map(mana::Pip::Colored)
-        .collect::<Vec<_>>();
-    let Some(plan) = mana::can_pay_owned(&pips, generic, player, state) else {
+    let Some(plan) = effect_mana_plan(player, colored, generic, state) else {
         return false;
     };
-    pay_plan(state, player, &plan);
+    for (id, color) in plan.treasures {
+        // Use the real printed tap/sacrifice activation and committed events.
+        // Resolution remains atomic: queued triggers/SBAs wait for completion.
+        if activate_mana_ability_for_with_checkpoint(state, player, id, color, None, false).is_err()
+        {
+            return false;
+        }
+        // Each exact recipe produces one unit used by this cost. Consume it
+        // before the next activation, retaining the native pool capacity and
+        // the original plan's floating/restricted-pool accounting.
+        state.players[player.index()].mana_pool[color.pool_index()] -= 1;
+    }
+    pay_plan(state, player, &plan.ordinary);
     true
 }
 
@@ -8727,6 +8807,17 @@ fn activate_mana_ability_for(
     choice: ManaColor,
     cost_target: Option<ObjectId>,
 ) -> Result<(), String> {
+    activate_mana_ability_for_with_checkpoint(state, player, source, choice, cost_target, true)
+}
+
+fn activate_mana_ability_for_with_checkpoint(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    choice: ManaColor,
+    cost_target: Option<ObjectId>,
+    checkpoint: bool,
+) -> Result<(), String> {
     let available_choices = available_mana_ability_choices(player, source, state);
     if !available_choices.contains(&choice) {
         return Err(format!("{source} cannot currently produce {choice:?}"));
@@ -8743,7 +8834,9 @@ fn activate_mana_ability_for(
         state.engine.priority_passes = [false, false];
         state.engine.mana_ability_activations += 1;
         state.engine.last_mana_ability_activator = Some(player);
-        collect_and_queue_triggers(state);
+        if checkpoint {
+            collect_and_queue_triggers(state);
+        }
         return Ok(());
     }
     let primary_choices = definition.primary_mana_ability_choices(chosen_color);
@@ -8791,7 +8884,9 @@ fn activate_mana_ability_for(
             state.engine.priority_passes = [false, false];
             state.engine.mana_ability_activations += 1;
             state.engine.last_mana_ability_activator = Some(player);
-            collect_and_queue_triggers(state);
+            if checkpoint {
+                collect_and_queue_triggers(state);
+            }
             return Ok(());
         }
     }
@@ -8984,7 +9079,9 @@ fn activate_mana_ability_for(
             .v4
             .note_ability_use(AbilityKindV4::Mana, ability_index);
     }
-    collect_and_queue_triggers(state);
+    if checkpoint {
+        collect_and_queue_triggers(state);
+    }
 
     // 605.3b: mana abilities don't use the stack, so nothing goes on
     // it and no new *stack item* appears -- but this is not the same
