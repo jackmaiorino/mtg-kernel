@@ -309,7 +309,9 @@ fn known_library_and_newly_drawn_amulet_require_v51_before_legacy_publication_bo
         let mut before_draw = hidden;
         before_draw.step = crate::state::Step::Upkeep;
         let mut old = FastActorSessionV1::from_fake_v50_fixture_state(before_draw);
-        for _ in 0..32 {
+        // The starting player's first draw is skipped, so retain enough real
+        // priority passes to reach that player's next eligible draw step.
+        for _ in 0..128 {
             let FastActorResponseV1::Decision(current) = old.current_response() else {
                 break;
             };
