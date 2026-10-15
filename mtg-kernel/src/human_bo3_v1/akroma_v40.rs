@@ -291,6 +291,9 @@ fn label(
     )? {
         return Ok(label);
     }
+    if let Some(label) = super::labels::label_printed_equip_v40(action, handles, human)? {
+        return Ok(label);
+    }
     super::labels::label_parts_v8(action, &parts(observation), handles, human)
 }
 
