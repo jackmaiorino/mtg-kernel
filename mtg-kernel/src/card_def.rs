@@ -2696,13 +2696,13 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 442 (Partial Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 443 (Partial Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                443
+                444
             } else {
                 192
             }
@@ -3147,8 +3147,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the registered Partial Fake printing may remain outside Full"
+            CARD_DEFS.len() - 2 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the registered Partial Fake and Ravenous printings may remain outside Full"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3160,16 +3160,21 @@ mod tests {
                 .collect();
             assert_eq!(
                 non_full,
-                vec![(442, "Fake Your Own Death", CardCapability::Partial)]
+                vec![
+                    (442, "Fake Your Own Death", CardCapability::Partial),
+                    (443, "Ravenous Amulet", CardCapability::Partial),
+                ]
             );
-            assert!(matches!(
-                preflight_fully_supported_deck(&[442]),
-                Err(DeckPreflightError::NotFullySupported {
-                    index: 0,
-                    capability: CardCapability::Partial,
-                    ..
-                })
-            ));
+            for id in [442, 443] {
+                assert!(matches!(
+                    preflight_fully_supported_deck(&[id]),
+                    Err(DeckPreflightError::NotFullySupported {
+                        index: 0,
+                        capability: CardCapability::Partial,
+                        ..
+                    })
+                ));
+            }
         }
         #[cfg(feature = "limited-fdn-fixtures")]
         assert!(preflight_fully_supported_deck(&[
