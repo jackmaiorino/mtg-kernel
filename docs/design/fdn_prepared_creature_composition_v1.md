@@ -33,16 +33,17 @@ tail. Spinner's reveal and Quandary's private optional discard precede Drake's
 capture roots at the effect tail. Drake custody retains original combat input,
 exact paid activation, nested records, visible fresh-source selection and the
 three reviewed dispatch/privacy repairs. Standalone V53 meaning/public facts
-from `7ac6e3b484` are composed. No observation/backend/Human/V3 successor for
-Drake is claimed.
+from `7ac6e3b484` are composed. The combined Prepared V57 consumer source below
+includes Drake, without claiming a runtime-qualified successor.
 
 The Elenda reference is a genuine 40-card correctness input using its original
 20 spells and 20 basics. All seven candidate decks refuse Full-only resolution.
-Observed: 102 Python tests pass across deck/pool, schema-4 and predecessor V3;
+Observed: 115 Python tests pass across deck/pool, schema-4, predecessor V3 and
+the new schema-5 client;
 pinned formatting, diff and static prefix checks pass. Separate scoped source
 reviews of the new transport and V52 model are clear. Every added Rust fixture
 is uncompiled and unrun. No catalog
-hash is guessed; live-v86 canaries await the actual successor export/profile.
+hash is guessed; live-v87 canaries await the actual successor export/profile.
 
 Phoenix restored-payment and Treasure-only payment source repairs from
 `7c13ca4dcc` / `22b44f3935` are composed, with their genuine fixtures still unrun.
@@ -72,11 +73,19 @@ Pinned formatting/diff and the same 102 Python cases pass on the composition.
 The shared observation/backend Prepared V57 source from `4506503ad0` /
 `aaa90046c4` is composed with its distinct compatibility schemas, exact
 all-object battlefield roster, captured-source routing and sealed ownership.
-The Human/schema-5 source remains separate while its two scoped findings are
-repaired. No combined transport or runtime pass is claimed here.
+The Human/schema-5 source is composed from `8a9c03a3d6` / `29881dd8d0`,
+including `39f527e201` nonnegative counter quantities and `78d346d884` genuine
+trigger occurrence ordering. The scoped repair re-review is source-clear.
+Old transport paths retain their own validators and frozen labels. The combined
+Rust transport remains uncompiled and unrun.
 Conqueror/Season ordinary-printing model supplements from `3dc65d167a`,
 Frenzied/Banner from `171c2f783d`, and Sower from `db1fc766fe` are composed.
-Broader covered-ID completeness and all successor
+Prepared numeric source `b4c55ba6a9` adds a separate sealed V57 owner, original
+action order, complete typed meaning dispatch and mandatory ordinary-printing
+supplements. Wildwood source `d2f22e0f3f` adds the actual variable-cost route,
+native X choice and captured stack mana value while retaining its existing
+single entry operation. Their genuine Rust fixtures remain uncompiled and
+unrun. Broader covered-ID completeness and all successor
 model/search qualification remain open. Drake's
 effective power/toughness projection refuses its explicit checked-overflow
 boundary; the engine's later unchecked modifiers still need a concrete repair
@@ -90,4 +99,6 @@ every other field and all old hash literals remain checked. The actual composed
 registry has 260 rows. The v87 444-definition identity and live canaries are
 predecessor evidence, not an identity for this 452-definition source. A later
 actual export must establish the successor before profile/runtime publication.
-Pinned formatting/diff and all 102 affected Python tests pass after this merge.
+Pinned formatting/diff and all 115 affected Python tests pass after this
+composition. Native157 still owns the separate unchanged 444-definition source
+and target; its result cannot qualify this 452-definition composition.
