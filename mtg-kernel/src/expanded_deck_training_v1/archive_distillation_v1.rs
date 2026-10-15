@@ -1986,5 +1986,8 @@ pub(super) fn probe_v1(
     Ok(result)
 }
 
+mod retention_trace;
+pub(super) use retention_trace::retention_trace_v1;
+
 #[cfg(test)]
 mod tests;

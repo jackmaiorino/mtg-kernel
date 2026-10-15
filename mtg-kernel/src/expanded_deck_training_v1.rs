@@ -2719,6 +2719,16 @@ pub enum ExpandedTrainingCommandV1 {
         offers: Vec<PinnedFileV1>,
         output_directory: PathBuf,
     },
+    /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
+    /// one completed run's update-by-update GAE credit, checked against its
+    /// update records, and the Spy learner's line menus. Trains nothing.
+    LineRetentionTrace {
+        /// The run's `run.json` manifest.
+        run: PinnedFileV1,
+        /// The same run's `completion.json`.
+        completion: PinnedFileV1,
+        output_directory: PathBuf,
+    },
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
@@ -2822,6 +2832,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             offers,
             output_directory,
         ),
+        ExpandedTrainingCommandV1::LineRetentionTrace {
+            run,
+            completion,
+            output_directory,
+        } => archive_distillation_v1::retention_trace_v1(run, completion, output_directory),
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,

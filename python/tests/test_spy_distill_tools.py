@@ -283,6 +283,65 @@ class PhaseTwo(Temp):
         with self.assertRaisesRegex(ValueError, "import or feature transfer"):
             phase2.config("r1", o_config(), moved, 4, "d", DECKS)
 
+    def test_retention_options_change_only_seeds_ids_and_the_spy_learners_units(self):
+        saved = self.root / "checkpoint-step-1024.json"
+        saved.write_text(json.dumps({"archive_distillation": {"method": "spy-archive-distillation-phase1-v1"}}))
+        distilled = {**source("r1"), "checkpoint": {"path": str(saved), "sha256": "7" * 64}}
+        base = phase2.config("r1", o_config(), distilled, 4, "D:/p2", DECKS)
+        self.assertEqual(phase2.config("r1", o_config(), distilled, 4, "D:/p2", DECKS, replicate=0,
+                                       drop_spy_learner=False), base)
+        spy = DECKS[pilot.SPY]
+
+        def learner_deck(item):
+            return item["episode"]["selected"][item["episode"]["learner_seat"]]
+
+        replicated = phase2.config("r1", o_config(), distilled, 4, "D:/p2", DECKS, replicate=2)
+        seeds = set()
+        for entries, old_update, new_update in zip(pilot.schedule("r1")["updates"], base["iterations"],
+                                                   replicated["iterations"]):
+            self.assertEqual(len(old_update["episodes"]), len(new_update["episodes"]))
+            for entry, old, new in zip(entries, old_update["episodes"], new_update["episodes"]):
+                o, t, j, seat = entry["own"], entry["other"], entry["j"], entry["seat"]
+                self.assertEqual(new["episode"]["id"], f"spy-line-retention-v1-r1-rep2-o{o}-t{t}-j{j}-s{seat}")
+                self.assertEqual(new["episode"]["seed"],
+                                 pilot.seed(["spy-line-retention-v1/train/rep2", "r1", o, t, j]))
+                self.assertNotEqual(new["episode"]["seed"], old["episode"]["seed"])
+                seeds.add(new["episode"]["seed"])
+                rest = {k: v for k, v in new["episode"].items() if k not in ("id", "seed")}
+                self.assertEqual(rest, {k: v for k, v in old["episode"].items() if k not in ("id", "seed")})
+                self.assertEqual(new["opponent"], old["opponent"])
+        self.assertEqual(len(seeds), 810)
+        self.assertEqual({k: v for k, v in replicated.items() if k != "iterations"},
+                         {k: v for k, v in base.items() if k != "iterations"})
+
+        for replicate in (0, 3):
+            dropped = phase2.config("r1", o_config(), distilled, 4, "D:/p2", DECKS, replicate=replicate,
+                                    drop_spy_learner=True)
+            reference = (base if replicate == 0 else
+                         phase2.config("r1", o_config(), distilled, 4, "D:/p2", DECKS, replicate=replicate))
+            self.assertEqual(len(dropped["iterations"]), 162)
+            kept = [[item for item in update["episodes"] if learner_deck(item) != spy]
+                    for update in reference["iterations"]]
+            self.assertEqual([update["episodes"] for update in dropped["iterations"]], kept)
+            self.assertEqual(sum(len(update) for update in kept), 1440)
+            self.assertEqual(sum(learner_deck(item) == spy for update in reference["iterations"]
+                                 for item in update["episodes"]), 180)
+
+    def test_retention_options_are_refused_off_phase_two_or_off_schedule(self):
+        saved = self.root / "checkpoint-step-1024.json"
+        saved.write_text(json.dumps({"archive_distillation": {"method": "spy-archive-distillation-phase1-v1"}}))
+        distilled = {**source("r1"), "checkpoint": {"path": str(saved), "sha256": "7" * 64}}
+        with self.assertRaisesRegex(ValueError, "not to O's reproduction"):
+            phase2.config("r1", o_config(), None, 4, "d", DECKS, replicate=1)
+        with self.assertRaisesRegex(ValueError, "not to O's reproduction"):
+            phase2.config("r1", o_config(), None, 4, "d", DECKS, drop_spy_learner=True)
+        with self.assertRaisesRegex(ValueError, "unknown replicate"):
+            phase2.config("r1", o_config(), distilled, 4, "d", DECKS, replicate=4)
+        moved = phase2.config("r1", o_config(), distilled, 4, "d", DECKS)
+        moved["iterations"][0]["episodes"][0]["episode"]["seed"] += 1
+        with self.assertRaisesRegex(ValueError, "differs from its schedule entry"):
+            phase2.retention_iterations("r1", moved["iterations"], 1, False)
+
     def test_reproduction_check_compares_the_final_state_with_os_record(self):
         recorded = self.root / "o-final.json"
         recorded.write_text(json.dumps({"state_sha256": "f" * 64, "adam_step": 35_802}))
@@ -298,6 +357,22 @@ class PhaseTwo(Temp):
             self.assertFalse(phase2.check("r1", completion, recorded)["reproduced"])
         with self.assertRaisesRegex(ValueError, "recorded r1 final checkpoint"):
             phase2.check("r1", completion, recorded)
+
+    def test_check_takes_another_recorded_checkpoint_by_its_hash(self):
+        """The retention trace's A-s0 checks against the screen's D2L."""
+        recorded = self.root / "d2l.json"
+        recorded.write_text(json.dumps({"state_sha256": "d" * 64, "adam_step": 35_802}))
+        final = self.root / "final.json"
+        final.write_text(json.dumps({"state_sha256": "d" * 64, "adam_step": 35_802}))
+        completion = {"schema": pilot.ndb.SCHEMA, "complete": True, "completed_iterations": 162,
+                      "source": {"checkpoint": common.pin(final)}}
+        sha = hashlib.sha256(recorded.read_bytes()).hexdigest()
+        self.assertTrue(phase2.check("r1", completion, recorded, sha)["reproduced"])
+        final.write_text(json.dumps({"state_sha256": "d" * 64, "adam_step": 35_801}))
+        completion["source"]["checkpoint"] = common.pin(final)
+        self.assertFalse(phase2.check("r1", completion, recorded, sha)["reproduced"])
+        with self.assertRaisesRegex(ValueError, "not the recorded r1 checkpoint 0{64}"):
+            phase2.check("r1", completion, recorded, "0" * 64)
 
 
 def readout(cid, g1=(0.1, 0.1), gap=4.0, agree=0.95, kl=0.01, share=(0.4, 1.0), discrimination=0.1,
