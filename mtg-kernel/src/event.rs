@@ -125,6 +125,9 @@ pub struct ZoneChangeProposed {
     /// Original X placement and optional actual host of an effect entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_x_v48: Option<crate::doubling_season_v48::EffectXEntryV48>,
+    /// A resolving entry effect adds this subtype simultaneously with entry (611.2e).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_added_subtype_v1: Option<crate::card_def::Subtype>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -227,6 +230,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -243,6 +247,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -259,6 +264,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -278,6 +284,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -307,6 +314,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -339,6 +347,7 @@ impl ProposedEvent {
             counter_origin_v48: None,
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
+            battlefield_added_subtype_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -2892,6 +2901,23 @@ fn commit_with_entry_batch_and_source_color(
             entry.1.attached_to = request.host;
             entry.1.bestowed = request.host.is_some();
         }
+        // A destination rewrite that does not enter the battlefield must not
+        // install the entry-only characteristic on the card in another zone.
+        if change.to_zone == Zone::Battlefield {
+            if let Some(subtype) = change.battlefield_added_subtype_v1 {
+                let entry = entry_context
+                    .0
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        change.object,
+                    ));
+                    return;
+                }
+                entry.1.added_subtype_v1 = Some(subtype);
+            }
+        }
     }
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
@@ -4592,6 +4618,10 @@ fn commit_zone_change(
     }
 
     let turn = state.turn_key_v1();
+    let entry_added_subtype = (to_zone == Zone::Battlefield)
+        .then(|| entering_characteristics.and_then(|entry| entry.added_subtype_v1))
+        .flatten()
+        .map(|subtype| (subtype, crate::engine::next_timestamp(state)));
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
@@ -4625,6 +4655,9 @@ fn commit_zone_change(
             }
         }
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        // CR 611.2e: this resolving entry effect belongs to the new incarnation
+        // before entry statics, counter replacements, and committed observers.
+        obj.v4.added_subtype_v1 = entry_added_subtype;
         // 707.10f: a resolving permanent spell copy becomes a token. This
         // is a zone entry, not token creation, so no creation replacement applies.
         if from_zone == Zone::Stack

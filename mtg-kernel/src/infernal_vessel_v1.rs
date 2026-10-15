@@ -38,7 +38,6 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx) {
     {
         return;
     }
-    let expected_return = source.zone_change_count.checked_add(2);
     let mut proposal = ProposedEvent::zone_change(source.source, Zone::Battlefield);
     if let ProposedEvent::ZoneChange(change) = &mut proposal {
         // This is the shared effect-entry counter input, despite its original
@@ -48,15 +47,11 @@ pub(crate) fn resolve(state: &mut GameState, ctx: &ExecCtx) {
             original: 2,
             host: None,
         });
+        // 611.2e makes this resolving effect's characteristic simultaneous
+        // with entry. The entry driver installs it before static observers.
+        change.battlefield_added_subtype_v1 = Some(Subtype::Demon);
     }
     event::propose_and_commit(state, proposal);
-    if state.objects.try_get(source.source).is_some_and(|object| {
-        object.zone == Zone::Battlefield && Some(object.zone_change_count) == expected_return
-    }) {
-        let timestamp = crate::engine::next_timestamp(state);
-        state.objects.get_mut(source.source).v4.added_subtype_v1 =
-            Some((Subtype::Demon, timestamp));
-    }
 }
 
 #[cfg(all(

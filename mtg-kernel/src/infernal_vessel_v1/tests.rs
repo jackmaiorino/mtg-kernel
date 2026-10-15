@@ -321,3 +321,103 @@ fn paid_ability_removal_prevents_death_trigger_both_seats() {
             event::CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. } if source.source == vessel)));
     }
 }
+
+#[test]
+fn returned_incarnation_is_demon_in_production_entry_snapshot_with_counters_and_statics() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for season in [false, true] {
+            let (mut state, vessel) = paid_vessel(actor);
+            put(&mut state, actor, "Garruk's Uprising", Zone::Battlefield);
+            put(
+                &mut state,
+                actor.opponent(),
+                "Authority of the Consuls",
+                Zone::Battlefield,
+            );
+            if season {
+                put(&mut state, actor, "Doubling Season", Zone::Battlefield);
+            }
+            let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+            let hand_before = state.players[actor.index()].hand.len();
+            let opponent_life = state.players[actor.opponent().index()].life;
+            let departed_generation = state.objects.get(vessel).zone_change_count;
+            cast(&mut state, actor, bolt, Some(vessel));
+            let count = if season { 4 } else { 2 };
+            let entries: Vec<_> = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    event::CommittedEvent::GarrukEntryObservationV1 {
+                        entry,
+                        effective_creature,
+                        effective_power,
+                        ..
+                    } if entry.object == vessel
+                        && entry.snapshot.zone_change_count == departed_generation + 2 =>
+                    {
+                        Some((entry, *effective_creature, *effective_power))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(entries.len(), 1);
+            let (entry, creature, power) = entries[0];
+            // This is the existing production entry-observer snapshot. It is
+            // captured inside the return commit, before the effect returns.
+            // Garruk is power-based; this does not invent a Demon entry trigger.
+            assert_eq!(
+                entry.snapshot.v4.added_subtype_v1.map(|value| value.0),
+                Some(Subtype::Demon)
+            );
+            for subtype in [Subtype::Human, Subtype::Cleric] {
+                assert!(subtype.is_in_subtype_ids(&entry.snapshot.v4.effective_subtype_ids));
+            }
+            assert_eq!(entry.snapshot.counters.plus1_plus1, count);
+            assert!(entry.snapshot.tapped);
+            assert_eq!(entry.snapshot.controller, actor);
+            assert!(creature);
+            assert_eq!(power, Some(2 + count));
+            assert!(engine::has_effective_subtype(
+                &state,
+                vessel,
+                Subtype::Demon
+            ));
+            // Paid Bolt consumes one card; the genuine qualifying entry draws
+            // one. Authority still captures its opposing creature entry.
+            assert_eq!(state.players[actor.index()].hand.len(), hand_before);
+            assert_eq!(
+                state.players[actor.opponent().index()].life,
+                opponent_life + 1
+            );
+            let copy = restored(&state);
+            assert!(engine::has_effective_subtype(&copy, vessel, Subtype::Demon));
+        }
+    }
+}
+
+#[test]
+fn nonbattlefield_destination_does_not_install_entry_subtype_input() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, vessel) = paid_vessel(actor);
+        depart(&mut state, vessel);
+        let _ = engine::advance_until_decision(&mut state);
+        // The shared production commit primitive receives a final destination
+        // other than Battlefield. This is an explicitly labeled primitive,
+        // not a claim that the current FDN pool has an exile-on-return rule.
+        let mut move_away = ProposedEvent::zone_change(vessel, Zone::Exile);
+        if let ProposedEvent::ZoneChange(change) = &mut move_away {
+            change.battlefield_added_subtype_v1 = Some(Subtype::Demon);
+        }
+        event::propose_and_commit(&mut state, move_away);
+        assert_eq!(state.objects.get(vessel).zone, Zone::Exile);
+        assert!(state.objects.get(vessel).v4.added_subtype_v1.is_none());
+        let mut copy = restored(&state);
+        for branch in [&mut state, &mut copy] {
+            settle(branch);
+            assert_eq!(branch.objects.get(vessel).zone, Zone::Exile);
+            assert!(branch.objects.get(vessel).v4.added_subtype_v1.is_none());
+            assert_eq!(branch.objects.get(vessel).counters.plus1_plus1, 0);
+        }
+    }
+}
