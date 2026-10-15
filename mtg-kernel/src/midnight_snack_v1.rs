@@ -260,4 +260,4 @@ pub(crate) fn resolve(
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "midnight_snack_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

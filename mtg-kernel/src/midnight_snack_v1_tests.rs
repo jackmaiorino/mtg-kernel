@@ -7,7 +7,7 @@ use crate::{
     state::{Step, Target},
 };
 
-fn priority(s: &mut GameState, actor: PlayerId) {
+pub(crate) fn priority(s: &mut GameState, actor: PlayerId) {
     for _ in 0..4 {
         let d = engine::advance_until_decision(s);
         if matches!(d, Decision::CastSpellOrPass { player, .. } if player == actor) {
@@ -18,7 +18,7 @@ fn priority(s: &mut GameState, actor: PlayerId) {
     }
     panic!("no priority");
 }
-fn drain(s: &mut GameState) {
+pub(crate) fn drain(s: &mut GameState) {
     for _ in 0..40 {
         let d = engine::advance_until_decision(s);
         match d {
@@ -36,7 +36,7 @@ fn drain(s: &mut GameState) {
     }
     panic!("stack did not drain");
 }
-fn mana(s: &mut GameState, actor: PlayerId, name: &str, n: usize) {
+pub(crate) fn mana(s: &mut GameState, actor: PlayerId, name: &str, n: usize) {
     for _ in 0..n {
         let land = put(s, actor, name, Zone::Battlefield);
         priority(s, actor);
@@ -44,7 +44,7 @@ fn mana(s: &mut GameState, actor: PlayerId, name: &str, n: usize) {
         assert!(s.objects.get(land).tapped);
     }
 }
-fn paid(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     let mut s = crate::extra_turn_v1::tests::ready(actor);
     let source = put(&mut s, actor, "Midnight Snack", Zone::Hand);
     assert_eq!(s.objects.get(source).card_def, 452);
@@ -69,7 +69,7 @@ fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     assert_eq!(s.objects.get(source).zone, Zone::Battlefield);
     (s, source)
 }
-fn activate_paid(s: &mut GameState, actor: PlayerId, source: ObjectId) {
+pub(crate) fn activate_paid(s: &mut GameState, actor: PlayerId, source: ObjectId) {
     mana(s, actor, "Swamp", 3);
     engine::step(s, Action::ActivateAbility(source, 0)).unwrap();
     assert!(matches!(
@@ -92,7 +92,7 @@ fn activate_paid(s: &mut GameState, actor: PlayerId, source: ObjectId) {
         0
     );
 }
-fn walk(s: &mut GameState, actor: PlayerId, step: Step, attacker: Option<ObjectId>) {
+pub(crate) fn walk(s: &mut GameState, actor: PlayerId, step: Step, attacker: Option<ObjectId>) {
     for _ in 0..160 {
         let d = engine::advance_until_decision(s);
         if s.active_player == actor
@@ -120,7 +120,7 @@ fn walk(s: &mut GameState, actor: PlayerId, step: Step, attacker: Option<ObjectI
     }
     panic!("turn walker exhausted");
 }
-fn foods(s: &GameState, actor: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn foods(s: &GameState, actor: PlayerId) -> Vec<ObjectId> {
     s.players[actor.index()]
         .battlefield
         .iter()
@@ -238,7 +238,7 @@ fn raid_requires_attack_and_rechecks_original_controller_after_source_leaves_bot
 // An explicit complete definition fixture keeps foreign-field selector tests
 // independent of any production Clone implementation. New fields must be
 // supplied here rather than silently inherited by struct update syntax.
-fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_def::CardDef {
+pub(crate) fn definition_fixture(d: &crate::card_def::CardDef) -> crate::card_def::CardDef {
     crate::card_def::CardDef {
         name: d.name,
         capability: d.capability,
