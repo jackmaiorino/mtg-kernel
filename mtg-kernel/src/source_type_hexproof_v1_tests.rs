@@ -260,7 +260,7 @@ fn only_the_genuine_partial_limited_printing_selects_source_type_captures() {
         not(feature = "standard-magezero-fixtures")
     ));
     assert_eq!(enabled(), selected);
-    for def in CARD_DEFS {
+    for def in &CARD_DEFS {
         assert_eq!(
             def.source_type_hexproof_v1.is_some(),
             selected && def.name == "Elenda, Saint of Dusk"

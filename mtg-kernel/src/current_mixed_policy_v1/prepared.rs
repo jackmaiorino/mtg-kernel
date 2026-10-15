@@ -331,7 +331,7 @@ pub(super) fn printing(id: u16) -> Result<Option<Value>> {
     // Complete typed characteristics and independently authenticated ordered
     // special roots. No function pointer, EffectOp or private world is serialized.
     Ok(Some(json!({"card_id":id,"prepared_printing":{
-        "characteristics":{"types":d.types,"subtypes":d.subtypes,"supertypes":d.supertypes,
+        "characteristics":{"types":d.types,"subtypes":d.subtypes,"supertypes":d.supertypes.iter().map(|value| *value as u8).collect::<Vec<_>>(),
             "colors":d.colors,"mana_value":d.mana_value,"power":d.power,"toughness":d.toughness,
             "keyword_bits":d.keywords.0,"minimum_blockers":d.minimum_blockers,"is_token":d.is_token,
             "is_land":d.is_land,"enters_tapped":d.enters_battlefield_tapped},

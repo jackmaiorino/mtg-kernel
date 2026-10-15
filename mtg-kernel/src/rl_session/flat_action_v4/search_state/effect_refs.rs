@@ -1168,7 +1168,9 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
-            AjaniJournalV42 { .. }
+            DrakeJournalV1 { .. }
+            | DrakeHistoryRefV1 { .. }
+            | AjaniJournalV42 { .. }
             | StromkirkEndStepObserversV1 { .. }
             | StromkirkTriggerCaptureV2 { .. }
             | StromkirkCollectedV2 { .. }
