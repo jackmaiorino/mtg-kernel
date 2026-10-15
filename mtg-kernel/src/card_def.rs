@@ -2720,7 +2720,7 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 444 (Partial Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 445 (Partial Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         assert_eq!(
@@ -2738,6 +2738,8 @@ mod tests {
         {
             let fake = card_id_by_name("Fake Your Own Death").unwrap();
             assert_eq!(fake, 442);
+            assert_eq!(card_id_by_name("Elenda, Saint of Dusk"), Some(444));
+            assert_eq!(card_id_by_name("Flamewake Phoenix"), Some(445));
             assert_eq!(
                 CARD_DEFS[usize::from(fake)].capability,
                 CardCapability::Partial
@@ -3171,8 +3173,8 @@ mod tests {
             .count();
         assert_eq!(
             full,
-            CARD_DEFS.len() - 2 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
-            "only the registered Partial Fake and Ravenous printings may remain outside Full"
+            CARD_DEFS.len() - 4 * usize::from(cfg!(feature = "limited-fdn-fixtures")),
+            "only the four registered Partial source candidates may remain outside Full"
         );
         #[cfg(feature = "limited-fdn-fixtures")]
         {
@@ -3187,9 +3189,11 @@ mod tests {
                 vec![
                     (442, "Fake Your Own Death", CardCapability::Partial),
                     (443, "Ravenous Amulet", CardCapability::Partial),
+                    (444, "Elenda, Saint of Dusk", CardCapability::Partial),
+                    (445, "Flamewake Phoenix", CardCapability::Partial),
                 ]
             );
-            for id in [442, 443] {
+            for id in [442, 443, 444, 445] {
                 assert!(matches!(
                     preflight_fully_supported_deck(&[id]),
                     Err(DeckPreflightError::NotFullySupported {

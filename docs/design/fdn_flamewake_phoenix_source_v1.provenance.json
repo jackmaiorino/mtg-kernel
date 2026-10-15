@@ -24,11 +24,17 @@
     }
   ],
   "parent_source": "eb05b03b241a09cbc2c29e79470de018741ddf83",
-  "prior_fdn_records": 252,
+  "prior_fdn_records": 253,
   "prior_registry_canonical_sha256": "da28318f5d9ca002b95ab06f83e265824c61982c61609a0b3100fc7a08c97b10",
-  "provisional_combined_id": 444,
+  "provisional_combined_id": 445,
   "capability": "partial",
   "full_admission": false,
   "native_qualification": "pending with assigned lead",
-  "catalog_hash": "not observed"
+  "catalog_hash": "not observed",
+  "original_isolated_preparation": {
+    "prior_fdn_records": 252,
+    "provisional_combined_id": 444,
+    "source_commit": "8a40c01435e355bd4098bd840051531e1cbc43f1"
+  },
+  "composition_base": "ac700ef7b2094397e02dca3fb34a653865070551"
 }
