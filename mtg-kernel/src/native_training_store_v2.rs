@@ -3333,7 +3333,7 @@ mod windows_publisher_tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn publish_rejects_prior_fdn_fake_partial_v85_before_any_store_mutation() {
+    fn publish_rejects_prior_fdn_batch_fake_partial_v85_before_any_store_mutation() {
         use crate::native_training_store_run_v2::test_fixture_bytes_fdn_fake_partial_batch_v1;
         let store = TestStoreV2::with_skeleton("prior-fdn-fake-partial-v85");
         let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();

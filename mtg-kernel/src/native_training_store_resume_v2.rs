@@ -1742,7 +1742,7 @@ mod windows_resume_tests {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    fn resume_rejects_prior_fdn_fake_partial_v85_before_store_lock_or_mutation() {
+    fn resume_rejects_prior_fdn_batch_fake_partial_v85_before_store_lock_or_mutation() {
         use crate::native_training_store_run_v2::{
             test_fixture_bytes_fdn_fake_partial_batch_v1, NativeRunCatalogProfileV1,
         };
