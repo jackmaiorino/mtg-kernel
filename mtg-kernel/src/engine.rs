@@ -14342,6 +14342,14 @@ fn validated_stack_item_target_metadata(
             contract
         };
         if !stack_target_contract_is_structurally_valid(state, spec, target_index, target, contract)
+            && !crate::fiendish_panda_v1::custody::authenticates_stale_target(
+                state,
+                item,
+                spec,
+                target_index,
+                target,
+                contract,
+            )?
         {
             return Err("stack target contract is structurally malformed".to_string());
         }
