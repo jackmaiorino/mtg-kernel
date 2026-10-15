@@ -10343,7 +10343,15 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                     Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
                 return;
             };
-            let frozen = freeze_activation_source(state, &p, ability);
+            let mut frozen = freeze_activation_source(state, &p, ability);
+            frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &p) {
+                Ok(owner) => owner,
+                Err(_) => {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, p.source));
+                    return;
+                }
+            };
             // Keep the state-changing payment outside `debug_assert!`: the
             // macro (including its argument) is compiled out in release
             // builds, but costs must be paid in every profile. The complete
@@ -21757,6 +21765,16 @@ fn finalize_activation(state: &mut GameState) {
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let mut frozen = freeze_activation_source(state, &pending, ability);
+    frozen.ravenous_payment = match crate::ravenous_amulet_v1::capture_payment(state, &pending) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
     frozen.ajani_payment_owner = ajani_payment_owner;
     let ability = &ability;
     let mut discarded = Vec::new();
@@ -21870,6 +21888,7 @@ struct FrozenActivationSource {
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
+    ravenous_payment: Option<crate::ravenous_amulet_v1::PaymentOwnerV1>,
 }
 
 fn freeze_activation_source(
@@ -21907,6 +21926,7 @@ fn freeze_activation_source(
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
+        ravenous_payment: None,
     }
 }
 
@@ -22036,6 +22056,8 @@ fn push_paid_activation(
             frozen.fishing_ability_index,
         )
         .is_err()
+        || crate::ravenous_amulet_v1::record_paid(state, stack_item_id, frozen.ravenous_payment)
+            .is_err()
         || crate::zul_ashur_v1::publish(state, stack_item_id).is_err()
     {
         state.engine.halted = Some((

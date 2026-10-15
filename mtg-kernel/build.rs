@@ -5740,7 +5740,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 ],
                 effect: AbilityEffectRecipe::Program {
                     name: "ravenous_amulet_draw_then_soul_v1",
-                    effect: "EffectOp::Sequence(vec![EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }, EffectOp::AddSoulCounterToAbilitySourceV1])",
+                    effect: "crate::ravenous_amulet_v1::draw_program()",
                 },
                 activation_zone: "Battlefield",
                 sorcery_speed_only: true,
@@ -5756,7 +5756,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 ],
                 effect: AbilityEffectRecipe::Program {
                     name: "ravenous_amulet_original_soul_loss_v1",
-                    effect: "EffectOp::LoseLifeEachOpponentEqualSourceSoulV1",
+                    effect: "crate::ravenous_amulet_v1::loss_program()",
                 },
                 activation_zone: "Battlefield",
                 sorcery_speed_only: false,

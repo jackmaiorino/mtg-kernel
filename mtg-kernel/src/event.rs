@@ -1461,6 +1461,10 @@ pub enum CommittedEvent {
     SoulCounterInputV1 {
         input: Box<crate::soul_counters_v1::PlacementInputV1>,
     },
+    /// Private finalized payment with its genuine pre-self-sacrifice count.
+    RavenousPaymentV1 {
+        paid: Box<crate::ravenous_amulet_v1::PaidV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -6133,6 +6137,19 @@ mod ravenous_amulet_paid_future_tests {
                 assert_eq!(branch.objects.get(chosen).zone, Zone::Graveyard);
                 assert_eq!(branch.objects.get(spare).zone, Zone::Battlefield);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 0);
+                let payments = branch
+                    .engine
+                    .event_history
+                    .iter()
+                    .filter_map(|event| match event {
+                        CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(payments.len(), 1);
+                assert_eq!(payments[0].original_soul_count, 0);
+                assert_eq!(payments[0].original_sacrifice.source, chosen);
+                assert_eq!(payments[0].item.v4.activated_ability_index, Some(0));
                 finish(branch);
                 assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
                 assert_eq!(branch.objects.get(amulet).counters.soul, 1);
@@ -6153,6 +6170,20 @@ mod ravenous_amulet_paid_future_tests {
             assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
             assert_eq!(state.objects.get(amulet).counters.soul, 0);
             assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(1));
+            let payments = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(payments.len(), 2);
+            assert_eq!(payments[1].original_source, original);
+            assert_eq!(payments[1].original_sacrifice, original);
+            assert_eq!(payments[1].original_soul_count, 1);
+            assert_eq!(payments[1].item.v4.activated_ability_index, Some(1));
             // Explicit zone-transition boundary after genuine paid self-sacrifice.
             // This is not a claim of a printed artifact-return producer.
             propose_and_commit(
@@ -6211,6 +6242,19 @@ mod ravenous_amulet_paid_future_tests {
             );
             assert_eq!(state.objects.get(amulet).zone, Zone::Graveyard);
             assert_eq!(state.soul_count_for_ability_source_v1(original), Ok(0));
+            let payments = state
+                .engine
+                .event_history
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::RavenousPaymentV1 { paid } => Some(paid.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(payments.len(), 1);
+            assert_eq!(payments[0].original_source, original);
+            assert_eq!(payments[0].original_soul_count, 0);
+            assert_eq!(payments[0].item.v4.activated_ability_index, Some(1));
             finish(&mut state);
             assert_eq!(state.players.each_ref().map(|p| p.life), life);
             assert_eq!(state.objects.get(spell).zone, Zone::Graveyard);

@@ -16,7 +16,24 @@ Unregistered generator recipes now express both printed abilities. The first use
 
 Sixteen focused Rust tests are written for storage/refusal/transfer, ordered draw and departure/reentry, distinct recipient control, original-generation LKI and restore, original-controller untargeted loss, life-total boundaries, Standard's actual Bloodletter multiplier, both-seat placement journal restore/refusal, and refusal before any hidden-owner permutation. The journal cases include changed actor, arithmetic, original world, input links, and private/duplicate trigger events, with read-only refusal assertions. The sampler case covers cleared trigger logs, live/departed sources and restored states. The existing opaque-program test covers both new instructions. Two additional paid-printing tests remain explicitly ignored until genuine registration and paid-owner qualification. They advance actual staged payments before asserting costs or LKI, use a real turn to untap, preserve the pre-cost count across labeled reentry, and distinguish first-ability sorcery timing from the zero-soul second ability above a real Think Twice. None has been compiled or executed. New enum variants append after all predecessor variants; a source-prefix comparison preserves both complete old enum bodies. Pinned Rust 1.94.1 formatting and diff checks pass. The future Doubling Season multikind test retains its existing ignore; its literal and assertions include soul. Forest operands establish primitive semantics, not printed Ravenous activations.
 
-Remaining: printing-specific paid ownership and genuine pre-self-sacrifice binding, including anchoring the primitive's original inputs; active registration; public/meaning/observation/consumer support; actual paid both-seat tests and qualification. No Full, model, sampler, fair-search, or training claim follows from this prerequisite.
+The genuine cost branches now acquire a private nonserialized Amulet payment
+token before paying. It captures the original source, chosen creature or self,
+ability index and soul count. Only successful generic full payment consumes it
+at finalized publication. The appended private payment receipt binds the whole
+stack row, original-generation count and unique ordered tap, sacrifice-marker
+and departure occurrences. Both generator recipes share the checked program
+factories. The existing ignored paid-printing cases now check zero/one soul
+payment receipts; their ignore remains. Hidden-world sampling refuses payment
+history even before a soul placement, and the counter-journal boundary rejects
+private receipts in the trigger log. This new payment custody is uncompiled and
+unrun. It does not yet authenticate restored receipts or bind a one-time resolving
+or counter-removal owner to the later draw/placement/loss operations.
+
+Remaining: complete printing-specific paid ownership through restore,
+resolution/counter-removal and anchoring the primitive's original inputs;
+active registration; public/meaning/observation/consumer support; actual paid
+both-seat tests and qualification. No Full, model, sampler, fair-search, or
+training claim follows from this prerequisite.
 
 Primary source receipts:
 

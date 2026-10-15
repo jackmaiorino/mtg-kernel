@@ -42,7 +42,9 @@ pub(crate) fn has_history(state: &GameState) -> bool {
     state.engine.event_history.iter().any(|event| {
         matches!(
             event,
-            CommittedEvent::SoulCounterInputV1 { .. } | CommittedEvent::SoulCounterAddedV1 { .. }
+            CommittedEvent::SoulCounterInputV1 { .. }
+                | CommittedEvent::SoulCounterAddedV1 { .. }
+                | CommittedEvent::RavenousPaymentV1 { .. }
         )
     })
 }
@@ -113,7 +115,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let mut published = Vec::new();
     for event in &state.engine.event_log {
         match event {
-            CommittedEvent::SoulCounterInputV1 { .. } => {
+            CommittedEvent::SoulCounterInputV1 { .. }
+            | CommittedEvent::RavenousPaymentV1 { .. } => {
                 return Err("private soul input replayed as trigger event".into());
             }
             CommittedEvent::SoulCounterAddedV1 {
