@@ -714,11 +714,11 @@ pub mod fake_observation_v50;
 #[path = "flamewake_phoenix_v1/paid_printing_tests.rs"]
 mod flamewake_phoenix_v1;
 
+pub mod drake_public_v53;
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
 mod painful_quandary_v1;
-pub mod drake_public_v53;
 pub mod rules_meaning_drake_hatcher_v53;
