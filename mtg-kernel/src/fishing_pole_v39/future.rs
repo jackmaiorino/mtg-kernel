@@ -956,6 +956,22 @@ fn mixed_memorial(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
     finish(&mut state);
     state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+    crate::rl::policy_observation_extensions_fishing_union_v40(&state, state.priority_player)
+        .expect("genuine mixed Memorial/Pole/Longbow normalization facts");
+    // Check the actual mixed public projection before installing its private
+    // session binding, retaining the precise projection error on regression.
+    crate::akroma_public_v1::observe_v1(
+        &state,
+        &crate::policy_surface_v5::PolicySurfaceV5::new_with_priority_mode_v1(
+            crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+            crate::surface_v2::SuppressionAuditMode::Off,
+        ),
+        state.priority_player,
+        0,
+        0,
+        (0, 1),
+    )
+    .expect("genuine mixed Memorial/Pole/Longbow observation");
     (state, host, pole)
 }
 #[test]
