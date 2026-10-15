@@ -87,14 +87,17 @@ fn stable(value: &Map<String, Value>) -> bool {
     .iter()
     .all(|k| value.contains_key(*k))
 }
-fn expand(value: &mut Value, covered: &mut BTreeSet<u16>) -> Result<()> {
+fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Result<()> {
     match value {
         Value::Array(values) => {
             for value in values {
-                expand(value, covered)?;
+                expand(value, covered, source)?;
             }
         }
         Value::Object(values) => {
+            if source == Source::PreparedV57 && super::prepared::typed_meaning(values, covered)? {
+                return Ok(());
+            }
             if values.contains_key("root_sha256") && values.contains_key("card_id") {
                 if values.len() <= 5 {
                     let full = roots::expand_thin(values)?;
@@ -103,7 +106,7 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>) -> Result<()> {
                 covered.insert(u16::try_from(uint(&values["card_id"])?).map_err(|_| Error::Range)?);
             }
             for child in values.values_mut() {
-                expand(child, covered)?;
+                expand(child, covered, source)?;
             }
         }
         _ => {}
@@ -239,8 +242,11 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
 }
 
 pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> Result<Packet> {
+    if source == Source::PreparedV57 {
+        super::prepared::references(&mut state)?;
+    }
     let mut covered = BTreeSet::new();
-    expand(&mut state, &mut covered)?;
+    expand(&mut state, &mut covered, source)?;
     let mut cards = BTreeSet::new();
     collect_cards(&state, &mut cards)?;
     for action in &actions {
@@ -248,6 +254,11 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
+        if source == Source::PreparedV57 {
+            if super::prepared::printing(*id)?.is_some() {
+                continue;
+            }
+        }
         meanings.push(roots::baseline(*id)?);
     }
     // A family fact/root is not a complete ordinary printing descriptor.
@@ -261,6 +272,13 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     // V52's existing typed meaning covers the static rules. Preserve its
     // complete ordered body and add the immutable ordinary spell route only
     // for an actually actor-authorized referenced printing.
+    if source == Source::PreparedV57 {
+        for id in &cards {
+            if let Some(printing) = super::prepared::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
     if source == Source::ElendaV52 {
         if let Some(id) = crate::card_def::card_id_by_name("Elenda, Saint of Dusk") {
             if cards.contains(&id) {

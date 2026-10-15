@@ -4,6 +4,7 @@ mod elenda;
 mod network;
 mod normalize;
 mod numeric;
+mod prepared;
 mod roots;
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
@@ -11,6 +12,7 @@ use crate::rl_session::{
 pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
 pub use network::{ModelConfig, NativeModel};
 pub use numeric::NumericTree;
+pub use prepared::{PreparedDecision, PreparedSession, PreparedSnapshot};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -41,6 +43,7 @@ pub enum Source {
     FakeV50,
     RavenousV51,
     ElendaV52,
+    PreparedV57,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -73,6 +76,20 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/roots.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),
             include_str!("current_mixed_policy_v1/elenda.rs"),
+            include_str!("current_mixed_policy_v1/prepared.rs"),
+            include_str!("prepared_observation_v57.rs"),
+            include_str!("rl_session/prepared_v57.rs"),
+            include_str!("drake_public_v53.rs"),
+            include_str!("drake_hatcher_v1/custody.rs"),
+            include_str!("rules_meaning_drake_hatcher_v53.rs"),
+            include_str!("optional_trigger_source_v1.rs"),
+            include_str!("optional_trigger_public_v1.rs"),
+            include_str!("rules_meaning_spinner_v54.rs"),
+            include_str!("spinner_public_v54.rs"),
+            include_str!("rules_meaning_quandary_v55.rs"),
+            include_str!("quandary_public_v55.rs"),
+            include_str!("rules_meaning_phoenix_v56.rs"),
+            include_str!("phoenix_public_v56.rs"),
             include_str!("elenda_observation_v52.rs"),
             include_str!("elenda_public_v52.rs"),
             include_str!("rules_meaning_elenda_v52.rs"),
