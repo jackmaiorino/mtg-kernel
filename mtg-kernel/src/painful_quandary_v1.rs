@@ -231,10 +231,10 @@ fn unpaid_branch_payer_hand_generation_frames_and_answer_forgeries_are_rejected(
                 0 => choice.player = actor,
                 1 => choice.hand[0].expected_zone_change_count += 1,
                 2 => {
-                    choice.unpaid = Box::new(EffectOp::LoseLife {
+                    *choice.unpaid = EffectOp::LoseLife {
                         player: crate::effect::PlayerRef::Opponent,
                         amount: 50,
-                    })
+                    }
                 }
                 3 => choice.path.push(0),
                 _ => pending.frames.push(EffectFrame::Program {
