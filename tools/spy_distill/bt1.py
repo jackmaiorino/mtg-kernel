@@ -30,13 +30,15 @@ it and the bank's parent logits (``ArchiveDistillationKeepSetsV1``). Live
 actions come from the actual log's ``hit_live`` map, which the recorder writes
 beside each hit.
 
-Voids. A game whose replay is not exact, whose check-game run ends in a tool
-error, or whose join fails at any of its tree-executed rows (its hit, node,
-counts or live map), is void: its rows leave both cells. More than one void
-game in twenty stops the step as engineering (TA1 Part B's rule). A failed
-label check stops BT1 as engineering wherever it falls, and so does any
-failure at one of the games TA1 replayed, which hold every line offer: no
-label check, and no failure at one of those games, removes a game.
+Voids. A game whose replay is not exact, whose check-game join fails, or
+whose join here fails at any of its tree-executed rows (its hit, node, counts
+or live map), is void: its rows leave both cells. More than one void game in
+twenty stops the step as engineering (TA1 Part B's rule). A check-game error
+that is not one of its join's own failures (a setup or pin error, or a crash)
+stops stage 1, as it stopped TA1. A failed label check stops BT1 as
+engineering wherever it falls, and so does any failure at one of the games
+TA1 replayed, which hold every line offer: no label check, and no failure at
+one of those games, removes a game.
 
 Commands (JSON summary on stdout):
   replays  --spec SPEC.json [--partial CHECKS.jsonl] --out REPLAYS.json
@@ -56,11 +58,14 @@ Commands (JSON summary on stdout):
       output directories DIR/LIN-BT1-T-dry, DIR/LIN-BT1-T, DIR/LIN-BT1-T-rerun
       and the same for BT1-P, once the stop rule is open on stage 2's census
       and both lineages' phase-1 exactness checks (cells.py exactness) passed
-  dry      --census CENSUS.json --lineage r1 --dry-t DRY.json --dry-p DRY.json --out CHECK.json
-      before any full run: each cell's dry run trains exactly its keep-set
-      file's rows with its keep sets and records the census's line rows, and
-      the cells have the same rows and exposure
-  fit      --spec SPEC.json --out FIT.json      sections 5, 7.2, 7.3 and 7.5
+  dry      --census CENSUS.json --lineage r1 --exact-dry DRY.json --dry-t DRY.json --dry-p DRY.json
+           --out CHECK.json
+      before any full run: each cell's dry run comes from the build and inputs
+      of the lineage's exactness dry run, trains exactly its keep-set file's
+      rows with its keep sets and records the census's line rows, and the
+      cells have the same rows and exposure
+  fit      --spec SPEC.json --out FIT.json      sections 5, 7.2, 7.3 and 7.5;
+      both cells in both lineages
   x4       --screen-index INDEX.json --screen-result RESULT.json --out X4.json
       the screen's D1L-parent points and intervals, reproduced from its own
       panels before any BT1 panel is read (exits 1 when X4 fails)
@@ -119,6 +124,11 @@ DRY_SCHEMA = "bestline-target-test-v1/dry-check"
 # TA1's check-game reports a failed label check with this text (audit_b.py,
 # LANES/teacher-target-audit-20261014/tools): a label failure stops BT1.
 LABEL_FAILURE = "the node's labels differ from the row's"
+# check-game's setup errors (audit_b.py's check_game and replay_game, and
+# audit.py's load_bank). They name the game as its join's own failures do,
+# but they are not failed joins: they stop stage 1, as they stopped TA1.
+SETUP_ERRORS = ("missing replay rows", "budget_game records in the replay rows", "replay entries in the spec",
+                "not a kept game of", "conflicting budget_game records")
 CLASSES = ("self_chosen", "self_declined", "giant_chosen", "giant_declined", "cast_offered", "other")
 CHOOSERS = ("new_root", "reused")
 CELLS = ("T", "P")
@@ -279,6 +289,22 @@ def void_reason(verdict: dict) -> str:
     if verdict.get("error") is not None:
         return f"check-game: {verdict['error']}"
     return "the replay is not exact"
+
+
+def join_failure(gid: str, error: str) -> bool:
+    """Whether a check-game tool error (exit 2) is one of its join's own
+    failures, which begin with the game's id ("GAME: ..." or "GAME step N:
+    ..."). A setup or pin error, or a crash (whose message begins with the
+    exception's type), is not: it stops stage 1, as it stopped TA1."""
+    return error.startswith((f"{gid}: ", f"{gid} step ")) and not any(s in error for s in SETUP_ERRORS)
+
+
+def check_error(where: str, gid: str, error: str) -> None:
+    """A check-game error line may only void its game when it is a failed
+    join and not a failed label check."""
+    require(LABEL_FAILURE not in error, f"{where}: check-game's label check failed ({error}); BT1 stops")
+    require(join_failure(gid, error),
+            f"{where}: check-game ended in a tool error that is not a failed join ({error}); stage 1 stops")
 
 
 def check_labels(at: str, labels: dict, row: dict, x: int, live_map) -> None:
@@ -554,10 +580,12 @@ def census(spec: dict, out_dir: Path) -> dict:
     """SPEC: {"stage": 0 | 2,
               "banks": [{"lineage": LIN, "bank": PATH, "bank_sha256": SHA}, ...],
               "verdicts": {"path": REPLAYS.json, "sha256": SHA},
+              "ta1_verdicts": {"path": TA1 REPLAYS.json, "sha256": SHA} (stage 2 only),
               "path_logs": {"LIN/GAME": DIR, ...}}
     Stage 0 reads TA1's REPLAYS.json and its retained logs; stage 2 reads
-    BT1's full REPLAYS.json, which lists every kept bank game and marks the
-    games TA1 replayed. Every log read must hash as its verdict records. A
+    BT1's full REPLAYS.json, which lists every kept bank game and must mark
+    exactly the games of TA1's pinned verdicts, each compared with TA1's
+    logs at stage 1. Every log read must hash as its verdict records. A
     game whose verdict is not exact, or whose join fails, is void; more than
     one void game in twenty stops the census as engineering before it writes
     anything. A failed label check stops it the same way, and so does a void
@@ -573,6 +601,13 @@ def census(spec: dict, out_dir: Path) -> dict:
     if live:
         require(record.get("schema") == REPLAYS_SCHEMA and record.get("partial") is False,
                 "stage 2 reads BT1's full REPLAYS.json")
+        ta1_pin = spec["ta1_verdicts"]
+        ta1_games = {(v["lineage"], v["id"]) for v in read_pinned(ta1_pin, "TA1 verdicts")["replays"]}
+        require(record["ta1_verdicts"]["sha256"] == ta1_pin["sha256"],
+                "stage 1 read other TA1 verdicts than the ones this census pins")
+        require({(v["lineage"], v["id"]) for v in record["replays"] if v["ta1"]} == ta1_games
+                and record["ta1_identity"]["games"] == len(ta1_games),
+                "REPLAYS.json does not mark exactly TA1's games, each compared with TA1's logs")
     verdicts = record["replays"]
     joined, games, voids = {}, 0, 0
     for lineage in LINEAGES:
@@ -590,6 +625,8 @@ def census(spec: dict, out_dir: Path) -> dict:
             ta1_game = v["ta1"] if live else True
             if v["exact"] is not True:
                 require(not ta1_game, f"{lineage} {v['id']}: {void_reason(v)} at a game TA1 replayed; BT1 stops")
+                if v.get("error") is not None:
+                    check_error(f"{lineage} {v['id']}", v["id"], v["error"])
                 void.append({"id": v["id"], "reason": void_reason(v)})
                 continue
             d = Path(spec["path_logs"][f"{lineage}/{v['id']}"])
@@ -664,9 +701,10 @@ def replays(spec: dict, partial=None) -> dict:
     exact, its search logs must equal TA1's file for file, and its actual log
     must equal TA1's, field for field and in order, once the live-index field
     is removed; any difference stops stage 1. Any other game that is not
-    exact, or whose check-game run ended in a tool error, is listed as void,
-    and more than one void game in twenty stops stage 1 as engineering. A
-    check-game error from its label check stops stage 1 wherever it falls.
+    exact, or whose check-game join failed, is listed as void, and more than
+    one void game in twenty stops stage 1 as engineering. A check-game error
+    that is not a failed join (a setup or pin error, or a crash), or that
+    comes from its label check, stops stage 1 wherever it falls.
     With ``partial`` (a checks file holding some of the games), only those
     games are checked, read in place of SPEC's checks: no game need be
     present, and the void count waits for the full run."""
@@ -684,8 +722,7 @@ def replays(spec: dict, partial=None) -> dict:
         if "error" in c:
             require(key not in ta1, f"{key}: check-game failed at a game TA1 replayed exactly ({c['error']}); "
                                     "stage 1 stops")
-            require(LABEL_FAILURE not in c["error"],
-                    f"{key}: check-game's label check failed ({c['error']}); BT1 stops")
+            check_error(str(key), c["id"], c["error"])
             out.append({"lineage": c["lineage"], "id": c["id"], "ta1": False, "exact": None, "error": c["error"]})
             continue
         require(c["exact"] is True or key not in ta1,
@@ -899,6 +936,28 @@ def dry_checks(lineage: str, cell: str, keep_pin: dict, targets: dict, dry: dict
     return keep, lines, masses, sorted(map(tuple, census_lines["anti"]["keys"]))
 
 
+# The recipe fields a cell's options set: the options themselves, and the
+# checkpoint schedule and epoch length that follow from them and the rows.
+CELL_RECIPE_FIELDS = ("options", "checkpoints", "epoch_steps")
+
+
+def same_build(lineage: str, cell: str, dry: dict, exact_dry: dict) -> None:
+    """Section 5: a cell's dry run comes from the build and inputs whose
+    default arm U dry run passed phase-1 exactness in this lineage (the
+    runbook's 5.4). Its identity equals that run's, build fields included,
+    apart from the recipe fields the cell's options set."""
+    require(exact_dry.get("schema") == screen.PHASE1_SCHEMA and exact_dry.get("dry_run") is True
+            and exact_dry["identity"]["lineage"] == lineage and exact_dry["identity"]["arm"] == "uniform"
+            and "options" not in exact_dry["identity"]["recipe"],
+            f"{lineage}: the exactness dry run is not this lineage's default arm U dry run")
+
+    def base(identity: dict) -> dict:
+        return {**identity, "recipe": {k: v for k, v in identity["recipe"].items() if k not in CELL_RECIPE_FIELDS}}
+
+    require(base(dry["identity"]) == base(exact_dry["identity"]),
+            f"{lineage}-{cell}: the dry run's build or inputs differ from the exactness dry run's")
+
+
 def same_batches(lineage: str, t: dict, p: dict) -> None:
     """Both cells' dry-run censuses train the same rows with the same
     exposure, so they see the same batches and differ only in their
@@ -906,25 +965,28 @@ def same_batches(lineage: str, t: dict, p: dict) -> None:
     require(all(t[k] == p[k] for k in ("arm", "exposure")), f"{lineage}: T and P differ in rows or exposure")
 
 
-def dry_check(census_path: Path, lineage: str, dry_paths: dict) -> dict:
-    """Section 5, before any full run: both cells' dry runs pass their
-    checks against the stage 2 census, whose stop rule must be open, and
-    the cells train the same rows with the same exposure."""
+def dry_check(census_path: Path, lineage: str, dry_paths: dict, exact_dry_path: Path) -> dict:
+    """Section 5, before any full run: both cells' dry runs come from the
+    build and inputs of the lineage's exactness dry run and pass their checks
+    against the stage 2 census, whose stop rule must be open, and the cells
+    train the same rows with the same exposure."""
     census_record = read_json(census_path)
     stage_3_census(census_record)
     same_rows(census_record, lineage)
     record = census_record["lineages"][lineage]
     dry = {cell: read_json(dry_paths[cell]) for cell in CELLS}
+    exact_dry = read_json(exact_dry_path)
     out = {}
     for cell in CELLS:
+        same_build(lineage, cell, dry[cell], exact_dry)
         keep, lines, _, anti = dry_checks(lineage, cell, record["keep_sets"][cell], record["targets"]["cells"][cell],
                                           dry[cell])
         out[cell] = {"dry_run": pin(Path(dry_paths[cell]).resolve()), "keep_sets": record["keep_sets"][cell],
                      "rows": len(keep["rows"]),
                      "line_rows": {"self": len(lines["self"]), "giant": len(lines["giant"]), "anti": len(anti)}}
     same_batches(lineage, dry["T"]["census"], dry["P"]["census"])
-    return {"schema": DRY_SCHEMA, "lineage": lineage, "census": pin(Path(census_path).resolve()), "cells": out,
-            "pass": True}
+    return {"schema": DRY_SCHEMA, "lineage": lineage, "census": pin(Path(census_path).resolve()),
+            "exactness_dry_run": pin(Path(exact_dry_path).resolve()), "cells": out, "pass": True}
 
 
 def cell_fit(lineage: str, cell: str, readouts: dict, keep_pin: dict, targets: dict, dry: dict, full: dict,
@@ -1068,6 +1130,14 @@ def cross_cell(readouts: dict, t: dict, p: dict) -> list:
                     "shared_self_line_rows": len(shared),
                     "on_shared_self_line_rows": {cell: deployed(at[cell], shared, "self") for cell in CELLS}})
     return out
+
+
+def whole_fit_spec(spec: dict) -> None:
+    """The selection (FIT.json) reads both cells in both lineages: a spec
+    without one would read as a lineage-dependent fit or a missing cell."""
+    require(all(isinstance(spec.get(lin), dict) and sorted(spec[lin].get("cells") or {}) == sorted(CELLS)
+                and spec[lin].get("probes") for lin in LINEAGES),
+            "the fit reads both cells in both lineages")
 
 
 def fit(spec: dict) -> dict:
@@ -1325,6 +1395,7 @@ def main(argv=None) -> int:
     d = sub.add_parser("dry")
     d.add_argument("--census", type=Path, required=True)
     d.add_argument("--lineage", required=True, choices=LINEAGES)
+    d.add_argument("--exact-dry", type=Path, required=True)
     d.add_argument("--dry-t", type=Path, required=True)
     d.add_argument("--dry-p", type=Path, required=True)
     d.add_argument("--out", type=Path, required=True)
@@ -1358,13 +1429,15 @@ def main(argv=None) -> int:
                                                  [read_json(p) for p in a.exactness], a.root).items()}
         print(json.dumps(written))
     elif a.op == "dry":
-        result = dry_check(a.census, a.lineage, {"T": a.dry_t, "P": a.dry_p})
+        result = dry_check(a.census, a.lineage, {"T": a.dry_t, "P": a.dry_p}, a.exact_dry)
         write_json(a.out, result)
         print(json.dumps({"lineage": result["lineage"], "pass": result["pass"],
                           "cells": {cell: {k: v[k] for k in ("rows", "line_rows")}
                                     for cell, v in result["cells"].items()}}))
     elif a.op == "fit":
-        result = fit(read_json(a.spec))
+        spec = read_json(a.spec)
+        whole_fit_spec(spec)
+        result = fit(spec)
         write_json(a.out, result)
         print(json.dumps({"fit_check": result["fit_check"],
                           "readings": {f"{lin}-{cell}": v["reading"] for lin, by in result["fits"].items()
