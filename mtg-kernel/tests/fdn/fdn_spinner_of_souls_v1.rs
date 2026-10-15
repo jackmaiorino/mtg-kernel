@@ -421,6 +421,13 @@ fn paid_simultaneous_wipe_keeps_departed_spinner_and_exactly_two_other_controlle
         for _ in 0..2 {
             await_choice(&mut state, actor, spinner);
             assert_eq!(state.objects.get(spinner).zone, Zone::Graveyard);
+            let facts = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+            assert!(facts.current.is_empty());
+            assert!(facts
+                .stack
+                .iter()
+                .all(|row| row.root.original_source.zone == Zone::Battlefield
+                    && row.root.current_original_source.is_none()));
             state = restore(&state);
             engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
         }
@@ -569,6 +576,182 @@ fn direct_resume_validates_paid_spinner_prompt_and_answer_before_mutation_both_s
                         );
                     }
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn v54_paid_choice_and_answer_facts_restore_without_hidden_library_or_completed_occurrences() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for accept in [false, true] {
+            let mut views = Vec::new();
+            for top in ["Llanowar Elves", "Forest"] {
+                let mut state = ready(actor, true);
+                let spinner = source(&mut state, actor);
+                let dead = victim(&mut state, actor);
+                library(&mut state, actor, &[top, "Mountain"]);
+                bolt(&mut state, actor.opponent(), dead);
+                await_choice(&mut state, actor, spinner);
+                let facts = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+                assert_eq!(facts.stack.len(), 1);
+                assert_eq!(
+                    facts.stack[0].stage,
+                    mtg_kernel::spinner_public_v54::StageV54::AwaitingReveal
+                );
+                let restored = restore(&state);
+                assert_eq!(
+                    mtg_kernel::spinner_public_v54::capture(&restored).unwrap(),
+                    facts
+                );
+                let mut erased = restore(&state);
+                let pending = erased.engine.pending_effect.as_mut().unwrap();
+                pending.choice = None;
+                pending.frames.clear();
+                pending.answered_choice_guard = None;
+                assert!(mtg_kernel::spinner_public_v54::capture(&erased).is_err());
+                let mut forged = facts.clone();
+                forged.stack[0].root.captured_controller = actor.opponent().into();
+                assert!(mtg_kernel::spinner_public_v54::validate(&state, &forged).is_err());
+                views.push(facts);
+                engine::step(&mut state, Action::ChooseEffectOption(u16::from(accept))).unwrap();
+                state = restore(&state);
+                let answered = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+                assert_eq!(
+                    answered.stack[0].stage,
+                    mtg_kernel::spinner_public_v54::StageV54::Answered { reveal: accept }
+                );
+                let mut replay = restore(&state);
+                settle(&mut state);
+                settle(&mut replay);
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+                let complete = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+                assert!(complete.stack.is_empty() && complete.held.is_empty());
+                assert!(mtg_kernel::spinner_public_v54::validate(&state, &answered).is_err());
+            }
+            assert_eq!(views[0], views[1]);
+        }
+    }
+}
+
+#[test]
+fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for mode in 0..3 {
+            let mut state = ready(actor, false);
+            let spinner = source(&mut state, actor);
+            let other = actor.opponent();
+            put(&mut state, other, "High Fae Trickster", Zone::Battlefield);
+            let (name, caster, color, pips, generic) = match mode {
+                0 => ("Involuntary Employment", other, ManaColor::R, 1, 3),
+                1 => ("Witness Protection", other, ManaColor::U, 1, 0),
+                _ => ("Self-Reflection", actor, ManaColor::U, 2, 4),
+            };
+            cast(
+                &mut state,
+                caster,
+                name,
+                color,
+                pips,
+                generic,
+                Some(spinner),
+            );
+            settle(&mut state);
+            let facts = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+            if mode == 1 {
+                assert_eq!(facts.current.len(), 1);
+                assert!(!facts.current[0].form.printed_abilities_active);
+                assert_eq!(facts.current[0].form.keyword_bits & Keywords::REACH.0, 0);
+                assert_eq!(
+                    (facts.current[0].form.power, facts.current[0].form.toughness),
+                    (Some(1), Some(1))
+                );
+                let dead = victim(&mut state, actor);
+                bolt(&mut state, other, dead);
+                settle(&mut state);
+                assert!(mtg_kernel::spinner_public_v54::capture(&state)
+                    .unwrap()
+                    .stack
+                    .is_empty());
+            } else if mode == 0 {
+                assert_eq!(facts.current[0].source.controller, other.into());
+                let dead = victim(&mut state, other);
+                bolt(&mut state, actor, dead);
+                let mut on_stack = false;
+                for _ in 0..80 {
+                    let decision = next(&mut state);
+                    if matches!(decision, Decision::CastSpellOrPass { .. })
+                        && state.stack.iter().any(|row| {
+                            row.kind == mtg_kernel::state::StackItemKind::TriggeredAbility
+                                && row.source == spinner
+                        })
+                    {
+                        on_stack = true;
+                        break;
+                    }
+                    step_priority(&mut state, decision);
+                }
+                assert!(on_stack);
+                // Change actual control again while the original trigger is on the stack.
+                cast(
+                    &mut state,
+                    actor,
+                    "Involuntary Employment",
+                    ManaColor::R,
+                    1,
+                    3,
+                    Some(spinner),
+                );
+                // Suppression after collection also leaves the published root
+                // under its captured controller. Trickster permits this real cast.
+                cast(
+                    &mut state,
+                    other,
+                    "Witness Protection",
+                    ManaColor::U,
+                    1,
+                    0,
+                    Some(spinner),
+                );
+                await_choice(&mut state, other, spinner);
+                state = restore(&state);
+                let facts = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+                assert!(!facts.current[0].form.printed_abilities_active);
+                let root = &facts.stack[0].root;
+                assert_eq!(root.captured_controller, other.into());
+                assert_eq!(
+                    root.current_original_source.as_ref().unwrap().controller,
+                    actor.into()
+                );
+                engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+                settle(&mut state);
+            } else {
+                assert_eq!(facts.current.len(), 2);
+                assert_eq!(facts.current.iter().filter(|row| row.is_token).count(), 1);
+                let dead = victim(&mut state, actor);
+                bolt(&mut state, other, dead);
+                let mut choices = 0;
+                for _ in 0..160 {
+                    let decision = next(&mut state);
+                    if let Decision::ChooseEffectOption { player, .. } = decision {
+                        assert_eq!(player, actor);
+                        let facts = mtg_kernel::spinner_public_v54::capture(&state).unwrap();
+                        assert_eq!(facts.stack.len(), 2 - choices);
+                        state = restore(&state);
+                        engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+                        choices += 1;
+                        if choices == 2 {
+                            break;
+                        }
+                    } else {
+                        step_priority(&mut state, decision);
+                    }
+                }
+                assert_eq!(choices, 2);
+                settle(&mut state);
             }
         }
     }

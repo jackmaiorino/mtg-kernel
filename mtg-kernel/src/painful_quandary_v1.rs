@@ -395,3 +395,125 @@ fn direct_resume_validates_genuine_discard_prompt_and_answer_before_mutation_bot
         }
     }
 }
+
+#[test]
+fn v55_paid_private_payment_and_answer_facts_restore_and_refuse_tampered_dto_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for pay in [false, true] {
+            let mut opponent_views = Vec::new();
+            for name in ["Lightning Bolt", "Llanowar Elves"] {
+                let (mut state, source) = paid_quandary(actor);
+                let payer = actor.opponent();
+                let card = put(&mut state, payer, name, Zone::Hand);
+                cast_think_twice(&mut state, payer);
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+                payment(&mut state, payer);
+                let public = crate::quandary_public_v55::capture(&state, actor).unwrap();
+                let own = crate::quandary_public_v55::capture(&state, payer).unwrap();
+                let mut erased = state.clone();
+                let pending = erased.engine.pending_effect.as_mut().unwrap();
+                pending.choice = None;
+                pending.frames.clear();
+                pending.answered_choice_guard = None;
+                assert!(crate::quandary_public_v55::capture(&erased, actor).is_err());
+                assert!(public.current.is_empty());
+                assert_eq!(public.stack[0].root.captured_controller, actor.into());
+                assert!(public.stack[0].root.current_original_source.is_none());
+                let crate::quandary_public_v55::StageV55::AwaitingPayment { payer_hand, .. } =
+                    &public.stack[0].stage
+                else {
+                    panic!("public payment stage")
+                };
+                assert!(payer_hand.is_none());
+                let crate::quandary_public_v55::StageV55::AwaitingPayment {
+                    payer_hand: Some(hand),
+                    minimum: 0,
+                    maximum: 1,
+                    ..
+                } = &own.stack[0].stage
+                else {
+                    panic!("payer stage")
+                };
+                assert_eq!(hand.original_hand.len(), 1);
+                assert_eq!(hand.original_hand[0].object, card.0);
+                let bytes = serde_json::to_vec(&state).unwrap();
+                let mut replay: GameState = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    crate::quandary_public_v55::capture(&replay, actor).unwrap(),
+                    public
+                );
+                let dto: crate::quandary_public_v55::FactsV55 =
+                    serde_json::from_slice(&serde_json::to_vec(&own).unwrap()).unwrap();
+                crate::quandary_public_v55::validate(&state, payer, &dto).unwrap();
+                assert!(crate::quandary_public_v55::validate(&state, actor, &dto).is_err());
+                let mut forged = public.clone();
+                forged.stack[0].root.captured_controller = payer.into();
+                let before = serde_json::to_vec(&state).unwrap();
+                assert!(crate::quandary_public_v55::validate(&state, actor, &forged).is_err());
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+                opponent_views.push(public);
+                for game in [&mut state, &mut replay] {
+                    if pay {
+                        engine::step(game, Action::ChooseEffectTarget(Target::Object(card)))
+                            .unwrap();
+                    } else {
+                        engine::step(game, Action::FinishEffectSelection).unwrap();
+                    }
+                    let other = crate::quandary_public_v55::capture(game, actor).unwrap();
+                    let own = crate::quandary_public_v55::capture(game, payer).unwrap();
+                    assert!(matches!(
+                        other.stack[0].stage,
+                        crate::quandary_public_v55::StageV55::Answered {
+                            payer_selected: None,
+                            ..
+                        }
+                    ));
+                    let crate::quandary_public_v55::StageV55::Answered {
+                        payer_selected: Some(selected),
+                        ..
+                    } = &own.stack[0].stage
+                    else {
+                        panic!("private answered stage")
+                    };
+                    assert_eq!(selected.len(), usize::from(pay));
+                    *game = serde_json::from_slice(&serde_json::to_vec(game).unwrap()).unwrap();
+                    drain(game);
+                    assert_eq!(game.players[payer.index()].life, if pay { 20 } else { 15 });
+                    let complete = crate::quandary_public_v55::capture(game, actor).unwrap();
+                    assert!(complete.stack.is_empty() && complete.held.is_empty());
+                }
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&replay).unwrap()
+                );
+            }
+            assert_eq!(opponent_views[0], opponent_views[1]);
+        }
+    }
+}
+
+#[test]
+fn v55_genuine_spell_copy_is_not_a_cast_and_public_facts_keep_no_extra_root_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = paid_quandary(actor);
+        let spell = cast_think_twice(&mut state, actor);
+        engine::copy_spell_for(&mut state, spell, actor.opponent()).unwrap();
+        engine::advance_until_decision(&mut state);
+        for viewer in [actor, actor.opponent()] {
+            let facts = crate::quandary_public_v55::capture(&state, viewer).unwrap();
+            assert_eq!(facts.current.len(), 1);
+            assert!(facts.held.is_empty() && facts.stack.is_empty());
+        }
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        drain(&mut state);
+        drain(&mut restored);
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
