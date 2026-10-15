@@ -232,12 +232,20 @@ class Temp(unittest.TestCase):
             out.append({"lineage": value["lineage"], "bank": pin["path"], "bank_sha256": pin["sha256"]})
         return out
 
-    def verdicts(self, dirs, name="REPLAYS.json", void=()):
+    def verdicts(self, dirs, name="REPLAYS.json", void=(), ta1=None, errors=()):
+        """TA1's replay verdicts (stage 0) or, given ``ta1`` (the "LIN/GAME"
+        keys TA1 replayed), BT1's REPLAYS.json (stage 2); ``void`` games are
+        not exact and ``errors`` games ended check-game in a tool error."""
         replays = [{"lineage": key.split("/")[0], "id": key.split("/")[1], "exact": True, "first_difference": None,
                     "path_logs_sha256": bt1.log_hashes(d)} for key, d in dirs.items()]
         replays += [{"lineage": lin, "id": gid, "exact": False, "first_difference": "$.game.result"}
                     for lin, gid in void]
-        return write(self.root / name, {"schema": "verdicts", "replays": replays})
+        replays += [{"lineage": lin, "id": gid, "exact": None, "error": "boom"} for lin, gid in errors]
+        if ta1 is None:
+            return write(self.root / name, {"schema": "verdicts", "replays": replays})
+        for v in replays:
+            v["ta1"] = f"{v['lineage']}/{v['id']}" in ta1
+        return write(self.root / name, {"schema": bt1.REPLAYS_SCHEMA, "partial": False, "replays": replays})
 
 
 class Evidence(Temp):
@@ -413,9 +421,7 @@ class Join(Temp):
             ([{**row, "step": 6}, plain], "0 actual-log hits"),
             ([{**row, "k": 3}, plain], "differ from the row's menu"),
             ([{**row, "edge_backups": 23}, plain], "tries differ from edge_backups"),
-            ([{**row, "line": {**row["line"], "self_chosen": False}}, plain], "spy_self flags"),
             ([{**row, "target": 0}, plain], "live action differs from the target"),
-            ([{**row, "self_actions": [3]}, plain], "spy_self edges' live actions differ"),
             ([row, {**plain, "target": 0}], "step 9: the executed edge's live action differs"),
             ([row, {**plain, "chooser": "new_root", "k": 2}], None),
         ]
@@ -435,8 +441,6 @@ class Join(Temp):
             ("missing", [line_tree], [(0, 5, "zz", LIVE)], [row], "not in search 0's log"),
             ("index", [self.first_tree(), flat_tree], [(5, 5, "aa", LIVE), (1, 9, "ff", [1, 0])], self.r1,
              "the hit names no search"),
-            ("other", [self.first_tree({"spy_self": [0], "spy_other": [0, 1]}), flat_tree],
-             [(0, 5, "aa", LIVE), (1, 9, "ff", [1, 0])], self.r1, "opponent-target edge maps to a self-target"),
         ]
         for tag, searches, hits, rows, message in games:
             with self.assertRaisesRegex(bt1.Void, message):
@@ -444,6 +448,26 @@ class Join(Temp):
         (self.d / "g1-1.search.json").unlink()
         with self.assertRaisesRegex(bt1.Void, "search 1: 0 search logs"):
             self.rows(self.d, self.r1)
+
+    def test_a_label_check_that_fails_stops_bt1_and_voids_nothing(self):
+        """No label check removes a game: a failure raises ValueError, which
+        no census catches, rather than Void."""
+        row, plain = self.r1
+        cases = [
+            ([{**row, "line": {**row["line"], "self_chosen": False}}, plain],
+             "the node's labels differ from the row's spy_self flags; BT1 stops"),
+            ([{**row, "self_actions": [3]}, plain], "spy_self edges' live actions differ from the row's; BT1 stops"),
+            ([{**row, "line": {**row["line"], "giant_offered": True}}, plain], "row's dr_giant flags"),
+        ]
+        for rows, message in cases:
+            with self.assertRaisesRegex(ValueError, message):
+                self.rows(self.d, rows)
+        other = self.game(self.root / "other", "r1", "g1",
+                          [self.first_tree({"spy_self": [0], "spy_other": [0, 1]}), flat_tree],
+                          [(0, 5, "aa", LIVE), (1, 9, "ff", [1, 0])])
+        with self.assertRaisesRegex(ValueError, "opponent-target edge maps to a self-target action; BT1 stops"):
+            self.rows(other, self.r1)
+        self.assertNotIsInstance(bt1.Void("x"), ValueError)
 
     def test_logs_whose_counts_or_paths_are_broken_void_the_game(self):
         original = json.loads((self.d / "g1-0.search.json").read_text())
@@ -531,7 +555,7 @@ class Census(Temp):
     def test_stage_2_writes_both_cells_keep_sets_and_target_measures(self):
         dirs = self.world()
         out = self.root / "census2"
-        result = bt1.census(self.spec(2, dirs, self.verdicts(dirs)), out)
+        result = bt1.census(self.spec(2, dirs, self.verdicts(dirs, ta1=())), out)
         p = softmax(LOGITS)
         targets = result["lineages"]["r1"]["targets"]
         self.assertEqual((targets["evidence_rows"], targets["parent_top_differs"]), (1, 1))
@@ -568,7 +592,8 @@ class Census(Temp):
 
     def test_anti_line_and_giant_line_rows_are_counted(self):
         dirs = self.world(r1="giant", r2="anti")
-        result = bt1.census(self.spec(2, dirs, self.verdicts(dirs), self.banks(r1="giant", r2="anti")), self.root / "c")
+        result = bt1.census(self.spec(2, dirs, self.verdicts(dirs, ta1=()), self.banks(r1="giant", r2="anti")),
+                            self.root / "c")
         r1, r2 = result["lineages"]["r1"], result["lineages"]["r2"]
         self.assertEqual(r1["rules"]["bestline8"]["giant_offers"]["chosen"],
                          {"offers": 1, "giant_leads": 1, "giant_leads_rival_separated": 1, "other_separated": 1,
@@ -595,10 +620,11 @@ class Census(Temp):
         the counts that read labels change."""
         banks = self.banks(r2="anti")
         dirs = self.world(r2="anti")
-        labelled = bt1.census(self.spec(2, dirs, self.verdicts(dirs), banks), self.root / "labelled")
+        labelled = bt1.census(self.spec(2, dirs, self.verdicts(dirs, ta1=()), banks), self.root / "labelled")
         bare = self.world(tag="bare", r2="anti", labels=False)
         with mock.patch.object(bt1, "check_labels") as check:
-            unlabelled = bt1.census(self.spec(2, bare, self.verdicts(bare, "BARE.json"), banks), self.root / "bare")
+            unlabelled = bt1.census(self.spec(2, bare, self.verdicts(bare, "BARE.json", ta1=()), banks),
+                                    self.root / "bare")
         self.assertEqual(check.call_count, 3)
         for name in ("KEEP-T-r1.json", "KEEP-P-r1.json", "KEEP-T-r2.json", "KEEP-P-r2.json"):
             self.assertEqual((self.root / "labelled" / name).read_bytes(), (self.root / "bare" / name).read_bytes())
@@ -609,17 +635,20 @@ class Census(Temp):
 
     def test_the_census_reads_only_verified_logs_and_stage_2_needs_every_kept_game(self):
         dirs = self.world()
-        verdicts = self.verdicts(dirs)
+        verdicts = self.verdicts(dirs, ta1=())
         with self.assertRaisesRegex(ValueError, "every kept bank game"):
             bt1.census(self.spec(2, dirs, verdicts, self.banks(extra_r2=["g3"])), self.root / "a")
-        void = self.verdicts(dirs, "VOID.json", void=[("r2", "g3")])
-        with mock.patch.object(bt1, "VOID_RATIO", 3):
-            result = bt1.census(self.spec(2, dirs, void, self.banks(extra_r2=["g3"])), self.root / "b")
-        self.assertEqual(result["lineages"]["r2"]["void_games"], [{"id": "g3", "reason": "the replay is not exact"}])
+        void = self.verdicts(dirs, "VOID.json", void=[("r2", "g3")], errors=[("r2", "g4")], ta1=())
+        with mock.patch.object(bt1, "VOID_RATIO", 2):
+            result = bt1.census(self.spec(2, dirs, void, self.banks(extra_r2=["g3", "g4"])), self.root / "b")
+        self.assertEqual(result["lineages"]["r2"]["void_games"], [{"id": "g3", "reason": "the replay is not exact"},
+                                                                  {"id": "g4", "reason": "check-game: boom"}])
         self.assertEqual((result["lineages"]["r2"]["games"], result["lineages"]["r2"]["void_rows"]), (1, 0))
         foreign = self.verdicts(dirs, "FOREIGN.json", void=[("r2", "g9")])
         with self.assertRaisesRegex(ValueError, "names no kept game"):
             bt1.census(self.spec(0, dirs, foreign), self.root / "c")
+        with self.assertRaisesRegex(ValueError, "stage 2 reads BT1's full REPLAYS.json"):
+            bt1.census(self.spec(2, dirs, self.verdicts(dirs, "TA1-STYLE.json")), self.root / "f")
         value = json.loads((dirs["r1/g1"] / "g1-1.search.json").read_text())
         value["select_cap"] = 7
         write(dirs["r1/g1"] / "g1-1.search.json", value)
@@ -633,11 +662,11 @@ class Census(Temp):
         # g1's actual log lost its step-9 hit: the join fails there, so the whole game is void.
         dirs["r1/g1"] = self.game(self.root / "broken" / "r1-g1", "r1", "g1",
                                   [lambda *a: line_tree(*a, labels=SELF_LABELS), flat_tree], [(0, 5, "aa", LIVE)])
-        verdicts = self.verdicts(dirs)
+        verdicts = self.verdicts(dirs, ta1=())
         with self.assertRaisesRegex(ValueError, "engineering: 1 of 2 games are void"):
             bt1.census(self.spec(2, dirs, verdicts), self.root / "a")
         self.assertFalse((self.root / "a").exists())
-        void = self.verdicts(dirs, "VOID.json", void=[("r2", "g3")])
+        void = self.verdicts(dirs, "VOID.json", void=[("r2", "g3")], ta1=())
         with mock.patch.object(bt1, "VOID_RATIO", 2), self.assertRaisesRegex(ValueError, "2 of 3 games are void"):
             bt1.census(self.spec(2, dirs, void, self.banks(extra_r2=["g3"])), self.root / "b")
         with mock.patch.object(bt1, "VOID_RATIO", 2):
@@ -647,6 +676,36 @@ class Census(Temp):
         self.assertEqual((r1["games"], r1["void_rows"], r1["rules"]["bestline8"]["rows"]), (0, 2, 0))
         self.assertEqual(json.loads((self.root / "c" / "KEEP-T-r1.json").read_text())["rows"], [])
         self.assertEqual(result["stop_rule"]["self_leads_other_separated"]["r1"], 0)
+
+    def test_a_failure_at_a_game_ta1_replayed_or_a_failed_label_check_stops_the_census(self):
+        """TA1's games hold every line offer, so none of them may leave the
+        cells: a join failure there stops the census (at stage 0 every game is
+        one of them), and so does a verdict that is not exact. A label check
+        that fails stops it anywhere."""
+        dirs = self.world()
+        broken = self.game(self.root / "broken" / "r1-g1", "r1", "g1",
+                           [lambda *a: line_tree(*a, labels=SELF_LABELS), flat_tree], [(0, 5, "aa", LIVE)])
+        with mock.patch.object(bt1, "VOID_RATIO", 2):
+            with self.assertRaisesRegex(ValueError, "r1 g1 step 9: 0 actual-log hits: the join failed at a game TA1 "
+                                                    "replayed; BT1 stops"):
+                bt1.census(self.spec(2, {**dirs, "r1/g1": broken},
+                                     self.verdicts({**dirs, "r1/g1": broken}, "TA1-GAME.json", ta1={"r1/g1"})),
+                           self.root / "a")
+            stage0 = self.world(live=False, tag="v1")
+            broken0 = self.game(self.root / "broken0" / "r1-g1", "r1", "g1",
+                                [lambda *a: line_tree(*a, labels=SELF_LABELS), flat_tree], [(0, 5, "aa", None)],
+                                live=False)
+            with self.assertRaisesRegex(ValueError, "the join failed at a game TA1 replayed"):
+                bt1.census(self.spec(0, {**stage0, "r1/g1": broken0},
+                                     self.verdicts({**stage0, "r1/g1": broken0}, "STAGE0.json")), self.root / "b")
+            void = self.verdicts(dirs, "VOID.json", void=[("r2", "g3")], ta1={"r2/g3"})
+            with self.assertRaisesRegex(ValueError, "r2 g3: the replay is not exact at a game TA1 replayed"):
+                bt1.census(self.spec(2, dirs, void, self.banks(extra_r2=["g3"])), self.root / "c")
+            for stage, d, verdicts in ((0, stage0, self.verdicts(stage0, "S0.json")),
+                                       (2, dirs, self.verdicts(dirs, "S2.json", ta1=()))):
+                with self.assertRaisesRegex(ValueError, "the node's labels differ from the row's spy_self flags"):
+                    bt1.census(self.spec(stage, d, verdicts, self.banks(r1="anti")), self.root / f"labels{stage}")
+        self.assertFalse(any((self.root / name).exists() for name in ("a", "b", "c", "labels0", "labels2")))
 
     def test_the_cli_prints_the_stop_rule(self):
         dirs = self.world(live=False)
@@ -692,17 +751,80 @@ class Replays(Temp):
     def test_every_kept_game_is_checked_and_ta1s_games_keep_their_logs(self):
         result = bt1.replays(self.spec(self.checks()))
         self.assertEqual(result["games"], {"r1": 1, "r2": 2})
-        self.assertEqual(result["void"], [{"lineage": "r2", "id": "g3", "first_difference": "$.game.result"}])
+        self.assertEqual(result["void"], [{"lineage": "r2", "id": "g3", "reason": "the replay is not exact",
+                                           "first_difference": "$.game.result"}])
         self.assertEqual(result["ta1_identity"], {"games": 1, "search_logs": 2})
-        self.assertEqual([(v["lineage"], v["id"]) for v in result["replays"]], [("r1", "g1"), ("r2", "g2"),
-                                                                                  ("r2", "g3")])
+        self.assertEqual((result["partial"], result["ta1_verdicts"]), (False, self.ta1))
+        self.assertEqual([(v["lineage"], v["id"], v["ta1"]) for v in result["replays"]],
+                         [("r1", "g1", True), ("r2", "g2", False), ("r2", "g3", False)])
         self.assertNotIn("path_logs_sha256", result["replays"][2])
         new_actual = json.loads((self.new["r1/g1"] / "g1.actual.json").read_text())
         self.assertEqual(list(bt1.without_live(new_actual)),
                          list(json.loads((self.old["r1/g1"] / "g1.actual.json").read_text())))
         with mock.patch.object(bt1, "VOID_RATIO", 20), \
-                self.assertRaisesRegex(ValueError, "engineering: 1 of 3 replays are not exact"):
+                self.assertRaisesRegex(ValueError, "engineering: 1 of 3 games are void"):
             bt1.replays(self.spec(self.checks()))
+
+    def test_a_ta1_game_that_is_not_exact_or_fails_check_game_stops_stage_1(self):
+        checks = self.checks()
+        checks[0] = {**checks[0], "exact": False, "first_difference": "$.game.result"}
+        del checks[0]["path_logs_sha256"]
+        with self.assertRaisesRegex(ValueError, "TA1 replayed this game exactly and this replay is not exact"):
+            bt1.replays(self.spec(checks))
+        checks[0] = {"lineage": "r1", "id": "g1", "error": "g1 step 5: a new_root hit is not its search's root"}
+        with self.assertRaisesRegex(ValueError, "check-game failed at a game TA1 replayed exactly"):
+            bt1.replays(self.spec(checks))
+        # The same error at a game TA1 did not replay voids it.
+        self.ta1 = self.verdicts({}, "NO-TA1.json")
+        with mock.patch.object(bt1, "VOID_RATIO", 1):
+            result = bt1.replays(self.spec(checks))
+        self.assertEqual([(v["id"], v["reason"]) for v in result["void"]],
+                         [("g1", "check-game: g1 step 5: a new_root hit is not its search's root"),
+                          ("g3", "the replay is not exact")])
+        self.assertEqual(result["ta1_identity"], {"games": 0, "search_logs": 0})
+
+    def test_a_check_game_error_voids_any_other_game_unless_its_label_check_failed(self):
+        checks = self.checks()
+        checks[2] = {"lineage": "r2", "id": "g3", "error": "g3 step 4: the hit's node is not in search 0's log"}
+        result = bt1.replays(self.spec(checks))
+        self.assertEqual(result["void"], [{"lineage": "r2", "id": "g3",
+                                           "reason": "check-game: g3 step 4: the hit's node is not in search 0's log",
+                                           "first_difference": None}])
+        self.assertEqual(result["replays"][2], {"lineage": "r2", "id": "g3", "ta1": False, "exact": None,
+                                                "error": "g3 step 4: the hit's node is not in search 0's log"})
+        checks[1] = {"lineage": "r2", "id": "g2", "error": "g2 step 3: the node's labels differ from the row's "
+                                                           "self_target flags"}
+        with self.assertRaisesRegex(ValueError, "r2', 'g2'\\): check-game's label check failed"):
+            bt1.replays(self.spec(checks))
+        with mock.patch.object(bt1, "VOID_RATIO", 20), \
+                self.assertRaisesRegex(ValueError, "engineering: 1 of 3 games are void"):
+            bt1.replays(self.spec(self.checks()[:2] + [checks[2]]))
+
+    def test_partial_checks_read_only_their_own_games(self):
+        """Stage 1's per-game check: the games of a partial checks file, with
+        TA1's identity for a TA1 game, no completeness check and no void
+        count."""
+        checks = self.checks()
+        partial = self.root / "partial.jsonl"
+        partial.write_text(json.dumps(checks[0]) + "\n")
+        result = bt1.replays(self.spec([]), partial)
+        self.assertEqual((result["partial"], result["games"], result["ta1_identity"]),
+                         (True, {"r1": 1, "r2": 0}, {"games": 1, "search_logs": 2}))
+        partial.write_text(json.dumps(checks[2]) + "\n")
+        with mock.patch.object(bt1, "VOID_RATIO", 20):
+            self.assertEqual(len(bt1.replays(self.spec([]), partial)["void"]), 1)
+        d = self.new["r1/g1"]
+        value = json.loads((d / "g1-0.search.json").read_text())
+        value["select_cap"] = 7
+        write(d / "g1-0.search.json", value)
+        partial.write_text(json.dumps(self.checks()[0]) + "\n")
+        with self.assertRaisesRegex(ValueError, "a search log differs from TA1's"):
+            bt1.replays(self.spec([]), partial)
+        spec = write(self.root / "spec.json", self.spec([]))
+        with mock.patch("builtins.print"), self.assertRaisesRegex(ValueError, "a search log differs from TA1's"):
+            bt1.main(["replays", "--spec", spec["path"], "--partial", str(partial), "--out", str(self.root / "o")])
+        with mock.patch("builtins.print"), self.assertRaisesRegex(ValueError, "kept games with no check"):
+            bt1.main(["replays", "--spec", spec["path"], "--out", str(self.root / "o")])
 
     def test_any_difference_from_ta1_or_a_missing_game_stops_stage_1(self):
         checks = self.checks()
@@ -738,8 +860,11 @@ class Replays(Temp):
             bt1.replays(self.spec(self.checks()))
 
 
+EXACT = [{"lineage": lin, "arm": "uniform", "pass": True} for lin in ("r1", "r2")]
+
+
 class Commands(Temp):
-    def census_record(self, stage=2, p_rows=None):
+    def census_record(self, stage=2, p_rows=None, stop=False):
         rows = [{"game": "g", "step": 1, "keep": [0, 1]}]
         keep = {cell: write(self.root / "census" / f"KEEP-{cell}-r1.json",
                             {"schema": bt1.KEEP_SETS_SCHEMA, "lineage": "r1", "bank_rows_sha256": "x",
@@ -747,7 +872,7 @@ class Commands(Temp):
                 for cell in ("T", "P")}
         bank_pin = write(self.root / "bank.json", {"bank": 1})
         return {"schema": bt1.CENSUS_SCHEMA, "stage": stage, "banks": {"r1": bank_pin},
-                "lineages": {"r1": {"keep_sets": keep}}}
+                "lineages": {"r1": {"keep_sets": keep}}, "stop_rule": {"stop": stop}}
 
     def source(self):
         return {"play_import": {"path": "p.json", "sha256": "1" * 64}, "feature_transfer": {},
@@ -757,7 +882,7 @@ class Commands(Temp):
         record = self.census_record()
         games = self.root / "games.jsonl"
         games.write_text('{"id":"g"}\n')
-        written = bt1.commands("r1", self.source(), games, self.root / "bank.json", {"training": []}, record,
+        written = bt1.commands("r1", self.source(), games, self.root / "bank.json", {"training": []}, record, EXACT,
                                str(self.root / "phase1"))
         self.assertEqual(sorted(written), ["BT1-P", "BT1-P-dry", "BT1-P-rerun", "BT1-T", "BT1-T-dry",
                                            "BT1-T-rerun"])
@@ -771,16 +896,23 @@ class Commands(Temp):
         self.assertNotIn("update_scope", full)
         self.assertTrue(rerun["output_directory"].endswith("/phase1/r1-BT1-T-rerun"))
         with self.assertRaisesRegex(ValueError, "not the census's bank"):
-            bt1.commands("r1", self.source(), games, games, {}, record, "d")
+            bt1.commands("r1", self.source(), games, games, {}, record, EXACT, "d")
         with self.assertRaisesRegex(ValueError, "not the stage 2 census"):
-            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, self.census_record(0), "d")
+            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, self.census_record(0), EXACT, "d")
+        with self.assertRaisesRegex(ValueError, "the stop rule binds on stage 2's census: BT1 stops"):
+            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, self.census_record(stop=True),
+                         EXACT, "d")
+        for exactness in (EXACT[:1], [EXACT[0], {**EXACT[1], "pass": False}], [EXACT[0], EXACT[0]],
+                          [EXACT[0], {**EXACT[1], "arm": "line"}], [EXACT[0], {"arm": "uniform", "pass": True}]):
+            with self.assertRaisesRegex(ValueError, "phase-1 exactness has not passed in both lineages"):
+                bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, record, exactness, "d")
         shifted = self.census_record(p_rows=[{"game": "g", "step": 2, "keep": [0]}])
         with self.assertRaisesRegex(ValueError, "T and P list different rows"):
-            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, shifted, "d")
+            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, shifted, EXACT, "d")
         record = self.census_record()
         (self.root / "census" / "KEEP-P-r1.json").write_text("{}")
         with self.assertRaisesRegex(ValueError, "keep sets: .* is missing or differs"):
-            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, record, "d")
+            bt1.commands("r1", self.source(), games, self.root / "bank.json", {}, record, EXACT, "d")
 
     def test_the_cli_writes_the_commands_and_phase1_takes_keep_sets_alone(self):
         record = write(self.root / "CENSUS.json", self.census_record())
@@ -788,10 +920,11 @@ class Commands(Temp):
         games.write_text('{"id":"g"}\n')
         write(parent, self.source())
         write(anchor, {"training": []})
+        exact = [write(self.root / f"exact-{e['lineage']}.json", e)["path"] for e in EXACT]
         with mock.patch("builtins.print"):
             bt1.main(["commands", "--lineage", "r1", "--parent", str(parent), "--games", str(games), "--bank",
                       str(self.root / "bank.json"), "--anchor", str(anchor), "--census", record["path"],
-                      "--root", str(self.root / "phase1"), "--out-dir", str(self.root / "cmds")])
+                      "--exactness", *exact, "--root", str(self.root / "phase1"), "--out-dir", str(self.root / "cmds")])
         command = json.loads((self.root / "cmds" / "r1-BT1-P-dry.command.json").read_text())
         self.assertEqual(command["options"]["cell"], "BT1-P")
         keep = self.root / "census" / "KEEP-T-r1.json"
@@ -887,10 +1020,11 @@ class Fit(Temp):
                               gap=1.0 if collapse_from and s >= collapse_from else 4.0) for s in STEPS]
         return paths, candidates
 
-    def spec(self, runs, keep=None, screen_floors=None, stage=2, missing=None, census_self=None):
+    def spec(self, runs, keep=None, screen_floors=None, stage=2, missing=None, census_self=None, stop=False):
         """runs[lineage][cell] = keyword arguments of ``cell_run``."""
         keep = keep or KEEP
-        spec, screen_fit, census = {}, {"fits": {}}, {"schema": bt1.CENSUS_SCHEMA, "stage": stage, "lineages": {}}
+        spec, screen_fit = {}, {"fits": {}}
+        census = {"schema": bt1.CENSUS_SCHEMA, "stage": stage, "lineages": {}, "stop_rule": {"stop": stop}}
         for lineage, by_cell in runs.items():
             pins = {cell: self.keep_file(lineage, cell, keep[cell]) for cell in bt1.CELLS}
             census["lineages"][lineage] = {
@@ -995,6 +1129,19 @@ class Fit(Temp):
         result = bt1.fit(self.spec({"r1": {"T": {"collapse_from": 32}, "P": {"collapse_from": 32}}}))
         self.assertEqual(result["t_against_p"]["per_lineage"]["r1"]["ordering"], bt1.cells.SAME)
         self.assertEqual(result["t_against_p"]["per_lineage"]["r1"]["wording"], bt1.ORDER_WORDING[bt1.cells.SAME])
+        self.assertEqual((result["fits"]["r1"]["T"]["reading"], result["fits"]["r1"]["T"]["explanations"]),
+                         (bt1.COLLAPSE_FIRST["T"][0] + ", on 1 self line row", bt1.COLLAPSE_FIRST["T"][1]))
+        result = bt1.fit(self.spec({"r1": {"T": {}}}))
+        self.assertEqual((result["fits"]["r1"]["T"]["reading"], result["fits"]["r1"]["T"]["explanations"]),
+                         (bt1.NOT_FIT["T"][0] + ", on 1 self line row", bt1.NOT_FIT["T"][1]))
+        # Engineering comes first, also for a cell with no self line row.
+        result = bt1.fit(self.spec({"r1": {"T": {"rerun_hash": "other"}}}, keep=none))
+        self.assertEqual((result["fits"]["r1"]["T"]["reading"], result["fits"]["r1"]["T"]["explanations"]),
+                         (bt1.screen.ENGINEERING, []))
+        # A pattern no row of 7.2 describes reads as no match.
+        read = [{"G1'": {"pass": True}, "G2": {"pass": True}, "G3": {"pass": True}}]
+        self.assertEqual(bt1.fit_reading("T", {"self": [("g1", 5)] * 3}, read, [{"step": 32}], None, None),
+                         (bt1.screen.NO_MATCH, []))
 
     def test_every_run_must_be_its_cell_on_its_keep_sets(self):
         cases = [
@@ -1023,6 +1170,38 @@ class Fit(Temp):
         lost = {**KEEP, "T": [("g1", 7, [1, 2, 3], 0.74)] + KEEP["T"][1:]}
         with self.assertRaisesRegex(ValueError, "not among the probe's line rows"):
             bt1.fit(self.spec({"r1": {"T": {}}}, keep=lost))
+        with self.assertRaisesRegex(ValueError, "the stop rule binds on stage 2's census: BT1 stops"):
+            bt1.fit(self.spec({"r1": {"T": {}, "P": {}}}, stop=True))
+
+    def test_the_dry_check_reads_both_cells_dry_runs_against_the_census(self):
+        spec = self.spec({"r1": {"T": {}, "P": {}}})
+        dry = {cell: run["dry"] for cell, run in spec["r1"]["cells"].items()}
+        out = self.root / "dry-check.json"
+        with mock.patch("builtins.print") as printed:
+            self.assertEqual(bt1.main(["dry", "--census", spec["census"], "--lineage", "r1", "--dry-t", dry["T"],
+                                       "--dry-p", dry["P"], "--out", str(out)]), 0)
+        result = json.loads(out.read_text())
+        self.assertEqual((result["schema"], result["lineage"], result["pass"]), (bt1.DRY_SCHEMA, "r1", True))
+        self.assertEqual(result["census"]["sha256"], hashlib.sha256(Path(spec["census"]).read_bytes()).hexdigest())
+        self.assertEqual({cell: (v["rows"], v["line_rows"]) for cell, v in result["cells"].items()},
+                         {"T": (3, {"self": 1, "giant": 0, "anti": 1}), "P": (3, {"self": 1, "giant": 0, "anti": 1})})
+        self.assertEqual(result["cells"]["T"]["dry_run"]["sha256"], hashlib.sha256(Path(dry["T"]).read_bytes())
+                         .hexdigest())
+        self.assertEqual(json.loads(printed.call_args[0][0])["cells"]["P"]["rows"], 3)
+        cases = [
+            ({"T": {"dry_keep": [("g1", 5, [1, 2], 0.7)] + KEEP["T"][1:]}}, {},
+             "keep rows differ from the keep-set file"),
+            ({"T": {"options": {"cell": "BT1-P", "keep_sets": {"sha256": "0" * 64}, "checkpoint_steps": STEPS}}}, {},
+             "options differ from the design's"),
+            ({"T": {"exposure": [{"step": 9}]}}, {}, "T and P differ in rows or exposure"),
+            ({}, {"census_self": {"P": [("g2", 3)]}}, "r1-P: the census's self line rows differ from the engine's"),
+            ({}, {"stop": True}, "the stop rule binds"),
+        ]
+        for runs, kwargs, message in cases:
+            spec = self.spec({"r1": {"T": {}, "P": {}, **runs}}, **kwargs)
+            with self.assertRaisesRegex(ValueError, message):
+                bt1.dry_check(Path(spec["census"]), "r1",
+                              {cell: Path(run["dry"]) for cell, run in spec["r1"]["cells"].items()})
 
 
 # ---------------------------------------------------------------- panels
@@ -1052,7 +1231,7 @@ class Panels(panels_fixture.Fixture):
                 pairs[f"{ck}-vs-{opp}"] = {"rows.jsonl": {"new": rows if opp == "T1" else "e" * 64, "recorded": rows},
                                            "labels.jsonl": {"new": labels, "recorded": labels}}
                 if opp == "H":
-                    h_pairs[f"{ck}-vs-H"] = {"rows_bytes_equal": holds,
+                    h_pairs[f"{ck}-vs-H"] = {"rows_bytes_equal": holds, "new_rows_sha256": "e" * 64,
                                              "restored_rows_sha256": rows if holds else "d" * 64,
                                              "recorded_rows_sha256": rows, "failure_count": 0 if holds else 2}
         return {"panel_identity": write(base / "PANEL-IDENTITY.json", {"pairs": pairs}),
@@ -1084,13 +1263,14 @@ class Panels(panels_fixture.Fixture):
         fit_check = {cell: ("passes in both lineages" if cell in cells and len(lineages) == 2 else
                             "lineage-dependent fit" if cell in cells else "passes in neither lineage")
                      for cell in ("T", "P")}
+        passes = {cell: [lin for lin in ("r1", "r2") if cell in cells and lin in lineages] for cell in ("T", "P")}
         spec = {"screen_index": index, "screen_result": result, "x4": x4,
                 "identity": self.identity(base, screen, holds), "entries": entries}
         if not holds:
             spec["controls"] = {lin: [self.panel(f"{lin}-{role}", opp, half if role == "D1L" else never,
                                                  where="rerun") for role in bt1.CONTROLS for opp in ("T1", "H")]
                                 for lin in ("r1", "r2")}
-        return spec, {"fits": fits, "fit_check": fit_check}
+        return spec, {"fits": fits, "fit_check": fit_check, "passes": passes}
 
     def test_d1_of_each_passing_cell_is_read_against_the_parent(self):
         spec, fitted = self.setup_panels()
@@ -1154,6 +1334,35 @@ class Panels(panels_fixture.Fixture):
         spec["identity"]["panel_identity"] = write(base / "identity.json", record)
         with self.assertRaisesRegex(ValueError, "r2-D1L-vs-T1: the identity record does not compare"):
             bt1.panels(spec, fitted)
+
+    def test_the_h_check_must_have_read_the_identity_panels_new_rows(self):
+        spec, fitted = self.setup_panels()
+        check = json.loads(Path(spec["identity"]["h_identity"]["path"]).read_text())
+        check["pairs"]["r2-D1L-vs-H"]["new_rows_sha256"] = "f" * 64
+        spec["identity"]["h_identity"] = write(self.root / "h-check.json", check)
+        with self.assertRaisesRegex(ValueError, "r2-D1L-vs-H: the H identity check did not read the identity panel"):
+            bt1.panels(spec, fitted)
+
+    def test_every_passing_cell_needs_both_panels_in_every_lineage_it_passed(self):
+        spec, fitted = self.setup_panels()
+        spec["entries"]["r2"] = [e for e in spec["entries"]["r2"] if e["opponent"] != "H"]
+        with self.assertRaisesRegex(ValueError, "every selected checkpoint's panel against each opponent, once each"):
+            bt1.panels(spec, fitted)
+        spec, fitted = self.setup_panels()
+        spec["entries"]["r1"].append(spec["entries"]["r1"][0])
+        with self.assertRaisesRegex(ValueError, "once each"):
+            bt1.panels(spec, fitted)
+        spec, fitted = self.setup_panels(lineages=("r1",))
+        fitted["passes"]["T"] = ["r1", "r2"]
+        fitted["fits"]["r2"]["T"]["selected"] = {"checkpoint": {"sha256": "2a" * 32}}
+        with self.assertRaisesRegex(ValueError, "once each"):
+            bt1.panels(spec, fitted)
+        # The analysis must hold a contrast for every lineage where the cell passed.
+        spec, fitted = self.setup_panels()
+        with mock.patch.object(bt1, "panel_index", lambda spec, fitted, index, holds: {
+                "panels": bt1.controls_of(index) + spec["entries"]["r1"]}):
+            with self.assertRaisesRegex(ValueError, "D1T-parent: the analysis lacks a lineage where the cell passed"):
+                bt1.panels(spec, fitted)
 
     def test_a_cell_passing_in_one_lineage_is_descriptive_and_panels_must_be_the_selected_checkpoint(self):
         spec, fitted = self.setup_panels(lineages=("r1",))

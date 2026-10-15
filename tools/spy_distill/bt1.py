@@ -2,8 +2,9 @@
 
 Offline: reads the training banks, the replays' path logs (``S4A_PATH_LOG``),
 phase-1 receipts, probes and panels. Nothing is played or trained here, and no
-Spy label selects a row or shapes a target: labels are read only to check the
-join, to report, and for the design's stop rule.
+Spy label selects a row, a game or a target: labels are read only to check the
+join, to define the line rows the fit and the reports read, and for the
+design's stop rule.
 
 Evidence rule (DESIGN.md section 3). Each tree-executed decision of a replayed
 archive game maps, through its single actual-log hit, to one node of one search
@@ -29,26 +30,36 @@ it and the bank's parent logits (``ArchiveDistillationKeepSetsV1``). Live
 actions come from the actual log's ``hit_live`` map, which the recorder writes
 beside each hit.
 
-Voids. A game whose replay is not exact, or whose join fails at any of its
-tree-executed rows (its hit, node, counts, labels or live map), is void: its
-rows leave both cells. More than one void game in twenty stops the step as
-engineering (TA1 Part B's rule).
+Voids. A game whose replay is not exact, whose check-game run ends in a tool
+error, or whose join fails at any of its tree-executed rows (its hit, node,
+counts or live map), is void: its rows leave both cells. More than one void
+game in twenty stops the step as engineering (TA1 Part B's rule). A failed
+label check stops BT1 as engineering wherever it falls, and so does any
+failure at one of the games TA1 replayed, which hold every line offer: no
+label check, and no failure at one of those games, removes a game.
 
 Commands (JSON summary on stdout):
-  replays  --spec SPEC.json --out REPLAYS.json
+  replays  --spec SPEC.json [--partial CHECKS.jsonl] --out REPLAYS.json
       stage 1: collect each replayed game's check-game verdict (TA1's
       audit_b.py check-game), require every kept bank game once, and, for the
-      games TA1 replayed, require every search log equal to TA1's and each
-      actual log equal to TA1's, field for field and in order, apart from the
-      live-index field.
+      games TA1 replayed, require an exact replay, every search log equal to
+      TA1's and each actual log equal to TA1's, field for field and in order,
+      apart from the live-index field. With --partial, only the games of that
+      checks file, with no completeness or void count (stage 1's per-game
+      check).
   census   --spec SPEC.json --out-dir DIR
       stage 0 (no live indices; TA1's retained logs) or stage 2 (live indices,
       the target measures and the keep-set files), each with the stop rule.
   commands --lineage r1 --parent P.json --games GAMES.jsonl --bank BANK.json --anchor ANCHOR.json
-           --census CENSUS.json --root DIR --out-dir CMDS
+           --census CENSUS.json --exactness R1.json R2.json --root DIR --out-dir CMDS
       stage 3: each cell's dry-run, full-run and rerun phase-1 command, with
       output directories DIR/LIN-BT1-T-dry, DIR/LIN-BT1-T, DIR/LIN-BT1-T-rerun
-      and the same for BT1-P
+      and the same for BT1-P, once the stop rule is open on stage 2's census
+      and both lineages' phase-1 exactness checks (cells.py exactness) passed
+  dry      --census CENSUS.json --lineage r1 --dry-t DRY.json --dry-p DRY.json --out CHECK.json
+      before any full run: each cell's dry run trains exactly its keep-set
+      file's rows with its keep sets and records the census's line rows, and
+      the cells have the same rows and exposure
   fit      --spec SPEC.json --out FIT.json      sections 5, 7.2, 7.3 and 7.5
   x4       --screen-index INDEX.json --screen-result RESULT.json --out X4.json
       the screen's D1L-parent points and intervals, reproduced from its own
@@ -104,6 +115,10 @@ CENSUS_SCHEMA = "bestline-target-test-v1/census"
 FIT_SCHEMA = "bestline-target-test-v1/fit"
 X4_SCHEMA = "bestline-target-test-v1/x4"
 PANELS_SCHEMA = "bestline-target-test-v1/panels"
+DRY_SCHEMA = "bestline-target-test-v1/dry-check"
+# TA1's check-game reports a failed label check with this text (audit_b.py,
+# LANES/teacher-target-audit-20261014/tools): a label failure stops BT1.
+LABEL_FAILURE = "the node's labels differ from the row's"
 CLASSES = ("self_chosen", "self_declined", "giant_chosen", "giant_declined", "cast_offered", "other")
 CHOOSERS = ("new_root", "reused")
 CELLS = ("T", "P")
@@ -259,19 +274,28 @@ def void_unless(condition, message: str) -> None:
         raise Void(message)
 
 
+def void_reason(verdict: dict) -> str:
+    """Why a replay verdict that is not exact voids its game."""
+    if verdict.get("error") is not None:
+        return f"check-game: {verdict['error']}"
+    return "the replay is not exact"
+
+
 def check_labels(at: str, labels: dict, row: dict, x: int, live_map) -> None:
-    """The node's Spy labels against the bank row's flags and, with a live
-    map, the labelled edges' live actions against the row's."""
+    """The node's self-target and Giant labels against the bank row's flags
+    and, with a live map, the labelled edges' live actions against the
+    row's. A failure stops BT1 as engineering (ValueError), never a void: no
+    label check removes a game."""
     for _, offered, chosen, label, actions in LINE_LABELS:
         edges = set(labels.get(label) or [])
-        void_unless(bool(edges) == bool(row["line"][offered]) and (x in edges) == bool(row["line"][chosen])
-                    and len(edges) == len(row[actions]), f"{at}: the node's labels differ from the row's {label} flags")
+        require(bool(edges) == bool(row["line"][offered]) and (x in edges) == bool(row["line"][chosen])
+                and len(edges) == len(row[actions]), f"{at}: {LABEL_FAILURE} {label} flags; BT1 stops")
         if live_map is not None:
-            void_unless(sorted(live_map[e] for e in edges) == sorted(row[actions]),
-                        f"{at}: the {label} edges' live actions differ from the row's")
+            require(sorted(live_map[e] for e in edges) == sorted(row[actions]),
+                    f"{at}: the {label} edges' live actions differ from the row's; BT1 stops")
     if live_map is not None:
-        void_unless(not {live_map[e] for e in labels.get("spy_other") or []} & set(row["self_actions"]),
-                    f"{at}: an opponent-target edge maps to a self-target action")
+        require(not {live_map[e] for e in labels.get("spy_other") or []} & set(row["self_actions"]),
+                f"{at}: an opponent-target edge maps to a self-target action; BT1 stops")
 
 
 def search_state(s, at: str):
@@ -288,7 +312,8 @@ def search_state(s, at: str):
 def game_rows(lineage: str, gid: str, bank_rows: dict, d: Path, live: bool) -> list:
     """Each tree-executed bank row of one exact replay, joined to its node,
     with every rule's evidence (and, with ``live``, its live map). Every row
-    is checked; any failed check raises Void for the whole game."""
+    is checked; any failed check raises Void for the whole game, except a
+    label check, which stops (``check_labels``)."""
     actual = [a for a in (load_log(p) for p in logs(d, "actual")) if a.get("id") == gid and a.get("lineage") == lineage]
     void_unless(len(actual) == 1, f"{lineage} {gid}: {len(actual)} actual logs")
     actual = actual[0]
@@ -531,17 +556,24 @@ def census(spec: dict, out_dir: Path) -> dict:
               "verdicts": {"path": REPLAYS.json, "sha256": SHA},
               "path_logs": {"LIN/GAME": DIR, ...}}
     Stage 0 reads TA1's REPLAYS.json and its retained logs; stage 2 reads
-    BT1's REPLAYS.json, which lists every kept bank game. Every log read must
-    hash as its verdict records. A game whose verdict is not exact, or whose
-    join fails, is void; more than one void game in twenty stops the census as
-    engineering before it writes anything. Writes ROWS-{lineage}.jsonl and
-    CENSUS.json, and at stage 2 KEEP-{T,P}-{lineage}.json."""
+    BT1's full REPLAYS.json, which lists every kept bank game and marks the
+    games TA1 replayed. Every log read must hash as its verdict records. A
+    game whose verdict is not exact, or whose join fails, is void; more than
+    one void game in twenty stops the census as engineering before it writes
+    anything. A failed label check stops it the same way, and so does a void
+    at a game TA1 replayed (at stage 0, every game). Writes
+    ROWS-{lineage}.jsonl and CENSUS.json, and at stage 2
+    KEEP-{T,P}-{lineage}.json."""
     stage = spec["stage"]
     require(stage in (0, 2), "the census is stage 0 or stage 2")
     live = stage == 2
     out_dir = Path(out_dir).resolve()
     bank_by = banks(spec)
-    verdicts = read_pinned(spec["verdicts"], "verdicts")["replays"]
+    record = read_pinned(spec["verdicts"], "verdicts")
+    if live:
+        require(record.get("schema") == REPLAYS_SCHEMA and record.get("partial") is False,
+                "stage 2 reads BT1's full REPLAYS.json")
+    verdicts = record["replays"]
     joined, games, voids = {}, 0, 0
     for lineage in LINEAGES:
         kept = kept_games(bank_by[lineage])
@@ -555,8 +587,10 @@ def census(spec: dict, out_dir: Path) -> dict:
             rows_by_game.setdefault(r["game"], {})[r["step"]] = r
         rows, void = [], []
         for v in sorted(mine, key=lambda v: v["id"]):
-            if not v["exact"]:
-                void.append({"id": v["id"], "reason": "the replay is not exact"})
+            ta1_game = v["ta1"] if live else True
+            if v["exact"] is not True:
+                require(not ta1_game, f"{lineage} {v['id']}: {void_reason(v)} at a game TA1 replayed; BT1 stops")
+                void.append({"id": v["id"], "reason": void_reason(v)})
                 continue
             d = Path(spec["path_logs"][f"{lineage}/{v['id']}"])
             require(log_hashes(d) == v["path_logs_sha256"],
@@ -564,6 +598,7 @@ def census(spec: dict, out_dir: Path) -> dict:
             try:
                 rows += game_rows(lineage, v["id"], rows_by_game.get(v["id"], {}), d, live)
             except Void as e:
+                require(not ta1_game, f"{e}: the join failed at a game TA1 replayed; BT1 stops")
                 void.append({"id": v["id"], "reason": str(e)})
         games, voids = games + len(mine), voids + len(void)
         joined[lineage] = (mine, rows, void, rows_by_game)
@@ -616,29 +651,47 @@ def same_fields(a, b) -> bool:
     return json.dumps(a, separators=(",", ":")) == json.dumps(b, separators=(",", ":"))
 
 
-def replays(spec: dict) -> dict:
+def replays(spec: dict, partial=None) -> dict:
     """SPEC: {"banks": [...as for census...],
-              "checks": PATH (JSONL: one TA1 check-game output per replayed game),
+              "checks": PATH (JSONL, one line per replayed game: TA1's check-game
+                        output, or {"lineage", "id", "error"} with the error
+                        check-game printed when it exited 2),
               "path_logs": {"LIN/GAME": DIR, ...},
               "ta1": {"verdicts": {"path": TA1 REPLAYS.json, "sha256": SHA},
                       "path_logs": {"LIN/GAME": DIR, ...}}}
     Every kept bank game appears once. An exact game's logs must hash as its
-    check-game output records. For each game TA1 replayed, an exact replay's
-    search logs must equal TA1's file for file, and its actual log must equal
-    TA1's, field for field and in order, once the live-index field is removed;
-    any difference stops stage 1. A game that is not exact is listed as void,
-    and more than one void game in twenty stops stage 1 as engineering."""
+    check-game output records. For each game TA1 replayed, the replay must be
+    exact, its search logs must equal TA1's file for file, and its actual log
+    must equal TA1's, field for field and in order, once the live-index field
+    is removed; any difference stops stage 1. Any other game that is not
+    exact, or whose check-game run ended in a tool error, is listed as void,
+    and more than one void game in twenty stops stage 1 as engineering. A
+    check-game error from its label check stops stage 1 wherever it falls.
+    With ``partial`` (a checks file holding some of the games), only those
+    games are checked, read in place of SPEC's checks: no game need be
+    present, and the void count waits for the full run."""
     bank_by = banks(spec)
-    lines = Path(spec["checks"]).read_text(encoding="utf-8").splitlines()
+    lines = Path(partial if partial is not None else spec["checks"]).read_text(encoding="utf-8").splitlines()
     checks = [json.loads(line) for line in lines if line.strip()]
-    ta1 = {(v["lineage"], v["id"]): v for v in read_pinned(spec["ta1"]["verdicts"], "TA1 verdicts")["replays"]}
+    ta1_pin = spec["ta1"]["verdicts"]
+    ta1 = {(v["lineage"], v["id"]): v for v in read_pinned(ta1_pin, "TA1 verdicts")["replays"]}
     out, seen, identity = [], set(), {"games": 0, "search_logs": 0}
     for c in checks:
         key = (c["lineage"], c["id"])
         require(key not in seen and c["lineage"] in LINEAGES and c["id"] in kept_games(bank_by[c["lineage"]]),
                 f"{key}: repeated, or not a kept bank game")
         seen.add(key)
+        if "error" in c:
+            require(key not in ta1, f"{key}: check-game failed at a game TA1 replayed exactly ({c['error']}); "
+                                    "stage 1 stops")
+            require(LABEL_FAILURE not in c["error"],
+                    f"{key}: check-game's label check failed ({c['error']}); BT1 stops")
+            out.append({"lineage": c["lineage"], "id": c["id"], "ta1": False, "exact": None, "error": c["error"]})
+            continue
+        require(c["exact"] is True or key not in ta1,
+                f"{key}: TA1 replayed this game exactly and this replay is not exact; stage 1 stops")
         verdict = {k: c[k] for k in ("lineage", "id", "rows", "rows_sha256", "exact", "first_difference")}
+        verdict["ta1"] = key in ta1
         if c["exact"]:
             d = Path(spec["path_logs"][f"{c['lineage']}/{c['id']}"])
             hashes = log_hashes(d)
@@ -660,16 +713,18 @@ def replays(spec: dict) -> dict:
                 identity["games"] += 1
                 identity["search_logs"] += len(searches)
         out.append(verdict)
-    for lineage in LINEAGES:
-        missing = kept_games(bank_by[lineage]) - {i for lin, i in seen if lin == lineage}
-        require(not missing, f"{lineage}: kept games with no check: {sorted(missing)[:5]}")
-    require(identity["games"] == sum(1 for key in ta1 if key in seen and next(
-        v["exact"] for v in out if (v["lineage"], v["id"]) == key)), "a TA1 game was not compared")
-    void = [{"lineage": v["lineage"], "id": v["id"], "first_difference": v["first_difference"]}
-            for v in out if not v["exact"]]
-    require(len(void) * VOID_RATIO <= len(out), f"engineering: {len(void)} of {len(out)} replays are not exact")
-    return {"schema": REPLAYS_SCHEMA, "replays": sorted(out, key=lambda v: (v["lineage"], v["id"])),
-            "void": void, "ta1_identity": identity,
+    if partial is None:
+        for lineage in LINEAGES:
+            missing = kept_games(bank_by[lineage]) - {i for lin, i in seen if lin == lineage}
+            require(not missing, f"{lineage}: kept games with no check: {sorted(missing)[:5]}")
+        require(set(ta1) <= seen, "a game TA1 replayed has no check")
+    require(identity["games"] == sum(1 for key in ta1 if key in seen), "a TA1 game was not compared")
+    void = [{"lineage": v["lineage"], "id": v["id"], "reason": void_reason(v),
+             "first_difference": v.get("first_difference")} for v in out if v["exact"] is not True]
+    if partial is None:
+        require(len(void) * VOID_RATIO <= len(out), f"engineering: {len(void)} of {len(out)} games are void")
+    return {"schema": REPLAYS_SCHEMA, "partial": partial is not None, "ta1_verdicts": ta1_pin,
+            "replays": sorted(out, key=lambda v: (v["lineage"], v["id"])), "void": void, "ta1_identity": identity,
             "games": {lin: sum(1 for v in out if v["lineage"] == lin) for lin in LINEAGES}}
 
 
@@ -679,11 +734,28 @@ BASE_STEPS = cells.BASE_STEPS
 GATED_FROM = cells.GATED_FROM
 
 
+def stage_3_census(census_record: dict) -> None:
+    """Stage 3 reads the stage 2 census, and only when its stop rule is open
+    (section 4)."""
+    require(census_record.get("schema") == CENSUS_SCHEMA and census_record["stage"] == 2, "not the stage 2 census")
+    require(not census_record["stop_rule"]["stop"], "the stop rule binds on stage 2's census: BT1 stops")
+
+
+def exact_in_both_lineages(exactness: list) -> None:
+    """Section 5: before stage 3, the BT1 build's default arm U dry run and
+    32-step rerun reproduce the screen's in both lineages (each lineage's
+    cells.py exactness output)."""
+    lineages = sorted(str(e.get("lineage")) for e in exactness)
+    require(lineages == sorted(LINEAGES) and all(e.get("arm") == "uniform" and e.get("pass") is True
+                                                 for e in exactness),
+            "engineering: phase-1 exactness has not passed in both lineages")
+
+
 def cell_options(census_record: dict, lineage: str, cell: str) -> dict:
     """A cell's phase-1 options (section 5): its label, its keep-set file
     from the stage 2 census and the shared checkpoint steps. Nothing else
     changes from the screen's arm U recipe."""
-    require(census_record.get("schema") == CENSUS_SCHEMA and census_record["stage"] == 2, "not the stage 2 census")
+    stage_3_census(census_record)
     keep = census_record["lineages"][lineage]["keep_sets"][cell]
     pinned(keep, f"{lineage}-{cell} keep sets")
     return {"cell": CELL_LABELS[cell], "keep_sets": keep, "checkpoint_steps": list(BASE_STEPS)}
@@ -699,10 +771,12 @@ def same_rows(census_record: dict, lineage: str) -> list:
 
 
 def commands(lineage: str, parent: dict, games: Path, bank: Path, anchor: dict, census_record: dict,
-             root: str) -> dict:
+             exactness: list, root: str) -> dict:
     """Each cell's dry-run, full-run and rerun phase-1 command, on the bank
-    the census read, once both cells' files list the same rows."""
-    require(census_record.get("schema") == CENSUS_SCHEMA and census_record["stage"] == 2, "not the stage 2 census")
+    the census read, once the stop rule is open, exactness has passed in both
+    lineages and both cells' files list the same rows."""
+    stage_3_census(census_record)
+    exact_in_both_lineages(exactness)
     require(sha256_file(bank) == census_record["banks"][lineage]["sha256"], f"{lineage}: not the census's bank")
     same_rows(census_record, lineage)
     out = {}
@@ -797,37 +871,78 @@ def discrimination(readout: dict, lines: dict, anti: list):
     return deployed(readout, lines["self"], "self") - deployed(readout, anti, "self")
 
 
-def cell_fit(lineage: str, cell: str, readouts: dict, keep_pin: dict, targets: dict, dry: dict, full: dict,
-             rerun: dict) -> dict:
+def dry_checks(lineage: str, cell: str, keep_pin: dict, targets: dict, dry: dict) -> tuple:
+    """A cell's dry run against its keep-set file and the stage 2 census:
+    this lineage's arm U with the design's options, training exactly the
+    file's rows with its keep sets, and recording the census's self and
+    Giant line rows. Returns the keep-set file, the line rows and their mean
+    target masses, and the census's anti-line rows."""
     label = CELL_LABELS[cell]
-    for record, what in ((full, "full"), (dry, "dry")):
-        require(record.get("schema") == screen.PHASE1_SCHEMA and record["identity"]["lineage"] == lineage
-                and record["identity"]["arm"] == "uniform",
-                f"{lineage}-{cell}: the {what} run is not this lineage's arm U")
-    require(full.get("complete") is True and full.get("stop_after_steps") is None, f"{lineage}-{cell}: not a full run")
-    require(dry.get("dry_run") is True and dry["identity"] == full["identity"],
-            f"{lineage}-{cell}: the dry run's identity differs from the full run's")
-    options = full["identity"]["recipe"].get("options") or {}
+    require(dry.get("schema") == screen.PHASE1_SCHEMA and dry["identity"]["lineage"] == lineage
+            and dry["identity"]["arm"] == "uniform" and dry.get("dry_run") is True,
+            f"{lineage}-{cell}: the dry run is not this lineage's arm U dry run")
+    options = dry["identity"]["recipe"].get("options") or {}
     require(set(options) == {"cell", "keep_sets", "checkpoint_steps"} and options["cell"] == label
             and options["keep_sets"]["sha256"] == keep_pin["sha256"] and options["checkpoint_steps"] == list(BASE_STEPS)
-            and "update_scope" not in full["identity"]["recipe"],
+            and "update_scope" not in dry["identity"]["recipe"],
             f"{lineage}-{cell}: the run's options differ from the design's")
     keep = read_pinned(keep_pin, f"{lineage}-{cell} keep sets")
     require([(r["game"], r["step"], r["keep"]) for r in dry["census"]["keep_rows"]]
             == [(r["game"], r["step"], r["keep"]) for r in keep["rows"]],
             f"{lineage}-{cell}: the dry run's keep rows differ from the keep-set file")
+    require(dry["census"]["arm"]["rows"] == len(keep["rows"]), f"{lineage}-{cell}: the run trains other rows")
+    lines, masses = line_rows(dry)
+    census_lines = targets["line_rows"]
+    for name in ("self", "giant"):
+        require(sorted(map(tuple, census_lines[name]["keys"])) == lines[name],
+                f"{lineage}-{cell}: the census's {name} line rows differ from the engine's")
+    return keep, lines, masses, sorted(map(tuple, census_lines["anti"]["keys"]))
+
+
+def same_batches(lineage: str, t: dict, p: dict) -> None:
+    """Both cells' dry-run censuses train the same rows with the same
+    exposure, so they see the same batches and differ only in their
+    targets."""
+    require(all(t[k] == p[k] for k in ("arm", "exposure")), f"{lineage}: T and P differ in rows or exposure")
+
+
+def dry_check(census_path: Path, lineage: str, dry_paths: dict) -> dict:
+    """Section 5, before any full run: both cells' dry runs pass their
+    checks against the stage 2 census, whose stop rule must be open, and
+    the cells train the same rows with the same exposure."""
+    census_record = read_json(census_path)
+    stage_3_census(census_record)
+    same_rows(census_record, lineage)
+    record = census_record["lineages"][lineage]
+    dry = {cell: read_json(dry_paths[cell]) for cell in CELLS}
+    out = {}
+    for cell in CELLS:
+        keep, lines, _, anti = dry_checks(lineage, cell, record["keep_sets"][cell], record["targets"]["cells"][cell],
+                                          dry[cell])
+        out[cell] = {"dry_run": pin(Path(dry_paths[cell]).resolve()), "keep_sets": record["keep_sets"][cell],
+                     "rows": len(keep["rows"]),
+                     "line_rows": {"self": len(lines["self"]), "giant": len(lines["giant"]), "anti": len(anti)}}
+    same_batches(lineage, dry["T"]["census"], dry["P"]["census"])
+    return {"schema": DRY_SCHEMA, "lineage": lineage, "census": pin(Path(census_path).resolve()), "cells": out,
+            "pass": True}
+
+
+def cell_fit(lineage: str, cell: str, readouts: dict, keep_pin: dict, targets: dict, dry: dict, full: dict,
+             rerun: dict) -> dict:
+    label = CELL_LABELS[cell]
+    require(full.get("schema") == screen.PHASE1_SCHEMA and full["identity"]["lineage"] == lineage
+            and full["identity"]["arm"] == "uniform", f"{lineage}-{cell}: the full run is not this lineage's arm U")
+    require(full.get("complete") is True and full.get("stop_after_steps") is None, f"{lineage}-{cell}: not a full run")
+    require(dry.get("identity") == full["identity"],
+            f"{lineage}-{cell}: the dry run's identity differs from the full run's")
+    keep, lines, masses, anti = dry_checks(lineage, cell, keep_pin, targets, dry)
     require(full["census"]["arm"]["rows"] == len(keep["rows"]), f"{lineage}-{cell}: the run trains other rows")
     require(full["census"]["exposure"] == dry["census"]["exposure"],
             f"{lineage}-{cell}: the full run's exposure differs from the dry run's")
     checkpoints = full["checkpoints"]
     require([c["step"] for c in checkpoints] == list(BASE_STEPS),
             f"{lineage}-{cell}: checkpoints differ from the schedule")
-    lines, masses = line_rows(dry)
     census_lines = targets["line_rows"]
-    for name in ("self", "giant"):
-        require(sorted(map(tuple, census_lines[name]["keys"])) == lines[name],
-                f"{lineage}-{cell}: the census's {name} line rows differ from the engine's")
-    anti = sorted(map(tuple, census_lines["anti"]["keys"]))
     parent, o_final = readouts["parent"], readouts["O-final"]
     telemetry = read_json(full["telemetry"]["path"])
     repro = screen.reproduced(full, rerun)
@@ -881,17 +996,18 @@ def cell_fit(lineage: str, cell: str, readouts: dict, keep_pin: dict, targets: d
 
 
 def fit_reading(cell: str, lines: dict, rows: list, gated: list, selected, fit_dose) -> tuple:
-    """Section 7.2's first matching row, with its competing explanations; on
-    fewer than three self line rows, the reading names their count (and a
-    pass says it is in-sample fit)."""
+    """Section 7.2's first matching row, with its competing explanations,
+    after the engineering rule (a G3 failure before any checkpoint passes
+    all three gates); on fewer than three self line rows, the reading names
+    their count (and a pass says it is in-sample fit)."""
     n = len(lines["self"])
+    if selected is None and any(not r["G3"]["pass"] for r in rows):
+        return screen.ENGINEERING, []
     if not n:
         return NO_SELF_LINE_ROW
     if selected is not None:
         reading = f"{PASSES}: selected step {selected['step']}, fit dose {fit_dose}"
         explanations = [FEW_ROWS] if n < FEW_LINE_ROWS else []
-    elif any(not r["G3"]["pass"] for r in rows):
-        return screen.ENGINEERING, []
     else:
         g2_fail = next((i for i, r in enumerate(rows) if not r["G2"]["pass"]), None)
         g1_first = next((i for i, r in enumerate(rows) if r["G1'"]["pass"]), None)
@@ -964,7 +1080,7 @@ def fit(spec: dict) -> dict:
     references), and every checkpoint of each cell."""
     screen_fit = read_json(spec["screen_fit"])
     census_record = read_json(spec["census"])
-    require(census_record.get("schema") == CENSUS_SCHEMA and census_record["stage"] == 2, "not the stage 2 census")
+    stage_3_census(census_record)
     fits, references, beside = {}, {}, {}
     for lineage in LINEAGES:
         if lineage not in spec:
@@ -978,8 +1094,7 @@ def fit(spec: dict) -> dict:
             # Same rows, so the same batches: the cells differ only in their targets.
             same_rows(census_record, lineage)
             dry = {cell: read_json(spec[lineage]["cells"][cell]["dry"])["census"] for cell in CELLS}
-            require(all(dry["T"][k] == dry["P"][k] for k in ("arm", "exposure")),
-                    f"{lineage}: T and P differ in rows or exposure")
+            same_batches(lineage, dry["T"], dry["P"])
         fits[lineage] = {cell: cell_fit(lineage, cell, readouts, record["keep_sets"][cell],
                                         record["targets"]["cells"][cell], read_json(run["dry"]),
                                         read_json(run["full"]), read_json(run["rerun"]))
@@ -1016,8 +1131,8 @@ LINE_READINGS = {2: "behavioral transfer established at D1", 1: "lineage-depende
 NOT_STRENGTH = ("A positive J result is behavioral transfer: the policy wins through the line more often. It is not a "
                 "playing-strength claim, because more winning Spy sequences can mean that wins the parent already "
                 "had took the line's route.")
-NO_GIANT_LINE_ROW = ("the cell has no Giant line row, so J may fail at the line's second step, which the parent "
-                     "chose in few offered panel games")
+NO_GIANT_LINE_ROW = ("If a cell has no Giant line row, J may fail at the line's second step, which the parent chose "
+                     "in 3 of 17 (r1) and 0 of 5 (r2) offered panel games.")
 
 
 def statistics(index: dict, contrasts) -> tuple:
@@ -1062,8 +1177,9 @@ def identity(spec: dict, screen_index: dict) -> dict:
     """Section 6: the screen's parent and D1L panels stand when BT1's
     evaluator reproduces r1-parent and r2-D1L against T1 byte for byte, and
     against the rebound H apart from its provenance hash (labels byte for
-    byte; rows byte for byte once the recorded envelope hash is restored, the
-    screen's H identity check)."""
+    byte; rows byte for byte once each panel's own recorded envelope hash is
+    restored, the screen's H identity check). The H check must have read
+    the identity record's new H rows."""
     record = read_pinned(spec["panel_identity"], "panel identity")
     h = read_pinned(spec["h_identity"], "H identity")
     recorded = {(p["checkpoint"], p["opponent"]): p for p in screen_index["panels"]}
@@ -1080,6 +1196,8 @@ def identity(spec: dict, screen_index: dict) -> dict:
                 pairs[name] = labels and pair["rows.jsonl"]["new"] == pair["rows.jsonl"]["recorded"]
             else:
                 check = h["pairs"].get(name) or {}
+                require(check.get("new_rows_sha256") == pair["rows.jsonl"]["new"],
+                        f"{name}: the H identity check did not read the identity panel's rows")
                 pairs[name] = (labels and h.get("passed") is True and check.get("rows_bytes_equal") is True
                                and check.get("failure_count") == 0
                                and check.get("restored_rows_sha256") == pair["rows.jsonl"]["recorded"])
@@ -1089,7 +1207,8 @@ def identity(spec: dict, screen_index: dict) -> dict:
 def panel_index(spec: dict, fitted: dict, screen_index: dict, holds: bool) -> dict:
     """The control panels (the screen's parent and D1L panels when identity
     holds, else the reruns on BT1's evaluator, one per lineage, role and
-    opponent) and BT1's D1 panels. A D1 panel must name its cell's selected
+    opponent) and BT1's D1 panels: one against each opponent for every
+    lineage where a cell selected a checkpoint, each naming that selected
     checkpoint file."""
     if holds:
         controls = controls_of(screen_index)
@@ -1110,6 +1229,10 @@ def panel_index(spec: dict, fitted: dict, screen_index: dict, holds: bool) -> di
             require(selected is not None and e["checkpoint_sha256"] == selected["checkpoint"]["sha256"],
                     f"{e['checkpoint']}: not the cell's selected checkpoint")
             new.append(e)
+    require(sorted((e["checkpoint"], e["opponent"]) for e in new)
+            == sorted((f"{lin}-D1{cell}", opp) for cell in CELLS for lin in fitted["passes"][cell]
+                      for opp in analyze.OPPONENTS),
+            "the D1 panels must be every selected checkpoint's panel against each opponent, once each")
     return {"panels": controls + new}
 
 
@@ -1149,6 +1272,7 @@ def panels(spec: dict, fitted: dict) -> dict:
     for cell in CELLS:
         name = f"D1{cell}-parent"
         lineages = [lin for lin in LINEAGES if (lin, name, "J", "pooled", "worst") in ci]
+        require(lineages == fitted["passes"][cell], f"{name}: the analysis lacks a lineage where the cell passed")
         entry = {"lineages": lineages, "fit_check": fitted["fit_check"][cell], "per_lineage": {}}
         for lin in lineages:
             fitted_cell = fitted["fits"][lin][cell]
@@ -1187,6 +1311,7 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="op", required=True)
     r = sub.add_parser("replays")
     r.add_argument("--spec", type=Path, required=True)
+    r.add_argument("--partial", type=Path)
     r.add_argument("--out", type=Path, required=True)
     c = sub.add_parser("census")
     c.add_argument("--spec", type=Path, required=True)
@@ -1195,7 +1320,14 @@ def main(argv=None) -> int:
     m.add_argument("--lineage", required=True, choices=LINEAGES)
     for flag in ("--parent", "--games", "--bank", "--anchor", "--census", "--out-dir"):
         m.add_argument(flag, type=Path, required=True)
+    m.add_argument("--exactness", type=Path, nargs="+", required=True)
     m.add_argument("--root", required=True)
+    d = sub.add_parser("dry")
+    d.add_argument("--census", type=Path, required=True)
+    d.add_argument("--lineage", required=True, choices=LINEAGES)
+    d.add_argument("--dry-t", type=Path, required=True)
+    d.add_argument("--dry-p", type=Path, required=True)
+    d.add_argument("--out", type=Path, required=True)
     f = sub.add_parser("fit")
     f.add_argument("--spec", type=Path, required=True)
     f.add_argument("--out", type=Path, required=True)
@@ -1209,9 +1341,10 @@ def main(argv=None) -> int:
     p.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.op == "replays":
-        result = replays(read_json(a.spec))
+        result = replays(read_json(a.spec), a.partial)
         write_json(a.out, result)
-        print(json.dumps({"games": result["games"], "void": result["void"], "ta1_identity": result["ta1_identity"]}))
+        print(json.dumps({"partial": result["partial"], "games": result["games"], "void": result["void"],
+                          "ta1_identity": result["ta1_identity"]}))
     elif a.op == "census":
         result = census(read_json(a.spec), a.out_dir)
         print(json.dumps({"stage": result["stage"], "stop_rule": result["stop_rule"],
@@ -1221,8 +1354,15 @@ def main(argv=None) -> int:
     elif a.op == "commands":
         written = {name: write_json(a.out_dir / f"{a.lineage}-{name}.command.json", command)
                    for name, command in commands(a.lineage, read_json(a.parent), a.games, a.bank,
-                                                 read_json(a.anchor), read_json(a.census), a.root).items()}
+                                                 read_json(a.anchor), read_json(a.census),
+                                                 [read_json(p) for p in a.exactness], a.root).items()}
         print(json.dumps(written))
+    elif a.op == "dry":
+        result = dry_check(a.census, a.lineage, {"T": a.dry_t, "P": a.dry_p})
+        write_json(a.out, result)
+        print(json.dumps({"lineage": result["lineage"], "pass": result["pass"],
+                          "cells": {cell: {k: v[k] for k in ("rows", "line_rows")}
+                                    for cell, v in result["cells"].items()}}))
     elif a.op == "fit":
         result = fit(read_json(a.spec))
         write_json(a.out, result)
