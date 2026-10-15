@@ -55,6 +55,8 @@ class Fixture(unittest.TestCase):
         self.artifacts = self.root / 'artifacts'; self.artifacts.mkdir()
         self.counter = 0
         self.cores = dispatch.slots.parse_cores(os.environ.get(dispatch.slots.CORES_ENV, '0,1'))[:2]
+        hosts = patch.dict(dispatch.native.HOSTS, {'desktop': dispatch.slots.host()})
+        hosts.start(); self.addCleanup(hosts.stop)
         self.script = self.root / 'fake_native.py'; self.script.write_text(FAKE_NATIVE)
         model = self.save({'state_sha256': '3'*64})
         trajectory = self.save({'parent':model})
@@ -72,7 +74,7 @@ class Fixture(unittest.TestCase):
             'storage':{'accounting_roots':[str(self.artifacts)],'max_physical_bytes':100*1024**2,
                        'projected_additional_bytes':10*1024**2,'reserve_bytes':dispatch.DISK_RESERVE_BYTES},
             'stop_files':[str(self.root/'STOP')], 'inventory':inventory,
-            'allocation':{'host_name':dispatch.slots.host(),'selected_host':'desktop','reason':'test comparison',
+            'allocation':{'mode':'formal','host_name':dispatch.slots.host(),'selected_host':'desktop','reason':'test comparison',
                 'comparisons':{host:{'absolute_inputs_available':True,'reason':'test cost comparison',
                     'projected_seconds':20,'transfer_seconds':0,'evidence':evidence}
                     for host in ('desktop','computehost')}}}
@@ -90,8 +92,10 @@ class Fixture(unittest.TestCase):
         path.write_text(json.dumps(value))
         return dispatch.pin(path)
 
-    def invoke(self, name, qualify, receipt=None):
-        plan_path = self.root/f'{name}-plan.json'; plan_path.write_text(json.dumps(self.plan))
+    def invoke(self, name, qualify, receipt=None, allocation_mode=None):
+        plan = copy.deepcopy(self.plan)
+        plan['allocation']['mode'] = allocation_mode or ('evidence_acquisition' if qualify else 'formal')
+        plan_path = self.root/f'{name}-plan.json'; plan_path.write_text(json.dumps(plan))
         with patch.object(dispatch.shutil, 'disk_usage', return_value=SimpleNamespace(free=200*1024**3)), \
              patch.object(dispatch,'resource_context'), \
              patch.object(dispatch, 'native_command', side_effect=lambda runtime, command:
@@ -142,6 +146,52 @@ class PureChecks(Fixture):
         with self.assertRaises(KeyError):
             dispatch.inventory(self.plan)
 
+    def test_evidence_acquisition_needs_inputs_not_preexisting_timing(self):
+        self.plan['allocation']['mode']='evidence_acquisition'
+        for row in self.plan['allocation']['comparisons'].values():
+            row.pop('projected_seconds'); row.pop('transfer_seconds')
+        dispatch.inventory(self.plan, qualifying=True)
+        self.plan['allocation']['comparisons']['desktop']['absolute_inputs_available']=False
+        with self.assertRaisesRegex(ValueError,'exact absolute inputs'):
+            dispatch.inventory(self.plan, qualifying=True)
+
+    def test_acquisition_still_requires_fresh_inventory_eligibility_and_host_identity(self):
+        self.plan['allocation']['mode']='evidence_acquisition'
+        self.plan['inventory']['desktop']['eligible']=False
+        with self.assertRaisesRegex(ValueError,'ineligible'):
+            dispatch.inventory(self.plan, qualifying=True)
+        self.plan['inventory']['desktop']['eligible']=True
+        self.plan['inventory']['runpod']['checked_at']='2000-01-01T00:00:00+00:00'
+        with self.assertRaisesRegex(ValueError,'stale'):
+            dispatch.inventory(self.plan, qualifying=True)
+        self.plan['inventory']['runpod']['checked_at']=datetime.now(timezone.utc).isoformat()
+        self.plan['allocation']['selected_host']='computehost'
+        with patch.dict(dispatch.native.HOSTS, {'computehost':'OTHER-HOST'}):
+            with self.assertRaisesRegex(ValueError,'local unpaid'):
+                dispatch.inventory(self.plan, qualifying=True)
+
+    def test_formal_budgets_can_follow_measurement_without_changing_prefix_binding(self):
+        self.plan['run_limits']={'cpu_seconds':None,'wall_seconds':None}
+        self.plan['publication_budget']={'cpu_seconds':None,'wall_seconds':None,'bytes':None}
+        with patch.object(dispatch,'WINDOWS',True):
+            dispatch.validate_plan(self.plan, qualifying=True)
+            with self.assertRaisesRegex(ValueError,'invalid .*_seconds'):
+                dispatch.validate_plan(self.plan)
+        with patch.object(dispatch.native,'host_runtime'):
+            binding,_,_=dispatch.workload(self.plan)
+            self.plan['run_limits']={'cpu_seconds':1000,'wall_seconds':1000}
+            self.plan['publication_budget']={'cpu_seconds':1,'wall_seconds':1,'bytes':1024}
+            self.assertEqual(dispatch.workload(self.plan)[0],binding)
+
+    def test_acquisition_plan_and_unmarked_receipt_do_not_authorize_formal_dispatch(self):
+        self.plan['allocation']['mode']='evidence_acquisition'
+        with self.assertRaisesRegex(ValueError,'allocation mode must be formal'):
+            dispatch.inventory(self.plan)
+        for purpose in (None,'formal-dispatch'):
+            with self.assertRaisesRegex(ValueError,'incompatible'):
+                dispatch.verify_qualification({'schema':dispatch.RECEIPT,'complete':True,
+                    'purpose':purpose,'binding':{}}, {}, {}, [])
+
     def test_stale_inventory_refuses(self):
         self.plan['inventory']['desktop']['checked_at']='2000-01-01T00:00:00+00:00'
         with self.assertRaisesRegex(ValueError,'stale'):
@@ -189,6 +239,25 @@ class PureChecks(Fixture):
 
 @unittest.skipUnless(os.name=='nt','Windows production containment tests')
 class FileProtocol(Fixture):
+    def test_acquire_without_future_budgets_then_choose_formal_placement(self):
+        self.plan['run_limits']={'cpu_seconds':None,'wall_seconds':None}
+        self.plan['publication_budget']={'cpu_seconds':None,'wall_seconds':None,'bytes':None}
+        for row in self.plan['allocation']['comparisons'].values():
+            row.pop('projected_seconds'); row.pop('transfer_seconds')
+        qualified=self.invoke('acquire',True)
+        self.assertEqual(qualified['purpose'],dispatch.EVIDENCE)
+        self.assertNotIn('projection',qualified)
+        self.assertFalse((self.artifacts/'acquire'/'formal').exists())
+        self.assertEqual(dispatch.read(dispatch.checked(qualified['receipt']))['purpose'],dispatch.EVIDENCE)
+        self.plan['run_limits']={'cpu_seconds':1000,'wall_seconds':1000}
+        self.plan['publication_budget']={'cpu_seconds':1,'wall_seconds':1,'bytes':1024**2}
+        for row in self.plan['allocation']['comparisons'].values():
+            row.update(projected_seconds=20,transfer_seconds=0)
+        with self.assertRaisesRegex(ValueError,'allocation mode must be formal'):
+            self.invoke('acquisition-is-not-formal',False,qualified['receipt'],allocation_mode='evidence_acquisition')
+        self.assertFalse((self.artifacts/'acquisition-is-not-formal'/'formal').exists())
+        self.assertTrue(self.invoke('formal-after-acquisition',False,qualified['receipt'])['complete'])
+
     def test_qualification_then_formal_preserves_recipe_and_reconciles_first32(self):
         # A deliberately loose publication extrapolation is recorded, not a
         # veto against actual declared limits which remain enforced live.

@@ -1,10 +1,12 @@
 """Guarded, local two-lineage archive-distillation batch dispatch.
 
-qualify PLAN --root FRESH runs startup dry-runs and the unchanged formal
-recipes' 32-step prefixes at one then two processes. run PLAN --root FRESH
---qualification RECEIPT requires exact prefix parity and selects the fastest
-measured complete-prefix batch. Full-dose estimates are extrapolations, not
-measurements; declared nonzero final-publication budgets remain mandatory.
+qualify PLAN --root FRESH uses allocation.mode=evidence_acquisition to measure
+startup dry-runs and unchanged recipes' 32-step prefixes at one then two
+processes. It needs fresh host/input evidence, not comparative timings or
+future formal budgets. Its receipt is throughput evidence only. run PLAN
+--root FRESH --qualification RECEIPT requires allocation.mode=formal, exact
+prefix parity, fastest feasible placement and nonzero formal/publication
+budgets. Full-dose estimates are extrapolations, not measurements.
 
 Run inside host_slots_v1 run, or a held host reservation with timed cores.
 This tool neither acquires other hosts nor rents compute. The plan records
@@ -40,6 +42,7 @@ RECEIPT = "archive-distillation-qualification/v1"
 RESULT = "archive-distillation-batch-result/v1"
 PHASE1 = "mtg-kernel-archive-distillation-phase1/v1"
 PREFIX = 32
+EVIDENCE = "local-throughput-evidence-only"
 WINDOWS = os.name == "nt"
 
 
@@ -96,7 +99,7 @@ def required_inputs(plan, runtime, configs):
     return required
 
 
-def validate_plan(plan):
+def validate_plan(plan, qualifying=False):
     require(plan["schema"] == PLAN and WINDOWS, "Windows archive batch plan required")
     cores = plan["cpu_affinity"]
     require(cores and len(set(cores)) == len(cores)
@@ -106,7 +109,10 @@ def validate_plan(plan):
     require([j["id"] for j in plan["jobs"]] == ["r1", "r2"], "ordered r1/r2 jobs required")
     for job in plan["jobs"]:
         require(type(job["steps"]) is int and job["steps"] >= PREFIX, "invalid formal step count")
-    for limits in (plan["qualification_limits"], plan["run_limits"], plan["publication_budget"]):
+    limits_to_check = [plan["qualification_limits"]]
+    if not qualifying:
+        limits_to_check += [plan["run_limits"], plan["publication_budget"]]
+    for limits in limits_to_check:
         for name in ("wall_seconds", "cpu_seconds"):
             native.positive(limits[name], name)
     storage = plan["storage"]
@@ -114,8 +120,9 @@ def validate_plan(plan):
             "positive physical storage cap required")
     require(type(storage["projected_additional_bytes"]) is int
             and storage["projected_additional_bytes"] > 0, "positive write projection required")
-    require(type(plan["publication_budget"]["bytes"]) is int and plan["publication_budget"]["bytes"] > 0,
-            "nonzero final checkpoint/publication byte budget required")
+    if not qualifying:
+        require(type(plan["publication_budget"]["bytes"]) is int and plan["publication_budget"]["bytes"] > 0,
+                "nonzero final checkpoint/publication byte budget required")
     require(storage["reserve_bytes"] >= DISK_RESERVE_BYTES, "preserve 60 GiB free")
     roots = [absolute(p) for p in storage["accounting_roots"]]
     require(roots and all(not a.is_relative_to(b) for i, a in enumerate(roots)
@@ -147,7 +154,7 @@ def resource_context(cores):
     return {"reservation_sha256": slots.token_hash(token), "cores": sorted(requested)}
 
 
-def inventory(plan):
+def inventory(plan, qualifying=False):
     require(set(plan["inventory"]) == {"desktop", "computehost", "runpod"}, "inspect all three hosts")
     for host, status in plan["inventory"].items():
         checked(status["evidence"])
@@ -155,26 +162,31 @@ def inventory(plan):
         require(0 <= age <= 86400 and type(status["eligible"]) is bool and status["reason"],
                 "stale or incomplete inventory: " + host)
     decision = plan["allocation"]
+    mode = "evidence_acquisition" if qualifying else "formal"
+    require(decision.get("mode") == mode, "allocation mode must be " + mode)
     require(decision["host_name"].upper() == slots.host()
-            and decision["selected_host"] in ("desktop", "computehost"), "local unpaid allocation required")
+            and decision["selected_host"] in ("desktop", "computehost")
+            and native.HOSTS[decision["selected_host"]] == slots.host(), "local unpaid allocation required")
     require(plan["inventory"][decision["selected_host"]]["eligible"] and decision["reason"],
-            "selected host is ineligible or lacks comparative decision")
+            "selected host is ineligible or lacks an allocation reason")
     for host, status in plan["inventory"].items():
         if status["eligible"]:
             comparison = decision["comparisons"][host]
             checked(comparison["evidence"])
             require(type(comparison["absolute_inputs_available"]) is bool and comparison["reason"],
                     "record exact absolute input availability and placement tradeoff")
-            native.positive(comparison["projected_seconds"], "placement projection")
-            require(type(comparison["transfer_seconds"]) in (int, float)
-                    and 0 <= comparison["transfer_seconds"] < float("inf"), "record transfer/startup cost")
+            if not qualifying:
+                native.positive(comparison["projected_seconds"], "measured placement projection")
+                require(type(comparison["transfer_seconds"]) in (int, float)
+                        and 0 <= comparison["transfer_seconds"] < float("inf"), "record transfer/startup cost")
     feasible = {host: row for host, row in decision["comparisons"].items()
                 if plan["inventory"][host]["eligible"] and row["absolute_inputs_available"]}
     require(decision["selected_host"] in feasible, "selected placement lacks exact absolute inputs")
-    chosen = feasible[decision["selected_host"]]
-    require(chosen["projected_seconds"] + chosen["transfer_seconds"]
-            <= min(row["projected_seconds"] + row["transfer_seconds"] for row in feasible.values()),
-            "selected placement is slower than a feasible comparative allocation")
+    if not qualifying:
+        chosen = feasible[decision["selected_host"]]
+        require(chosen["projected_seconds"] + chosen["transfer_seconds"]
+                <= min(row["projected_seconds"] + row["transfer_seconds"] for row in feasible.values()),
+                "selected placement is slower than a feasible comparative allocation")
 
 
 def workload(plan):
@@ -193,11 +205,12 @@ def workload(plan):
         command.pop("output_directory")
         configs.append(command)
     pins = required_inputs(plan, runtime, configs)
+    # Future formal limits/publication budgets do not affect the prefix and
+    # can be filled after measuring it. Formal admission validates them again.
     binding = {"runtime": native.runtime_identity(runtime), "inputs": pins, "commands": configs,
                "steps": [j["steps"] for j in plan["jobs"]], "cpu_affinity": plan["cpu_affinity"],
                "host": slots.host(), "launcher_sha256": pin(__file__)["sha256"],
-               "publication_budget": plan["publication_budget"], "storage": plan["storage"],
-               "qualification_limits": plan["qualification_limits"], "run_limits": plan["run_limits"],
+               "storage": plan["storage"], "qualification_limits": plan["qualification_limits"],
                "stop_files": plan["stop_files"]}
     return binding, runtime, configs
 
@@ -390,10 +403,12 @@ def run_batch(plan, runtime, configs, root, workers, mode, guard):
 def verify_qualification(ref, binding, runtime, configs):
     receipt = read(checked(ref)) if "path" in ref else ref
     require(receipt["schema"] == RECEIPT and receipt.get("complete") is True
+            and receipt.get("purpose") == EVIDENCE
             and receipt["binding"] == binding, "missing or incompatible throughput qualification")
     if "path" in ref:
         completion = read(Path(ref["path"]).parent / "result.json")
         require(completion["complete"] is True and completion["receipt"] == ref
+                and completion.get("qualification") is True and completion.get("purpose") == EVIDENCE
                 and completion["binding"] == binding and completion["guard"]["active_processes"] == 0,
                 "qualification lacks successful drained completion")
     trials = receipt["trials"]
@@ -427,12 +442,13 @@ def verify_qualification(ref, binding, runtime, configs):
 
 def execute(plan_path, root, qualifying, qualification=None):
     plan = read(plan_path)
-    validate_plan(plan)
+    validate_plan(plan, qualifying)
     guard = Guard(plan, root, qualifying)
-    outcome = {"schema": RESULT, "complete": False, "plan": pin(plan_path), "qualification": qualifying}
+    outcome = {"schema": RESULT, "complete": False, "plan": pin(plan_path), "qualification": qualifying,
+               "purpose": EVIDENCE if qualifying else "formal-dispatch"}
     failure = None
     try:
-        inventory(plan)
+        inventory(plan, qualifying)
         binding, runtime, configs = workload(plan)
         outcome["binding"] = binding
         if qualifying:
@@ -442,6 +458,7 @@ def execute(plan_path, root, qualifying, qualification=None):
                 prefix = run_batch(plan, runtime, configs, guard.root / f"prefix-w{workers}", workers, "prefix", guard)
                 trials.append({"startup": dry, "prefix": prefix})
             receipt = {"schema": RECEIPT, "complete": True, "binding": binding, "trials": trials,
+                       "purpose": EVIDENCE,
                        "allocation": plan["allocation"], "inventory": plan["inventory"]}
             selected = verify_qualification(receipt, binding, runtime, configs)
             write(guard.root / "qualification.json", receipt)
@@ -450,29 +467,30 @@ def execute(plan_path, root, qualifying, qualification=None):
             require(qualification is not None, "throughput qualification required before native spawn")
             selected = verify_qualification(qualification, binding, runtime, configs)
         workers = selected["prefix"]["workers"]
-        startup, prefix = selected["startup"], selected["prefix"]
-        marginal = [max(0, p["seconds"] - d["seconds"]) / PREFIX
-                    for p, d in zip(prefix["jobs"], startup["jobs"])]
-        projected = [d["seconds"] + marginal[i] * plan["jobs"][i]["steps"]
-                     for i, d in enumerate(startup["jobs"])]
-        overhead = max(0, prefix["seconds"] - (sum(j["seconds"] for j in prefix["jobs"])
-                                               if workers == 1 else max(j["seconds"] for j in prefix["jobs"])))
-        wall = overhead + (sum(projected) if workers == 1 else max(projected)) + plan["publication_budget"]["wall_seconds"]
-        factor = max(j["steps"] for j in plan["jobs"]) / PREFIX
-        cpu = startup["cpu_seconds"] + max(0, prefix["cpu_seconds"] - startup["cpu_seconds"]) * factor
-        cpu += plan["publication_budget"]["cpu_seconds"]
-        projected_bytes = sum(d["output_bytes"] + max(0, p["output_bytes"] - d["output_bytes"])
-                              * plan["jobs"][i]["steps"] / PREFIX
-                              for i, (p, d) in enumerate(zip(prefix["jobs"], startup["jobs"])))
-        projected_bytes += plan["publication_budget"]["bytes"]
-        outcome.update(selected_workers=workers, projection={"wall_seconds": wall, "cpu_seconds": cpu,
-            "physical_bytes": projected_bytes,
-            "startup_seconds": [j["seconds"] for j in selected["startup"]["jobs"]],
-            "incremental_seconds_per_step": marginal,
-            "repeated_startup_cpu_upper_estimate": prefix["cpu_seconds"] * factor + plan["publication_budget"]["cpu_seconds"],
-            "limitation": "32-step extrapolation; startup subtraction is noisy; final publication is budgeted, not measured",
-            "publication_budget": plan["publication_budget"]})
+        outcome["selected_workers"] = workers
         if not qualifying:
+            startup, prefix = selected["startup"], selected["prefix"]
+            marginal = [max(0, p["seconds"] - d["seconds"]) / PREFIX
+                        for p, d in zip(prefix["jobs"], startup["jobs"])]
+            projected = [d["seconds"] + marginal[i] * plan["jobs"][i]["steps"]
+                         for i, d in enumerate(startup["jobs"])]
+            overhead = max(0, prefix["seconds"] - (sum(j["seconds"] for j in prefix["jobs"])
+                                                   if workers == 1 else max(j["seconds"] for j in prefix["jobs"])))
+            wall = overhead + (sum(projected) if workers == 1 else max(projected)) + plan["publication_budget"]["wall_seconds"]
+            factor = max(j["steps"] for j in plan["jobs"]) / PREFIX
+            cpu = startup["cpu_seconds"] + max(0, prefix["cpu_seconds"] - startup["cpu_seconds"]) * factor
+            cpu += plan["publication_budget"]["cpu_seconds"]
+            projected_bytes = sum(d["output_bytes"] + max(0, p["output_bytes"] - d["output_bytes"])
+                                  * plan["jobs"][i]["steps"] / PREFIX
+                                  for i, (p, d) in enumerate(zip(prefix["jobs"], startup["jobs"])))
+            projected_bytes += plan["publication_budget"]["bytes"]
+            outcome.update(projection={"wall_seconds": wall, "cpu_seconds": cpu,
+                "physical_bytes": projected_bytes,
+                "startup_seconds": [j["seconds"] for j in selected["startup"]["jobs"]],
+                "incremental_seconds_per_step": marginal,
+                "repeated_startup_cpu_upper_estimate": prefix["cpu_seconds"] * factor + plan["publication_budget"]["cpu_seconds"],
+                "limitation": "32-step extrapolation; startup subtraction is noisy; final publication is budgeted, not measured",
+                "publication_budget": plan["publication_budget"]})
             outcome["batch"] = run_batch(plan, runtime, configs, guard.root / "formal", workers, "formal", guard)
             require([{k: j["fingerprint"][k] for k in ("step32_state_sha256", "prefix_telemetry_sha256")}
                      for j in outcome["batch"]["jobs"]]
