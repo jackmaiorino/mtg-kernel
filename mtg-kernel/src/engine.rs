@@ -9320,6 +9320,10 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if halt_on_invalid_battlefield_pt(state) {
+        let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
+        return Decision::Halted { mechanic, source };
+    }
     if crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)
         .is_err()
         || crate::bloodthirsty_conqueror_v49::validate(state).is_err()
@@ -9415,6 +9419,10 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
 }
 
 pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision {
+    if halt_on_invalid_battlefield_pt(state) {
+        let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
+        return Decision::Halted { mechanic, source };
+    }
     if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -10381,6 +10389,9 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             // ability, e.g. the Blood Token's) can put a token into the
             // graveyard before the stack item is installed.
             trigger::sba_fixed_point(state);
+            if state.engine.halted.is_some() {
+                return;
+            }
             let p = state
                 .engine
                 .pending_activation
@@ -15019,7 +15030,11 @@ fn execute_resolving_program(
     let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
         effect::execute(program, ctx, state);
-        return ResolutionProgress::Complete;
+        return if state.engine.halted.is_some() {
+            ResolutionProgress::Suspended
+        } else {
+            ResolutionProgress::Complete
+        };
     }
 
     let progress = if let Some(owner) = hunter_owner {
@@ -15452,6 +15467,21 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    if let Some(owner) = fake_owner.as_ref() {
+        if crate::fake_your_own_death_v50::spell_custody::preflight_resolution(
+            state,
+            owner,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                resolving_source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    }
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
@@ -16696,7 +16726,7 @@ pub(crate) fn static_controlled_subtype_boost_for(
     }
 }
 
-fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i128, i128) {
     if !cfg!(feature = "limited-fdn-fixtures") {
         return (0, 0);
     }
@@ -16722,7 +16752,7 @@ fn controlled_subtype_boost(state: &GameState, recipient: ObjectId) -> (i32, i32
             .then_some((boost.power, boost.toughness))
         })
         .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + p, toughness + t)
+            (power + i128::from(p), toughness + i128::from(t))
         })
 }
 
@@ -16763,7 +16793,7 @@ pub(crate) fn static_controlled_creature_boost_for_v1(
     })
 }
 
-fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i32, i32) {
+fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i128, i128) {
     if !cfg!(feature = "limited-fdn-fixtures") {
         return (0, 0);
     }
@@ -16801,7 +16831,7 @@ fn controlled_creature_boost_v1(state: &GameState, recipient: ObjectId) -> (i32,
             matches.then_some((boost.power, boost.toughness))
         })
         .fold((0, 0), |(power, toughness), (p, t)| {
-            (power + p, toughness + t)
+            (power + i128::from(p), toughness + i128::from(t))
         })
 }
 
@@ -16866,7 +16896,7 @@ fn valid_bestow_attachment_host(state: &GameState, aura: ObjectId) -> Option<Obj
     .then_some(link.object)
 }
 
-fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
+fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i128 {
     state
         .objects
         .try_get(host)
@@ -16876,7 +16906,7 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i32 {
                 .iter()
                 .copied()
                 .filter(|&aura| valid_bestow_attachment_host(state, aura) == Some(host))
-                .map(|aura| state.objects.get(aura).counters.plus1_plus1)
+                .map(|aura| i128::from(state.objects.get(aura).counters.plus1_plus1))
                 .sum()
         })
         .unwrap_or(0)
@@ -17144,87 +17174,72 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     })
 }
 
-pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
-    let obj = state.objects.get(id);
-    let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut power = effective_base_power(state, id).unwrap_or(0) + obj.counters.plus1_plus1
-        - obj.counters.minus1_minus1 as i32;
-    power += bestow_host_counter_bonus(state, id);
-    power += controlled_subtype_boost(state, id).0;
-    #[cfg(feature = "standard-magezero-fixtures")]
-    {
-        power += crate::standard_keywords_v1::controlled_forest_boost(state, id);
-        power += crate::standard_statics_v1::self_counter_boost(state, id).0;
-        power += crate::standard_cards_v1::controlled_boost(state, id).0;
-        power += crate::standard_legends_v1::jodah_bonus(state, id);
-    }
-    power += controlled_creature_boost_v1(state, id).0;
-    power += crate::heraldic_banner_v1::controlled_boost(state, id).0;
-    if def.is_executable()
-        && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
-    {
-        if let Some(boost) = static_self_boost_for(def.name) {
-            if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
-                && (boost.condition)(obj.controller, state)
-            {
-                power += boost.power;
-            }
-        }
-    }
-    for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
-        let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
-        power += i32::from(equipment.pt_deltas(controller_turn).0);
-    }
-    for (aura, profile) in attached_static_aura_profiles(state, id) {
-        power += i32::from(profile.power) * static_aura_multiplier(state, aura, profile);
-    }
-    for eff in &state.engine.until_end_of_turn {
-        match eff {
-            UntilEndOfTurnEffect::ResolvedSetEffect {
-                object_ids,
-                power: p,
-                ..
-            } if object_ids.contains(&id) => power += p,
-            UntilEndOfTurnEffect::ResolvedObjectEffect {
-                object_id,
-                object_zone_change_count,
-                power: p,
-                ..
-            } if *object_id == id
-                && obj.zone == Zone::Battlefield
-                && obj.zone_change_count == *object_zone_change_count =>
-            {
-                power += p
-            }
-            _ => {}
-        }
-    }
-    power
+/// The single layer-7 query used by native rules and current projections.
+/// Intermediate arithmetic is wide and checked; only the final native value
+/// must fit i32. A later negative modifier can therefore cancel a wide prefix.
+pub(crate) fn checked_effective_pt(state: &GameState, id: ObjectId) -> Result<(i32, i32), String> {
+    checked_effective_pt_with_boost(state, id, (0, 0))
 }
 
-/// `effective_power`'s toughness twin -- see that function's doc. No card in
-/// this pool's static/team boosts actually carries a nonzero toughness
-/// delta (Goblin Tomb Raider/Goblin Bushwhacker are both "+1/+0"), but this
-/// stays a real, symmetric code path rather than a power-only shortcut so
-/// the next card that pumps toughness doesn't have to rediscover this
-/// shape.
-pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
-    let obj = state.objects.get(id);
+/// Preflight the additive exact-incarnation temporary boost without installing
+/// a timestamp or modifier. All existing layer predicates run in the same query.
+pub(crate) fn checked_effective_pt_with_boost(
+    state: &GameState,
+    id: ObjectId,
+    proposed: (i32, i32),
+) -> Result<(i32, i32), String> {
+    Ok((
+        checked_effective_stat(state, id, false, proposed.0)?,
+        checked_effective_stat(state, id, true, proposed.1)?,
+    ))
+}
+
+// One evaluator, parameterized by axis so legacy single-stat queries do not
+// evaluate the unused characteristic or add a new dependency between axes.
+fn checked_effective_stat(
+    state: &GameState,
+    id: ObjectId,
+    toughness: bool,
+    proposed: i32,
+) -> Result<i32, String> {
+    let obj = state.objects.try_get(id).ok_or("PT source is missing")?;
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut toughness = effective_base_toughness(state, id).unwrap_or(0) + obj.counters.plus1_plus1
-        - obj.counters.minus1_minus1 as i32
-        - obj.counters.minus0_minus1 as i32;
-    toughness += bestow_host_counter_bonus(state, id);
-    toughness += controlled_subtype_boost(state, id).1;
+    let overflow = || format!("effective PT exceeds native i32 range for {id:?}");
+    let select = |pair: (i128, i128)| if toughness { pair.1 } else { pair.0 };
+    let base = if toughness {
+        effective_base_toughness(state, id)
+    } else {
+        effective_base_power(state, id)
+    };
+    let mut value = i128::from(base.unwrap_or(0)) + i128::from(obj.counters.plus1_plus1)
+        - i128::from(obj.counters.minus1_minus1)
+        - if toughness {
+            i128::from(obj.counters.minus0_minus1)
+        } else {
+            0
+        };
+    let mut add = |delta: i128| -> Result<(), String> {
+        value = value.checked_add(delta).ok_or_else(overflow)?;
+        Ok(())
+    };
+    add(bestow_host_counter_bonus(state, id))?;
+    add(select(controlled_subtype_boost(state, id)))?;
     #[cfg(feature = "standard-magezero-fixtures")]
     {
-        toughness += crate::standard_keywords_v1::controlled_forest_boost(state, id);
-        toughness += crate::standard_statics_v1::self_counter_boost(state, id).1;
-        toughness += crate::standard_cards_v1::controlled_boost(state, id).1;
-        toughness += crate::standard_legends_v1::jodah_bonus(state, id);
+        add(crate::standard_keywords_v1::controlled_forest_boost(
+            state, id,
+        ))?;
+        let own = crate::standard_statics_v1::self_counter_boost(state, id);
+        add(select((i128::from(own.0), i128::from(own.1))))?;
+        add(select(crate::standard_cards_v1::controlled_boost(
+            state, id,
+        )))?;
+        add(crate::standard_legends_v1::jodah_bonus(state, id))?;
     }
-    toughness += controlled_creature_boost_v1(state, id).1;
-    toughness += crate::heraldic_banner_v1::controlled_boost(state, id).1;
+    add(select(controlled_creature_boost_v1(state, id)))?;
+    add(select(crate::heraldic_banner_v1::controlled_boost(
+        state, id,
+    )))?;
     if def.is_executable()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     {
@@ -17232,39 +17247,92 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
             if (!boost.battlefield_only || obj.zone == Zone::Battlefield)
                 && (boost.condition)(obj.controller, state)
             {
-                toughness += boost.toughness;
+                add(i128::from(if toughness {
+                    boost.toughness
+                } else {
+                    boost.power
+                }))?;
             }
         }
     }
     for (equipment_id, equipment) in attached_equipment_profiles(state, id) {
         let controller_turn = state.active_player == state.objects.get(equipment_id).controller;
-        toughness += i32::from(equipment.pt_deltas(controller_turn).1);
+        let delta = equipment.pt_deltas(controller_turn);
+        add(i128::from(if toughness { delta.1 } else { delta.0 }))?;
     }
     for (aura, profile) in attached_static_aura_profiles(state, id) {
-        toughness += i32::from(profile.toughness) * static_aura_multiplier(state, aura, profile);
+        let delta = if toughness {
+            profile.toughness
+        } else {
+            profile.power
+        };
+        add(i128::from(delta)
+            .checked_mul(static_aura_multiplier(state, aura, profile))
+            .ok_or_else(overflow)?)?;
     }
-    for eff in &state.engine.until_end_of_turn {
-        match eff {
+    for effect in &state.engine.until_end_of_turn {
+        let delta = match effect {
             UntilEndOfTurnEffect::ResolvedSetEffect {
                 object_ids,
+                power,
                 toughness: t,
                 ..
-            } if object_ids.contains(&id) => toughness += t,
+            } if object_ids.contains(&id) => Some(if toughness { *t } else { *power }),
             UntilEndOfTurnEffect::ResolvedObjectEffect {
                 object_id,
                 object_zone_change_count,
+                power,
                 toughness: t,
                 ..
             } if *object_id == id
                 && obj.zone == Zone::Battlefield
                 && obj.zone_change_count == *object_zone_change_count =>
             {
-                toughness += t
+                Some(if toughness { *t } else { *power })
             }
-            _ => {}
+            _ => None,
+        };
+        if let Some(delta) = delta {
+            add(i128::from(delta))?;
         }
     }
-    toughness
+    add(i128::from(proposed))?;
+    i32::try_from(value).map_err(|_| overflow())
+}
+
+/// Read-only ingress check. Noncreature objects have no current PT envelope.
+pub(crate) fn validate_battlefield_pt(state: &GameState) -> Result<(), ObjectId> {
+    for (id, object) in state.objects.iter() {
+        if object.zone == Zone::Battlefield
+            && object_has_type(state, id, CardType::Creature)
+            && checked_effective_pt(state, id).is_err()
+        {
+            return Err(id);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn halt_on_invalid_battlefield_pt(state: &mut GameState) -> bool {
+    if state.engine.halted.is_some() {
+        return true;
+    }
+    if let Err(source) = validate_battlefield_pt(state) {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return true;
+    }
+    false
+}
+
+/// Legacy scalar API cannot represent refusal. Current producers, ingress,
+/// temporary boost installation and SBA use the checked query instead. Other
+/// direct legacy callers still require a state within the native PT envelope.
+pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
+    checked_effective_stat(state, id, false, 0).expect("native PT envelope must be validated")
+}
+
+pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
+    checked_effective_stat(state, id, true, 0).expect("native PT envelope must be validated")
 }
 
 pub(crate) fn static_graveyard_threshold_keyword_for(name: &str) -> Option<(u16, Keywords)> {
@@ -17614,7 +17682,7 @@ fn static_aura_multiplier(
     state: &GameState,
     aura: ObjectId,
     profile: card_def::AuraCreatureStaticDef,
-) -> i32 {
+) -> i128 {
     let Some(subtype) = profile.per_controlled_subtype else {
         return 1;
     };
@@ -17623,7 +17691,7 @@ fn static_aura_multiplier(
         .battlefield
         .iter()
         .filter(|id| subtype.is_in_subtype_ids(&effective_subtype_ids(state, **id)))
-        .count() as i32
+        .count() as i128
 }
 
 pub(crate) fn attached_equipment_profiles(
@@ -17950,6 +18018,9 @@ fn deal_combat_damage(state: &mut GameState) {
             return;
         }
         trigger::sba_fixed_point(state);
+        if state.engine.halted.is_some() {
+            return;
+        }
         combat_damage_wave(state, false);
     } else {
         combat_damage_wave(state, false);
@@ -18591,6 +18662,8 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    validate_battlefield_pt(state)
+        .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)?;
     crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
@@ -18624,6 +18697,8 @@ pub(crate) fn step_without_linked_aura_v1(
     state: &mut GameState,
     action: Action,
 ) -> Result<(), String> {
+    validate_battlefield_pt(state)
+        .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
     event::validate_exile_if_dies_replacements(state)

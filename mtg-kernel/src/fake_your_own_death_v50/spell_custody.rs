@@ -475,6 +475,19 @@ pub(crate) fn acquire(
         item: item.clone(),
     }))
 }
+/// Check the actual resolving grant while its original paid row is still live.
+/// Countering, fizzling and other departures do not install a modifier.
+pub(crate) fn preflight_resolution(
+    state: &GameState,
+    owner: &RemovalOwnerV50,
+    target_legal: bool,
+) -> Result<(), String> {
+    if target_legal {
+        super::grant_primitive::preflight_install_grant_v50(state, validate_spell(&owner.item)?)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve(
     state: &mut GameState,
     owner: RemovalOwnerV50,
@@ -491,6 +504,8 @@ pub(crate) fn resolve(
     if removal == (RemovalV50::Resolving { target_legal: true }) {
         // The engine independently rechecks target legality before removal.
         // The primitive rechecks the exact live incarnation before installation.
+        // Recheck before journaling too if a private owner was held separately.
+        super::grant_primitive::preflight_install_grant_v50(state, recipient)?;
         timestamp
             .checked_add(1)
             .ok_or("Fake installation timestamp overflow")?;

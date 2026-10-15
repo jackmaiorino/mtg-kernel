@@ -43,7 +43,7 @@ pub(crate) fn legendary_creature(state: &GameState, object: ObjectId) -> bool {
 }
 
 #[cfg(feature = "standard-magezero-fixtures")]
-pub(crate) fn jodah_bonus(state: &GameState, recipient: ObjectId) -> i32 {
+pub(crate) fn jodah_bonus(state: &GameState, recipient: ObjectId) -> i128 {
     let object = state.objects.get(recipient);
     if object.zone != Zone::Battlefield || !legendary_creature(state, recipient) {
         return 0;
@@ -57,7 +57,9 @@ pub(crate) fn jodah_bonus(state: &GameState, recipient: ObjectId) -> i32 {
         .iter()
         .filter(|&&id| legendary_creature(state, id))
         .count();
-    i32::try_from(sources.saturating_mul(count)).unwrap_or(i32::MAX)
+    // Preserve the historical Jodah helper cap; this patch only makes
+    // its intermediate multiplication exact.
+    ((sources as i128) * (count as i128)).min(i128::from(i32::MAX))
 }
 
 fn binding(state: &GameState, object: ObjectId) -> EffectObjectBinding {

@@ -141,6 +141,8 @@ pub fn commitment(value: &RavenousObservationV51) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::engine::validate_battlefield_pt(state)
+        .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")

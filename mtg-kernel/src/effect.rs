@@ -2987,6 +2987,9 @@ pub(crate) fn install_temporary_boost(
     toughness: i32,
     keywords: Keywords,
 ) {
+    if state.engine.halted.is_some() {
+        return;
+    }
     let Some(object) = state.objects.try_get(binding.object) else {
         return;
     };
@@ -2994,6 +2997,16 @@ pub(crate) fn install_temporary_boost(
         || binding.expected_zone != Zone::Battlefield
         || object.zone_change_count != binding.expected_zone_change_count
     {
+        return;
+    }
+    if crate::engine::object_has_type(state, binding.object, crate::card_def::CardType::Creature)
+        && crate::engine::checked_effective_pt_with_boost(state, binding.object, (power, toughness))
+            .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            binding.object,
+        ));
         return;
     }
     let timestamp = crate::engine::next_timestamp(state);
@@ -10182,6 +10195,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
 
     let mut resolution_answer = None;
     while let Some(frame) = continuation.frames.pop() {
+        if state.engine.halted.is_some() {
+            return Err("effect continuation halted".into());
+        }
         if matches!(
             frame,
             EffectFrame::ExilePlay { .. } | EffectFrame::ExileBatchSelect { .. }
@@ -13752,6 +13768,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
     }
 
+    if state.engine.halted.is_some() {
+        return Err("effect continuation halted".into());
+    }
     if continuation.answered_choice_guard.is_some() {
         return Err("effect completed with an unconsumed answered-choice guard".to_string());
     }
@@ -16468,6 +16487,9 @@ fn creature_matches_filter(
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if state.engine.halted.is_some() {
+        return;
+    }
     if crate::linked_aura_operation_v1::needs_event_owner(state)
         && crate::linked_aura_operation_v1::event(
             state,
@@ -16483,6 +16505,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
 }
 
 pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    if state.engine.halted.is_some() {
+        return;
+    }
     if crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op)
     {
@@ -16496,6 +16521,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::Sequence(ops) => {
             for inner in ops {
                 execute(inner, ctx, state);
+                if state.engine.halted.is_some() {
+                    break;
+                }
             }
         }
         EffectOp::Conditional { cond, then, else_ } => {
