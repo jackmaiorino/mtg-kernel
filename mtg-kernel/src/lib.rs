@@ -734,3 +734,17 @@ pub mod rules_meaning_spinner_v54;
 pub mod spinner_public_v54;
 
 pub mod prepared_observation_v57;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod fake_full_engine_admission_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) mod ravenous_full_engine_admission_v1_tests;

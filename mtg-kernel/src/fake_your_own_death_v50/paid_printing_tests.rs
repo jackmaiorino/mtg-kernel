@@ -24,10 +24,10 @@ fn paid_on(
     let definition = state.objects.get(spell).card_def;
     assert_eq!(
         CARD_DEFS[usize::from(definition)].capability,
-        crate::card_def::CardCapability::Partial
+        crate::card_def::CardCapability::Full
     );
     assert!(spell_custody::selected_definition(definition));
-    assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_err());
+    assert!(crate::card_def::preflight_fully_supported_deck(&[definition]).is_ok());
     for root in [
         crate::rules_meaning_fake_your_own_death_v50::RootV50::InstantSpell,
         crate::rules_meaning_fake_your_own_death_v50::RootV50::GainedDiesAbility,
@@ -36,7 +36,7 @@ fn paid_on(
             crate::rules_meaning_fake_your_own_death_v50::printed_meaning(definition, root)
                 .unwrap();
         crate::rules_meaning_fake_your_own_death_v50::validate(&meaning).unwrap();
-        assert_eq!(meaning.capability, crate::card_def::CardCapability::Partial);
+        assert_eq!(meaning.capability, crate::card_def::CardCapability::Full);
         assert!(!meaning.model_admitted);
     }
     for _ in 0..2 {
@@ -132,7 +132,7 @@ fn treasures(state: &GameState, player: PlayerId) -> usize {
 }
 
 #[test]
-fn actual_partial_printing_pays_1b_and_returns_once_with_death_controller_treasure_and_restore() {
+fn actual_full_printing_pays_1b_and_returns_once_with_death_controller_treasure_and_restore() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for owner in [actor, actor.opponent()] {
             let (mut state, spell, target) = paid(actor, owner);

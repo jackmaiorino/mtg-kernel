@@ -2760,10 +2760,10 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 451 (Partial Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // The nine Partial source candidates occupy ids 442-448 and 450-451.
+        // The seven Partial source candidates occupy ids 444-448 and 450-451.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
@@ -2783,7 +2783,7 @@ mod tests {
             assert_eq!(card_id_by_name("Flamewake Phoenix"), Some(445));
             assert_eq!(
                 CARD_DEFS[usize::from(fake)].capability,
-                CardCapability::Partial
+                CardCapability::Full
             );
             assert_eq!(card_id_by_name("Krenko, Mob Boss"), Some(426));
             assert_eq!(card_id_by_name("Zul Ashur, Lich Lord"), Some(427));
@@ -2972,8 +2972,8 @@ mod tests {
     #[test]
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     #[cfg(feature = "limited-fdn-fixtures")]
-    fn card_db_hash_v86_fdn_is_frozen() {
-        const EXPECTED_FDN: u64 = 0x69ed_c2fb_ec6b_9070;
+    fn card_db_hash_v87_fdn_is_frozen() {
+        const EXPECTED_FDN: u64 = 0x68f2_13db_0a5e_f38c;
         assert_eq!(KERNEL_CARDDB_HASH, EXPECTED_FDN);
     }
 
@@ -3219,8 +3219,6 @@ mod tests {
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
         let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
             &[
-                (442, "Fake Your Own Death"),
-                (443, "Ravenous Amulet"),
                 (444, "Elenda, Saint of Dusk"),
                 (445, "Flamewake Phoenix"),
                 (446, "Spinner of Souls"),
@@ -3269,16 +3267,16 @@ mod tests {
             assert_eq!(
                 non_full,
                 vec![
-                    (442, "Fake Your Own Death", CardCapability::Partial),
-                    (443, "Ravenous Amulet", CardCapability::Partial),
                     (444, "Elenda, Saint of Dusk", CardCapability::Partial),
                     (445, "Flamewake Phoenix", CardCapability::Partial),
                     (446, "Spinner of Souls", CardCapability::Partial),
                     (447, "Painful Quandary", CardCapability::Partial),
                     (448, "Drake Hatcher", CardCapability::Partial),
+                    (450, "Bloodthirsty Conqueror", CardCapability::Partial),
+                    (451, "Doubling Season", CardCapability::Partial),
                 ]
             );
-            for id in [442, 443, 444, 445, 446, 447, 448] {
+            for id in [444, 445, 446, 447, 448, 450, 451] {
                 assert!(matches!(
                     preflight_fully_supported_deck(&[id]),
                     Err(DeckPreflightError::NotFullySupported {
@@ -3287,6 +3285,10 @@ mod tests {
                         ..
                     })
                 ));
+            }
+            for (id, name) in [(442, "Fake Your Own Death"), (443, "Ravenous Amulet")] {
+                assert_eq!(card_id_by_name(name), Some(id));
+                assert!(preflight_fully_supported_deck(&[id]).is_ok());
             }
         }
         #[cfg(feature = "limited-fdn-fixtures")]

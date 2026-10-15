@@ -20,10 +20,12 @@ Full promotion, model, search or default-branch acceptance.
 
 The registry has 452 definitions / 260 FDN rows. All 258 predecessor rows retain
 their exact parsed values and order. The frozen 286-printing inventory is
-prospectively 236 Full, 9 Partial and 41 Missing. Fake442 and Ravenous443 remain
-Partial. The external Drake token does not increase that printing Full count.
+prospectively 238 Full, 7 Partial and 41 Missing. Fake442 and Ravenous443 now
+inherit the separate dual-Full source candidate `2d448e0f984c7d84401e27dd271e964235911834`.
+The external Drake token does not increase that printing Full count.
 The 24 dependency records, original UG/WG inputs and frozen profiles remain fixed.
-The separate dual-Full candidate is not composed here.
+This local composition does not qualify or accept either candidate. Native157
+continues to own its separate unchanged dual-Full source/target.
 
 Composition preserves the old subtype/cost/effect/trigger/event prefixes and
 CardDef/Counters/EngineState fields. Phoenix then Drake append to the subtype
@@ -67,12 +69,25 @@ exact object binding, rejecting malformed rows before mutation. Their paid
 both-seat, restore, grant and refusal fixtures remain uncompiled and unrun.
 Pinned formatting/diff and the same 102 Python cases pass on the composition.
 
-The shared observation/backend/Human/schema-5 Prepared V57 successor is under
-development in separate owned trees. No combined transport or runtime pass
-is claimed here. Conqueror/Season ordinary-printing model supplements from
-`3dc65d167a` are composed; broader covered-ID completeness and all successor
+The shared observation/backend Prepared V57 source from `4506503ad0` /
+`aaa90046c4` is composed with its distinct compatibility schemas, exact
+all-object battlefield roster, captured-source routing and sealed ownership.
+The Human/schema-5 source remains separate while its two scoped findings are
+repaired. No combined transport or runtime pass is claimed here.
+Conqueror/Season ordinary-printing model supplements from `3dc65d167a`,
+Frenzied/Banner from `171c2f783d`, and Sower from `db1fc766fe` are composed.
+Broader covered-ID completeness and all successor
 model/search qualification remain open. Drake's
 effective power/toughness projection refuses its explicit checked-overflow
 boundary; the engine's later unchecked modifiers still need a concrete repair
 before relying on extreme arithmetic cases. Original source notes retain their
 provisional IDs; the table above supplies the composed mapping.
+
+The merge preserves both public Full reference-reset families and all seven
+Partial refusal cases. Prior registry prefix hashes normalize only the two
+explicitly promoted capability fields to their historical Partial values;
+every other field and all old hash literals remain checked. The actual composed
+registry has 260 rows. The v87 444-definition identity and live canaries are
+predecessor evidence, not an identity for this 452-definition source. A later
+actual export must establish the successor before profile/runtime publication.
+Pinned formatting/diff and all 102 affected Python tests pass after this merge.
