@@ -65,10 +65,35 @@ impl Project for PublicRestrictedManaV1 {
 record!(HumanCounterDistributionV1, CounterDistributionPublicV1, {
     total: u32, targets: Vec<HumanTargetV1>, amounts: Vec<u32>,
 });
-record!(HumanCounterValuesV1, crate::state::Counters, {
-    plus1_plus1: i32, minus1_minus1: i16, minus0_minus1: i16, stun: i16,
-    lore: i16, oil: i16, charge: i32, net: i32,
-});
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HumanCounterValuesV1 {
+    pub plus1_plus1: i32,
+    pub minus1_minus1: i16,
+    pub minus0_minus1: i16,
+    pub stun: i16,
+    pub lore: i16,
+    pub oil: i16,
+    pub charge: i32,
+    pub net: i32,
+}
+impl Project for crate::state::Counters {
+    type Output = HumanCounterValuesV1;
+    fn project(&self, _handles: &mut Handles) -> Result<Self::Output, Error> {
+        if self.soul != 0 {
+            return Err(Error::InvalidVisibleReference);
+        }
+        Ok(HumanCounterValuesV1 {
+            plus1_plus1: self.plus1_plus1,
+            minus1_minus1: self.minus1_minus1,
+            minus0_minus1: self.minus0_minus1,
+            stun: self.stun,
+            lore: self.lore,
+            oil: self.oil,
+            charge: self.charge,
+            net: self.net,
+        })
+    }
+}
 record!(HumanCounterExtrasV1, creatures::CounterExtrasV1, {
     loyalty: u32, lifelink: i16, time: u8, finality: u16,
 });
@@ -243,6 +268,18 @@ mod tests {
         )
         .unwrap()
         .0
+    }
+
+    #[test]
+    fn old_human_counter_transfer_refuses_soul_without_dropping_it() {
+        let observation = observation();
+        let mut handles = Handles::new(&observation).unwrap();
+        let mut transfer = creatures::CounterTransferV1::default();
+        assert!(transfer.project(&mut handles).is_ok());
+        transfer.counters.soul = 3;
+        let before = transfer;
+        assert!(transfer.project(&mut handles).is_err());
+        assert_eq!(transfer, before);
     }
 
     fn assert_safe(value: &serde_json::Value) {

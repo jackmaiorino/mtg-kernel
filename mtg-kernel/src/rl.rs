@@ -8151,6 +8151,11 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if object.counters.soul != 0 {
+        return Err(RlContractError(
+            "public counter schema cannot represent soul counters".into(),
+        ));
+    }
     Ok(CardPublicV1 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
@@ -8192,6 +8197,11 @@ fn public_card_v2(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    if object.counters.soul != 0 {
+        return Err(RlContractError(
+            "public counter schema cannot represent soul counters".into(),
+        ));
+    }
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
@@ -12301,5 +12311,23 @@ mod crystal_resolving_source_ref_native84_tests {
                 assert_eq!(bytes, serde_json::to_vec(&bad).unwrap());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod soul_counter_representation_v1_tests {
+    use super::*;
+    #[test]
+    fn old_public_counter_shapes_refuse_visible_soul_instead_of_silently_dropping_it() {
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+        let mut state = ready_state_for(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+        assert!(public_card(&state, source).is_ok());
+        assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_ok());
+        state.objects.get_mut(source).counters.soul = 3;
+        let before = serde_json::to_vec(&state).unwrap();
+        assert!(public_card(&state, source).is_err());
+        assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }

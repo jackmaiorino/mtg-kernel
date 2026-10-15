@@ -194,6 +194,7 @@ fn apply_counter_transfer(
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
     let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
+    let soul = live.counters.soul.checked_add(scale(counters.soul)?)?;
     let loyalty = snapshot.extras.loyalty;
     if loyalty > 0
         && (crate::doubling_season_v48::requires_successor(state) || loyalty > i32::MAX as u32)
@@ -233,6 +234,7 @@ fn apply_counter_transfer(
     live.counters.charge = charge;
     live.counters.net = net;
     live.counters.bait = bait;
+    live.counters.soul = soul;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -1016,6 +1018,32 @@ mod doubling_season_transfer_tests_v48 {
         state::Zone,
     };
     #[test]
+    fn soul_transfer_preserves_value_restore_and_overflow_refusal_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let target = put(&mut state, actor, "Forest", Zone::Battlefield);
+            state.objects.get_mut(target).counters.soul = 2;
+            let snapshot = CounterTransferV1 {
+                counters: crate::state::Counters {
+                    soul: 3,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, snapshot).unwrap();
+                assert_eq!(branch.objects.get(target).counters.soul, 5);
+                branch.objects.get_mut(target).counters.soul = i32::MAX;
+                let before = branch.clone();
+                assert!(apply_counter_transfer(branch, target, actor, snapshot).is_none());
+                assert_eq!(*branch, before);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+    #[test]
     #[ignore = "future actual Doubling Season registration required"]
     fn actual_bait_transfer_original_world_balance_and_restore_refuse_counter_forgery_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
@@ -1029,6 +1057,7 @@ mod doubling_season_transfer_tests_v48 {
             let original = CounterTransferV1 {
                 counters: crate::state::Counters {
                     bait: 1,
+                    soul: 1,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -1161,6 +1190,7 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.charge, 2);
                 assert_eq!(o.counters.net, 2);
                 assert_eq!(o.counters.bait, 2);
+                assert_eq!(o.counters.soul, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);

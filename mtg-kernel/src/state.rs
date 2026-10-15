@@ -68,6 +68,10 @@ pub struct Counters {
     pub net: i32,
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub bait: i32,
+    /// Ravenous Amulet's counter family. Absent counters preserve every
+    /// predecessor snapshot and hash; old public counter shapes refuse it.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub soul: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -90,6 +94,7 @@ impl Counters {
             || self.charge != 0
             || self.net != 0
             || self.bait != 0
+            || self.soul != 0
     }
 }
 
@@ -125,6 +130,10 @@ impl std::hash::Hash for Counters {
         if self.oil != 0 {
             b"oil_counters_v1".hash(state);
             self.oil.hash(state);
+        }
+        if self.soul != 0 {
+            b"soul_counters_v1".hash(state);
+            self.soul.hash(state);
         }
     }
 }
@@ -4803,5 +4812,65 @@ mod tests {
 
         let mut r3 = SplitMix64::seed(6789);
         assert_ne!(r1.next_u64(), r3.next_u64());
+    }
+}
+
+#[cfg(test)]
+mod soul_counter_storage_v1_tests {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Default)]
+    struct Bytes(Vec<u8>);
+    impl Hasher for Bytes {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+    fn bytes(counters: Counters) -> Vec<u8> {
+        let mut out = Bytes::default();
+        counters.hash(&mut out);
+        out.0
+    }
+    #[test]
+    fn absent_soul_preserves_original_counter_json_and_ten_zero_hash_bytes() {
+        let original = r#"{"plus1_plus1":0,"minus1_minus1":0,"minus0_minus1":0,"stun":0,"lore":0}"#;
+        let counters: Counters = serde_json::from_str(original).unwrap();
+        assert_eq!(counters.soul, 0);
+        assert_eq!(serde_json::to_string(&counters).unwrap(), original);
+        assert_eq!(bytes(counters), vec![0; 10]);
+        assert!(!counters.any());
+    }
+    #[test]
+    fn soul_is_a_distinct_restorable_hashed_counter_and_zone_change_clears_it() {
+        use crate::policy_observation_v6::tests::{put, ready_state_for};
+        let mut state = ready_state_for(PlayerId::P0);
+        let source = put(&mut state, PlayerId::P0, "Forest", Zone::Battlefield);
+        state.objects.get_mut(source).counters.soul = 3;
+        let counters = state.objects.get(source).counters;
+        assert!(counters.any());
+        assert_ne!(bytes(counters), bytes(Counters::default()));
+        let other = Counters {
+            soul: 2,
+            ..Default::default()
+        };
+        assert_ne!(bytes(counters), bytes(other));
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored.objects.get(source).counters.soul, 3);
+        for branch in [&mut state, &mut restored] {
+            crate::event::propose_and_commit(
+                branch,
+                crate::event::ProposedEvent::zone_change(source, Zone::Hand),
+            );
+            assert_eq!(branch.objects.get(source).counters, Counters::default());
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
     }
 }
