@@ -1294,3 +1294,10 @@ pub(crate) fn expected_tokens(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod paid_counter_coexistence_tests;
