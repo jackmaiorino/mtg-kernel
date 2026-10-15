@@ -1092,6 +1092,13 @@ fn actual_mixed_human_named_grant_cost_restore_retry_and_current_facts_both_seat
             panic!("actual mixed Human: {:?}", human.current_response());
         };
         let prompt = projector.project_current(&human, expected).unwrap();
+        // Pool mana plus the genuine available Forest/Elf mana sources also
+        // make Longbow's printed equip legal in this same complete menu.
+        assert!(prompt.actions.iter().any(|action| action
+            .label
+            .starts_with("Activate Viridian Longbow")
+            && action.label.contains("target creature you control")
+            && action.label.contains("only as a sorcery")));
         assert!(prompt
             .actions
             .iter()

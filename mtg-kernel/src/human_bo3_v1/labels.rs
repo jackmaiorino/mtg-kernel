@@ -174,6 +174,54 @@ fn activation_cost(components: &[CostComponent], source: &str) -> Result<String,
         .map(|parts| parts.join("; "))
 }
 
+// The owning V40 union can offer an ordinary Equipment's printed equip
+// alongside a later family's granted abilities. Keep this exact supported
+// root separate from the frozen common effect-description whitelist.
+pub(super) fn label_printed_equip_v40(
+    action: &A,
+    handles: &Handles,
+    human: PlayerSeatV1,
+) -> Result<Option<String>, Error> {
+    let A::ActivateAbility {
+        actor,
+        source,
+        ability_index,
+        granted_ability: None,
+        ..
+    } = action
+    else {
+        return Ok(None);
+    };
+    let def = definition(source)?;
+    let Some(ability) = def.activated_abilities.get(usize::from(*ability_index)) else {
+        return Ok(None);
+    };
+    if def.equipment.is_none()
+        || def.capability != card_def::CardCapability::Full
+        || source.zone != Zone::Battlefield
+        || ability.activation_zone != Zone::Battlefield
+        || ability.target_spec != card_def::TargetSpec::ControlledCreature
+        || ability.activation_target_filter != card_def::ActivationTargetFilter::TargetSpecOnly
+        || !ability.sorcery_speed_only
+        || ability.max_activations_per_turn.is_some()
+        || !matches!(ability.cost, [CostComponent::Mana(_)])
+        || (ability.effect)()
+            != (EffectOp::AttachSourceToTarget {
+                object: ObjectRef::Target(0),
+            })
+    {
+        return Ok(None);
+    }
+    if *actor != human {
+        return Err(Error::NotHumanTurn);
+    }
+    Ok(Some(format!(
+        "Activate {} equip: {}: attach this Equipment to target creature you control; activate only as a sorcery",
+        handles.name(source)?,
+        activation_cost(ability.cost, &handles.name(source)?)?
+    )))
+}
+
 // Definition programs contain no runtime objects or hidden card identities.
 // Unsupported operations deliberately have no Debug/string fallback.
 fn effect_player(player: PlayerRef) -> Result<&'static str, Error> {
