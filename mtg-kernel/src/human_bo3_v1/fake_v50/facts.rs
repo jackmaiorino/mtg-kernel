@@ -72,7 +72,7 @@ pub(super) fn project_panda(
     })
 }
 fn instruction(
-    observation: &FakeObservationV50,
+    observation: &MixedObservation,
     actor: PlayerSeatV1,
     position: usize,
 ) -> Result<Option<String>, Error> {
@@ -104,7 +104,7 @@ fn instruction(
 }
 pub(super) fn panda_label(
     action: &ActionSemanticV1,
-    observation: &FakeObservationV50,
+    observation: &MixedObservation,
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<Option<String>, Error> {

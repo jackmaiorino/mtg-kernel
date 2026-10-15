@@ -261,7 +261,7 @@ pub(super) fn unary(
 }
 pub(super) fn label(
     action: &ActionSemanticV1,
-    observation: &FakeObservationV50,
+    observation: &MixedObservation,
     handles: &Handles,
     human: PlayerSeatV1,
 ) -> Result<Option<String>, Error> {

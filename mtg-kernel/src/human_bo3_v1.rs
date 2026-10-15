@@ -65,6 +65,7 @@ pub mod conqueror_v49;
 pub mod eaten_v46;
 pub mod fake_v50;
 pub mod panda_v47;
+pub mod ravenous_v51;
 pub mod season_v48;
 pub use panda_v47::{
     HumanDecisionPandaV47, HumanPandaProjectorV47, HumanPandaSessionV47, HumanPandaSnapshotV47,

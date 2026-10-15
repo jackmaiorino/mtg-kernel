@@ -187,6 +187,44 @@ mixed-family backend/Human tests, native cross-family qualification and any
 future model admission remain separate. This observation prerequisite alone
 does not admit Ravenous as Full or admit training, fair search or sampling.
 
+The distinct `HumanRavenousSessionV51` and `HumanRavenousProjectorV51`
+source now consume the owning V51 backend directly. Their complete ordered
+menu binding, current observation and Human owner/revision are checked before
+submission. Typed restore advances the Human generation and the backend
+revision; the backend's generic restore also invalidates pending prompts.
+Inherited family field helpers share a local observation type alias without
+constructing or revalidating a V50 observation. Every V50 Human family remains
+present. Public battlefield rows use `HumanPublicCardV51`, preserving the safe
+common card and mandatory exact soul, +1/+1 and marked-damage values, including
+zero and wide values. These exact values participate in handle canonicalization
+before labels and the final roster are published.
+
+Ravenous Human facts select ordered printed costs/instructions and public
+activation outcomes explicitly. Original source/current-original-source use
+safe card handles; sacrificed incarnations use prompt-local roles that retain
+generation distinctions without object IDs, generation numbers or underlying
+face-down printings. Draw outcomes expose success and placement, never the
+private draw identity. No payment/world record or executable menu index enters
+these DTOs. The observation producer now binds the direct V51 Human sources
+alongside all predecessor dependencies.
+
+Four new both-seat source tests pay actual Amulet cast and both abilities
+through Human, exercise typed and generic restore parity, retry/conflict,
+stale/foreign/forged inputs with read-only refusal, preserve a genuinely paid
+Fake grant through Amulet sacrifice and return, and inspect exact zero/wide
+values and private-hand noninterference. A face-down physical creature fixture
+is sacrificed by the actual Human ability after reusing the existing genuinely
+paid engine cast helper; only safe incarnation roles enter its Ravenous facts.
+Numeric wide-field operands on an already paid public artifact do not claim
+another printed producer. All these Rust paths and tests remain uncompiled
+and unexecuted. Pinned `cargo +1.94.1 fmt --all`, source consistency checks and
+`git diff --check` are the only executed checks for this Human source change.
+
+Native cross-family qualification remains with the assigned lead. Fake PR272
+must merge before Ravenous delivery qualification. Ravenous remains Partial
+ID443; public deck reset still rejects it. No registry, Full, model, sampler,
+fair-search or training admission changes follow from this Human source work.
+
 Primary source receipts:
 
 - `Mage.Sets/src/mage/cards/r/RavenousAmulet.java`: blob `0d010bb77fcf85f9168ade1060b9430782571e0f`, SHA-256 `e89ec45785f01de0ef55d485fdcfbc34fb6f8deb71601511b214d43043b39d74`.
