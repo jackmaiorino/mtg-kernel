@@ -5694,23 +5694,6 @@ impl RlEpisodeSessionV1 {
 
     #[cfg(test)]
     fn advance_to_decision_or_terminal(&mut self) {
-        if self.flat_action_contract_mode != FlatActionContractModeV1::NextFiveV59 {
-            if let Err(error) =
-                crate::next_five_public_v59::require_legacy_visible(&self.state, None)
-            {
-                self.current = None;
-                self.terminal = Some(halted_terminal(
-                    &self.deck_ids,
-                    self.deck_hashes,
-                    self.episode_id,
-                    format!("fail_closed:next_five_v59:{error}"),
-                    self.policy_step_count,
-                    self.physical_decision_count,
-                ));
-                return;
-            }
-        }
-
         self.advance_to_decision_or_terminal_profiled(None);
     }
 
@@ -7836,6 +7819,23 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::NextFiveV59 {
+            if let Err(error) =
+                crate::next_five_public_v59::require_legacy_visible(&self.state, None)
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:next_five_v59:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
+
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::ElendaV52
