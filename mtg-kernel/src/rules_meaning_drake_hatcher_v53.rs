@@ -352,7 +352,7 @@ pub fn printed_meaning(card_id: u16, root: RootV53) -> Result<MeaningV53, String
         root_sha256,
         printed,
         program,
-        full_engine_admitted: false,
+        full_engine_admitted: d.capability == CardCapability::Full,
         model_admitted: false,
         sampler_admitted: false,
         fair_search_admitted: false,

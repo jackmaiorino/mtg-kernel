@@ -141,12 +141,18 @@ fn typed_printed_roots_cost_order_token_blueprint_and_tamper() {
         let value = meaning::printed_meaning(id, root).unwrap();
         meaning::validate(&value).unwrap();
         assert_eq!(value.capability, crate::card_def::CardCapability::Full);
-        assert!(
-            !value.full_engine_admitted
-                && !value.model_admitted
-                && !value.sampler_admitted
-                && !value.fair_search_admitted
+        assert_eq!(
+            value.full_engine_admitted,
+            value.capability == crate::card_def::CardCapability::Full
         );
+        assert!(!value.model_admitted && !value.sampler_admitted && !value.fair_search_admitted);
+        let mut bad = value.clone();
+        bad.full_engine_admitted = !value.full_engine_admitted;
+        // Integrity digests and the ordered rule are unchanged. The live
+        // capability still determines this field; a caller cannot override it.
+        assert_eq!(bad.root_sha256, value.root_sha256);
+        assert_eq!(bad.program, value.program);
+        assert!(meaning::validate(&bad).is_err());
         let mut bad = value.clone();
         bad.root_sha256.clear();
         assert!(meaning::validate(&bad).is_err());
