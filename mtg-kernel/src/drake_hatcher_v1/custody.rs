@@ -1237,7 +1237,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 .collect::<Vec<_>>();
             let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
             if removals.len() > 1
-                || (!local && !live_once && !(lives.is_empty() && removals.len() == 1))
+                || !(local || live_once || lives.is_empty() && removals.len() == 1)
             {
                 return Err("Drake issued stack row lost/duplicated/replayed".into());
             }

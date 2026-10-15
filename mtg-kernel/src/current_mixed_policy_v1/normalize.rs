@@ -254,10 +254,8 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::PreparedV57 {
-            if super::prepared::printing(*id)?.is_some() {
-                continue;
-            }
+        if source == Source::PreparedV57 && super::prepared::printing(*id)?.is_some() {
+            continue;
         }
         meanings.push(roots::baseline(*id)?);
     }

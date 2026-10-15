@@ -242,8 +242,8 @@ pub(crate) fn stack_source_reference(
         .iter()
         .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
         .collect::<Vec<_>>();
-    if !matches!(live.as_slice(),[row] if *row==item)
-        && !(live.is_empty()
+    if !(matches!(live.as_slice(),[row] if *row==item)
+        || live.is_empty()
             && state
                 .engine
                 .pending_effect

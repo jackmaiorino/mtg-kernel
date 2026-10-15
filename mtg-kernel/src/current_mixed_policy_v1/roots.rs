@@ -80,6 +80,8 @@ enum CounterGuard {
     BoundTargetInStackLegacy,
 }
 #[derive(serde::Serialize)]
+// These variant names are serialized semantic labels and must remain stable.
+#[allow(clippy::enum_variant_names)]
 enum CounterTargetFilter {
     AnySpell,
     CreatureSpell,
