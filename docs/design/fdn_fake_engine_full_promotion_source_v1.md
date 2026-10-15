@@ -43,8 +43,10 @@ complete enum, frozen-input/profile checks pass. Static metadata comparison
 allows exactly one changed field: Fake's capability. Frozen 286 membership,
 24 token dependencies, prior source/catalog prefix, existing reference bytes,
 Pauper/Standard data, build code, lockfiles and toolchain pins stay intact.
+The Limited Fake consumer CI filter explicitly selects
+fake_full_engine_admission_v1_tests:: while retaining broad V2/V3 selectors.
 No Rust build/test/check/clippy, native launch, push or PR was performed.
 
-Source-diff SHA-256: `35540f7d4bf3a9ff4871efcc3bba7cabcbde7a027f1afe5b911e98645aa274b6`. Sorted changed non-doc paths versus base;
+Source-diff SHA-256: `02ed7cb81b57b7acc93560a563b9042ae5e9fc65607a107949cc0beb494a3cd5`. Sorted changed non-doc paths versus base;
 for each, hash UTF-8 path, NUL and raw SHA-256 of LF-normalized bytes. This is
 a source receipt, not the pending generated catalog identity.
