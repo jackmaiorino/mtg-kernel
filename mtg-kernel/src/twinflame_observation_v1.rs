@@ -498,6 +498,7 @@ pub(crate) fn parts_for_common_scope(
                         | crate::rl::CommonProjectionScopeV42::ConquerorV49
                         | crate::rl::CommonProjectionScopeV42::FakeV50
                         | crate::rl::CommonProjectionScopeV42::RavenousV51
+                        | crate::rl::CommonProjectionScopeV42::PreparedV57
                 ),
             ),
             Some(scope),
@@ -570,6 +571,7 @@ fn observe_inner_scoped(
         Some(
             crate::rl::CommonProjectionScopeV42::FakeV50
                 | crate::rl::CommonProjectionScopeV42::RavenousV51
+                | crate::rl::CommonProjectionScopeV42::PreparedV57
         )
     );
     let (substep_index, substep_count) = substep;

@@ -2013,20 +2013,25 @@ enum ObservationTextModeV2 {
     // Private construction mode. Only the distinct V51 DTO publishes this
     // storage, together with its mandatory exact battlefield card roster.
     RavenousV51Artifact,
+    PreparedV57Artifact,
     FlatForbiddenElided,
 }
 
 impl ObservationTextModeV2 {
     fn kernel_version(self) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact => KERNEL_VERSION.to_string(),
+            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
+                KERNEL_VERSION.to_string()
+            }
             Self::FlatForbiddenElided => String::new(),
         }
     }
 
     fn card_name(self, card_id: u16) -> String {
         match self {
-            Self::FullArtifact | Self::RavenousV51Artifact => card_name(card_id),
+            Self::FullArtifact | Self::RavenousV51Artifact | Self::PreparedV57Artifact => {
+                card_name(card_id)
+            }
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2175,7 +2180,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accepted_planes: AcceptedPlanesV49,
     accept_fake: bool,
 ) -> Result<ObservationV2> {
-    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+    ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -3556,6 +3564,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     ConquerorV49,
     FakeV50,
     RavenousV51,
+    PreparedV57,
 }
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
@@ -3585,6 +3594,9 @@ pub(crate) fn common_family_observation_storage_scoped(
         CommonProjectionScopeV42::EatenV46 => crate::eaten_observation_v46::validate_state(state),
         CommonProjectionScopeV42::PandaV47 => crate::panda_observation_v47::validate_state(state),
         CommonProjectionScopeV42::FakeV50 => crate::fake_observation_v50::validate_state(state),
+        CommonProjectionScopeV42::PreparedV57 => {
+            crate::prepared_observation_v57::validate_state(state)
+        }
         CommonProjectionScopeV42::RavenousV51 => {
             crate::ravenous_observation_v51::validate_state(state)
         }
@@ -3609,6 +3621,7 @@ pub(crate) fn common_family_observation_storage_scoped(
             | CommonProjectionScopeV42::ConquerorV49
             | CommonProjectionScopeV42::FakeV50
             | CommonProjectionScopeV42::RavenousV51
+            | CommonProjectionScopeV42::PreparedV57
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3620,7 +3633,9 @@ pub(crate) fn common_family_observation_storage_scoped(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::RavenousV51 {
+                text_mode: if scope == CommonProjectionScopeV42::PreparedV57 {
+                    ObservationTextModeV2::PreparedV57Artifact
+                } else if scope == CommonProjectionScopeV42::RavenousV51 {
                     ObservationTextModeV2::RavenousV51Artifact
                 } else {
                     ObservationTextModeV2::FullArtifact
@@ -3641,6 +3656,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3651,6 +3667,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3660,6 +3677,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3668,6 +3686,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                     matches!(
                         scope,
@@ -3675,6 +3694,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                             | CommonProjectionScopeV42::ConquerorV49
                             | CommonProjectionScopeV42::FakeV50
                             | CommonProjectionScopeV42::RavenousV51
+                            | CommonProjectionScopeV42::PreparedV57
                     ),
                 ),
                 matches!(
@@ -3682,6 +3702,7 @@ pub(crate) fn common_family_observation_storage_scoped(
                     CommonProjectionScopeV42::ConquerorV49
                         | CommonProjectionScopeV42::FakeV50
                         | CommonProjectionScopeV42::RavenousV51
+                        | CommonProjectionScopeV42::PreparedV57
                 ),
             ),
         ),
@@ -3699,7 +3720,9 @@ pub(crate) fn common_family_observation_storage_scoped(
         ),
         matches!(
             scope,
-            CommonProjectionScopeV42::FakeV50 | CommonProjectionScopeV42::RavenousV51
+            CommonProjectionScopeV42::FakeV50
+                | CommonProjectionScopeV42::RavenousV51
+                | CommonProjectionScopeV42::PreparedV57
         ),
     )
 }
@@ -4651,7 +4674,10 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<PolicyObservationExtensionsV6> {
-    if text_mode != ObservationTextModeV2::RavenousV51Artifact {
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+    ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -4917,8 +4943,11 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                             ));
                         }
                         if seen.insert(id) {
-                            if text_mode != ObservationTextModeV2::RavenousV51Artifact
-                                && crate::ravenous_amulet_v1::definition(object.card_def)
+                            if !matches!(
+                                text_mode,
+                                ObservationTextModeV2::RavenousV51Artifact
+                                    | ObservationTextModeV2::PreparedV57Artifact
+                            ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
                                     "known Ravenous search candidate requires V51".into(),
@@ -8510,8 +8539,10 @@ fn public_card_v2(
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     if object.counters.soul != 0
-        && !(text_mode == ObservationTextModeV2::RavenousV51Artifact
-            && object.zone == Zone::Battlefield)
+        && !(matches!(
+            text_mode,
+            ObservationTextModeV2::RavenousV51Artifact | ObservationTextModeV2::PreparedV57Artifact
+        ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
@@ -8527,12 +8558,45 @@ pub(crate) fn public_card_v51_base(state: &GameState, id: ObjectId) -> Result<Ca
     public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::FullArtifact)
 }
 
+/// Layout-compatible fields are subordinate to V57's complete native-width roster.
+pub(crate) fn public_card_prepared_compat_v57(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::PreparedV57Artifact)
+}
+pub(crate) fn policy_observation_extensions_prepared_v57(
+    state: &GameState,
+    actor: PlayerId,
+) -> Result<PolicyObservationExtensionsV6> {
+    crate::prepared_observation_v57::validate_state(state).map_err(RlContractError)?;
+    policy_observation_extensions_conqueror_inner_v49_fake_v50(
+        state,
+        actor,
+        ObservationTextModeV2::PreparedV57Artifact,
+        true,
+        true,
+        (true, true, true, true),
+        true,
+        true,
+    )
+}
+pub(crate) fn core_policy_action_candidates_prepared_v57(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::prepared_observation_v57::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_fake_scoped_v50(decision, state, true, true, true, true)
+}
+
 fn public_card_v2_non_soul_fields(
     state: &GameState,
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPublicV2> {
-    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+        crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    }
     let object = state
         .objects
         .try_get(id)
@@ -8543,7 +8607,9 @@ fn public_card_v2_non_soul_fields(
             text_mode.card_name(projected_card_def(state, id, object.zone_change_count))
         } else if matches!(
             text_mode,
-            ObservationTextModeV2::FullArtifact | ObservationTextModeV2::RavenousV51Artifact
+            ObservationTextModeV2::FullArtifact
+                | ObservationTextModeV2::RavenousV51Artifact
+                | ObservationTextModeV2::PreparedV57Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -8620,7 +8686,9 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     // Callers have already selected an actor-authorized identity: own hand,
     // known hand/library, or a visible choice. Do not scan concealed zones.
-    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    if text_mode != ObservationTextModeV2::PreparedV57Artifact {
+        crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
+    }
     let object = state
         .objects
         .try_get(id)

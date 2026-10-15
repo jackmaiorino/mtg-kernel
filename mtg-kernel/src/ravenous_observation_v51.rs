@@ -160,6 +160,26 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::fake_your_own_death_v50::public_v50::capture(state).map_err(|e| e.0)?;
     Ok(())
 }
+pub(crate) fn validate_state_complete_prepared_v57(state: &GameState) -> Result<(), String> {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return Err("Ravenous V51 requires the actual Foundations catalog".into());
+    }
+    crate::ravenous_public_v51::capture(state).map_err(|e| e.0)?;
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
+    crate::akroma_public_v1::roots().map_err(|e| e.0)?;
+    crate::akroma_family_public_v40::validate_state_for_divine_v44(state)?;
+    crate::high_society_hunter_custody_v45::validate(state)?;
+    crate::ajani_public_v42::facts(state).map_err(|e| e.0)?;
+    crate::eaten_public_v46::validate_state(state)?;
+    crate::fiendish_panda_v1::validate_state(state)?;
+    crate::doubling_season_v48::validate_token_journals(state)?;
+    crate::bloodthirsty_conqueror_v49::validate(state)?;
+    crate::fake_your_own_death_v50::public_v50::capture(state).map_err(|e| e.0)?;
+    Ok(())
+}
 pub fn observe_v51(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -288,6 +308,94 @@ pub(crate) fn observe_parts_complete_base_v52(
             .map_err(RlContractError)?,
     };
     observation.validate_battlefield_artifact()?;
+    observation.projection_sha256 = commitment(&observation)?;
+    for part in &mut parts {
+        part.set_projection(&observation.projection);
+    }
+    Ok((observation, parts))
+}
+
+pub(crate) fn observe_parts_complete_prepared_v57(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    let (actor, origin) = actor_and_origin;
+    if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
+        return Err(RlContractError(
+            "Ravenous V51 observation changed its supplied decision actor or substep".into(),
+        ));
+    }
+    let (substep_index, substep_count) = substep;
+    let ravenous = crate::ravenous_public_v51::battlefield_prepared_v57(state)?;
+    let roots = crate::akroma_public_v1::roots()?;
+    let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
+    let base = crate::rl::common_family_observation_storage_scoped(
+        (crate::rl::CommonProjectionScopeV42::PreparedV57, state),
+        surface,
+        actor,
+        step,
+        physical,
+        (substep_index, substep_count),
+    )?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    let mut base = storage.base;
+    let mut parts = crate::akroma_family_public_v40::build_for_scope(
+        state,
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::PreparedV57,
+    )?;
+    base.projection = crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)?;
+    let mut observation = RavenousObservationV51 {
+        schema: crate::prepared_observation_v57::COMMON_SCHEMA.into(),
+        producer_sha256: crate::prepared_observation_v57::producer_sha256(),
+        kernel_version: base.kernel_version,
+        surface_version: base.surface_version,
+        policy_surface_version: base.policy_surface_version,
+        card_db_hash: base.card_db_hash,
+        acting_player: base.acting_player,
+        step_index: base.step_index,
+        physical_decision_id: base.physical_decision_id,
+        substep_index: base.substep_index,
+        substep_count: base.substep_count,
+        projection: base.projection,
+        own_hand: base.own_hand,
+        known_library_cards: base.known_library_cards,
+        known_hand_cards: base.known_hand_cards,
+        known_face_down_cards: base.known_face_down_cards,
+        extensions: storage.extensions,
+        attacked_this_turn: [
+            state.player_attacked_this_turn_v1(PlayerId::P0),
+            state.player_attacked_this_turn_v1(PlayerId::P1),
+        ],
+        grants,
+        families: parts.iter().map(|part| part.facts()).collect(),
+        color_departures,
+        roots,
+        projection_sha256: String::new(),
+        ajani: crate::ajani_public_v42::facts(state)?,
+        faebloom: crate::faebloom_public_v43::capture(state)?,
+        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
+        divine: crate::divine_public_v44::facts(state, origin, actor)?,
+        hunter: crate::high_society_hunter_public_v45::capture(state)?,
+        eaten: crate::eaten_public_v46::capture(state, actor)?,
+        panda: crate::panda_public_v47::capture(state)?,
+        season: crate::doubling_season_public_v48::capture(state)?,
+        conqueror: crate::conqueror_public_v49::capture(state)?,
+        fake: crate::fake_your_own_death_v50::public_v50::capture(state)?,
+        battlefield: ravenous.cards,
+        ravenous: ravenous.facts,
+        trigger_order: surface
+            .hunter_order_context_v45(state)
+            .map_err(RlContractError)?,
+    };
     observation.projection_sha256 = commitment(&observation)?;
     for part in &mut parts {
         part.set_projection(&observation.projection);
