@@ -21,6 +21,7 @@ pub(crate) fn enabled() -> bool {
                                 ability.condition,
                                 TriggerCondition::ThisOrControlledCreatureDies
                                     | TriggerCondition::OtherNontokenCreatureDies
+                                    | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                             )
                         })
         })
@@ -62,6 +63,12 @@ pub(crate) fn capture(
                         || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
                             && crate::high_society_hunter_v1::owns_definition(object.card_def)
                             && !dead.v4.is_token
+                            && source != change.object)
+                        || (ability.condition
+                            == TriggerCondition::OtherControlledNontokenCreatureDiesV1
+                            && object.controller == dead.controller
+                            && !dead.v4.is_token
+                            && !CARD_DEFS[usize::from(dead.card_def)].is_token
                             && source != change.object))
                         && ability.home_zone == Zone::Battlefield
                         && ability.face_index == object.v4.face_index
@@ -153,6 +160,7 @@ pub(crate) fn pending(
             ability.condition,
             TriggerCondition::ThisOrControlledCreatureDies
                 | TriggerCondition::OtherNontokenCreatureDies
+                | TriggerCondition::OtherControlledNontokenCreatureDiesV1
         )
         || source.zone != Zone::Battlefield
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
@@ -164,6 +172,13 @@ pub(crate) fn pending(
                     .objects
                     .try_get(died.object)
                     .is_none_or(|object| object.v4.is_token)))
+        || (ability.condition == TriggerCondition::OtherControlledNontokenCreatureDiesV1
+            && (definition.other_controlled_nontoken_death_v1.is_none()
+                || source.controller != *controller_before
+                || source.source == died.object
+                || state.objects.try_get(died.object).is_none_or(|object| {
+                    object.v4.is_token || CARD_DEFS[usize::from(object.card_def)].is_token
+                })))
         || !matches!(death, Some(CommittedEvent::ZoneChange {
             object, from: Zone::Battlefield, to: Zone::Graveyard, controller_before: actual,
         }) if *object == died.object && actual == controller_before)
@@ -176,8 +191,12 @@ pub(crate) fn pending(
                 .and_then(|moves| died.zone_change_count.checked_add(1)?.checked_add(moves))
                 != Some(object.zone_change_count)
         })
-        || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
-            && crate::engine::validate_historical_ability_source_contract(state, *source).is_err())
+        || (matches!(
+            ability.condition,
+            TriggerCondition::OtherNontokenCreatureDies
+                | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+        ) && crate::engine::validate_historical_ability_source_contract(state, *source)
+            .is_err())
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
             && state.objects.try_get(source.source).is_none_or(|object| {
                 object.card_def != source.card_def
@@ -231,8 +250,11 @@ pub(crate) fn owns_program(
         && crate::trigger::triggers_for(source.card_def)
             .iter()
             .any(|ability| {
-                ability.condition == TriggerCondition::ThisOrControlledCreatureDies
-                    && ability.home_zone == Zone::Battlefield
+                matches!(
+                    ability.condition,
+                    TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+                ) && ability.home_zone == Zone::Battlefield
                     && (ability.effect)() == *effect
             })
 }

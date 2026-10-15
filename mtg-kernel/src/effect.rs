@@ -1716,6 +1716,13 @@ pub enum EffectOp {
     /// Appended original-source soul count. Uses the current battlefield
     /// incarnation or exact departure LKI, never a later incarnation's count.
     LoseLifeEachOpponentEqualSourceSoulV1,
+    /// Publicly reveal through the first matching card, move that card to
+    /// hand, then randomize only the revealed nonmatches on the bottom.
+    /// Empty and no-match libraries complete without drawing a card.
+    RevealUntilCardTypeToHandRandomBottomV1 {
+        player: PlayerRef,
+        card_type: CardType,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -8222,6 +8229,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     private_keep_one_v1::validate_required_stage(state, pending)?;
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
+    crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
@@ -16190,6 +16198,58 @@ fn bind_library_through_first_type(
     prefix
 }
 
+fn reveal_until_type_to_hand_random_bottom_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    card_type: CardType,
+) -> Result<(), String> {
+    let mut prefix = bind_library_through_first_type(state, player, card_type);
+    if prefix.is_empty() {
+        return Ok(());
+    }
+    // The accepted operation has no intervening choice. Stage knowledge,
+    // the hand move and the checked random transaction together so exhausted
+    // randomness cannot leave a partial reveal or a partly moved library.
+    let mut projected = state.clone();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        projected.reveal_library_top(observer, player, prefix.len());
+    }
+    if prefix.last().is_some_and(|binding| {
+        crate::card_def::CARD_DEFS[projected.objects.get(binding.object).card_def as usize]
+            .has_type(card_type)
+    }) {
+        let selected = prefix.pop().expect("nonempty matching prefix");
+        commit_zone_change_batch(&mut projected, &[selected], Zone::Hand, true)?;
+        if projected.engine.halted.is_some() {
+            return Err("reveal-to-hand move halted".into());
+        }
+        if projected.objects.get(selected.object).zone == Zone::Hand {
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                projected.reveal_hand_card(observer, player, selected.object)?;
+            }
+        }
+    }
+    if !prefix.is_empty() {
+        let expected_prefix = prefix
+            .iter()
+            .map(|binding| ObjectLinkV4 {
+                object: binding.object,
+                zone_change_count: binding.expected_zone_change_count,
+            })
+            .collect::<Vec<_>>();
+        let bottom = prefix
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>();
+        projected.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+        projected
+            .randomize_library_bottom_v1(player, prefix.len())
+            .map_err(|error| error.to_string())?;
+    }
+    *state = projected;
+    Ok(())
+}
+
 fn validate_bound_hand_exact(
     state: &GameState,
     player: PlayerId,
@@ -16540,6 +16600,15 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::Sequence(ops) => {
             for inner in ops {
                 execute(inner, ctx, state);
+            }
+        }
+        EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { player, card_type } => {
+            let player = ctx.resolve_player(*player, state);
+            if reveal_until_type_to_hand_random_bottom_v1(state, player, *card_type).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
             }
         }
         EffectOp::Conditional { cond, then, else_ } => {

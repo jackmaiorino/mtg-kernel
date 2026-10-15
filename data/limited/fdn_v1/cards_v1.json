@@ -7568,6 +7568,42 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/f/FlamewakePhoenix.java",
       "is_token": false
+    },
+    {
+      "name": "Spinner of Souls",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Spider",
+        "Spirit"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_spinner_of_souls_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "reach",
+        "controlled_other_nontoken_creature_dies",
+        "optional_public_reveal_until_creature",
+        "random_bottom_rest"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SpinnerOfSouls.java",
+      "is_token": false,
+      "other_controlled_nontoken_death_v1": "may_reveal_creature_to_hand_random_bottom",
+      "intrinsic_keywords_v1": ["reach"]
     }
   ]
 }

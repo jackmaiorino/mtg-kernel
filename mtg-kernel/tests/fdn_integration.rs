@@ -225,3 +225,5 @@ mod fdn_soulstone_kellan_v1;
 
 #[path = "fdn/fdn_elenda_v1.rs"]
 mod fdn_elenda_v1;
+#[path = "fdn/fdn_spinner_of_souls_v1.rs"]
+mod fdn_spinner_of_souls_v1;

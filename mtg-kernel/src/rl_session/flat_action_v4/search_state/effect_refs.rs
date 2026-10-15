@@ -220,6 +220,7 @@ impl Scan<'_> {
             | DealDamageByControlledCreatureCount { .. }
             | ExileTargetPlayersGraveyards
             | RevealUntilCardTypeAndMill { .. }
+            | RevealUntilCardTypeToHandRandomBottomV1 { .. }
             | DealDamageDynamic { .. }
             | BindPlusOnePlusOneCounterToTriggerSource
             | BindPlusOnePlusOneCounterToTriggerEventObject

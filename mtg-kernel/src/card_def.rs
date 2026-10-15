@@ -2319,6 +2319,14 @@ pub struct CardDef {
     /// Empty adds no catalog identity token and preserves all prior recipes.
     pub starting_life_self_bonuses_v1: &'static [StartingLifeSelfBonusDefV1],
     pub source_type_hexproof_v1: Option<SourceTypeHexproofDefV1>,
+    /// Definition-owned controlled, other, nontoken death recipe. Absent
+    /// descriptors preserve predecessor trigger and catalog identities.
+    pub other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathDefV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OtherControlledNontokenDeathDefV1 {
+    MayRevealCreatureToHandRandomBottom,
 }
 
 impl CardDef {

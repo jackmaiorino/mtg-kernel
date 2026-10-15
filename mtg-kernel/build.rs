@@ -81,6 +81,34 @@ struct CardJson {
     /// since tokens are never cast, only created by another card's effect).
     #[serde(default)]
     is_token: bool,
+    #[serde(default)]
+    other_controlled_nontoken_death_v1: Option<OtherControlledNontokenDeathJsonV1>,
+    #[serde(default)]
+    intrinsic_keywords_v1: Vec<IntrinsicKeywordJsonV1>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OtherControlledNontokenDeathJsonV1 {
+    MayRevealCreatureToHandRandomBottom,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum IntrinsicKeywordJsonV1 {
+    Reach,
+}
+
+fn other_controlled_nontoken_death_v1(card: &CardJson) -> &'static str {
+    if card.engine_capability == EngineCapabilityJson::NoEffect {
+        return "None";
+    }
+    match card.other_controlled_nontoken_death_v1 {
+        Some(OtherControlledNontokenDeathJsonV1::MayRevealCreatureToHandRandomBottom) => {
+            "Some(OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom)"
+        }
+        None => "None",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -4138,6 +4166,11 @@ fn effect_recipe_for(card: &CardJson) -> String {
 /// `EffectOp::PumpControlled`'s `grant_haste` instead.
 fn keywords_for(card: &CardJson) -> String {
     let mut keywords = Vec::new();
+    for keyword in &card.intrinsic_keywords_v1 {
+        match keyword {
+            IntrinsicKeywordJsonV1::Reach => keywords.push("Keywords::REACH"),
+        }
+    }
     if card
         .mechanics
         .iter()
@@ -10408,6 +10441,12 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        other_controlled_nontoken_death_v1: {},",
+            other_controlled_nontoken_death_v1(c)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10631,6 +10670,11 @@ fn codegen(cards: &[CardJson]) -> String {
             canon.push_str("starting_life_self_bonuses_v1=");
             canon.push_str(starting_life_self_bonuses_v1(&c.name));
             canon.push('|');
+        }
+        if other_controlled_nontoken_death_v1(c) != "None" {
+            canon.push_str(
+                "other_controlled_nontoken_death_v1=MayRevealCreatureToHandRandomBottom|",
+            );
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
             canon.push_str(

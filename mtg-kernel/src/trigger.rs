@@ -269,6 +269,8 @@ pub enum TriggerCondition {
     /// Intervening ferocious condition on the source controller's combat.
     /// A graveyard home zone is supplied by the printed ability definition.
     BeginningControllerCombatWithCreaturePowerAtLeast(i32),
+    /// Controlled OTHER nontoken creature death, observed before the batch.
+    OtherControlledNontokenCreatureDiesV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3518,6 +3520,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.other_controlled_nontoken_death_v1.is_some() {
+        return crate::spinner_of_souls_v1::triggers(card);
+    }
     if card.name == "Flourishing Bloom-Kin" {
         return &BLOOM_KIN_TRIGGERS;
     }
@@ -5237,6 +5242,7 @@ fn triggers_from_events(
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
                         | TriggerCondition::OtherNontokenCreatureDies
+                        | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {

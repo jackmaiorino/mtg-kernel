@@ -85,6 +85,7 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
         EffectOp::AddSoulCounterToAbilitySourceV1
+        | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
         | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
         | EffectOp::ConquerorGainFromCaptureV49 { .. }
         | EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
