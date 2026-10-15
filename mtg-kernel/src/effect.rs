@@ -3279,6 +3279,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
         .engine
         .pending_effect
         .as_ref()
+        .is_some_and(|pending| requires_ferocious_payment_stage(pending))
+    {
+        validate_pending_effect_choice(state)?;
+    }
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
         .is_some_and(|p| crate::high_society_hunter_custody_v45::selected(&p.resolving_item))
     {
         return Err("Hunter continuation requires its genuine private resumed owner".into());
@@ -3738,6 +3746,11 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
 /// pure continuation transition and making post-action snapshots stable.
 pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<(), String> {
     validate_pending_effect_choice(state)?;
+    let retain_optional_decline = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(requires_ferocious_payment_stage);
     if value {
         // An accepted shuffle must be authorizable before the pending choice
         // is consumed or any continuation state mutates. The token is
@@ -3996,7 +4009,7 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                         });
                         return Err("mana-payment choice player mismatch".to_string());
                     }
-                    if value {
+                    if value || retain_optional_decline {
                         let mut canonical_path = path.clone();
                         canonical_path.pop();
                         let expected_remaining_frames = continuation.frames.clone();
@@ -6431,6 +6444,67 @@ fn validate_pay_mana_then_origin(
     validate_resumable_program(then)
 }
 
+/// Only the printed graveyard ferocious payment needs this additional public
+/// stage invariant. No new event history or mutable-board threshold is used.
+fn requires_ferocious_payment_stage(pending: &EffectContinuation) -> bool {
+    pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility
+        && pending.ctx.ability_source_contract.is_some_and(|source| {
+            crate::card_def::CARD_DEFS.get(usize::from(source.card_def)).is_some()
+                && crate::trigger::triggers_for(source.card_def).iter().any(|trigger| {
+                trigger.home_zone == Zone::Graveyard
+                    && matches!(trigger.condition,
+                        crate::trigger::TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_))
+            })
+        })
+}
+
+fn validate_ferocious_payment_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if !requires_ferocious_payment_stage(pending) {
+        return Ok(());
+    }
+    let source = pending
+        .ctx
+        .ability_source_contract
+        .ok_or("ferocious payment source absent")?;
+    if source.zone != Zone::Graveyard || source.controller != source.owner {
+        return Err("ferocious payment lost its original graveyard controller".into());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::Conditional {
+        cond: EffectCond::ControlsCreaturePowerAtLeast(_),
+        then,
+        else_,
+    } = root.as_ref()
+    else {
+        return Err("ferocious payment lost its printed conditional root".into());
+    };
+    if !matches!(then.as_ref(), EffectOp::MayPayManaThen { .. })
+        || **else_ != EffectOp::Sequence(vec![])
+    {
+        return Err("ferocious payment lost its printed optional arm".into());
+    }
+    let choosing = matches!(pending.choice.as_ref(),
+        Some(PendingEffectChoice::ChooseBoolean {
+            path, purpose: EffectBooleanChoicePurpose::PayManaThen { .. }, ..
+        }) if path.as_slice() == [0])
+        && pending.frames.is_empty()
+        && pending.answered_choice_guard.is_none();
+    let answered = pending.choice.is_none()
+        && matches!(pending.frames.as_slice(), [EffectFrame::PayManaThen { canonical_path, .. }]
+            if canonical_path.as_slice() == [0])
+        && matches!(
+            pending.answered_choice_guard.as_ref(),
+            Some(EffectAnsweredChoiceGuard::PayManaThen { .. })
+        );
+    if !choosing && !answered {
+        return Err("ferocious payment lost its live choice or typed answer stage".into());
+    }
+    Ok(())
+}
+
 fn validate_pay_mana_then_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -6449,8 +6523,10 @@ fn validate_pay_mana_then_frame(
         return Err("optional-mana answer guard changed frame kind".to_string());
     };
     let mut expected_path = canonical_path.clone();
-    expected_path.push(1);
-    if path != &expected_path || !expected_remaining_frames.is_empty() {
+    let pay = path.last() == Some(&1);
+    let declined = path.last() == Some(&0) && requires_ferocious_payment_stage(pending);
+    expected_path.push(u16::from(pay));
+    if (!pay && !declined) || path != &expected_path || !expected_remaining_frames.is_empty() {
         return Err("optional-mana answered path changed".to_string());
     }
     validate_pay_mana_then_origin(
@@ -6462,7 +6538,7 @@ fn validate_pay_mana_then_frame(
         *generic,
         then,
     )?;
-    if !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
+    if pay && !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
         return Err("accepted optional mana cost is no longer payable".to_string());
     }
     Ok(())
@@ -8276,6 +8352,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         }
     }
     private_keep_one_v1::validate_required_stage(state, pending)?;
+    validate_ferocious_payment_stage(state, pending)?;
     discard_payment_v1::validate_required_stage(state, pending)?;
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
@@ -10825,6 +10902,9 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     }
                     validate_pay_mana_then_frame(state, &continuation, &answered_frame)?;
                     continuation.answered_choice_guard = None;
+                    if path.last() == Some(&0) {
+                        continue;
+                    }
                     if !crate::engine::pay_effect_mana(player, &colored, generic, state) {
                         return Err("accepted optional mana payment became unpayable".to_string());
                     }

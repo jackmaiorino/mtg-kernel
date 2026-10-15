@@ -614,3 +614,74 @@ fn printed_attack_requirement_obeys_tapped_and_defender_constraints_both_seats()
         }
     }
 }
+
+#[test]
+fn genuine_payment_stages_refuse_erased_choice_and_free_consequence_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, phoenix) = paid_and_dead(actor);
+        put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+        combat_trigger(&mut state, phoenix);
+        payment(&mut state, actor, phoenix);
+        let Some(PendingEffectChoice::ChooseBoolean {
+            purpose: EffectBooleanChoicePurpose::PayManaThen { then, .. },
+            ..
+        }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .as_ref()
+        else {
+            panic!("genuine optional payment")
+        };
+        let consequence = then.as_ref().clone();
+        for answer in [None, Some(false), Some(true)] {
+            let mut checkpoint = restore(&state);
+            if let Some(answer) = answer {
+                engine::step(&mut checkpoint, Action::ChooseEffectBoolean(answer)).unwrap();
+            }
+            crate::effect::validate_pending_effect_choice(&checkpoint).unwrap();
+            for erase_only in [false, true] {
+                let mut forged = restore(&checkpoint);
+                let pending = forged.engine.pending_effect.as_mut().unwrap();
+                pending.choice = None;
+                pending.answered_choice_guard = None;
+                pending.frames = if erase_only {
+                    vec![]
+                } else {
+                    vec![EffectFrame::Program {
+                        op: consequence.clone(),
+                        path: vec![0, 1],
+                    }]
+                };
+                let before = serde_json::to_vec(&forged).unwrap();
+                assert!(crate::effect::validate_pending_effect_choice(&forged).is_err());
+                assert!(crate::effect::resume_resumable_resolution(&mut forged).is_err());
+                assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+                assert_eq!(forged.objects.get(phoenix).zone, Zone::Graveyard);
+            }
+            let before = untapped_mountains(&checkpoint, actor);
+            let mut replay = restore(&checkpoint);
+            if answer.is_none() {
+                engine::step(&mut checkpoint, Action::ChooseEffectBoolean(false)).unwrap();
+                engine::step(&mut replay, Action::ChooseEffectBoolean(false)).unwrap();
+            }
+            settle(&mut checkpoint);
+            settle(&mut replay);
+            same(&checkpoint, &replay);
+            assert_eq!(
+                checkpoint.objects.get(phoenix).zone,
+                if answer == Some(true) {
+                    Zone::Battlefield
+                } else {
+                    Zone::Graveyard
+                }
+            );
+            assert_eq!(
+                untapped_mountains(&checkpoint, actor),
+                before - usize::from(answer == Some(true))
+            );
+        }
+    }
+}
