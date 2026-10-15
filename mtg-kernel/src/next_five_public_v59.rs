@@ -51,7 +51,8 @@ pub struct CastV59 {
     pub original_controller: PlayerSeatV1,
     pub is_copy: bool,
     pub payment_pending: bool,
-    pub x: u16,
+    /// None while the authentic cast has not selected X; non-X spells select zero.
+    pub x: Option<u16>,
     pub targets: Vec<TargetV59>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -378,9 +379,15 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV59, String> 
             let Some(f) = family(*card_id, &ids) else {
                 continue;
             };
-            let targets = item
-                .v4
-                .target_contracts
+            let pending = state
+                .engine
+                .pending_cast
+                .as_ref()
+                .filter(|p| p.spell == item.source);
+            let contracts = pending.map_or(item.v4.target_contracts.as_slice(), |p| {
+                p.target_contracts.as_slice()
+            });
+            let targets = contracts
                 .iter()
                 .map(|c| target(state, *c))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -389,15 +396,14 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV59, String> 
                 source: s.clone(),
                 original_controller: item.controller.into(),
                 is_copy: item.is_copy,
-                payment_pending: state
-                    .engine
-                    .pending_cast
-                    .as_ref()
-                    .is_some_and(|p| p.spell == item.source),
-                x: item.v4.x_value,
+                payment_pending: pending.is_some(),
+                x: pending.map_or(Some(item.v4.x_value), |p| p.x_value.map(u16::from)),
                 targets: targets.clone(),
             });
-            if f == FamilyV59::Goblin {
+            // The native cast placeholder deliberately has no finalized targets.
+            // Its authenticated staged selections are public above; a resolution
+            // quote exists only after actual announcement/payment finalization.
+            if f == FamilyV59::Goblin && pending.is_none() {
                 let legal = crate::engine::stack_targets_still_legal(item, state)?;
                 let lethal = if legal {
                     match item.targets.first() {

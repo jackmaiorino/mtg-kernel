@@ -134,6 +134,65 @@ fn roundtrip(s: &GameState, viewer: PlayerId) -> FactsV59 {
     f
 }
 #[test]
+fn genuine_goblin_pending_target_and_x_are_staged_before_finalized_quote() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let recipient = put(
+            &mut s,
+            actor.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let spell = put(&mut s, actor, "Goblin Negotiation", Zone::Hand);
+        assert!(
+            matches!(next(&mut s),Decision::CastSpellOrPass{player,castable_spells,..}if player==actor&&castable_spells.contains(&spell))
+        );
+        engine::step(&mut s, Action::CastSpell(spell)).unwrap();
+        assert!(
+            matches!(next(&mut s),Decision::ChooseTargets{legal_targets,..}if legal_targets.contains(&Target::Object(recipient)))
+        );
+        let f = roundtrip(&s, actor);
+        let cast = f.casts.iter().find(|c| c.source.object == spell.0).unwrap();
+        assert!(cast.payment_pending && cast.targets.is_empty() && cast.x.is_none());
+        assert!(f.goblin_quotes.is_empty());
+        engine::step(&mut s, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+        assert!(
+            matches!(next(&mut s),Decision::ChooseEffectOption{option_count,..}if option_count>3)
+        );
+        let f = roundtrip(&s, actor);
+        let cast = f.casts.iter().find(|c| c.source.object == spell.0).unwrap();
+        assert!(cast.payment_pending && cast.x.is_none());
+        assert!(matches!(cast.targets.as_slice(),[TargetV59::Object(r)]if r.object==recipient.0));
+        assert!(f.goblin_quotes.is_empty());
+        engine::step(&mut s, Action::ChooseEffectOption(3)).unwrap();
+        let f = roundtrip(&s, actor);
+        assert_eq!(
+            f.casts
+                .iter()
+                .find(|c| c.source.object == spell.0)
+                .unwrap()
+                .x,
+            Some(3)
+        );
+        assert!(f.goblin_quotes.is_empty());
+        assert!(matches!(next(&mut s),Decision::CastSpellOrPass{player,..}if player==actor));
+        let f = roundtrip(&s, actor);
+        let cast = f.casts.iter().find(|c| c.source.object == spell.0).unwrap();
+        assert!(!cast.payment_pending);
+        assert_eq!(cast.x, Some(3));
+        assert_eq!(f.goblin_quotes[0].original_x, 3);
+        let mut replay: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+        settle(&mut s);
+        settle(&mut replay);
+        assert_eq!(
+            serde_json::to_vec(&s).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert_eq!(roundtrip(&s, actor).goblin_completed[0].excess, 1);
+    }
+}
+#[test]
 fn all_five_exact_meanings_keep_order_costs_and_partial_truth_both_seats() {
     for family in FamilyV59::ALL {
         let m = meaning::printed_meaning(family).unwrap();
