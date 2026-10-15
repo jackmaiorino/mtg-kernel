@@ -105,6 +105,15 @@ for line in sys.stdin:
                       quandary=dict(viewer=decision["actor"],meaning=rules["quandary"],current=[],held=[],stack=[]),
                       phoenix=dict(meaning=rules["phoenix"],ferocious_now=[False,False],current=[],spells=[],triggers=[]))
         decision.update(state=dict(common=old,prepared=families),action_meanings=[None]*len(decision["actions"]),london_mulligans=None,foundations_combat=None)
+    if reply.get("state",{}).get("state_type")=="decision" and mode in ("negative-incubation","negative-stun","negative-optional"):
+        facts=reply["state"]["decision"]["state"]["prepared"]
+        row=facts["drake"]["battlefield"][0][0]
+        if mode=="negative-optional":
+            current={key:copy.deepcopy(row[key]) for key in ("source","is_token","tapped","summoning_sick","marked_damage","counters","form")}
+            current["counters"]["stun"]=-1
+            facts["spinner"]["current"]=[current]
+        else:
+            row["counters"]["incubation" if mode=="negative-incubation" else "stun"]=-1
     if mode == "bad-receipt" and op == "step":
         reply["receipt"]["action_index"] = True
     if mode == "stuck-generation" and op == "restore":
@@ -392,6 +401,26 @@ class LimitedPreparedClientV5Test(unittest.TestCase):
                 with self.subTest(mutation=mutation),self.assertRaises(LimitedSessionError):client.step(changed,0)
                 self.assertEqual(client.next_request,sent)
             client.step(original,0)
+
+    def test_negative_counter_quantities_close_owned_process_before_any_step(self):
+        for mode in ("negative-incubation","negative-stun","negative-optional"):
+            with self.subTest(mode=mode),self.client(mode) as client:
+                with self.assertRaises(LimitedSessionError):client.reset(self.decks)
+                self.assertTrue(client.closed)
+
+    def test_all_counter_quantities_are_nonnegative_but_power_and_boost_are_signed(self):
+        with self.client() as client:decision=client.reset(self.decks)["state"]["decision"]
+        def validate(d):_validate_prepared_visible(d["state"],d["actor"],d["action_meanings"],d["actions"])
+        for field in COUNTERS:
+            changed=deepcopy(decision)
+            changed["state"]["prepared"]["drake"]["battlefield"][0][0]["counters"][field]=-1
+            with self.subTest(field=field),self.assertRaises(LimitedSessionError):validate(changed)
+        good=deepcopy(decision)
+        row=good["state"]["prepared"]["drake"]["battlefield"][0][0]
+        row["form"].update(base_power=-(1<<31),power=-1,toughness=(1<<31)-1)
+        row["temporary_boosts"]=[{"binding":"OriginalIncarnation","power":-3,"toughness":-4,
+                                  "grant_haste":False,"until_end_of_turn":True}]
+        validate(good)
 
 
 if __name__ == "__main__":

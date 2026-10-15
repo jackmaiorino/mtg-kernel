@@ -30,8 +30,8 @@ SEAT = ("enum", ("p0", "p1"))
 ZONE = ("enum", ("Battlefield", "Graveyard", "Exile", "Stack", "Hand", "Library", "Command"))
 CARD_TYPES = ("enum", ("Land", "Creature", "Artifact", "Enchantment", "Instant", "Sorcery", "Planeswalker"))
 REF = {"handle": str, "name": str, "owner": SEAT, "controller": SEAT, "zone": ZONE}
-COUNTERS = {**{key:I32 for key in ("plus_one", "charge", "net", "bait", "soul", "incubation")},
-            **{key:I16 for key in ("minus_one", "minus_toughness", "stun", "lore", "oil", "lifelink")},
+COUNTERS = {**{key:("int",0,(1 << 31)-1) for key in ("plus_one", "charge", "net", "bait", "soul", "incubation")},
+            **{key:("int",0,(1 << 15)-1) for key in ("minus_one", "minus_toughness", "stun", "lore", "oil", "lifelink")},
             "time": U8, "finality": U16, "loyalty": U32}
 FORM = {"names": ("list",str), "mana_value":U16, "types":("list",CARD_TYPES),
         "supertypes":("list",("enum",("Basic","Snow","Legendary"))), "subtype_ids":("list",U16),

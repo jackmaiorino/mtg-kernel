@@ -32,7 +32,8 @@ accepts only registered Full-only reset decks or issued prompt/index operations,
 not fixture states or executable bindings. Original owner/generation/snapshot
 custody, full issued DTO comparison and native-index revalidation precede step.
 The Python client enforces exact new field/type/enum/integer closure, complete
-safe battlefield roster, semantic ordered meanings, actor-only Quandary private
+safe battlefield roster, nonnegative counter quantities within native widths,
+semantic ordered meanings, actor-only Quandary private
 hand and issued reply immutability. The source-only checker uses two real process
 workers for identical seed 123 natural basic-land games and requires identical
 complete transcript hashes. It has not been launched. Existing V1-V4 transports,
