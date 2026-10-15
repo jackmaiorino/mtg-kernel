@@ -725,3 +725,8 @@ fn enchantment_hunter_paid_cast_trigger_restore_privacy_preparedsession_both_sea
         PreparedSession,
     >();
 }
+
+#[test]
+fn eaten_paid_additional_branches_exile_restore_privacy_preparedsession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<PreparedSession>();
+}

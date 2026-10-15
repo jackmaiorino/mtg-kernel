@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 pub(super) mod crystal_printing;
 #[path = "early_activation_printing.rs"]
 pub(super) mod early_activation_printing;
+#[path = "eaten_printing.rs"]
+pub(super) mod eaten_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
 #[path = "legendary_printing.rs"]
@@ -304,6 +306,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if d.name == "Eaten Alive" {
+        return eaten_printing::baseline(id, d);
+    }
     if matches!(
         d.name,
         "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter"
@@ -638,6 +643,18 @@ enum PermanentKeyword {
     Trample,
     Defender,
     Flash,
+}
+
+/// Mandatory spell supplements are independent of catalog family coverage.
+/// Only actor-authorized printing references reach this dispatch.
+pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    match d.name {
+        "Eaten Alive" => eaten_printing::printing(id, d).map(Some),
+        _ => Ok(None),
+    }
 }
 
 /// Mandatory even when one or all family meanings already marked this ID
