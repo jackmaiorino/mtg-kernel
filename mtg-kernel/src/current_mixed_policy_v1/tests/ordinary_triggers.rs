@@ -6,6 +6,7 @@ use crate::{
     rl::{ActionSemanticV1, TargetRefV1},
     state::{GameState, Zone},
 };
+mod early_activation;
 mod entry_attack;
 mod memorial_panda;
 
@@ -14,6 +15,9 @@ pub(in crate::current_mixed_policy_v1) fn paid_entry_attack<O: Owner>() {
 }
 pub(in crate::current_mixed_policy_v1) fn paid_memorial_panda<O: Owner>() {
     memorial_panda::paid::<O>();
+}
+pub(in crate::current_mixed_policy_v1) fn paid_early_activation<O: Owner>() {
+    early_activation::paid::<O>();
 }
 
 pub(in crate::current_mixed_policy_v1) trait Owner:
@@ -271,6 +275,9 @@ pub(in crate::current_mixed_policy_v1) fn privacy<O: Owner>() {
             "Vampire Gourmand",
             "Akroma's Memorial",
             "Fiendish Panda",
+            "Scavenging Ooze",
+            "Heartfire Immolator",
+            "Soul-Shackled Zombie",
         ] {
             for known in [false, true] {
                 let mut a = crate::extra_turn_v1::tests::ready(actor);
@@ -448,4 +455,13 @@ fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_ravenous_both_se
 #[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_ravenous_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<RavenousSession>();
+}
+
+#[test]
+fn early_printings_paid_ordinary_activations_and_restore_fake_both_seats() {
+    paid_early_activation::<FakeSession>();
+}
+#[test]
+fn early_printings_paid_ordinary_activations_and_restore_ravenous_both_seats() {
+    paid_early_activation::<RavenousSession>();
 }

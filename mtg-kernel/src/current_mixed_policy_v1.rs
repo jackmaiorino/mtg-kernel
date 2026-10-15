@@ -75,6 +75,7 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
             include_str!("current_mixed_policy_v1/legendary_printing.rs"),
+            include_str!("current_mixed_policy_v1/early_activation_printing.rs"),
             include_str!("arahbo_v1.rs"),
             include_str!("zul_ashur_v1.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),

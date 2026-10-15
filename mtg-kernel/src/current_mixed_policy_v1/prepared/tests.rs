@@ -590,3 +590,10 @@ fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_prepared_both_se
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_memorial_panda::<PreparedSession>(
     );
 }
+
+#[test]
+fn early_printings_paid_ordinary_activations_and_restore_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_early_activation::<
+        PreparedSession,
+    >();
+}

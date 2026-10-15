@@ -1035,3 +1035,9 @@ fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_elenda_both_seat
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_memorial_panda::<ElendaSession>(
     );
 }
+
+#[test]
+fn early_printings_paid_ordinary_activations_and_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_early_activation::<ElendaSession>(
+    );
+}

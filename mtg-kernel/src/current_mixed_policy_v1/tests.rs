@@ -1990,6 +1990,160 @@ mod paid {
     }
 
     #[test]
+    fn three_early_closed_printings_authenticate_ordinary_and_activation_semantics() {
+        for (name, power, subtypes, colors, cost, activations) in [
+            (
+                "Scavenging Ooze",
+                2,
+                json!(["Ooze"]),
+                json!(["G"]),
+                json!({"generic":1,"pips":[{"Colored":"G"}],"x_count":0}),
+                1,
+            ),
+            (
+                "Heartfire Immolator",
+                2,
+                json!(["Human", "Wizard"]),
+                json!(["R"]),
+                json!({"generic":1,"pips":[{"Colored":"R"}],"x_count":0}),
+                1,
+            ),
+            (
+                "Soul-Shackled Zombie",
+                4,
+                json!(["Zombie"]),
+                json!(["B"]),
+                json!({"generic":3,"pips":[{"Colored":"B"}],"x_count":0}),
+                0,
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let d = ordinary_recipe(id);
+            // The old vanilla path refused before the mandatory supplement.
+            // Exact typed routing now retains full canonical bodies, not a digest or alias.
+            let routed = roots::baseline(id).unwrap();
+            assert!(!routed["definition_owned_family_meanings"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            let value = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &value["registered_permanent_printing"];
+            assert_eq!(p["characteristics"]["types"], json!(["Creature"]));
+            assert_eq!(p["characteristics"]["subtypes"], subtypes);
+            assert_eq!(p["characteristics"]["colors"], colors);
+            assert_eq!(p["characteristics"]["power"], power);
+            assert_eq!(p["characteristics"]["toughness"], 2);
+            assert_eq!(
+                p["characteristics"]["printed_activated_abilities"],
+                activations
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"],
+                cost
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["timing"],
+                "CasterMainPhaseEmptyStackWithPriority"
+            );
+            assert_eq!(
+                p["ordered_activation_roots"].as_array().unwrap().len(),
+                activations as usize
+            );
+            macro_rules! reject {($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::early_activation_printing::printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};}
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(power, Some(9));
+            reject!(mana_value, 0);
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(
+                alt_cost,
+                Some(crate::card_def::AltCostDef {
+                    components: &[],
+                    condition: crate::card_def::AltCostCondition::Always
+                })
+            );
+            reject!(
+                controlled_creature_grant,
+                Some(crate::controlled_creature_grants_v1::MEMORIAL)
+            );
+            reject!(spell_effect, || None);
+            reject!(minimum_blockers, 2);
+            if activations != 0 {
+                let a = &p["ordered_activation_roots"][0];
+                assert_eq!(a["printed_ability_index"], 0);
+                assert_eq!(a["activation_zone"], "Battlefield");
+                assert_eq!(a["timing"], "WithPriorityAtInstantSpeed");
+                assert_eq!(
+                    a["ordered_costs"][0]["Mana"],
+                    json!({"generic":0,"pips":[{"Colored":if name=="Scavenging Ooze"{"G"}else{"R"}}],"x_count":0})
+                );
+                assert_eq!(
+                    a["ordered_costs"].as_array().unwrap().len(),
+                    if name == "Scavenging Ooze" { 1 } else { 2 }
+                );
+                if name == "Heartfire Immolator" {
+                    assert_eq!(a["ordered_costs"][1], "SacrificeOriginalSource");
+                    let prowess = &p["canonical_family_roots"][0]["prowess"];
+                    assert_eq!(prowess["trigger"], "CurrentControllerCastsNoncreatureSpell");
+                    assert_eq!(prowess["ordered_resolution"][0]["power"], 1);
+                    assert_eq!(prowess["ordered_resolution"][0]["toughness"], 1);
+                    assert_eq!(
+                        prowess["ordered_resolution"][0]["original_source_battlefield_incarnation"],
+                        true
+                    );
+                    assert_eq!(prowess["intervening_condition"], false);
+                }
+                for corrupt in 0..9 {
+                    let mut changed = ordinary_recipe(id);
+                    let mut ability = d.activated_abilities[0];
+                    match corrupt {
+                        0 => ability.cost = &[crate::card_def::CostComponent::Tap],
+                        1 => ability.target_spec = crate::card_def::TargetSpec::AnyPlayer,
+                        2 => ability.effect = || crate::effect::EffectOp::Sequence(vec![]),
+                        3 => ability.activation_zone = Zone::Hand,
+                        4 => ability.sorcery_speed_only = true,
+                        5 => {
+                            ability.activation_target_filter =
+                                crate::card_def::ActivationTargetFilter::CreatureSubtype(
+                                    crate::card_def::Subtype::Bear,
+                                )
+                        }
+                        6 => ability.max_activations_per_turn = Some(1),
+                        7 => ability.face = Some(1),
+                        _ => {}
+                    }
+                    changed.activated_abilities = Box::leak(
+                        if corrupt == 8 {
+                            vec![ability, ability]
+                        } else {
+                            vec![ability]
+                        }
+                        .into_boxed_slice(),
+                    );
+                    assert!(
+                        roots::early_activation_printing::printing(id, &changed).is_err(),
+                        "nested ability {corrupt}"
+                    );
+                }
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Scavenging Ooze").unwrap();
+        assert!(
+            !crate::rules_meaning_ooze_v1::root_meaning(id, 0)
+                .unwrap()
+                .effect
+                .conditional_requires_successful_exile
+        );
+        let id = crate::card_def::card_id_by_name("Soul-Shackled Zombie").unwrap();
+        let zombie = crate::rules_meaning_soul_shackled_zombie_v1::root_meaning(id, 0).unwrap();
+        assert!(
+            zombie.effect.requires_actual_successful_creature_exile
+                && zombie.effect.drain_once_if_one_or_two_creatures_exiled
+        );
+    }
+
+    #[test]
     fn genuine_paid_sower_cast_and_target_bound_activation_restore_v50_v51_both_seats() {
         macro_rules! run {
             ($session:ident,$from:ident,$input:ident,$world:ident)=>{

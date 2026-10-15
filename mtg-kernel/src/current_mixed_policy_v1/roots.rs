@@ -5,6 +5,8 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "early_activation_printing.rs"]
+pub(super) mod early_activation_printing;
 #[path = "legendary_printing.rs"]
 mod legendary_printing;
 
@@ -292,6 +294,12 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if matches!(
+        d.name,
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
+    ) {
+        return early_activation_printing::baseline(id, d);
+    }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
     let think_twice = d.name == "Think Twice"
@@ -613,6 +621,9 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
+            return early_activation_printing::printing(id, d)
+        }
         "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {
             return legendary_printing::printing(id, d)
         }
