@@ -290,6 +290,9 @@ fn describe_effect(effect: &EffectOp) -> Result<String, Error> {
         EffectOp::DiscardCards { player, count } => format!("{} discards {count} cards", effect_player(*player)?),
         EffectOp::GainLife { player, amount } => format!("{} gains {amount} life", effect_player(*player)?),
         EffectOp::LoseLife { player, amount } => format!("{} loses {amount} life", effect_player(*player)?),
+        EffectOp::LoseLifeEqualControllerTurnGainsV1 => {
+            "the chosen opponent loses life equal to the total life you have gained this turn".into()
+        }
         EffectOp::AddMana { player, colors } => format!("{} adds {}", effect_player(*player)?, colors.iter().map(|c| format!("{{{}}}", color(*c))).collect::<String>()),
         EffectOp::CreateToken { token_def, controller } => {
             let token = card_def::CARD_DEFS.get(*token_def as usize).ok_or(Error::UnsupportedPrompt)?;
@@ -936,8 +939,31 @@ fn label_common(
                     .iter()
                     .find(|ability| ability.colors.contains(&choice))
             };
-            if !primary && additional.is_none() {
+            let restricted = if primary || additional.is_some() {
+                None
+            } else {
+                def.restricted_mana_abilities
+                    .iter()
+                    .find(|ability| ability.colors.contains(&choice))
+            };
+            if !primary && additional.is_none() && restricted.is_none() {
                 return Err(Error::UnsupportedPrompt);
+            }
+            if let Some(restricted) = restricted {
+                if cost_target.is_some() {
+                    return Err(Error::UnsupportedPrompt);
+                }
+                let restriction = match restricted.restriction {
+                    card_def::ManaSpendRestrictionDef::SpellWithSubtype(
+                        card_def::Subtype::Angel,
+                    ) => "spend this mana only to cast Angel spells",
+                    _ => return Err(Error::UnsupportedPrompt),
+                };
+                return Ok(format!(
+                    "Tap {}: add {{{}}}; {restriction}",
+                    handles.name(source)?,
+                    color(choice)
+                ));
             }
             let (ability, extra_cost) = match additional {
                 Some(additional) => (Some(additional.ability), Some(additional.mana_cost)),
@@ -1844,5 +1870,161 @@ mod variable_target_refusal_tests {
             describe_effect(&op),
             Err(Error::UnsupportedPrompt)
         ));
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod next_five_native_label_tests {
+    use super::*;
+    use crate::{
+        extra_turn_v1::tests::ready,
+        ids::PlayerId,
+        policy_observation_v6::tests::put,
+        rl_session::{FastActorResponseV1, FastActorSessionV1},
+        state::Zone,
+    };
+
+    fn fake_rows(
+        session: &FastActorSessionV1,
+    ) -> (
+        crate::fake_observation_v50::FakeObservationV50,
+        crate::rl_session::FastActorDecisionV1,
+        Vec<A>,
+    ) {
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("fixture did not expose an actual decision")
+        };
+        let (observation, actions, _) = session
+            .fake_current_decision_input_v50(expected, expected.acting_player)
+            .unwrap();
+        (observation, expected, actions)
+    }
+
+    fn human_label(
+        observation: &crate::fake_observation_v50::FakeObservationV50,
+        action: &A,
+        human: PlayerSeatV1,
+    ) -> Result<String, Error> {
+        let handles = Handles::from_parts(
+            &observation.projection,
+            &observation.own_hand,
+            &observation.known_hand_cards,
+            &observation.known_library_cards,
+            None,
+        )?;
+        let parts = super::super::life_ward_v8::ProjectionPartsV8 {
+            projection: &observation.projection,
+            own_hand: &observation.own_hand,
+            known_library_cards: &observation.known_library_cards,
+            known_hand_cards: &observation.known_hand_cards,
+            known_face_down_cards: &observation.known_face_down_cards,
+            extensions: &observation.extensions,
+        };
+        label_parts_v8(action, &parts, &handles, human)
+    }
+
+    fn activate_and_restore(
+        session: &mut FastActorSessionV1,
+        expected: crate::rl_session::FastActorDecisionV1,
+        index: usize,
+    ) {
+        let saved = session.snapshot_v1();
+        session
+            .step(expected.episode_id, expected.step, index as u32)
+            .unwrap();
+        session.restore_v1(&saved);
+    }
+
+    #[test]
+    fn restricted_giada_white_mana_labels_actual_paid_rows_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let giada = put(&mut state, actor, "Giada, Font of Hope", Zone::Battlefield);
+            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
+            let (observation, expected, actions) = fake_rows(&session);
+            let human = expected.acting_player;
+            let (index, action) = actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| matches!(action,
+                    A::ActivateManaAbility { actor: owner, source, mana_choice: Some(ManaColor::W), .. }
+                    if *owner == human && source.arena_id == giada.0
+                ))
+                .expect("native Giada white-mana row");
+            let label = human_label(&observation, action, human).unwrap();
+            assert!(label.contains("add {W}"), "{label}");
+            assert!(label.contains("only to cast Angel spells"), "{label}");
+
+            activate_and_restore(&mut session, expected, index);
+            let (restored_observation, restored_expected, restored_actions) = fake_rows(&session);
+            let restored_human = restored_expected.acting_player;
+            let (restored_index, restored_action) = restored_actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| matches!(action,
+                    A::ActivateManaAbility { actor: owner, source, mana_choice: Some(ManaColor::W), .. }
+                    if *owner == restored_human && source.arena_id == giada.0
+                ))
+                .expect("restored native Giada white-mana row");
+            assert_eq!(
+                human_label(&restored_observation, restored_action, restored_human).unwrap(),
+                label
+            );
+            activate_and_restore(&mut session, restored_expected, restored_index);
+        }
+    }
+
+    #[test]
+    fn midnight_snack_turn_gain_loss_labels_actual_activation_rows_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready(actor);
+            let snack = put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
+            state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
+            let (observation, expected, actions) = fake_rows(&session);
+            let human = expected.acting_player;
+            let (index, action) = actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| {
+                    matches!(action,
+                        A::ActivateAbility { actor: owner, source, ability_index: 0, .. }
+                        if *owner == human && source.arena_id == snack.0
+                    )
+                })
+                .expect("native Midnight Snack activation row");
+            let label = human_label(&observation, action, human).unwrap();
+            assert!(label.contains("sacrifice Midnight Snack"), "{label}");
+            assert!(
+                label.contains(
+                    "chosen opponent loses life equal to the total life you have gained this turn"
+                ),
+                "{label}"
+            );
+
+            activate_and_restore(&mut session, expected, index);
+            let (restored_observation, restored_expected, restored_actions) = fake_rows(&session);
+            let restored_human = restored_expected.acting_player;
+            let (restored_index, restored_action) = restored_actions
+                .iter()
+                .enumerate()
+                .find(|(_, action)| {
+                    matches!(action,
+                        A::ActivateAbility { actor: owner, source, ability_index: 0, .. }
+                        if *owner == restored_human && source.arena_id == snack.0
+                    )
+                })
+                .expect("restored native Midnight Snack activation row");
+            assert_eq!(
+                human_label(&restored_observation, restored_action, restored_human).unwrap(),
+                label
+            );
+            activate_and_restore(&mut session, restored_expected, restored_index);
+        }
     }
 }
