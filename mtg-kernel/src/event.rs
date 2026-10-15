@@ -1446,6 +1446,16 @@ pub enum CommittedEvent {
     ConquerorObserverInputV49 {
         input: Box<crate::bloodthirsty_conqueror_v49::ObserverInputV49>,
     },
+    /// Appended without changing predecessor Hash discriminants. Soul
+    /// placement retains the original source and recipient replacement inputs.
+    SoulCounterAddedV1 {
+        source: crate::state::AbilitySourceContractV4,
+        player: PlayerId,
+        replacement: crate::doubling_season_v48::ReplacementInputV48,
+        before: i32,
+        count: i32,
+        after: i32,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1647,6 +1657,54 @@ pub(crate) fn add_plus_one_counters(
                 }),
             });
     }
+    Ok(())
+}
+
+/// Checked source-relative soul placement. The ability controller remains
+/// its placing actor; current control determines the recipient replacements.
+pub(crate) fn add_soul_counter_to_ability_source_v1(
+    state: &mut GameState,
+    ctx: &crate::effect::ExecCtx,
+) -> Result<(), String> {
+    let source = ctx
+        .ability_source_contract
+        .ok_or("soul placement lacks original source")?;
+    if source.source != ctx.source
+        || source.controller != ctx.controller
+        || source.zone != Zone::Battlefield
+    {
+        return Err("soul placement changed original source relation".into());
+    }
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("soul source missing")?;
+    if live.owner != source.owner {
+        return Err("soul placement changed physical source owner".into());
+    }
+    if live.zone_change_count < source.zone_change_count || live.counters.soul < 0 {
+        return Err("soul placement has invalid generation or counter count".into());
+    }
+    if live.zone != Zone::Battlefield || live.zone_change_count != source.zone_change_count {
+        return Ok(());
+    }
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller);
+    let scaled = crate::standard_cards_v1::scale_counters_checked_v48(state, ctx.controller, 1)?;
+    let count = replacement.replaced_count(scaled)?;
+    let before = live.counters.soul;
+    let after = before.checked_add(count).ok_or("soul counter overflow")?;
+    let event = CommittedEvent::SoulCounterAddedV1 {
+        source,
+        player: ctx.controller,
+        replacement,
+        before,
+        count,
+        after,
+    };
+    state.objects.get_mut(source.source).counters.soul = after;
+    state.engine.event_log.push(event.clone());
+    state.engine.event_history.push(event);
     Ok(())
 }
 
@@ -5715,6 +5773,134 @@ mod season_time_entry_tests_v48 {
                 }
                 assert_eq!(state, restored);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod soul_placement_primitive_v1_tests {
+    use super::*;
+    use crate::effect::{self, EffectOp, ExecCtx, PlayerRef};
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::state::AbilitySourceContractV4;
+
+    fn context(state: &GameState, source: ObjectId, actor: PlayerId) -> ExecCtx {
+        let mut ctx = ExecCtx::no_targets(source, actor);
+        ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(state, source));
+        ctx
+    }
+
+    #[test]
+    fn draw_precedes_soul_and_departure_or_reentry_keeps_draw_without_counter_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for departure in 0..3 {
+                let mut state = ready_state_for(actor);
+                // Typed instruction operand, not a printed Forest activation.
+                let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+                put(&mut state, actor, "Forest", Zone::Library);
+                let ctx = context(&state, source, actor);
+                if departure > 0 {
+                    propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+                }
+                if departure == 2 {
+                    propose_and_commit(
+                        &mut state,
+                        ProposedEvent::zone_change(source, Zone::Battlefield),
+                    );
+                }
+                let hand = state.players[actor.index()].hand.len();
+                let at = state.engine.event_history.len();
+                let mut restored: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+                for branch in [&mut state, &mut restored] {
+                    effect::execute(
+                        &EffectOp::Sequence(vec![
+                            EffectOp::DrawCards {
+                                player: PlayerRef::Controller,
+                                count: 1,
+                            },
+                            EffectOp::AddSoulCounterToAbilitySourceV1,
+                        ]),
+                        &ctx,
+                        branch,
+                    );
+                    assert!(branch.engine.halted.is_none());
+                    assert_eq!(branch.players[actor.index()].hand.len(), hand + 1);
+                    assert!(branch.players[actor.index()].library.is_empty());
+                    assert_eq!(
+                        branch.objects.get(source).counters.soul,
+                        i32::from(departure == 0)
+                    );
+                    let events = &branch.engine.event_history[at..];
+                    let draw = events.iter().position(|e| matches!(e, CommittedEvent::Draw { player, .. } if *player == actor)).unwrap();
+                    let soul = events
+                        .iter()
+                        .position(|e| matches!(e, CommittedEvent::SoulCounterAddedV1 { .. }));
+                    if departure == 0 {
+                        assert!(soul.unwrap() > draw);
+                    } else {
+                        assert!(soul.is_none());
+                    }
+                }
+                assert_eq!(state, restored);
+            }
+        }
+    }
+
+    #[test]
+    fn recipient_control_and_original_ability_controller_remain_distinct_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let ctx = context(&state, source, actor);
+            crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+            add_soul_counter_to_ability_source_v1(&mut state, &ctx).unwrap();
+            let Some(CommittedEvent::SoulCounterAddedV1 {
+                source: original,
+                player,
+                replacement,
+                before,
+                count,
+                after,
+            }) = state.engine.event_history.last()
+            else {
+                panic!("actual soul placement")
+            };
+            assert_eq!(original.controller, actor);
+            assert_eq!(*player, actor);
+            assert_eq!(replacement.controller, actor.opponent());
+            assert_eq!((*before, *count, *after), (0, 1, 1));
+            assert_eq!(state.objects.get(source).controller, actor.opponent());
+        }
+    }
+
+    #[test]
+    fn malformed_source_negative_counter_and_overflow_refuse_before_mutation() {
+        let actor = PlayerId::P0;
+        for mutation in 0..8 {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let other = put(&mut state, actor, "Island", Zone::Battlefield);
+            let mut ctx = context(&state, source, actor);
+            match mutation {
+                0 => ctx.ability_source_contract = None,
+                1 => ctx.ability_source_contract.as_mut().unwrap().source = other,
+                2 => ctx.controller = actor.opponent(),
+                3 => ctx.ability_source_contract.as_mut().unwrap().zone = Zone::Hand,
+                4 => state.objects.get_mut(source).owner = actor.opponent(),
+                5 => {
+                    ctx.ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
+                6 => state.objects.get_mut(source).counters.soul = -1,
+                7 => state.objects.get_mut(source).counters.soul = i32::MAX,
+                _ => unreachable!(),
+            }
+            let before = state.clone();
+            assert!(add_soul_counter_to_ability_source_v1(&mut state, &ctx).is_err());
+            assert_eq!(state, before);
         }
     }
 }

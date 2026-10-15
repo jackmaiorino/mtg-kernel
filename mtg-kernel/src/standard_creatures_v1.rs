@@ -194,7 +194,13 @@ fn apply_counter_transfer(
     let charge = live.counters.charge.checked_add(scale(counters.charge)?)?;
     let net = live.counters.net.checked_add(scale(counters.net)?)?;
     let bait = live.counters.bait.checked_add(scale(counters.bait)?)?;
-    let soul = live.counters.soul.checked_add(scale(counters.soul)?)?;
+    let soul_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
+    let soul_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(soul_scaled)
+            .ok()?;
+    let soul = live.counters.soul.checked_add(soul_placed)?;
     let loyalty = snapshot.extras.loyalty;
     if loyalty > 0
         && (crate::doubling_season_v48::requires_successor(state) || loyalty > i32::MAX as u32)

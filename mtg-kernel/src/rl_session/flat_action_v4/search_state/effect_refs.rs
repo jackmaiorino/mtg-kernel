@@ -269,6 +269,7 @@ impl Scan<'_> {
             | LoseHalfLifeRoundedUp { .. }
             | CreateTokenTappedAndAttacking { .. }
             | AddPlusOneCounterToAbilitySource
+            | AddSoulCounterToAbilitySourceV1
             | ReturnTargetCreatureCardRestrictedWhileSourceControlled { .. }
             | ReturnSourceFromGraveyardTappedWithStunCounters { .. }
             | MaterializeStormCopies
@@ -1207,6 +1208,7 @@ pub(super) fn conflicts(
             | Sacrificed { object, .. }
             | TurnedFaceUp { object, .. }
             | Transformed { object, .. } => s.raw(*object),
+            SoulCounterAddedV1 { source, .. } => s.a(source),
             PlusOneCountersAdded { object, .. }
             | PrintedAbilitiesRemovedBeforeZoneChange { object, .. }
             | WasCreatureBeforeLeavingBattlefield { object, .. }
