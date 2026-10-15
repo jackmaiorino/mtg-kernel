@@ -603,7 +603,7 @@ impl FastActorSessionV1 {
             .current
             .as_ref()
             .ok_or(FlatActionDecisionSliceErrorV1::NoCurrentDecision)?;
-        flat_validate_expected_decision_akroma_inner(self, current, expected, true)?;
+        flat_validate_expected_decision_ravenous_v51(self, current, expected)?;
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch);
         }

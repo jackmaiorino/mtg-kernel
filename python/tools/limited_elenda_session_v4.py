@@ -1,0 +1,349 @@
+"""Client for the trusted two-seat kernel_limited_elenda_jsonl host.
+
+Schema 4 retains the complete V51 envelope and typed Elenda V52 facts.
+Replies contain only the current actor's safe prompt. A network host must route
+them to that actor. This client is transport tooling, not a StateSpec injector,
+MageZero model adapter, belief sampler or playing policy.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+import math
+from typing import Any, Sequence
+
+from limited_decks_v1 import ImportedDeck
+from limited_session_v1 import LimitedClientV1, LimitedSessionError, _uint
+
+PROTOCOL = "kernel_limited_elenda_jsonl"
+DECISION_SCHEMA = "mtg-kernel-limited-elenda-decision/v4"
+
+
+def _bounded_int(value: Any, field: str, minimum: int, maximum: int) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise LimitedSessionError(f"invalid exact battlefield {field}")
+    return value
+
+
+def _validate_battlefield(visible: dict[str, Any]) -> None:
+    public = visible.get("public")
+    battlefield = public.get("battlefield") if isinstance(public, dict) else None
+    if not isinstance(battlefield, list) or len(battlefield) != 2:
+        raise LimitedSessionError("missing two-seat exact battlefield roster")
+    handles: set[str] = set()
+    for seat, cards in zip(("p0", "p1"), battlefield):
+        if not isinstance(cards, list):
+            raise LimitedSessionError("invalid exact battlefield seat roster")
+        for row in cards:
+            if not isinstance(row, dict) or not isinstance(row.get("card"), dict):
+                raise LimitedSessionError("missing wrapped battlefield card")
+            reference = row["card"].get("stable")
+            if (not isinstance(reference, dict)
+                    or not isinstance(reference.get("handle"), str)
+                    or not reference["handle"] or reference["handle"] in handles
+                    or not isinstance(reference.get("name"), str)
+                    or reference.get("owner") not in ("p0", "p1")
+                    or reference.get("controller") != seat
+                    or reference.get("zone") != "Battlefield"):
+                raise LimitedSessionError("invalid safe battlefield card identity")
+            handles.add(reference["handle"])
+            _bounded_int(row.get("marked_damage"), "marked_damage", 0, (1 << 32) - 1)
+            _bounded_int(row.get("plus_one_counters"), "plus_one_counters", 0, (1 << 31) - 1)
+            _bounded_int(row.get("soul"), "soul", 0, (1 << 31) - 1)
+
+
+def _same_json_value(left: Any, right: Any) -> bool:
+    """Compare issued JSON without Python's bool/int/float equality coercion.
+
+    The retained side is a private deepcopy of a decoded, validated reply.
+    Accept only exact JSON value types and string keys on the caller side.
+    Dictionary insertion order has no effect on prompt identity.
+    """
+    pending = [(left, right)]
+    while pending:
+        actual, expected = pending.pop()
+        kind = type(actual)
+        if kind is not type(expected):
+            return False
+        if kind is dict:
+            if (any(type(key) is not str for key in actual)
+                    or any(type(key) is not str for key in expected)
+                    or actual.keys() != expected.keys()):
+                return False
+            pending.extend((actual[key], expected[key]) for key in actual)
+        elif kind is list:
+            if len(actual) != len(expected):
+                return False
+            pending.extend(zip(actual, expected))
+        elif kind in (str, int, bool, type(None)):
+            if actual != expected:
+                return False
+        elif kind is float:
+            if not math.isfinite(actual) or not math.isfinite(expected) or actual != expected:
+                return False
+        else:
+            return False
+    return True
+
+
+def _expected_meaning() -> dict[str, Any]:
+    """Immutable public rule contract, with no catalog IDs or provenance hashes."""
+    return {
+        "root": "CreatureSpellAndPrintedStatics",
+        "printed": {"generic_mana": 2, "colored_pips": ["W", "B"], "types": ["Creature"],
+                    "subtypes": ["Vampire", "Knight"], "supertypes": ["Legendary"],
+                    "colors": ["W", "B"], "power": 4, "toughness": 4},
+        "home": "BattlefieldPrintedFrontFace", "active_printed_ability_required": True,
+        "evaluation": "CurrentControllerAndWorldOnEveryQuery", "supported_starting_life": 20,
+        "bonus_combination": "AddEverySatisfiedSelfBonus",
+        "ordered_rules": [
+            {"Keyword": "Lifelink"},
+            {"HexproofFromSourceType": {
+                "targeter": "OpponentOfCurrentController", "required_source_type": "Instant",
+                "source_type_basis": "EffectiveSelectedFormOrOriginalSourceCharacteristics",
+                "ordered_checks": ["TargetSelection", "ResolutionRevalidation"]}},
+            {"ConditionalSelfBonus": {
+                "condition": {"CurrentControllerLifeAtLeastTheirStartingLifePlus": {"amount": 1}},
+                "ordered_grants": [{"ModifyPowerToughness": {"power": 1, "toughness": 1}},
+                                   {"GainKeyword": "Menace"}]}},
+            {"ConditionalSelfBonus": {
+                "condition": {"CurrentControllerLifeAtLeastTheirStartingLifePlus": {"amount": 10}},
+                "ordered_grants": [{"ModifyPowerToughness": {"power": 5, "toughness": 5}}]}}
+        ]}
+
+
+def _validate_elenda_visible(visible: dict[str, Any]) -> None:
+    if type(visible) is not dict or set(visible) != {"predecessor", "elenda"}:
+        raise LimitedSessionError("missing complete Elenda visible state")
+    predecessor = visible["predecessor"]
+    if type(predecessor) is not dict:
+        raise LimitedSessionError("invalid inherited V51 state")
+    _validate_battlefield(predecessor)
+    facts = visible["elenda"]
+    if (type(facts) is not dict or set(facts) != {"meaning", "current"}
+            or not _same_json_value(facts["meaning"], _expected_meaning())
+            or type(facts["current"]) is not list):
+        raise LimitedSessionError("invalid ordered Elenda meaning or current roster")
+    public_rows = {row["card"]["stable"]["handle"]: row["card"]["stable"]
+                   for cards in predecessor["public"]["battlefield"] for row in cards}
+    seen: set[str] = set()
+    bools = ("token", "printed_abilities_active", "effective_lifelink", "effective_menace",
+             "hexproof_from_opponents_instants")
+    integers = ("starting_life", "controller_life", "applied_power_bonus", "applied_toughness_bonus")
+    required = {*bools, *integers, "effective_name", "effective_types", "effective_supertypes",
+                "effective_subtype_ids", "effective_color_mask", "ordered_bonuses",
+                "effective_power", "effective_toughness"}
+    for row in facts["current"]:
+        if type(row) is not dict or set(row) != {"source", "traits"}:
+            raise LimitedSessionError("invalid Elenda current row")
+        source, traits = row["source"], row["traits"]
+        if (type(source) is not dict or type(source.get("handle")) is not str
+                or source["handle"] in seen
+                or not _same_json_value(source, public_rows.get(source["handle"]))):
+            raise LimitedSessionError("Elenda source is not an exact current safe battlefield handle")
+        seen.add(source["handle"])
+        if type(traits) is not dict or set(traits) != required:
+            raise LimitedSessionError("incomplete Elenda traits")
+        for field in bools:
+            if type(traits[field]) is not bool:
+                raise LimitedSessionError(f"invalid Elenda boolean {field}")
+        for field in integers:
+            _bounded_int(traits[field], field, -(1 << 31), (1 << 31) - 1)
+        for field in ("effective_power", "effective_toughness"):
+            if traits[field] is not None:
+                _bounded_int(traits[field], field, -(1 << 31), (1 << 31) - 1)
+        if type(traits["effective_name"]) is not str or traits["starting_life"] != 20:
+            raise LimitedSessionError("invalid Elenda current name or starting life")
+        _bounded_int(traits["effective_color_mask"], "effective_color_mask", 0, 31)
+        for field, allowed in (("effective_types", {"Land", "Creature", "Artifact", "Enchantment", "Instant", "Sorcery", "Planeswalker"}),
+                               ("effective_supertypes", {"Basic", "Snow", "Legendary"})):
+            values = traits[field]
+            if type(values) is not list or any(type(v) is not str or v not in allowed for v in values):
+                raise LimitedSessionError(f"invalid Elenda {field}")
+        subtypes = traits["effective_subtype_ids"]
+        if type(subtypes) is not list:
+            raise LimitedSessionError("invalid Elenda subtype vocabulary")
+        for subtype in subtypes:
+            _bounded_int(subtype, "subtype", 0, 65535)
+        bonuses = traits["ordered_bonuses"]
+        if type(bonuses) is not list or len(bonuses) != 2:
+            raise LimitedSessionError("missing ordered Elenda bonuses")
+        for bonus, threshold, amount, menace in zip(bonuses, (1, 10), (1, 5), (True, False)):
+            expected_keys = {"minimum_above_start", "condition_satisfied", "applied", "power", "toughness", "grants_menace"}
+            if type(bonus) is not dict or set(bonus) != expected_keys:
+                raise LimitedSessionError("invalid Elenda bonus fields")
+            for key in ("condition_satisfied", "applied", "grants_menace"):
+                if type(bonus[key]) is not bool:
+                    raise LimitedSessionError("invalid Elenda bonus boolean")
+            for key, value in (("minimum_above_start", threshold), ("power", amount), ("toughness", amount)):
+                if type(bonus[key]) is not int or bonus[key] != value:
+                    raise LimitedSessionError("invalid ordered Elenda bonus")
+            if bonus["grants_menace"] is not menace:
+                raise LimitedSessionError("invalid ordered Elenda menace grant")
+
+
+class LimitedElendaClientV4(LimitedClientV1):
+    def __init__(self, command: Sequence[str], *, expected_card_db_hash: int,
+                 timeout_s: float = 10.0) -> None:
+        self.expected_card_db_hash = _uint(expected_card_db_hash, "card_db_hash")
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("timeout_s must be finite and positive")
+        self._issued_state: dict[str, Any] | None = None
+        self._authority_generation: int | None = None
+        self._snapshots: set[int] = set()
+        super().__init__(command, timeout_s=timeout_s)
+        self.schema_version = 4
+
+    def _validate_reply(self, reply: dict[str, Any], request: dict[str, Any]) -> str:
+        if (reply.get("protocol") != PROTOCOL
+                or type(reply.get("schema_version")) is not int
+                or reply["schema_version"] != 4):
+            raise LimitedSessionError("unexpected Limited common protocol identity")
+        if reply.get("request_id") != request["request_id"]:
+            raise LimitedSessionError("response request_id mismatch")
+        catalog = _uint(reply.get("card_db_hash"), "card_db_hash")
+        if catalog != self.expected_card_db_hash:
+            raise LimitedSessionError("unexpected catalog identity")
+        for field, expected in (("priority_mode", "engine_windows_v1"),
+                                ("combat_rules", "foundations_v1"),
+                                ("mulligan_rules", "london_v1")):
+            if reply.get(field) != expected:
+                raise LimitedSessionError(f"unexpected {field}")
+        if (type(reply.get("kernel_version")) is not str or not reply["kernel_version"]
+                or _uint(reply.get("card_count"), "card_count") == 0
+                or type(reply.get("producer_sha256")) is not str
+                or len(reply["producer_sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in reply["producer_sha256"])):
+            raise LimitedSessionError("invalid Elenda producer metadata")
+        kind = reply.get("response_type")
+        if kind == "error":
+            if not isinstance(reply.get("code"), str) or not reply["code"]:
+                raise LimitedSessionError("invalid error code")
+            return kind
+        if kind != "state":
+            raise LimitedSessionError("unexpected state response")
+        state = reply.get("state")
+        if not isinstance(state, dict):
+            raise LimitedSessionError("missing common state")
+        _uint(state.get("episode_id"), "episode_id")
+        state_type = state.get("state_type")
+        if state_type == "decision":
+            generation = _uint(state.get("authority_generation"), "authority_generation")
+            if self._authority_generation is not None:
+                if request["request_type"] in ("reset", "restore"):
+                    if generation <= self._authority_generation:
+                        raise LimitedSessionError("restore/reset did not advance owner generation")
+                elif generation != self._authority_generation:
+                    raise LimitedSessionError("owner generation changed outside reset/restore")
+            decision = state.get("decision")
+            if not isinstance(decision, dict) or decision.get("schema") != DECISION_SCHEMA:
+                raise LimitedSessionError("unexpected common decision schema")
+            if decision.get("actor") not in ("p0", "p1"):
+                raise LimitedSessionError("invalid decision actor")
+            _uint(decision.get("prompt_seq"), "prompt_seq")
+            if not isinstance(decision.get("state"), dict):
+                raise LimitedSessionError("missing visible state")
+            _validate_elenda_visible(decision["state"])
+            actions = decision.get("actions")
+            if not isinstance(actions, list) or not actions:
+                raise LimitedSessionError("decision has no legal actions")
+            for index, action in enumerate(actions):
+                if (not isinstance(action, dict)
+                        or type(action.get("action_index")) is not int
+                        or action["action_index"] != index
+                        or not isinstance(action.get("label"), str)
+                        or not action["label"]):
+                    raise LimitedSessionError("invalid common action identity")
+        elif state_type == "terminal":
+            terminal_codes = {"natural": "natural_game_over",
+                              "truncated": "decision_cap", "halted": "fail_closed"}
+            classification = state.get("classification")
+            if (not isinstance(classification, str) or classification not in terminal_codes
+                    or state.get("code") != terminal_codes[classification]):
+                raise LimitedSessionError("inconsistent terminal classification/code")
+            if state.get("winner") not in (None, "p0", "p1"):
+                raise LimitedSessionError("invalid terminal winner")
+            outcomes = {"natural": {"p0_win": "p0", "p1_win": "p1", "draw": None},
+                        "truncated": {"truncated": None}, "halted": {"halted": None}}
+            outcome = state.get("outcome")
+            if (type(outcome) is not str or outcome not in outcomes[classification]
+                    or state.get("winner") != outcomes[classification][outcome]):
+                raise LimitedSessionError("inconsistent terminal outcome/winner")
+            _uint(state.get("policy_steps"), "policy_steps")
+            _uint(state.get("physical_decisions"), "physical_decisions")
+        elif state_type == "unsupported":
+            if not isinstance(state.get("code"), str) or not state["code"]:
+                raise LimitedSessionError("invalid unsupported code")
+        else:
+            raise LimitedSessionError("unknown common state type")
+        receipt = reply.get("receipt")
+        if request["request_type"] == "step":
+            if (type(receipt) is not dict or set(receipt) != {"prompt_seq", "action_index"}
+                    or not _same_json_value(receipt["prompt_seq"], request["prompt_seq"])
+                    or not _same_json_value(receipt["action_index"], request["action_index"])):
+                raise LimitedSessionError("receipt differs from issued action")
+        elif receipt is not None:
+            raise LimitedSessionError("unexpected action receipt")
+        if request["request_type"] == "snapshot":
+            if _uint(reply.get("snapshot_id"), "snapshot_id") == 0:
+                raise LimitedSessionError("invalid snapshot handle")
+        return kind
+
+    def _server_error(self, reply: dict[str, Any]) -> str:
+        return reply["code"]
+
+    def exchange(self, payload: dict[str, Any]) -> dict[str, Any]:
+        reply = super().exchange(payload)
+        self._issued_state = deepcopy(reply["state"])
+        if reply["state"].get("state_type") == "decision":
+            self._authority_generation = reply["state"]["authority_generation"]
+        if payload["request_type"] == "reset":
+            self._snapshots.clear()
+        if payload["request_type"] == "snapshot":
+            self._snapshots.add(reply["snapshot_id"])
+        return reply
+
+    def reset(self, decks: tuple[ImportedDeck, ImportedDeck], *, episode_id: int = 0,
+              env_seed: int = 1, starting_player: str = "p0",
+              max_steps: int = 4096) -> dict[str, Any]:
+        if len(decks) != 2 or starting_player not in ("p0", "p1"):
+            raise LimitedSessionError("provide two decks and a valid starting seat")
+        _uint(episode_id, "episode_id")
+        _uint(env_seed, "env_seed")
+        if _uint(max_steps, "max_steps") == 0:
+            raise LimitedSessionError("max_steps must be positive")
+        return self.exchange({
+            "request_type": "reset", "expected_card_db_hash": self.expected_card_db_hash,
+            "episode_id": episode_id, "env_seed": env_seed,
+            "starting_player": starting_player,
+            "max_physical_decisions": max_steps, "max_policy_steps": max_steps,
+            "decks": [{"cards": [{"name": row.name, "count": row.count}
+                                 for row in deck.mainboard]} for deck in decks],
+        })
+
+    def current(self) -> dict[str, Any]:
+        return self.exchange({"request_type": "current"})
+
+    def step(self, reply: dict[str, Any], action_index: int) -> dict[str, Any]:
+        state = self._issued_state
+        if (state is None or state.get("state_type") != "decision"
+                or type(reply) is not dict or not _same_json_value(reply.get("state"), state)):
+            raise LimitedSessionError("stale or unavailable common prompt")
+        actions = state["decision"]["actions"]
+        if type(action_index) is not int or not 0 <= action_index < len(actions):
+            raise LimitedSessionError("action index is outside the current menu")
+        decision = state["decision"]
+        return self.exchange({
+            "request_type": "step", "episode_id": state["episode_id"],
+            "authority_generation": state["authority_generation"],
+            "actor": decision["actor"], "prompt_seq": decision["prompt_seq"],
+            "action_index": action_index,
+        })
+
+    def snapshot(self) -> dict[str, Any]:
+        return self.exchange({"request_type": "snapshot"})
+
+    def restore(self, snapshot_id: int) -> dict[str, Any]:
+        _uint(snapshot_id, "snapshot_id")
+        if snapshot_id not in self._snapshots:
+            raise LimitedSessionError("snapshot does not belong to the current game")
+        return self.exchange({"request_type": "restore", "snapshot_id": snapshot_id})

@@ -86,7 +86,10 @@ pub struct HumanDecisionElendaV52 {
     pub state: HumanVisibleStateElendaV52,
     pub actions: Vec<HumanLegalActionV1>,
 }
-fn facts(facts: &public::FactsV52, handles: &Handles) -> Result<HumanElendaFactsV52, Error> {
+pub(super) fn facts(
+    facts: &public::FactsV52,
+    handles: &Handles,
+) -> Result<HumanElendaFactsV52, Error> {
     let rule = &facts.meaning;
     let mut current = facts
         .current
