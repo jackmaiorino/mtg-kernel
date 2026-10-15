@@ -45,3 +45,11 @@ Observed checks:91 affected Python deck/pool/V2/V3 cases passed; pinned
 checks exactly the two metadata fields, unchanged reference decks, old profile
 identities and runtime mechanics. All changed/new Rust remains uncompiled and
 unrun. No build/test/check/clippy, native launch, push or PR was performed.
+
+The integrating owner now preserves that checkpoint in a separate managed
+branch `codex/fdn-dual-full-integration-20261015`. Composition `07ba79a375`
+merges the exact Ravenous fixture repair `c52cbfcf5f` without changing either
+Full recipe or the frozen profile literals. Native151's83/6 failure is retained;
+Native152 is qualifying that repaired Partial parent. This successor still
+needs its own actual generated export, appended profile and affected runtime
+qualification. No current native or default-branch Full pass is claimed.
