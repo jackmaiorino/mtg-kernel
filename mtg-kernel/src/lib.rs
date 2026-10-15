@@ -80,6 +80,7 @@ pub mod rules_meaning_game_outcome_protection_v1;
 pub mod rules_meaning_heraldic_banner_v1;
 pub mod rules_meaning_librarian_v1;
 mod soul_shackled_zombie_v1;
+pub mod source_type_hexproof_v1;
 pub mod standard_cards_v1;
 pub mod standard_creature_choices_v1;
 pub mod standard_creatures_v1;

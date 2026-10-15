@@ -3510,8 +3510,8 @@ fn commit_with_entry_batch_and_source_color(
         _ => None,
     };
     if let Some(snapshot) = source_color.filter(|snapshot| {
-        matches!(&committed, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, to, .. }
-            if *object == snapshot.source.source && *to != Zone::Battlefield)
+        matches!(&committed, CommittedEvent::ZoneChange { object, from, to, .. }
+            if *object == snapshot.source.source && *from == snapshot.source.zone && to != from)
     }) {
         crate::controlled_creature_grants_v1::log_departure_color(state, snapshot);
     }

@@ -4496,6 +4496,14 @@ fn starting_life_self_bonuses_v1(name: &str) -> &'static str {
     }
 }
 
+fn source_type_hexproof_v1(name: &str) -> &'static str {
+    if starting_life_self_bonuses_v1(name) != "&[]" {
+        "Some(SourceTypeHexproofDefV1::Instants)"
+    } else {
+        "None"
+    }
+}
+
 fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     match name {
         "Citadel Gate" => "Some(ManaColor::W)",
@@ -10384,6 +10392,16 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        source_type_hexproof_v1: {},",
+            if executable {
+                source_type_hexproof_v1(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -10596,6 +10614,11 @@ fn codegen(cards: &[CardJson]) -> String {
         );
         canon.push('|');
         // Absent new descriptors add no semantic token to any predecessor.
+        if c.engine_capability != EngineCapabilityJson::NoEffect
+            && source_type_hexproof_v1(&c.name) != "None"
+        {
+            canon.push_str("source_type_hexproof_v1=Instants|");
+        }
         if c.engine_capability != EngineCapabilityJson::NoEffect
             && starting_life_self_bonuses_v1(&c.name) != "&[]"
         {

@@ -519,6 +519,13 @@ pub(crate) fn legal_targets(
     .filter(|target| match target {
         crate::state::Target::Object(target) => {
             !crate::source_power_activation_v1::protected(state, facts, *target)
+                && !crate::source_type_hexproof_v1::protects_from_source(
+                    state,
+                    *target,
+                    controller,
+                    facts.source,
+                )
+                .unwrap_or(true)
                 && !crate::standard_legends_v1::hexproof_from_historical_color(
                     state,
                     *target,

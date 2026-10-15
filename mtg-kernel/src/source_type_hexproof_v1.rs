@@ -1,0 +1,273 @@
+//! Typed effective source types shared by announcement, resolution and LKI.
+//! Optional projections are selected by the catalog's source-type hexproof rule.
+use crate::card_def::{CardDef, CardType, SourceTypeHexproofDefV1, CARD_DEFS};
+use crate::ids::{ObjectId, PlayerId};
+use crate::state::{CastMethodV4, GameState, Zone};
+use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+
+const TYPES: [CardType; 7] = [
+    CardType::Land,
+    CardType::Creature,
+    CardType::Instant,
+    CardType::Sorcery,
+    CardType::Artifact,
+    CardType::Enchantment,
+    CardType::Planeswalker,
+];
+
+/// A set of effective card types. Bits follow this module's explicit TYPES
+/// table, independently of enum discriminants. Unknown bits are rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceTypesV1(u8);
+impl SourceTypesV1 {
+    pub fn contains(self, kind: CardType) -> bool {
+        TYPES
+            .iter()
+            .position(|t| *t == kind)
+            .is_some_and(|i| self.0 & (1 << i) != 0)
+    }
+    pub fn card_types(self) -> Vec<CardType> {
+        TYPES.into_iter().filter(|t| self.contains(*t)).collect()
+    }
+    fn from_types(types: &[CardType]) -> Self {
+        Self(TYPES.iter().enumerate().fold(0, |mask, (i, t)| {
+            mask | if types.contains(t) { 1 << i } else { 0 }
+        }))
+    }
+    pub(crate) fn valid(self) -> bool {
+        self.0 & !0x7f == 0
+    }
+}
+
+/// Empty contributes no historical JSON member or Hash input. A present empty
+/// set is distinct from absence, as a source may legitimately have no types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SourceTypeProjectionV1(pub Option<SourceTypesV1>);
+impl SourceTypeProjectionV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for SourceTypeProjectionV1 {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        if let Some(types) = self.0 {
+            "effective-targeting-source-types/v1".hash(h);
+            types.hash(h);
+        }
+    }
+}
+
+pub(crate) fn enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        CARD_DEFS
+            .iter()
+            .any(|d| d.is_executable() && d.source_type_hexproof_v1.is_some())
+    })
+}
+
+pub(crate) fn spell_types(def: &CardDef, method: CastMethodV4) -> Result<SourceTypesV1, String> {
+    if method == CastMethodV4::Omen {
+        return def
+            .omen_spell_form()
+            .map(|(_, types)| SourceTypesV1::from_types(types))
+            .ok_or_else(|| "source-type projection lost selected Adventure/Omen form".into());
+    }
+    if method == CastMethodV4::Bestow {
+        return Ok(SourceTypesV1::from_types(&[CardType::Enchantment]));
+    }
+    Ok(SourceTypesV1::from_types(def.types))
+}
+
+/// Copies bind the copied form in immutable origin provenance, rather than
+/// consulting a parent object's later incarnation or a mutable stack flag.
+pub(crate) fn copy_projection(def: u16, method: CastMethodV4) -> SourceTypeProjectionV1 {
+    SourceTypeProjectionV1(enabled().then(|| {
+        spell_types(&CARD_DEFS[usize::from(def)], method)
+            .expect("validated spell form at genuine copy creation")
+    }))
+}
+pub(crate) fn copy_method(method: CastMethodV4) -> CastMethodV4 {
+    match method {
+        CastMethodV4::Omen | CastMethodV4::Bestow => method,
+        _ => CastMethodV4::Normal,
+    }
+}
+
+pub(crate) fn current_types(state: &GameState, object: ObjectId) -> Result<SourceTypesV1, String> {
+    let live = state
+        .objects
+        .try_get(object)
+        .ok_or("source-type object missing")?;
+    if live.v4.face_down_v1.is_some() {
+        return Ok(SourceTypesV1::from_types(
+            if live.v4.face_down_v1.is_some_and(|f| f.disguised) {
+                &[CardType::Creature]
+            } else {
+                &[]
+            },
+        ));
+    }
+    if live.zone != Zone::Stack {
+        return Ok(SourceTypesV1(TYPES.iter().enumerate().fold(
+            0,
+            |mask, (i, kind)| {
+                mask | if crate::engine::object_has_type(state, object, *kind) {
+                    1 << i
+                } else {
+                    0
+                }
+            },
+        )));
+    }
+    if let Some(copy) = live.spell_copy_origin {
+        if let Some(types) = copy.source_types_v1.0 {
+            if !types.valid() {
+                return Err("copy source type set has unknown bits".into());
+            }
+            return Ok(types);
+        }
+        if enabled() {
+            return Err("copy lost immutable source-type projection".into());
+        }
+    }
+    let def = &CARD_DEFS[usize::from(live.card_def)];
+    if let Some(pending) = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|p| p.spell == object)
+    {
+        let method = if pending.mode_chosen == Some(1) && def.omen_spell_form().is_some() {
+            CastMethodV4::Omen
+        } else {
+            pending.source_contract.cast_method
+        };
+        return spell_types(def, method);
+    }
+    let method = live
+        .v4
+        .spell_cast_origin
+        .and_then(|o| o.finalized_method)
+        .or_else(|| {
+            state
+                .stack
+                .iter()
+                .find(|i| i.source == object && i.kind == crate::state::StackItemKind::Spell)
+                .and_then(|i| i.v4.cast_method)
+        })
+        .ok_or("stack source lost selected spell-form authority")?;
+    spell_types(def, method)
+}
+
+/// Original live characteristics win. Departed battlefield or physical spell
+/// incarnations read the independently committed, prebatch type snapshot.
+pub(crate) fn source_types(
+    state: &GameState,
+    object: ObjectId,
+    card_def: u16,
+    zone: Zone,
+    generation: u32,
+) -> Result<SourceTypesV1, String> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|o| o.zone == zone && o.zone_change_count == generation)
+    {
+        return current_types(state, object);
+    }
+    crate::controlled_creature_grants_v1::validate_color_history(state)?;
+    let mut found = state.engine.event_history.iter().filter_map(|e| {
+        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
+        else {
+            return None;
+        };
+        (snapshot.source.source == object
+            && snapshot.source.zone == zone
+            && snapshot.source.zone_change_count == generation
+            && (snapshot.source.card_def == card_def
+                || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
+        .then_some(snapshot.source_types_v1.0)
+        .flatten()
+    });
+    let types = found
+        .next()
+        .ok_or("historical targeting source lost exact effective types")?;
+    if found.next().is_some() || !types.valid() {
+        return Err("historical source types duplicate or invalid".into());
+    }
+    Ok(types)
+}
+
+pub(crate) fn active_rule(
+    state: &GameState,
+    target: ObjectId,
+    targeter: PlayerId,
+) -> Option<SourceTypeHexproofDefV1> {
+    if !enabled() {
+        return None;
+    }
+    let live = state.objects.try_get(target)?;
+    let def = CARD_DEFS.get(usize::from(live.card_def))?;
+    active_rule_for_input(state, target, targeter, def.source_type_hexproof_v1)
+}
+
+fn active_rule_for_input(
+    state: &GameState,
+    target: ObjectId,
+    targeter: PlayerId,
+    rule: Option<SourceTypeHexproofDefV1>,
+) -> Option<SourceTypeHexproofDefV1> {
+    let live = state.objects.try_get(target)?;
+    let def = CARD_DEFS.get(usize::from(live.card_def))?;
+    (live.zone == Zone::Battlefield
+        && live.controller != targeter
+        && live.v4.face_index == 0
+        && def.is_executable()
+        && crate::continuous_characteristics_v1::printed_abilities_active(state, target))
+    .then_some(rule)
+    .flatten()
+}
+pub(crate) fn protects(rule: SourceTypeHexproofDefV1, types: SourceTypesV1) -> bool {
+    match rule {
+        SourceTypeHexproofDefV1::Instants => types.contains(CardType::Instant),
+    }
+}
+pub(crate) fn protects_from_source(
+    state: &GameState,
+    target: ObjectId,
+    targeter: PlayerId,
+    source: crate::state::AbilitySourceContractV4,
+) -> Result<bool, String> {
+    let Some(rule) = active_rule(state, target, targeter) else {
+        return Ok(false);
+    };
+    Ok(protects(
+        rule,
+        source_types(
+            state,
+            source.source,
+            source.card_def,
+            source.zone,
+            source.zone_change_count,
+        )?,
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceTypeHexproofFactsV1 {
+    pub controller: PlayerId,
+    pub rule: SourceTypeHexproofDefV1,
+}
+pub fn characteristics(state: &GameState, target: ObjectId) -> Option<SourceTypeHexproofFactsV1> {
+    let controller = state.objects.try_get(target)?.controller;
+    active_rule(state, target, controller.opponent())
+        .map(|rule| SourceTypeHexproofFactsV1 { controller, rule })
+}
+
+#[cfg(test)]
+#[path = "source_type_hexproof_v1_tests.rs"]
+mod tests;

@@ -141,6 +141,7 @@ fn put_spell_on_stack(
                 parent_controller: parent_object.controller,
                 parent_stack_zone_change_count: parent_object.zone_change_count,
                 parent_was_copy: false,
+                source_types_v1: Default::default(),
             }),
             plotted_turn: None,
             zone_change_count: 0,

@@ -2000,6 +2000,9 @@ fn validate_spell_copy_origin_chain(
     child_card_def: u16,
     origin: SpellCopyOriginV4,
 ) -> Result<(), String> {
+    if !crate::source_type_hexproof_v1::enabled() && !origin.source_types_v1.is_empty() {
+        return Err("copy source-type projection requires its selected catalog".into());
+    }
     if origin.parent == child || origin.parent.0 >= child.0 {
         return Err("spell copy origin does not name an earlier distinct arena object".to_string());
     }
@@ -2025,7 +2028,23 @@ fn validate_spell_copy_origin_chain(
         return Err("spell copy origin no longer identifies its exact parent ancestry".to_string());
     }
     if let Some(parent_origin) = parent.spell_copy_origin {
+        if crate::source_type_hexproof_v1::enabled()
+            && origin.source_types_v1 != parent_origin.source_types_v1
+        {
+            return Err("spell copy changed its parent's effective source types".into());
+        }
         validate_spell_copy_origin_chain(state, origin.parent, parent.card_def, parent_origin)?;
+    } else if crate::source_type_hexproof_v1::enabled() {
+        let types = crate::source_type_hexproof_v1::source_types(
+            state,
+            origin.parent,
+            origin.parent_card_def,
+            Zone::Stack,
+            origin.parent_stack_zone_change_count,
+        )?;
+        if origin.source_types_v1.0 != Some(types) {
+            return Err("spell copy lost its original selected source types".into());
+        }
     }
     Ok(())
 }
@@ -2401,6 +2420,17 @@ fn validate_spell_source_contract_fields(
         }
     }
     if is_virtual_copy {
+        if crate::source_type_hexproof_v1::enabled()
+            && source
+                .spell_copy_origin
+                .and_then(|origin| origin.source_types_v1.0)
+                != Some(crate::source_type_hexproof_v1::spell_types(
+                    def,
+                    cast_method,
+                )?)
+        {
+            return Err("spell copy source types disagree with its selected form".into());
+        }
         if def.target_spec == TargetSpec::KickerControlledCreatures {
             return Err(
                 "variable-cardinality spell copies require a copy-targeting successor".into(),
@@ -3106,6 +3136,7 @@ pub fn legal_targets_for(
 
 #[derive(Debug, Clone, Copy)]
 struct TargetingSource {
+    types_override: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
     object: ObjectId,
     card_def: u16,
     zone: Zone,
@@ -3118,6 +3149,7 @@ struct TargetingSource {
 
 fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
     state.objects.try_get(object).map(|live| TargetingSource {
+        types_override: None,
         object,
         card_def: live.card_def,
         zone: live.zone,
@@ -3125,6 +3157,32 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
         other_than: None,
         original_source_incarnation_only: false,
     })
+}
+
+fn targeting_source_for_spell_form(
+    state: &GameState,
+    object: ObjectId,
+    def: &card_def::CardDef,
+    method: CastMethodV4,
+) -> Option<TargetingSource> {
+    targeting_source_for_object(state, object).map(|mut source| {
+        source.types_override = crate::source_type_hexproof_v1::spell_types(def, method).ok();
+        source
+    })
+}
+fn targeting_source_for_pending_cast(
+    state: &GameState,
+    pending: &PendingCast,
+) -> Option<TargetingSource> {
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let method = if pending.mode_chosen == Some(1) && def.omen_spell_form().is_some() {
+        CastMethodV4::Omen
+    } else if pending.mode_chosen == Some(1) && supported_bestow(def).is_some() {
+        CastMethodV4::Bestow
+    } else {
+        pending.source_contract.cast_method
+    };
+    targeting_source_for_spell_form(state, pending.spell, def, method)
 }
 
 fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
@@ -3154,6 +3212,7 @@ fn triggered_ability_targeting_source(
     } = effect
     {
         return Some(TargetingSource {
+            types_override: None,
             object: original.source,
             card_def: original.card_def,
             zone: original.zone,
@@ -3170,6 +3229,7 @@ fn triggered_ability_targeting_source(
         _ => None,
     };
     source_contract.map(|contract| TargetingSource {
+        types_override: None,
         object: source,
         card_def: contract.card_def,
         zone: contract.zone,
@@ -3988,6 +4048,11 @@ fn legal_targets_for_controller_from_source(
         targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
         targets.retain(|target| !matches!(target,Target::Object(object) if crate::standard_legends_v1::katilda_protected_from(state,*object,source.object)
             || crate::standard_legends_v1::hexproof_from_color(state,*object,source.object,source.card_def,source.zone_change_count,controller)));
+        if crate::source_type_hexproof_v1::enabled() && targets.iter().any(|target| matches!(target, Target::Object(id) if crate::source_type_hexproof_v1::active_rule(state, *id, controller).is_some())) {
+            let types = source.types_override.map_or_else(|| crate::source_type_hexproof_v1::source_types(state, source.object, source.card_def, source.zone, source.zone_change_count), Ok);
+            let Ok(types) = types else { return Vec::new(); };
+            targets.retain(|target| !matches!(target, Target::Object(id) if crate::source_type_hexproof_v1::active_rule(state, *id, controller).is_some_and(|rule| crate::source_type_hexproof_v1::protects(rule, types))));
+        }
     }
     if spec == TargetSpec::KickerControlledCreatures {
         targets.retain(|target| !targets_chosen.contains(target));
@@ -4142,6 +4207,7 @@ pub(crate) fn effect_target_is_legal_from_ability_source(
             &targets[..index],
             controller,
             Some(TargetingSource {
+                types_override: None,
                 object: source.source,
                 card_def: source.card_def,
                 zone: source.zone,
@@ -4320,7 +4386,7 @@ fn activation_legal_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    activation_legal_targets_with_source_lki(source, ability, targets_chosen, false, state)
+    activation_legal_targets_with_source_lki(source, ability, targets_chosen, false, None, state)
 }
 
 /// `source_departed`: the ability's source has left the battlefield since
@@ -4334,6 +4400,7 @@ fn activation_legal_targets_with_source_lki(
     ability: &ActivatedAbilityDef,
     targets_chosen: &[Target],
     source_departed: bool,
+    captured_source: Option<AbilitySourceContractV4>,
     state: &GameState,
 ) -> Vec<Target> {
     if matches!(
@@ -4343,16 +4410,23 @@ fn activation_legal_targets_with_source_lki(
     {
         return crate::source_power_activation_v1::current_targets(state, source);
     }
-    let controller = state.objects.get(source).controller;
+    let captured_source = captured_source.filter(|_| crate::source_type_hexproof_v1::enabled());
+    let controller =
+        captured_source.map_or_else(|| state.objects.get(source).controller, |s| s.controller);
     legal_targets_for_controller_from_source(
         ability.target_spec,
         targets_chosen,
         controller,
         Some(TargetingSource {
+            types_override: None,
             object: source,
-            card_def: state.objects.get(source).card_def,
-            zone: state.objects.get(source).zone,
-            zone_change_count: state.objects.get(source).zone_change_count,
+            card_def: captured_source
+                .map_or_else(|| state.objects.get(source).card_def, |s| s.card_def),
+            zone: captured_source.map_or_else(|| state.objects.get(source).zone, |s| s.zone),
+            zone_change_count: captured_source.map_or_else(
+                || state.objects.get(source).zone_change_count,
+                |s| s.zone_change_count,
+            ),
             other_than: None,
             original_source_incarnation_only: false,
         }),
@@ -7222,7 +7296,7 @@ pub(crate) fn completable_next_cast_targets(
         spec,
         &pending.targets_chosen,
         pending.controller,
-        targeting_source_for_object(state, pending.spell),
+        targeting_source_for_pending_cast(state, pending),
         state,
     );
     let candidates = if crate::standard_cards_v1::filters_cast_targets(def) {
@@ -7404,7 +7478,7 @@ fn kicker_targets_complete(
         spec,
         &pending.targets_chosen,
         pending.controller,
-        targeting_source_for_object(state, pending.spell),
+        targeting_source_for_pending_cast(state, pending),
         state,
     )
 }
@@ -7538,6 +7612,11 @@ fn viable_pending_spell_forms(
                 continue;
             }
             let spec = spell_form_target_spec(def, form).expect("supported form owns target spec");
+            let source = source.map(|mut source| {
+                source.types_override =
+                    crate::source_type_hexproof_v1::spell_types(def, method).ok();
+                source
+            });
             if target_prefix_can_complete_for_controller_and_source(
                 spec,
                 &pending.targets_chosen,
@@ -7983,7 +8062,7 @@ fn is_castable_now(
                             omen.target_spec,
                             &[],
                             player,
-                            targeting_source_for_object(state, id),
+                            targeting_source_for_spell_form(state, id, def, CastMethodV4::Omen),
                             state,
                         )
                         && spell_costs_v1::selected_spell_quote_v1(
@@ -8016,7 +8095,7 @@ fn is_castable_now(
                             bestow.target_spec,
                             &[],
                             player,
-                            targeting_source_for_object(state, id),
+                            targeting_source_for_spell_form(state, id, def, CastMethodV4::Bestow),
                             state,
                         )
                         && spell_costs_v1::selected_spell_quote_v1(
@@ -8053,7 +8132,7 @@ fn is_castable_now(
                             adventure.target_spec,
                             &[],
                             player,
-                            targeting_source_for_object(state, id),
+                            targeting_source_for_spell_form(state, id, def, CastMethodV4::Omen),
                             state,
                         )
                         && spell_costs_v1::selected_spell_quote_v1(
@@ -14544,6 +14623,7 @@ pub(crate) fn stack_targets_still_legal(
                             &ability,
                             &chosen,
                             source_departed,
+                            Some(source_contract),
                             state,
                         )
                         .contains(&target)
@@ -14555,6 +14635,7 @@ pub(crate) fn stack_targets_still_legal(
                     item.controller,
                     match item.kind {
                         StackItemKind::Spell => Some(TargetingSource {
+                            types_override: None,
                             object: item.source,
                             card_def: state.objects.get(item.source).card_def,
                             zone: state.objects.get(item.source).zone,
@@ -19964,6 +20045,10 @@ fn expected_spell_copy_source_object(
             parent_controller: parent.controller,
             parent_stack_zone_change_count: original.zone_change_count,
             parent_was_copy: original.spell_copy_origin.is_some(),
+            source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                original.card_def,
+                parent.v4.cast_method.unwrap_or_default(),
+            ),
         }),
         plotted_turn: None,
         zone_change_count: 0,
@@ -19978,6 +20063,9 @@ fn expected_spell_copy(
     source_contract: StackSourceContractV4,
 ) -> StackItem {
     let mut copy = parent.clone();
+    copy.v4.cast_method = Some(crate::source_type_hexproof_v1::copy_method(
+        parent.v4.cast_method.unwrap_or_default(),
+    ));
     copy.source = copy_source;
     copy.controller = pending.player;
     copy.targets = vec![pending.inherited_target];
@@ -20026,12 +20114,18 @@ pub(crate) fn copy_spell_for(
             parent_controller: parent.controller,
             parent_stack_zone_change_count: original.zone_change_count,
             parent_was_copy: original.spell_copy_origin.is_some(),
+            source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                original.card_def,
+                parent.v4.cast_method.unwrap_or_default(),
+            ),
         }),
         plotted_turn: None,
         zone_change_count: 0,
     });
     let copy_stack_item = next_stack_item_id(state);
-    let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
+    let method =
+        crate::source_type_hexproof_v1::copy_method(parent.v4.cast_method.unwrap_or_default());
+    let source_contract = StackSourceContractV4::capture(state, copy_source, method);
     let mut copy = parent;
     copy.source = copy_source;
     copy.controller = controller;
@@ -20040,7 +20134,7 @@ pub(crate) fn copy_spell_for(
     copy.madness_offer = false;
     copy.discarded = Vec::new();
     copy.v4.stack_item_id = copy_stack_item;
-    copy.v4.cast_method = Some(CastMethodV4::Normal);
+    copy.v4.cast_method = Some(method);
     copy.v4.source_contract = Some(source_contract);
     copy.v4.paid_cost_refs = Vec::new();
     copy.v4.optional_additional_cost_paid = None;
@@ -20140,7 +20234,9 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
         original, &parent, pending,
     ));
     let copy_stack_item = next_stack_item_id(state);
-    let source_contract = StackSourceContractV4::capture(state, copy_source, CastMethodV4::Normal);
+    let method =
+        crate::source_type_hexproof_v1::copy_method(parent.v4.cast_method.unwrap_or_default());
+    let source_contract = StackSourceContractV4::capture(state, copy_source, method);
     let copy = expected_spell_copy(
         &parent,
         pending,
@@ -20210,6 +20306,10 @@ pub(crate) fn create_storm_spell_copies(
                 parent_controller: binding.source_contract.controller,
                 parent_stack_zone_change_count: binding.source_contract.zone_change_count,
                 parent_was_copy: false,
+                source_types_v1: crate::source_type_hexproof_v1::copy_projection(
+                    binding.source_contract.card_def,
+                    binding.source_contract.cast_method,
+                ),
             }),
             plotted_turn: None,
             zone_change_count: 0,
@@ -24730,6 +24830,7 @@ mod tests {
             parent_controller: parent_object.controller,
             parent_stack_zone_change_count: parent_object.zone_change_count,
             parent_was_copy: false,
+            source_types_v1: Default::default(),
         };
         let copy = state.objects.push(crate::state::GameObject {
             card_def: parent_object.card_def,

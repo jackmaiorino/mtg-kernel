@@ -395,6 +395,7 @@ fn copied_flashback_draws_without_repaying_and_virtual_copy_never_enters_exile()
             parent_controller: original.controller,
             parent_stack_zone_change_count: original.zone_change_count,
             parent_was_copy: false,
+            source_types_v1: Default::default(),
         }),
         plotted_turn: None,
         zone_change_count: 0,

@@ -499,14 +499,15 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         damage_replacement_v1,
         token_counter_replacement_v48,
         starting_life_self_bonuses_v1,
+        source_type_hexproof_v1,
         // Cast bookkeeping for a program's `ManaSpentToCast` count, which
         // the program's own facets already carry.
         records_mana_spent: _,
     } = def;
 
     assert!(
-        starting_life_self_bonuses_v1.is_empty(),
-        "starting-life statics require their typed meaning successor"
+        starting_life_self_bonuses_v1.is_empty() && source_type_hexproof_v1.is_none(),
+        "starting-life and source-type hexproof statics require their typed meaning successor"
     );
 
     assert!(

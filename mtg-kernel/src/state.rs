@@ -900,6 +900,11 @@ pub struct SpellCopyOriginV4 {
     /// after that parent has ceased and no stack item remains to carry an
     /// `is_copy` flag.
     pub parent_was_copy: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::source_type_hexproof_v1::SourceTypeProjectionV1::is_empty"
+    )]
+    pub source_types_v1: crate::source_type_hexproof_v1::SourceTypeProjectionV1,
 }
 
 /// Exact source identity owned by a spell stack item. A triggered ability
@@ -3907,6 +3912,7 @@ mod tests {
             parent_controller: parent_object.controller,
             parent_stack_zone_change_count: parent_object.zone_change_count,
             parent_was_copy: false,
+            source_types_v1: Default::default(),
         });
         assert!(
             !stack_target_contract_is_structurally_valid(

@@ -23,9 +23,9 @@ The implemented prerequisite appends typed
 `CardDef::starting_life_self_bonuses_v1`. `build.rs` selects only Elenda in
 Limited without Standard and emits two additive descriptors: +1/+1 and menace
 at +1; an additional +5/+5 at +10. Every current definition receives `&[]`.
-Empty descriptors add no semantic token to the catalog canonical input. No
-existing enum or serialized state field changes. Old vector extraction refuses
-a future nonempty descriptor until a precise meaning successor exists.
+Empty descriptors add no semantic token to the catalog canonical input. Old
+vector extraction refuses a future nonempty descriptor until a precise meaning
+successor exists.
 
 The common effective P/T and keyword queries read these descriptors without a
 name dispatch. Live current-controller life, battlefield/front-face membership
@@ -47,20 +47,46 @@ are explicit primitive inputs, never installed as a fabricated Elenda alias.
 Rust compilation and these tests are **unrun**. Pinned Rust1.94.1 formatting and
 the scoped static/diff checks are the only local verification.
 
-Remaining prerequisite: authenticate effective source types, including selected
-Instant Adventure/Omen spell forms and copies after departure. Thread that
-authority through ordinary announcement and resolution revalidation, trigger
-source contracts and the separate historical projections in
-`fixed_source_damage_v3`, `source_power_activation_v1` and `gorehorn_damage_v1`.
-The current `HistoricalDamageSourceV1` carries color/keywords/subtype facts,
-not a complete effective-type capture. Printed names, printed colors, generic
-HEXPROOF or a filter on only the ordinary enumeration path cannot replace it.
+The continuation adds `CardDef::source_type_hexproof_v1`, selecting the typed
+Instants rule only for Elenda. `source_type_hexproof_v1` reads effective live
+types, the selected pending/finalized Adventure/Omen/Bestow form, or original
+departure types. Form viability uses prospective types before announcement,
+including cloned free-cast selections. Ordinary target enumeration, individual
+effect guards and resolution revalidation share the rule. Opponents' sources
+are restricted against the target's current controller, while ability removal
+suppresses the printed rule. Recomputed public facts expose that typed rule.
+
+Historical types append an optional projection to the existing independently
+frozen `DepartureColorV1`, including physical spell departures. The existing
+prebatch, SBA and sacrifice capture paths freeze types before any member moves.
+`fixed_source_damage_v3`, `source_power_activation_v1` and `gorehorn_damage_v1`
+use their authenticated original source contract to read this projection; their
+original payment/publication/departure authorities remain intact. Missing,
+duplicate or foreign type evidence refuses, without printed-type fallback.
+The journals retain their existing trusted-occurrence assumption.
+
+Copies append the optional projection to immutable `SpellCopyOriginV4` and
+retain their actual alternative cast form. Validation compares the copy's form,
+origin and parent live/departure types. A ceased copy retains its original
+projection on its arena object; a departed/recast physical parent cannot replace
+it. Empty projections omit JSON and contribute no Hash input. Existing enum
+ordinals and all previous struct field prefixes remain fixed. New capture
+emission is catalog-selected, so all current printings retain absent projections.
+
+Additional test source covers typed predicates, exact legacy copy-origin
+bytes/Hash, current-controller/suppression primitive inputs and foreign-projection
+refusal. Genuine paid source-form cases use registered Fang Dragon/Sagu Wildling
+and Standard Questing Druid, copy them, counter the parent and restore. Those
+are source-form tests, not Elenda gameplay. The new opt-in emitters remain
+inactive in the current unregistered catalog and require genuine-printing
+qualification. All Rust cases and generated catalog exports remain **unrun**.
 
 Pending genuine-printing acceptance: paid Elenda casts/restores at all four
 thresholds and downward transitions; opponent instant refusal versus own
 instant/opponent sorcery acceptance; paid pending-target restore followed by
 control/ability changes; Instant Adventure versus noninstant form and copies
 after departure; combat lifelink crossing thresholds, menace legality and
-printed-ability suppression. These remain documentation, not ignored tests or
-runtime passes. Registration requires the complete executable recipe and actual
-generator provenance; no Partial printing is fabricated here.
+printed-ability suppression, and tampering with opt-in departure/copy type
+projections. These remain documentation, not ignored tests or runtime passes.
+Registration and exact-parent native qualification remain root-owned; no Partial
+printing is fabricated here.

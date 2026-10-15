@@ -2084,6 +2084,12 @@ pub struct StartingLifeSelfBonusDefV1 {
     pub keywords: Keywords,
 }
 
+/// Source-dependent hexproof restricts opponents' sources, not all targeting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SourceTypeHexproofDefV1 {
+    Instants,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -2309,6 +2315,7 @@ pub struct CardDef {
     pub token_counter_replacement_v48: Option<TokenCounterReplacementDefV48>,
     /// Empty adds no catalog identity token and preserves all prior recipes.
     pub starting_life_self_bonuses_v1: &'static [StartingLifeSelfBonusDefV1],
+    pub source_type_hexproof_v1: Option<SourceTypeHexproofDefV1>,
 }
 
 impl CardDef {

@@ -401,6 +401,13 @@ pub(crate) fn legal_targets(state: &GameState, facts: HistoricalDamageSourceV1) 
             return false;
         };
         !protected(state, facts, target)
+            && !crate::source_type_hexproof_v1::protects_from_source(
+                state,
+                target,
+                facts.source.controller,
+                facts.source,
+            )
+            .unwrap_or(true)
             && !crate::standard_legends_v1::hexproof_from_historical_color(
                 state,
                 target,

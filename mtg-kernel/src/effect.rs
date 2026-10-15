@@ -20749,6 +20749,7 @@ mod tests {
                 parent_controller: controller,
                 parent_stack_zone_change_count: 0,
                 parent_was_copy: false,
+                source_types_v1: Default::default(),
             });
             let virtual_copy = state.objects.push(virtual_copy);
             state.players[controller.index()]
@@ -20892,6 +20893,7 @@ mod tests {
                     parent_controller: owner,
                     parent_stack_zone_change_count: 0,
                     parent_was_copy: false,
+                    source_types_v1: Default::default(),
                 });
                 let copy = state.objects.push(copy);
                 state.players[owner.index()].graveyard.push(copy);
@@ -21771,6 +21773,7 @@ mod tests {
             parent_controller: PlayerId::P0,
             parent_stack_zone_change_count: 0,
             parent_was_copy: false,
+            source_types_v1: Default::default(),
         });
         let copy = state.objects.push(copy);
         state.players[0].graveyard.push(copy);
