@@ -1,5 +1,6 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod elenda;
 mod network;
 mod normalize;
 mod numeric;
@@ -7,6 +8,7 @@ mod roots;
 use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
 };
+pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
 pub use network::{ModelConfig, NativeModel};
 pub use numeric::NumericTree;
 use sha2::{Digest, Sha256};
@@ -38,6 +40,7 @@ impl std::error::Error for Error {}
 pub enum Source {
     FakeV50,
     RavenousV51,
+    ElendaV52,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -69,6 +72,14 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),
+            include_str!("current_mixed_policy_v1/elenda.rs"),
+            include_str!("elenda_observation_v52.rs"),
+            include_str!("elenda_public_v52.rs"),
+            include_str!("rules_meaning_elenda_v52.rs"),
+            include_str!("starting_life_statics_v1.rs"),
+            include_str!("source_type_hexproof_v1.rs"),
+            include_str!("rl_session/elenda_v52.rs"),
+            include_str!("rl_session.rs"),
             include_str!("fake_observation_v50.rs"),
             include_str!("ravenous_observation_v51.rs"),
             include_str!("rl_session/fake_v50.rs"),

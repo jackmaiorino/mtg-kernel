@@ -250,6 +250,16 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     for id in cards.difference(&covered) {
         meanings.push(roots::baseline(*id)?);
     }
+    // V52's existing typed meaning covers the static rules. Preserve its
+    // complete ordered body and add the immutable ordinary spell route only
+    // for an actually actor-authorized referenced printing.
+    if source == Source::ElendaV52 {
+        if let Some(id) = crate::card_def::card_id_by_name("Elenda, Saint of Dusk") {
+            if cards.contains(&id) {
+                meanings.push(roots::elenda_printing(id)?);
+            }
+        }
+    }
     let mut refs = References::default();
     let mut times = BTreeSet::new();
     timestamps(&state, "", &mut times);

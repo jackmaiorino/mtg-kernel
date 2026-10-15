@@ -398,6 +398,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         && d.chosen_color_creature_boost_v1.is_none()
         && d.damage_replacement_v1.is_none()
         && d.token_counter_replacement_v48.is_none()
+        && d.starting_life_self_bonuses_v1.is_empty()
+        && d.source_type_hexproof_v1.is_none()
+        && d.other_controlled_nontoken_death_v1.is_none()
         && crate::trigger::triggers_for(id).is_empty())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
@@ -500,6 +503,73 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
         "keywords":d.keywords.0,"mana_value":d.mana_value,"token":d.is_token,
         "ordered_instructions":[instruction],
         "mana_ability":mana.map(|colors|json!({"cost":"TapSelf","recipient":"Controller","colors":colors,"amount":1}))
+    }}))
+}
+
+#[derive(serde::Serialize)]
+struct ElendaCastRoot {
+    method: crate::state::CastMethodV4,
+    ordinary_route: crate::state::SpellCastRouteV4,
+    ordinary_origin: Zone,
+    timing: ElendaTiming,
+    targets: ElendaTargets,
+    ordered_costs: [BaselineManaCost; 1],
+    ordered_resolution: [ElendaEntry; 1],
+    physical_departure: ElendaDeparture,
+    other_cast_permissions_require_current_candidate_authority: bool,
+    zone_replacements_still_apply: bool,
+}
+#[derive(serde::Serialize)]
+enum ElendaTiming {
+    CasterMainPhaseEmptyStackWithPriority,
+}
+#[derive(serde::Serialize)]
+enum ElendaTargets {
+    None,
+}
+#[derive(serde::Serialize)]
+enum ElendaEntry {
+    MoveOriginalSpellFromStackToBattlefieldUnderCasterControl,
+}
+#[derive(serde::Serialize)]
+enum ElendaDeparture {
+    BattlefieldOnResolutionOtherwiseGraveyard,
+}
+/// Supplement the actual typed static root with the exact ordinary cast route.
+/// A descriptor never supplies an executable program or current cast permission.
+pub(super) fn elenda_printing(id: u16) -> Result<Value> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let meaning = crate::rules_meaning_elenda_v52::printed_meaning(
+        id,
+        crate::rules_meaning_elenda_v52::RootV52::CreatureSpellAndPrintedStatics,
+    )
+    .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+    if d.other_controlled_nontoken_death_v1.is_some()
+        || d.cost.x_count != 0
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    Ok(json!({"card_id":id,"elenda_printing":{
+        "meaning":meaning,
+        "ordered_cast_roots":[ElendaCastRoot {
+            method:crate::state::CastMethodV4::Normal,
+            ordinary_route:crate::state::SpellCastRouteV4::Hand,
+            ordinary_origin:Zone::Hand,
+            timing:ElendaTiming::CasterMainPhaseEmptyStackWithPriority,
+            targets:ElendaTargets::None,
+            ordered_costs:[BaselineManaCost::PrintedMana(d.cost)],
+            ordered_resolution:[ElendaEntry::MoveOriginalSpellFromStackToBattlefieldUnderCasterControl],
+            physical_departure:ElendaDeparture::BattlefieldOnResolutionOtherwiseGraveyard,
+            other_cast_permissions_require_current_candidate_authority:true,
+            zone_replacements_still_apply:true,
+        }]
     }}))
 }
 
