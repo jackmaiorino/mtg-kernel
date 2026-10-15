@@ -15,6 +15,7 @@ CLI (JSON on stdout):
          --anchor ANCHOR.json --output-directory DIR --out CMD.json [--dry-run | --rerun]
          [--cell U-a4 [--learning-rate X] [--anchor-coefficient X]
           [--min-edge-backups N | --count-control N] [--checkpoint-steps 8,16,...]]
+         [--update-scope full_network|scorer_only]
   probe  --lineage r1 --parent P.json --o-final O.json --games GAMES.jsonl --bank BANK.json
          [--completion-games GAMES.jsonl --completion-bank BANK.json]
          --anchor ANCHOR.json --offers OFFERS.json --phase1 PHASE1.json [PHASE1.json ...]
@@ -22,6 +23,10 @@ CLI (JSON on stdout):
 ``--bank`` is the bank command's bank.json; ``--phase1`` the full runs'
 phase1.json receipts, whose checkpoint sources become candidates
 ``U-step-N`` and ``L-step-N``.
+The optional ``scorer_only`` scope updates both policy scorer layers and
+freezes all representation and value parameters plus their Adam moments.
+The final scorer bias retains its canonical gauge. Omission preserves the
+historical full-network update and JSON. Scope is independent of arm/cell.
 """
 from __future__ import annotations
 
@@ -41,11 +46,12 @@ MAX_CANDIDATES = 64
 
 def phase1_command(lineage: str, arm: str, parent: dict, games: Path, bank: Path, anchor: dict,
                    output_directory: str, dry_run: bool = False, rerun: bool = False,
-                   options: dict | None = None) -> dict:
+                   options: dict | None = None, update_scope: str | None = None) -> dict:
     check_parent(lineage, parent)
     require(arm in ARMS, f"unknown arm {arm!r}")
     require(not (dry_run and rerun), "a dry run takes no step")
     require(options is None or (arm == "U" and options.get("cell")), "a cell is arm U with a label")
+    require(update_scope in (None, "full_network", "scorer_only"), "unknown update scope")
     command = {"mode": "archive_distillation_phase1", "parent": parent, "lineage": lineage, "arm": ARMS[arm],
                "games": pin(Path(games).resolve()), "bank": pin(Path(bank).resolve()), "anchor": anchor}
     if rerun:
@@ -54,6 +60,8 @@ def phase1_command(lineage: str, arm: str, parent: dict, games: Path, bank: Path
         command["dry_run"] = True
     if options is not None:
         command["options"] = options
+    if update_scope == "scorer_only":
+        command["update_scope"] = update_scope
     command["output_directory"] = absolute(output_directory)
     return command
 
@@ -72,9 +80,11 @@ def cell_options(cell: str | None, learning_rate: float | None = None, anchor_co
 
 
 def candidate_label(record: dict) -> str:
-    """A run's candidate prefix: its cell label, or the screen's arm letter."""
-    options = (record["identity"].get("recipe") or {}).get("options")
-    return options["cell"] if options else ARM_LETTERS[record["identity"]["arm"]]
+    """A run's candidate prefix, with the opt-in scope kept distinct."""
+    recipe = record["identity"].get("recipe") or {}
+    options = recipe.get("options")
+    label = options["cell"] if options else ARM_LETTERS[record["identity"]["arm"]]
+    return f"{label}-scorer-only" if recipe.get("update_scope") == "scorer_only" else label
 
 
 def checkpoint_candidates(record: dict, lineage: str) -> list[dict]:
@@ -124,6 +134,8 @@ def main(argv=None) -> int:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--rerun", action="store_true")
     p.add_argument("--cell")
+    p.add_argument("--update-scope", choices=("full_network", "scorer_only"),
+                   help="optional optimizer scope; default: full_network")
     p.add_argument("--learning-rate", type=float)
     p.add_argument("--anchor-coefficient", type=float)
     rows = p.add_mutually_exclusive_group()
@@ -150,7 +162,7 @@ def main(argv=None) -> int:
         options = cell_options(a.cell, a.learning_rate, a.anchor_coefficient, a.min_edge_backups,
                                a.count_control, a.checkpoint_steps)
         command = phase1_command(a.lineage, a.arm, parent, a.games, a.bank, anchor, a.output_directory,
-                                 a.dry_run, a.rerun, options)
+                                 a.dry_run, a.rerun, options, a.update_scope)
     else:
         require((a.completion_games is None) == (a.completion_bank is None),
                 "a completion bank needs its games and its bank")

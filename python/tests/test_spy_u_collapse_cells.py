@@ -68,6 +68,40 @@ class Temp(unittest.TestCase):
 
 
 class CellCommands(Temp):
+    def test_probe_keeps_full_and_scorer_checkpoints_distinct(self):
+        games, bank_file, anchor = self.files()
+        checkpoint_source = self.root / "source.json"
+        checkpoint_source.write_text(json.dumps(source()))
+        checkpoint = {"step": 32, "source": common.pin(checkpoint_source)}
+        records, expected = [], ["parent", "O-final"]
+        for arm, label, options in (("uniform", "U", None), ("line_decisions", "L", None),
+                                    ("uniform", "U0", {"cell": "U0"})):
+            for scope in (None, "scorer_only"):
+                recipe = {"options": options} if options else {}
+                if scope:
+                    recipe["update_scope"] = scope
+                records.append({"schema": phase1.PHASE1_SCHEMA, "complete": True,
+                                "identity": {"lineage": "r1", "arm": arm, "recipe": recipe},
+                                "checkpoints": [checkpoint]})
+                expected.append(f"{label}{'-scorer-only' if scope else ''}-step-32")
+        command = phase1.probe_command("r1", source(), source(), games, bank_file, anchor, [], records, "d")
+        self.assertEqual([c["id"] for c in command["candidates"]], expected)
+        explicit_full = {"identity": {"arm": "uniform", "recipe": {"update_scope": "full_network"}}}
+        self.assertEqual(phase1.candidate_label(explicit_full), "U")
+
+    def test_scorer_scope_is_optional_and_independent_of_arm_or_cell(self):
+        games, bank_file, anchor = self.files()
+        for arm in ("U", "L"):
+            base = phase1.phase1_command("r1", arm, source(), games, bank_file, anchor, "d")
+            self.assertNotIn("update_scope", base)
+            self.assertEqual(base, phase1.phase1_command(
+                "r1", arm, source(), games, bank_file, anchor, "d", update_scope="full_network"))
+            scoped = phase1.phase1_command(
+                "r1", arm, source(), games, bank_file, anchor, "d", update_scope="scorer_only")
+            self.assertEqual(scoped, {**base, "update_scope": "scorer_only"})
+        with self.assertRaisesRegex(ValueError, "unknown update scope"):
+            phase1.phase1_command("r1", "U", source(), games, bank_file, anchor, "d", update_scope="heads")
+
     def test_a_cell_is_arm_u_with_its_label_and_only_the_fields_it_changes(self):
         games, bank_file, anchor = self.files()
         options = phase1.cell_options("U-s32", min_edge_backups=32, checkpoint_steps=[8, 16, 32])
@@ -89,9 +123,10 @@ class CellCommands(Temp):
         phase1.main(["phase1", "--lineage", "r1", "--arm", "U", "--parent", str(parent), "--games", str(games),
                      "--bank", str(bank_file), "--anchor", str(anchor_file), "--output-directory", "d",
                      "--out", str(out), "--cell", "U-lr", "--learning-rate", "2.5e-5",
-                     "--checkpoint-steps", "8,16,32"])
+                     "--checkpoint-steps", "8,16,32", "--update-scope", "scorer_only"])
         command = json.loads(out.read_text())
         self.assertEqual(command["options"], {"cell": "U-lr", "learning_rate": 2.5e-5, "checkpoint_steps": [8, 16, 32]})
+        self.assertEqual(command["update_scope"], "scorer_only")
 
     def test_the_design_gives_each_cell_its_options_and_schedule(self):
         shared = [8, 16, 32, 64, 128, 189, 256, 512, 1024, 2048, 4096, 8192]

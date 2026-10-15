@@ -125,6 +125,173 @@ fn state_bits(state: &NativePolicyValueTrainStateV1) -> (u64, u32, Vec<u32>) {
     (state.adam_step, state.scorer_bias_anchor_bits, bits)
 }
 
+/// All tensors have live inherited momentum, including the value head which
+/// receives no auxiliary gradient. A gradient mask would fail this fixture.
+fn state_with_moments() -> NativePolicyValueTrainStateV1 {
+    let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    state.adam_step = 17;
+    for index in 0..state.first_moments.len() {
+        if index != SCORER_SECOND_BIAS {
+            state.first_moments[index].fill(0.002 * (index + 1) as f32);
+            state.second_moments[index].fill(0.003 * (index + 1) as f32);
+        }
+    }
+    // The padding embedding row is an independent exact-zero invariant.
+    state.first_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
+    state.second_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
+    state
+}
+
+fn bits(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|v| v.to_bits()).collect()
+}
+
+/// Independent assembly of the historical full-network Adam result, with
+/// live moments. Default and explicit full scope preserve every output bit.
+#[test]
+fn default_and_explicit_full_scope_match_historical_adam_bits() {
+    let mut default = state_with_moments();
+    let mut explicit = default.clone();
+    let mut reference = default.clone();
+    let tensors = tensors();
+    let targets = targets(default.model_v1(), &tensors);
+    let input = external(&tensors, &targets, 1.0, 2);
+    let parameters = reference.model.parameter_snapshot_v1();
+    let (gradients, _, _) = combined(
+        external_auxiliary_terms_v1(
+            &input,
+            &parameters,
+            reference.model.feature_transfer_config_v3(),
+        )
+        .unwrap(),
+        &parameters,
+    );
+    let mut gradients: Vec<Vec<f32>> = gradients
+        .iter()
+        .map(|values| values.iter().map(|&v| f32::from_bits(v)).collect())
+        .collect();
+    gradients[SCORER_SECOND_BIAS][0] = 0.0;
+    let (mut next, mut first, mut second) = adam_update(
+        &parameters,
+        &gradients,
+        &reference.first_moments,
+        &reference.second_moments,
+        reference.adam_step + 1,
+        LR,
+    )
+    .unwrap();
+    next[SCORER_SECOND_BIAS].values[0] = f32::from_bits(reference.scorer_bias_anchor_bits);
+    first[SCORER_SECOND_BIAS][0] = 0.0;
+    second[SCORER_SECOND_BIAS][0] = 0.0;
+    reference
+        .model
+        .replace_parameter_snapshot_v1(&next)
+        .unwrap();
+    reference.first_moments = first;
+    reference.second_moments = second;
+    reference.adam_step += 1;
+    let implicit_result = default
+        .train_step_auxiliary_only_v1(FreshLineageGenerationV1::V3, LR, &[&input])
+        .unwrap();
+    let explicit_result = explicit
+        .train_step_auxiliary_only_scoped_v1(
+            FreshLineageGenerationV1::V3,
+            LR,
+            &[&input],
+            ArchiveDistillationUpdateScopeV1::FullNetwork,
+        )
+        .unwrap();
+    assert_eq!(implicit_result, explicit_result);
+    assert_eq!(state_bits(&default), state_bits(&reference));
+    assert_eq!(state_bits(&explicit), state_bits(&reference));
+}
+
+/// Frozen parameters and both moments survive multiple steps bit for bit.
+/// Each scorer update equals full Adam from the same pre-step state, while
+/// the value output remains exactly fixed and the shared Adam age advances.
+#[test]
+fn scorer_only_freezes_all_other_parameters_and_live_moments() {
+    let mut state = state_with_moments();
+    let initial = state.snapshot_v1().unwrap();
+    let tensors = tensors();
+    let targets = targets(state.model_v1(), &tensors);
+    let input = external(&tensors, &targets, 1.0, 2);
+    let initial_outputs: Vec<_> = tensors
+        .iter()
+        .map(|tensor| {
+            state
+                .model
+                .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+                .unwrap()
+        })
+        .collect();
+    for step in 1..=3 {
+        let before = state.snapshot_v1().unwrap();
+        let mut full = state.clone();
+        let full_result = full
+            .train_step_auxiliary_only_v1(FreshLineageGenerationV1::V3, LR, &[&input])
+            .unwrap();
+        let scoped_result = state
+            .train_step_auxiliary_only_scoped_v1(
+                FreshLineageGenerationV1::V3,
+                LR,
+                &[&input],
+                ArchiveDistillationUpdateScopeV1::ScorerOnly,
+            )
+            .unwrap();
+        assert_eq!(scoped_result, full_result);
+        let after = state.snapshot_v1().unwrap();
+        let full = full.snapshot_v1().unwrap();
+        assert_eq!(after.adam_step, initial.adam_step + step);
+        assert_eq!(
+            after.scorer_bias_anchor_bits,
+            initial.scorer_bias_anchor_bits
+        );
+        for index in 0..PARAMETER_TENSOR_COUNT {
+            // Spell the allowed tensors independently of the implementation's mask.
+            let trainable = matches!(
+                after.parameters[index].name,
+                "scorer.0.weight" | "scorer.0.bias" | "scorer.2.weight"
+            );
+            let expected = if trainable { &full } else { &initial };
+            for (actual, expected) in [
+                (&after.parameters[index], &expected.parameters[index]),
+                (&after.first_moments[index], &expected.first_moments[index]),
+                (
+                    &after.second_moments[index],
+                    &expected.second_moments[index],
+                ),
+            ] {
+                assert_eq!(
+                    bits(&actual.values),
+                    bits(&expected.values),
+                    "{} step {step}",
+                    actual.name
+                );
+            }
+            if trainable {
+                assert_ne!(
+                    bits(&after.parameters[index].values),
+                    bits(&before.parameters[index].values)
+                );
+            }
+        }
+        // Witness momentum would have changed the otherwise gradient-free value head.
+        assert_ne!(
+            bits(&full.parameters[VALUE_FIRST_WEIGHT].values),
+            bits(&initial.parameters[VALUE_FIRST_WEIGHT].values)
+        );
+        for (tensor, original) in tensors.iter().zip(&initial_outputs) {
+            let output = state
+                .model
+                .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+                .unwrap();
+            assert_eq!(output.value.to_bits(), original.value.to_bits());
+            assert_ne!(bits(&output.logits), bits(&original.logits));
+        }
+    }
+}
+
 /// Off-batch rows build the same gradient, telemetry and gauge record as the
 /// same rows entered as in-batch line (b) roots, bit for bit, including a
 /// denominator above the row count (the line (b) scheduled count).
