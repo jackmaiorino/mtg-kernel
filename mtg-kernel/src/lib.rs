@@ -705,6 +705,7 @@ pub mod season_observation_v48;
 
 pub mod season_token_attachment_v48;
 
+pub mod current_mixed_policy_v1;
 pub mod fake_observation_v50;
 
 #[cfg(all(

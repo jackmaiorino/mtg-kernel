@@ -1,0 +1,291 @@
+//! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
+//! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod network;
+mod normalize;
+mod numeric;
+mod roots;
+use crate::rl_session::{
+    FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
+};
+pub use network::{ModelConfig, NativeModel};
+pub use numeric::NumericTree;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+pub type Result<T> = std::result::Result<T, Error>;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Error {
+    NoDecision,
+    Range,
+    NonIntegralOperand,
+    UnsupportedPrintedRoot(u16),
+    UnsupportedOperand(String),
+    Projection(String),
+    StaleBinding,
+    ForeignSnapshot,
+    ModelContract,
+    NonFiniteLogit,
+    ActionRange,
+}
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "current_mixed_policy_v1:{self:?}")
+    }
+}
+impl std::error::Error for Error {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    FakeV50,
+    RavenousV51,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Packet {
+    source: Source,
+    state: NumericTree,
+    actions: Vec<NumericTree>,
+}
+impl Packet {
+    pub fn source(&self) -> Source {
+        self.source
+    }
+    pub fn state(&self) -> &NumericTree {
+        &self.state
+    }
+    /// Rows are in the exact original backend legal-action order, without label sorting.
+    pub fn actions(&self) -> &[NumericTree] {
+        &self.actions
+    }
+}
+
+pub fn feature_identity() -> String {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for part in [
+            "current-mixed-policy/numeric-tree/v1",
+            include_str!("current_mixed_policy_v1.rs"),
+            include_str!("current_mixed_policy_v1/numeric.rs"),
+            include_str!("current_mixed_policy_v1/normalize.rs"),
+            include_str!("current_mixed_policy_v1/roots.rs"),
+            include_str!("current_mixed_policy_v1/network.rs"),
+            include_str!("fake_observation_v50.rs"),
+            include_str!("ravenous_observation_v51.rs"),
+            include_str!("rl_session/fake_v50.rs"),
+            include_str!("rl_session/ravenous_v51.rs"),
+            include_str!("rules_meaning_ajani_v42.rs"),
+            include_str!("rules_meaning_akroma_v1.rs"),
+            include_str!("rules_meaning_arahbo_v1.rs"),
+            include_str!("rules_meaning_ashroot_v1.rs"),
+            include_str!("rules_meaning_authority_v1.rs"),
+            include_str!("rules_meaning_banishing_v1.rs"),
+            include_str!("rules_meaning_bloodthirsty_conqueror_v49.rs"),
+            include_str!("rules_meaning_bloom_tender_v1.rs"),
+            include_str!("rules_meaning_cerberus_v1.rs"),
+            include_str!("rules_meaning_crystal_barricade_v1.rs"),
+            include_str!("rules_meaning_crystal_ordering_v1.rs"),
+            include_str!("rules_meaning_divine_v44.rs"),
+            include_str!("rules_meaning_doubling_season_v48.rs"),
+            include_str!("rules_meaning_eaten_alive_v1.rs"),
+            include_str!("rules_meaning_employment_v1.rs"),
+            include_str!("rules_meaning_extra_turn_v1.rs"),
+            include_str!("rules_meaning_faebloom_v43.rs"),
+            include_str!("rules_meaning_fake_your_own_death_v50.rs"),
+            include_str!("rules_meaning_fiendish_panda_v1.rs"),
+            include_str!("rules_meaning_fiery_v1.rs"),
+            include_str!("rules_meaning_fishing_pole_v39.rs"),
+            include_str!("rules_meaning_frenzied_goblin_v1.rs"),
+            include_str!("rules_meaning_game_outcome_protection_v1.rs"),
+            include_str!("rules_meaning_garruk_v1.rs"),
+            include_str!("rules_meaning_gourmand_v1.rs"),
+            include_str!("rules_meaning_heartfire_v1.rs"),
+            include_str!("rules_meaning_heraldic_banner_v1.rs"),
+            include_str!("rules_meaning_high_society_hunter_v1.rs"),
+            include_str!("rules_meaning_inspiration_v1.rs"),
+            include_str!("rules_meaning_juggernaut_v1.rs"),
+            include_str!("rules_meaning_krenko_v1.rs"),
+            include_str!("rules_meaning_librarian_v1.rs"),
+            include_str!("rules_meaning_ooze_v1.rs"),
+            include_str!("rules_meaning_raid_entry_v1.rs"),
+            include_str!("rules_meaning_ravenous_amulet_v51.rs"),
+            include_str!("rules_meaning_searslicer_v1.rs"),
+            include_str!("rules_meaning_self_reflection_v1.rs"),
+            include_str!("rules_meaning_soul_shackled_zombie_v1.rs"),
+            include_str!("rules_meaning_sower_v1.rs"),
+            include_str!("rules_meaning_squad_rallier_v1.rs"),
+            include_str!("rules_meaning_stromkirk_v1.rs"),
+            include_str!("rules_meaning_strongbox_v1.rs"),
+            include_str!("rules_meaning_v2.rs"),
+            include_str!("rules_meaning_wildwood_v1.rs"),
+            include_str!("rules_meaning_wildwood_v1_tests.rs"),
+            include_str!("rules_meaning_zul_ashur_v1.rs"),
+            include_str!("card_def.rs"),
+            include_str!("rl.rs"),
+            include_str!("akroma_family_public_v40.rs"),
+            include_str!("policy_observation_v8.rs"),
+            include_str!("policy_surface_v5.rs"),
+            include_str!("ravenous_public_v51.rs"),
+            include_str!("fake_your_own_death_v50/public_v50.rs"),
+        ] {
+            hash.update((part.len() as u64).to_le_bytes());
+            hash.update(part.as_bytes());
+        }
+        hash.update(crate::card_def::KERNEL_CARDDB_HASH.to_le_bytes());
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
+}
+
+macro_rules! session {
+    ($session:ident,$decision:ident,$snapshot:ident,$binding:ty,$into:ident,$input:ident,$validate:ident,$restore:ident,$source:ident) => {
+        /// Owning source-specific session. No conversion to a predecessor model contract.
+        pub struct $session {
+            inner: FastActorSessionV1,
+            owner: Arc<()>,
+            generation: u64,
+        }
+        #[derive(Clone)]
+        pub struct $snapshot {
+            inner: FastActorSessionSnapshotV1,
+            owner: Arc<()>,
+        }
+        /// Private authority is deliberately neither Debug nor Serialize.
+        #[derive(Clone)]
+        pub struct $decision {
+            expected: FastActorDecisionV1,
+            binding: $binding,
+            packet: Packet,
+            owner: Arc<()>,
+            generation: u64,
+        }
+        impl $decision {
+            pub fn packet(&self) -> &Packet {
+                &self.packet
+            }
+        }
+        impl $session {
+            pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
+                Ok(Self {
+                    inner: session
+                        .$into()
+                        .map_err(|e| Error::Projection(e.to_string()))?,
+                    owner: Arc::new(()),
+                    generation: 0,
+                })
+            }
+            pub fn current_response(&self) -> FastActorResponseV1 {
+                self.inner.current_response()
+            }
+            pub fn snapshot(&self) -> $snapshot {
+                $snapshot {
+                    inner: self.inner.snapshot_v1(),
+                    owner: self.owner.clone(),
+                }
+            }
+            pub fn restore(&mut self, snapshot: &$snapshot) -> Result<()> {
+                if !Arc::ptr_eq(&self.owner, &snapshot.owner) {
+                    return Err(Error::ForeignSnapshot);
+                }
+                let next = self.generation.checked_add(1).ok_or(Error::Range)?;
+                self.inner
+                    .$restore(&snapshot.inner)
+                    .map_err(|_| Error::StaleBinding)?;
+                self.generation = next;
+                Ok(())
+            }
+            pub fn encode(&self, expected: FastActorDecisionV1) -> Result<$decision> {
+                let (observation, actions, binding) = self
+                    .inner
+                    .$input(expected, expected.acting_player)
+                    .map_err(|_| Error::StaleBinding)?;
+                let state = serde_json::to_value(&observation)
+                    .map_err(|e| Error::Projection(e.to_string()))?;
+                let actions = actions
+                    .iter()
+                    .map(serde_json::to_value)
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(|e| Error::Projection(e.to_string()))?;
+                let packet = normalize::encode(Source::$source, state, actions)?;
+                Ok($decision {
+                    expected,
+                    binding,
+                    packet,
+                    owner: self.owner.clone(),
+                    generation: self.generation,
+                })
+            }
+            pub fn apply(
+                &mut self,
+                decision: &$decision,
+                index: u32,
+            ) -> Result<FastActorResponseV1> {
+                if !Arc::ptr_eq(&self.owner, &decision.owner)
+                    || self.generation != decision.generation
+                {
+                    return Err(Error::StaleBinding);
+                }
+                if index as usize >= decision.packet.actions.len() {
+                    return Err(Error::ActionRange);
+                }
+                self.inner
+                    .$validate(
+                        decision.expected,
+                        decision.expected.acting_player,
+                        &decision.binding,
+                    )
+                    .map_err(|_| Error::StaleBinding)?;
+                // Numeric packet equality is additional to, never a substitute for, full private authority.
+                if self.encode(decision.expected)?.packet != decision.packet {
+                    return Err(Error::StaleBinding);
+                }
+                self.inner
+                    .step(decision.expected.episode_id, decision.expected.step, index)
+                    .map_err(|e| Error::Projection(format!("execution:{e:?}")))
+            }
+            pub fn score_and_apply(
+                &mut self,
+                decision: &$decision,
+                model: &NativeModel,
+            ) -> Result<(Vec<f32>, u32, FastActorResponseV1)> {
+                let logits = model.forward(&decision.packet)?;
+                if logits.len() != decision.packet.actions.len() {
+                    return Err(Error::ModelContract);
+                }
+                let mut selected = 0;
+                for index in 1..logits.len() {
+                    if logits[index] > logits[selected] {
+                        selected = index;
+                    }
+                }
+                let selected = u32::try_from(selected).map_err(|_| Error::Range)?;
+                let response = self.apply(decision, selected)?;
+                Ok((logits, selected, response))
+            }
+        }
+    };
+}
+session!(
+    FakeSession,
+    FakeDecision,
+    FakeSnapshot,
+    crate::rl_session::fake_v50::FakeDecisionBindingV50,
+    into_fake_v50,
+    fake_current_decision_input_v50,
+    fake_validate_bound_decision_v50,
+    fake_restore_v50,
+    FakeV50
+);
+session!(
+    RavenousSession,
+    RavenousDecision,
+    RavenousSnapshot,
+    crate::rl_session::ravenous_v51::RavenousDecisionBindingV51,
+    into_ravenous_v51,
+    ravenous_current_decision_input_v51,
+    ravenous_validate_bound_decision_v51,
+    ravenous_restore_v51,
+    RavenousV51
+);
+
+#[cfg(test)]
+mod tests;
