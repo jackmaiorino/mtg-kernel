@@ -178,8 +178,8 @@ pub(super) fn label(
             meaning::validate(descriptor).map_err(|_| Error::InvalidVisibleReference)?;
             let name = handles.name(source)?;
             Ok(Some(match root {
-                meaning::RootV51::DrawAndSoul => format!("Activate {name}: {{1}}, tap, sacrifice a creature you control: draw one card, then put one soul counter on this original battlefield source; activate only as a sorcery"),
-                meaning::RootV51::SoulLoss => format!("Activate {name}: {{4}}, tap, sacrifice this artifact: each opponent loses life equal to this original source's soul counters, using last-known information; no target"),
+                meaning::RootV51::DrawAndSoul => format!("Activate {name}: {{1}}, tap, sacrifice a creature: draw one card, then put a soul counter on {name}. Activate only as a sorcery."),
+                meaning::RootV51::SoulLoss => format!("Activate {name}: {{4}}, tap, sacrifice {name}: each opponent loses life equal to the number of soul counters it had before being sacrificed."),
             }))
         }
         ActionSemanticV1::ChooseCostTarget {

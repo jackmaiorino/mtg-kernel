@@ -325,7 +325,7 @@ fn actual_human_paid_cast_draw_loss_typed_and_generic_restore_both_seats() {
         let before = session.inner.ravenous_fixture_state().players[actor.opponent().index()].life;
         submit(&mut session, &mut projector, |label| {
             label.starts_with("Activate Ravenous Amulet")
-                && label.contains("last-known information")
+                && label.contains("soul counters it had before being sacrificed")
         });
         let snapshot = session.snapshot_v51();
         let final_view = drain(&mut session, &mut projector);
@@ -530,7 +530,7 @@ fn actual_paid_human_sacrifice_facts_omit_underlying_face_down_printing_both_sea
             crate::event::ravenous_amulet_paid_future_tests::cast_amulet(actor);
         let chosen = put(&mut state, actor, "Mountain", Zone::Battlefield);
         state.objects.get_mut(chosen).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
-            disguised: false,
+            disguised: true,
             lookers: 0,
             hidden_by: None,
             hidden_by_source: None,
