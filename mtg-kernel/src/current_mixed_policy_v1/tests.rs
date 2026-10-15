@@ -1852,7 +1852,14 @@ mod paid {
                 changed.activated_abilities=Box::leak(vec![ability].into_boxed_slice());
                 assert!(matches!(roots::sower_printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};
         }
-        reject_ability!(cost, &[CostComponent::Mana(Cost::zero())]);
+        reject_ability!(
+            cost,
+            &[CostComponent::Mana(Cost {
+                generic: 0,
+                pips: &[],
+                x_count: 0
+            })]
+        );
         reject_ability!(target_spec, TargetSpec::AnyTarget);
         reject_ability!(effect, || crate::effect::EffectOp::Sequence(vec![]));
         reject_ability!(activation_zone, Zone::Hand);
@@ -2548,7 +2555,11 @@ mod paid {
         reject!(
             alt_cost,
             Some(crate::card_def::AltCostDef {
-                components: &[CostComponent::Mana(Cost::zero())],
+                components: &[CostComponent::Mana(Cost {
+                    generic: 0,
+                    pips: &[],
+                    x_count: 0
+                })],
                 condition: crate::card_def::AltCostCondition::Always
             })
         );

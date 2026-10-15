@@ -34,6 +34,119 @@ fn gameplay(s: &PreparedSession) -> (Vec<u8>, (u64, u64)) {
         s.inner.fixture_counts_v57(),
     )
 }
+// A fresh native Prepared-mode stream owns its own issued menu. It never
+// clones or receives the model owner's sealed backend capability. Construction
+// from the complete fixture world must preserve that world and exact menu;
+// a surface-only prefix that cannot be reconstructed must fail these checks.
+struct NativeReference {
+    session: FastActorSessionV1,
+    current: FastActorDecisionV1,
+    original: FastActorDecisionV1,
+    actions: Vec<ActionSemanticV1>,
+    original_counts: (u64, u64),
+    native_counts: (u64, u64),
+}
+fn native_reference(s: &PreparedSession) -> NativeReference {
+    let session = FastActorSessionV1::from_prepared_v57_fixture_state(state(s).clone());
+    assert_eq!(state(s), session.prepared_fixture_state());
+    let FastActorResponseV1::Decision(current) = session.current_response() else {
+        panic!("independent native Prepared reference has no current decision")
+    };
+    let original = expected(s);
+    let (_, actions, _) = session
+        .prepared_current_decision_input_v57(current, current.acting_player)
+        .unwrap();
+    assert_eq!(actions.as_slice(), s.inner.decision_v57().unwrap().actions());
+    assert_eq!(
+        (
+            current.episode_id,
+            current.substep_index,
+            current.substep_count,
+            current.acting_player,
+            current.decision_kind,
+            current.legal_action_count
+        ),
+        (
+            original.episode_id,
+            original.substep_index,
+            original.substep_count,
+            original.acting_player,
+            original.decision_kind,
+            original.legal_action_count
+        )
+    );
+    let native_counts = (
+        session.policy_step_count(),
+        session.physical_decision_count(),
+    );
+    NativeReference {
+        session,
+        current,
+        original,
+        actions,
+        original_counts: s.inner.fixture_counts_v57(),
+        native_counts,
+    }
+}
+fn rebase_counter(value: u64, native_before: u64, original_before: u64) -> u64 {
+    original_before
+        .checked_add(value.checked_sub(native_before).unwrap())
+        .unwrap()
+}
+impl NativeReference {
+    fn assert_step(&mut self, s: &PreparedSession, actual: FastActorResponseV1, index: u32) {
+        let mut response = self
+            .session
+            .step(self.current.episode_id, self.current.step, index)
+            .unwrap();
+        // Only independent stream clock origins differ. Every actor/kind/menu,
+        // substep, outcome/reason/reward/deck field is still compared exactly.
+        match &mut response {
+            FastActorResponseV1::Decision(next) => {
+                next.step = rebase_counter(next.step, self.current.step, self.original.step);
+                next.environment_revision = rebase_counter(
+                    next.environment_revision,
+                    self.current.environment_revision,
+                    self.original.environment_revision,
+                );
+                next.physical_decision_id = rebase_counter(
+                    next.physical_decision_id,
+                    self.current.physical_decision_id,
+                    self.original.physical_decision_id,
+                );
+            }
+            FastActorResponseV1::Terminal(terminal) => {
+                terminal.policy_step_count = rebase_counter(
+                    terminal.policy_step_count,
+                    self.native_counts.0,
+                    self.original_counts.0,
+                );
+                terminal.physical_decision_count = rebase_counter(
+                    terminal.physical_decision_count,
+                    self.native_counts.1,
+                    self.original_counts.1,
+                );
+            }
+        }
+        assert_eq!(actual, response);
+        assert_eq!(state(s), self.session.prepared_fixture_state());
+        assert_eq!(
+            s.inner.fixture_counts_v57(),
+            (
+                rebase_counter(
+                    self.session.policy_step_count(),
+                    self.native_counts.0,
+                    self.original_counts.0
+                ),
+                rebase_counter(
+                    self.session.physical_decision_count(),
+                    self.native_counts.1,
+                    self.original_counts.1
+                )
+            )
+        );
+    }
+}
 fn act(s: &mut PreparedSession, choose: impl Fn(&ActionSemanticV1) -> bool) {
     let d = s.encode(expected(s)).unwrap();
     assert_eq!(d.packet.source(), Source::PreparedV57);
@@ -50,13 +163,9 @@ fn act(s: &mut PreparedSession, choose: impl Fn(&ActionSemanticV1) -> bool) {
         .unwrap();
     assert_eq!(logits.len(), native.actions().len());
     assert!(logits.iter().all(|v| v.is_finite()));
-    let mut reference = s.inner.clone();
-    assert_eq!(
-        s.apply(&d, i as u32).unwrap(),
-        reference.step_v57(&native, i as u32).unwrap()
-    );
-    assert_eq!(state(s), reference.fixture_state_v57());
-    assert_eq!(s.inner.fixture_counts_v57(), reference.fixture_counts_v57());
+    let mut reference = native_reference(s);
+    let response = s.apply(&d, i as u32).unwrap();
+    reference.assert_step(s, response, i as u32);
 }
 fn pass(s: &mut PreparedSession) {
     act(s, |a| matches!(a, ActionSemanticV1::Pass { .. }));
@@ -240,14 +349,11 @@ fn paid_prepared_casts_original_index_finite_logits_full_binding_and_restore_bot
             assert_ne!(packet, decision.packet);
             let input = s.encode(expected(&s)).unwrap();
             let model = NativeModel::deterministic_fixture().unwrap();
-            let mut reference = s.inner.clone();
-            let original = reference.decision_v57().unwrap();
+            let mut reference = native_reference(&s);
             let (logits, index, response) = s.score_and_apply(&input, &model).unwrap();
-            assert_eq!(logits.len(), original.actions().len());
+            assert_eq!(logits.len(), reference.actions.len());
             assert!(logits.iter().all(|logit| logit.is_finite()));
-            assert_eq!(response, reference.step_v57(&original, index).unwrap());
-            assert_eq!(state(&s), reference.fixture_state_v57());
-            assert_eq!(s.inner.fixture_counts_v57(), reference.fixture_counts_v57());
+            reference.assert_step(&s, response, index);
         }
     }
 }

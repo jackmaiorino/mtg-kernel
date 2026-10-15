@@ -3,7 +3,7 @@
 use super::*;
 use crate::human_bo3_v1::elenda_v52::HumanElendaTraitsV52;
 use crate::{
-    ids::{ObjectId, PlayerId},
+    ids::PlayerId,
     policy_observation_v6::tests::put,
     rl::TargetRefV1,
     state::{GameState, Zone},
