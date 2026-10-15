@@ -4,6 +4,11 @@ This isolated candidate appends the real printing with `Partial` capability.
 It does not add Full coverage or permit a fully supported deck preflight. The
 canonical PR266 registration and accepted issue110 counts are unchanged.
 
+The source now appends catalog profile v85 for the actual Partial catalog;
+see `fdn_fake_partial_catalog_profile_v85.md`. It preserves historical profiles
+and requires fresh affected checks. This records identity without promoting
+Fake to Full or admitting its model consumers.
+
 The first actual native build rejected empty deck coverage before generation.
 The registry now names a separate synthetic 40-card reference containing the
 Partial printing. It leaves the original WG/UG fixtures unchanged and supplies
@@ -34,8 +39,8 @@ including one additional Partial printing. Actual generated count, printing ID,
 catalog hash are observed in the retained Native131 export: Fake ID442,
 catalog `2fa3e07073975972`, generated SHA-256
 `b9ff9d9cd357ba26758470d355839d293bc6afd2e7f568cbc4b3e217b122ecf9`.
-Existing profile literals and full-coverage assertions are retained. No new
-live profile or Full capability is published by this result.
+Existing profile literals remain intact. That result did not publish a new
+live profile or Full capability; the v85 successor above is qualified separately.
 
 Native131 passed genuine untargeted Aura returns, entry-choice restores,
 public/meaning/backend and two Human groups; its combined result was44PASS/1FAIL

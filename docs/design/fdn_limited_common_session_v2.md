@@ -1,7 +1,7 @@
 # Current-family Limited JSONL V2
 
-Unpublished integrated source combines the Fake Partial backend, V2 transport
-and PR266 shared dispatcher repair1a1f0 for issue110. This is a distinct schema2 server, `kernel_limited_common_env_v2`,
+This source combines the Fake Partial backend, V2 transport and the accepted
+PR266 default. This is a distinct schema2 server, `kernel_limited_common_env_v2`,
 with a matching Python client. The V1 server, executable, client, requests and
 safe decision shape remain unchanged. No registration, catalog/profile,
 flat-model shape, training or Full-pool admission changes.
@@ -55,5 +55,12 @@ reject Partial Fake. All changed Rust cases remain uncompiled/unrun. Native131/1
 belongs to earlier Fake source before these parent and V2 merges. Fresh affected
 Rust, all three strict configurations, actual443 export and real-process replay
 remain pending supported native verification.
-PR266 remains separately pinned during its current native/CI qualification;
-this V2 preparation is unpublished and does not borrow that qualification.
+PR266 is merged and default-verified. Native142 compiled the V2 bridge and ran
+62 focused tests: 60 passed and two fixture label lookups failed. The repair
+uses the canonical Bolt target and Panda cast labels without changing production
+actions or paid outcome assertions. Native144 runs that repair at
+`f29198d9f299b0ef664150e2de582c19c23cf264`; its result is pending. The repaired
+source passes 76 Python deck, frozen-pool and V2 checks. The appended v85 catalog
+profile is a separate source successor requiring its own affected qualification.
+CI now runs all V2 host tests and its fresh-binary repeat replay. Neither parent
+acceptance nor the earlier partial native result qualifies this new source.
