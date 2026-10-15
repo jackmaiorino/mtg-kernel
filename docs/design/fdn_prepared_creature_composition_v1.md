@@ -38,8 +38,8 @@ includes Drake, without claiming a runtime-qualified successor.
 
 The Elenda reference is a genuine 40-card correctness input using its original
 20 spells and 20 basics. All seven candidate decks refuse Full-only resolution.
-Observed: 115 Python tests pass across deck/pool, schema-4, predecessor V3 and
-the new schema-5 client;
+Observed: 131 Python tests pass across deck/pool, common V2/V3, Elenda schema-4
+and the new schema-5 client;
 pinned formatting, diff and static prefix checks pass. Separate scoped source
 reviews of the new transport and V52 model are clear. Every added Rust fixture
 is uncompiled and unrun. No catalog
@@ -99,6 +99,6 @@ every other field and all old hash literals remain checked. The actual composed
 registry has 260 rows. The v87 444-definition identity and live canaries are
 predecessor evidence, not an identity for this 452-definition source. A later
 actual export must establish the successor before profile/runtime publication.
-Pinned formatting/diff and all 115 affected Python tests pass after this
+Pinned formatting/diff and all 131 affected Python tests pass after this
 composition. Native157 still owns the separate unchanged 444-definition source
 and target; its result cannot qualify this 452-definition composition.
