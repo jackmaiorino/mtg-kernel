@@ -2,31 +2,23 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 import subprocess
+from threading import Event
+from time import monotonic
 
 from limited_common_session_v3 import LimitedCommonClientV3, PROTOCOL
 from limited_decks_v1 import load_json, parse_dck
 from limited_session_v1 import LimitedSessionError, _uint
 
 
-def check(binary: Path, *, seed: int = 123) -> dict:
-    command = [str(binary.resolve())]
-    probe = subprocess.run(
-        command, input=b'{"request_type":"current","schema_version":3,"request_id":"probe"}\n',
-        capture_output=True, timeout=30, check=True)
-    identity = load_json(probe.stdout)
-    if (identity.get("protocol") != PROTOCOL
-            or type(identity.get("schema_version")) is not int
-            or identity["schema_version"] != 3):
-        raise LimitedSessionError("unexpected probe protocol")
-    catalog = _uint(identity.get("card_db_hash"), "card_db_hash")
+def _check_game(command: list[str], catalog: int, seed: int, stop: Event) -> dict:
+    started = monotonic()
     decks = (parse_dck("40 Forest"), parse_dck("40 Island"))
-    transcripts = []
     server_timings = []
-    terminal = None
-    for _ in range(2):
+    try:
         with LimitedCommonClientV3(command, expected_card_db_hash=catalog,
                                    timeout_s=30) as client:
             reply = client.reset(decks, env_seed=seed, max_steps=10000)
@@ -45,6 +37,8 @@ def check(binary: Path, *, seed: int = 123) -> dict:
                 raise LimitedSessionError("stale prompt sent an engine request")
             reply = restored
             for _ in range(10000):
+                if stop.is_set():
+                    raise LimitedSessionError("paired process check failed")
                 state = reply["state"]
                 if state["state_type"] == "terminal":
                     if state["classification"] != "natural":
@@ -59,16 +53,51 @@ def check(binary: Path, *, seed: int = 123) -> dict:
                 reply = client.step(reply, index)
             else:
                 raise LimitedSessionError("plumbing game exceeded its bound")
-            transcripts.append(client.transcript.hexdigest())
+            transcript = client.transcript.hexdigest()
         for line in client.stderr:
             prefix = b"LIMITED_COMMON_TIMING_V3 "
             if line.startswith(prefix):
                 server_timings.append(load_json(line[len(prefix):]))
-    if transcripts[0] != transcripts[1]:
+        return {"transcript": transcript, "terminal": terminal,
+                "timings": server_timings, "elapsed_seconds": monotonic() - started}
+    except BaseException:
+        stop.set()
+        raise
+
+
+def check(binary: Path, *, seed: int = 123) -> dict:
+    command = [str(binary.resolve())]
+    probe = subprocess.run(
+        command, input=b'{"request_type":"current","schema_version":3,"request_id":"probe"}\n',
+        capture_output=True, timeout=30, check=True)
+    identity = load_json(probe.stdout)
+    if (identity.get("protocol") != PROTOCOL
+            or type(identity.get("schema_version")) is not int
+            or identity["schema_version"] != 3):
+        raise LimitedSessionError("unexpected probe protocol")
+    catalog = _uint(identity.get("card_db_hash"), "card_db_hash")
+    stop = Event()
+    games: list[dict | None] = [None, None]
+    started = monotonic()
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="limited-v3-replay") as pool:
+        pending = {pool.submit(_check_game, command, catalog, seed, stop): index
+                   for index in range(2)}
+        try:
+            for future in as_completed(pending):
+                games[pending[future]] = future.result()
+        except BaseException:
+            stop.set()
+            raise
+    first, second = games
+    assert first is not None and second is not None
+    if first["transcript"] != second["transcript"]:
         raise LimitedSessionError("same-seed process transcripts differed")
+    server_timings = first["timings"] + second["timings"]
     result = {"schema": "limited-common-client-check/v3", "seed": seed,
-            "card_db_hash": catalog, "transcript_sha256": transcripts[0],
-            "terminal": terminal}
+              "card_db_hash": catalog, "transcript_sha256": first["transcript"],
+              "terminal": first["terminal"], "parallel_workers": 2,
+              "replay_wall_seconds": monotonic() - started,
+              "game_elapsed_seconds": [first["elapsed_seconds"], second["elapsed_seconds"]]}
     if server_timings:
         result["server_timings_v3"] = server_timings
     return result

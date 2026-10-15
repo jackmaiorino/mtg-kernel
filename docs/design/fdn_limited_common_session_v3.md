@@ -51,3 +51,11 @@ cross-family qualification remain with the assigned lead. Ravenous remains
 Partial ID443; both currently Partial Fake and Ravenous are rejected by public
 reset. Native147 on Haley remains immutable parent evidence. No Full, model,
 sampler, fair-search, training or strength admission follows from this source.
+
+The process checker runs its two fixed seed-123 replays concurrently in separate
+engine processes. Each keeps its own client, transcript and restore state. The
+supported launcher still limits the entire job to four BelowNormal cores. A
+failure stops the paired replay at its next decision; each response retains the
+30-second deadline. The checker reports both durations and the common transcript
+hash. This changes neither game count nor deterministic engine inputs. Fresh
+binary execution remains required before qualification.
