@@ -117,6 +117,94 @@ impl Wire {
 }
 
 const ELENDA: &str = "Elenda, Saint of Dusk";
+
+#[test]
+fn v4_paid_draw_scry_refuse_visible_hatcher_and_preserve_owned_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (spell, drawn) in [("Think Twice", true), ("Preordain", false)] {
+            for printing in ["Drake Hatcher", "Llanowar Elves"] {
+                let mut state = raw(actor, 20);
+                let hatcher = put(&mut state, actor, printing, Zone::Library);
+                let library = &mut state.players[actor.index()].library;
+                library.retain(|id| *id != hatcher);
+                library.insert(0, hatcher);
+                put(&mut state, actor, spell, Zone::Hand);
+                let mut wire = Wire::fixture(state);
+                cast(&mut wire, actor, spell, None);
+                assert!(wire.state().stack.iter().any(|item| wire
+                    .state()
+                    .objects
+                    .get(item.source)
+                    .name
+                    == spell));
+                let paid = wire.snapshot();
+                let stale = wire.request(|label| label == "Pass priority");
+                let play = |wire: &mut Wire| {
+                    for _ in 0..8 {
+                        let visible = if drawn {
+                            wire.state().players[actor.index()].hand.contains(&hatcher)
+                        } else {
+                            wire.state()
+                                .known_library_cards(actor, actor)
+                                .iter()
+                                .any(|known| known.object == hatcher)
+                        };
+                        if visible {
+                            assert_eq!(
+                                wire.last["state"]["state_type"] == "decision",
+                                printing != "Drake Hatcher"
+                            );
+                            assert_eq!(wire.server.pending.is_none(), printing == "Drake Hatcher");
+                            safe(&wire.last);
+                            let bytes = wire.bytes();
+                            let reply = wire.send(json!({"request_type":"current"}));
+                            assert_eq!(
+                                reply["state"]["state_type"] == "decision",
+                                printing != "Drake Hatcher"
+                            );
+                            assert_eq!(wire.bytes(), bytes);
+                            let public = if reply["state"]["state_type"] == "decision" {
+                                reply["state"]["decision"]["state"].clone()
+                            } else {
+                                reply["state"].clone()
+                            };
+                            return (public, bytes);
+                        }
+                        wire.step(|label| label == "Pass priority");
+                    }
+                    panic!("paid wire spell did not expose its actual library card");
+                };
+                let refused = play(&mut wire);
+                wire.restore(paid);
+                wire.reject_unchanged(stale, "stale_decision");
+                assert_eq!(play(&mut wire), refused);
+            }
+        }
+    }
+}
+
+#[test]
+fn v4_genuine_paid_concealed_hatcher_elf_wire_noninterference_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let build = |printing: &str| {
+            let mut state = raw(actor, 20);
+            put(&mut state, actor.opponent(), printing, Zone::Hand);
+            put(&mut state, actor.opponent(), printing, Zone::Library);
+            put(&mut state, actor, "Think Twice", Zone::Hand);
+            let mut wire = Wire::fixture(state);
+            cast(&mut wire, actor, "Think Twice", None);
+            assert_eq!(wire.menu()["actor"], json!(PlayerSeatV1::from(actor)));
+            safe(&wire.last);
+            assert!(!wire.last.to_string().contains(printing));
+            (wire.menu().clone(), wire.bytes())
+        };
+        let hatcher = build("Drake Hatcher");
+        let elf = build("Llanowar Elves");
+        assert_eq!(hatcher.0, elf.0);
+        assert_ne!(hatcher.1, elf.1);
+    }
+}
+
 fn raw(actor: PlayerId, life: i32) -> GameState {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     state.players[actor.index()].life = life;

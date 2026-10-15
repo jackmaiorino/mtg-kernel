@@ -8610,6 +8610,9 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    // Callers have already selected an actor-authorized identity: own hand,
+    // known hand/library, or a visible choice. Do not scan concealed zones.
+    crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)

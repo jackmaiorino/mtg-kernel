@@ -4,6 +4,240 @@ use super::*;
 use crate::{ids::ObjectId, policy_observation_v6::tests::put, rl::TargetRefV1, state::Zone};
 const ELENDA: &str = "Elenda, Saint of Dusk";
 
+// These cases use genuine paid spells through each owning backend. Only the
+// initial concealed printing, library order, life and available mana are inputs.
+fn drake_predecessor_input(
+    session: &FastActorSessionV1,
+    v52: bool,
+) -> Result<(FastActorDecisionV1, Vec<ActionSemanticV1>), String> {
+    let FastActorResponseV1::Decision(current) = session.current_response() else {
+        return Err("predecessor stream refused".into());
+    };
+    let actions = if v52 {
+        let (_, actions, binding) = session
+            .elenda_current_decision_input_v52(current, current.acting_player)
+            .map_err(|e| format!("{e:?}"))?;
+        session
+            .elenda_validate_bound_decision_v52(current, current.acting_player, &binding)
+            .map_err(|e| format!("{e:?}"))?;
+        actions
+    } else {
+        let (_, actions, binding) = session
+            .ravenous_current_decision_input_v51(current, current.acting_player)
+            .map_err(|e| format!("{e:?}"))?;
+        session
+            .ravenous_validate_bound_decision_v51(current, current.acting_player, &binding)
+            .map_err(|e| format!("{e:?}"))?;
+        actions
+    };
+    Ok((current, actions))
+}
+fn drake_predecessor_act(
+    session: &mut FastActorSessionV1,
+    v52: bool,
+    choose: impl Fn(&ActionSemanticV1) -> bool,
+) {
+    let (current, actions) = drake_predecessor_input(session, v52).unwrap();
+    let index = actions
+        .iter()
+        .position(choose)
+        .expect("genuine paid choice");
+    session
+        .step(current.episode_id, current.step, index as u32)
+        .unwrap();
+}
+
+#[test]
+fn paid_draw_and_scry_refuse_newly_visible_hatcher_v51_v52_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for v52 in [false, true] {
+            for (spell_name, drawn) in [("Think Twice", true), ("Preordain", false)] {
+                for printing in ["Drake Hatcher", "Llanowar Elves"] {
+                    let mut state = raw(actor, 20);
+                    let hatcher = put(&mut state, actor, printing, Zone::Library);
+                    let library = &mut state.players[actor.index()].library;
+                    library.retain(|id| *id != hatcher);
+                    library.insert(0, hatcher);
+                    let spell = put(&mut state, actor, spell_name, Zone::Hand);
+                    let mut session = if v52 {
+                        FastActorSessionV1::from_elenda_v52_fixture_state(state)
+                    } else {
+                        FastActorSessionV1::from_ravenous_v51_fixture_state(state)
+                    };
+                    let before: u32 = session.state.players[actor.index()]
+                        .mana_pool
+                        .iter()
+                        .map(|&n| u32::from(n))
+                        .sum();
+                    drake_predecessor_act(&mut session, v52, |a| {
+                        matches!(a,
+                    ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0)
+                    });
+                    let after: u32 = session.state.players[actor.index()]
+                        .mana_pool
+                        .iter()
+                        .map(|&n| u32::from(n))
+                        .sum();
+                    assert_eq!(before - after, if drawn { 2 } else { 1 });
+                    assert!(session.state.stack.iter().any(|item| item.source == spell));
+                    let paid = session.snapshot_v1();
+                    let stale = drake_predecessor_input(&session, v52).unwrap().0;
+                    let play = |session: &mut FastActorSessionV1| {
+                        for _ in 0..8 {
+                            let visible = if drawn {
+                                session.state.players[actor.index()].hand.contains(&hatcher)
+                            } else {
+                                session
+                                    .state
+                                    .known_library_cards(actor, actor)
+                                    .iter()
+                                    .any(|known| known.object == hatcher)
+                            };
+                            if visible {
+                                let before = serde_json::to_vec(&session.state).unwrap();
+                                assert_eq!(
+                                    drake_predecessor_input(session, v52).is_err(),
+                                    printing == "Drake Hatcher"
+                                );
+                                assert_eq!(serde_json::to_vec(&session.state).unwrap(), before);
+                                assert!(session.state.engine.drake_ledger_v1.is_empty());
+                                assert_eq!(
+                                    session.state.objects.get(hatcher).counters.incubation,
+                                    0
+                                );
+                                return before;
+                            }
+                            drake_predecessor_act(session, v52, |a| {
+                                matches!(a, ActionSemanticV1::Pass { .. })
+                            });
+                        }
+                        panic!("paid draw/scry did not expose the actual library card");
+                    };
+                    let refused = play(&mut session);
+                    if v52 {
+                        session.elenda_restore_v52(&paid).unwrap();
+                        assert!(session
+                            .elenda_current_decision_input_v52(stale, stale.acting_player)
+                            .is_err());
+                    } else {
+                        session.ravenous_restore_v51(&paid).unwrap();
+                        assert!(session
+                            .ravenous_current_decision_input_v51(stale, stale.acting_player)
+                            .is_err());
+                    }
+                    assert_eq!(play(&mut session), refused);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paid_unknown_hatcher_or_elf_preserves_v51_v52_actor_view_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for v52 in [false, true] {
+            let build = |printing: &str| {
+                let mut state = raw(actor, 20);
+                put(&mut state, actor.opponent(), printing, Zone::Hand);
+                put(&mut state, actor.opponent(), printing, Zone::Library);
+                let spell = put(&mut state, actor, "Think Twice", Zone::Hand);
+                let mut session = if v52 {
+                    FastActorSessionV1::from_elenda_v52_fixture_state(state)
+                } else {
+                    FastActorSessionV1::from_ravenous_v51_fixture_state(state)
+                };
+                drake_predecessor_act(&mut session, v52, |a| {
+                    matches!(a,
+                    ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0)
+                });
+                let (current, actions) = drake_predecessor_input(&session, v52).unwrap();
+                assert_eq!(current.acting_player, actor.into());
+                let public = if v52 {
+                    serde_json::to_value(
+                        session
+                            .elenda_current_decision_input_v52(current, actor.into())
+                            .unwrap()
+                            .0,
+                    )
+                    .unwrap()
+                } else {
+                    serde_json::to_value(
+                        session
+                            .ravenous_current_decision_input_v51(current, actor.into())
+                            .unwrap()
+                            .0,
+                    )
+                    .unwrap()
+                };
+                (public, actions, serde_json::to_vec(&session.state).unwrap())
+            };
+            let a = build("Drake Hatcher");
+            let b = build("Llanowar Elves");
+            assert_eq!(a.0, b.0);
+            assert_eq!(a.1, b.1);
+            assert_ne!(a.2, b.2);
+        }
+    }
+}
+
+#[test]
+fn genuine_paid_duress_revealed_hatcher_refuses_v51_v52_without_rewriting_originals_both_seats() {
+    use crate::{
+        engine::{self, Action, Decision},
+        state::Target,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = raw(actor, 20);
+        let hatcher = put(&mut state, actor.opponent(), "Drake Hatcher", Zone::Hand);
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        let duress = put(&mut state, actor, "Duress", Zone::Hand);
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        engine::step(&mut state, Action::CastSpell(duress)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Player(actor.opponent())))
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        assert_eq!(
+            state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()],
+            9
+        );
+        assert!(state.stack.iter().any(|item| item.source == duress));
+        // The native engine can reach this genuine reveal. Predecessor consumers
+        // correctly stop earlier if the Hatcher owner receives priority.
+        for _ in 0..8 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::ChooseEffectTargets { player, source, .. } => {
+                    assert_eq!(player, actor);
+                    assert_eq!(source, duress);
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                other => panic!("actual Duress reveal: {other:?}"),
+            }
+        }
+        assert!(state
+            .known_hand_cards(actor, actor.opponent())
+            .iter()
+            .any(|known| known.object == hatcher));
+        let original = serde_json::to_vec(&state).unwrap();
+        for v52 in [false, true] {
+            let session = if v52 {
+                FastActorSessionV1::from_elenda_v52_fixture_state(state.clone())
+            } else {
+                FastActorSessionV1::from_ravenous_v51_fixture_state(state.clone())
+            };
+            assert!(drake_predecessor_input(&session, v52).is_err());
+            assert_eq!(serde_json::to_vec(&session.state).unwrap(), original);
+        }
+    }
+}
+
 fn raw(actor: PlayerId, life: i32) -> GameState {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     state.players[actor.index()].life = life;
