@@ -2706,6 +2706,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// frozen recipe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         options: Option<archive_distillation_v1::ArchiveDistillationOptionsV1>,
+        /// Prospective scorer-only updates; omission preserves full-network steps.
+        #[serde(
+            default,
+            skip_serializing_if = "crate::native_policy_train_step_v1::ArchiveDistillationUpdateScopeV1::is_full_network_v1"
+        )]
+        update_scope: crate::native_policy_train_step_v1::ArchiveDistillationUpdateScopeV1,
         output_directory: PathBuf,
     },
     /// Spy archive distillation fit check: forward-only readouts of each
@@ -2802,6 +2808,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             stop_after_steps,
             dry_run,
             options,
+            update_scope,
             output_directory,
         } => archive_distillation_v1::phase1_v1(
             parent,
@@ -2813,6 +2820,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             stop_after_steps,
             dry_run,
             options,
+            update_scope,
             output_directory,
         ),
         ExpandedTrainingCommandV1::ArchiveDistillationProbe {
