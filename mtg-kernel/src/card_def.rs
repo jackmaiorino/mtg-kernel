@@ -643,6 +643,11 @@ impl Subtype {
             not(feature = "standard-magezero-fixtures")
         ))]
         Subtype::Drake,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Subtype::Phoenix,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -2706,6 +2711,7 @@ mod tests {
                 Subtype::Devil.stable_id(),
                 Subtype::Avatar.stable_id(),
                 Subtype::Drake.stable_id(),
+                Subtype::Phoenix.stable_id(),
             ]);
         }
         assert_eq!(
@@ -2715,6 +2721,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             expected
         );
+        #[cfg(feature = "limited-fdn-fixtures")]
+        {
+            let changeling = crate::state::ObjectStateV4::from_card_def(
+                card_id_by_name("Masked Vandal").expect("genuine changeling printing"),
+            );
+            assert!(changeling
+                .effective_subtype_ids
+                .contains(&Subtype::Phoenix.stable_id()));
+            assert!(changeling
+                .effective_subtype_ids
+                .contains(&Subtype::Drake.stable_id()));
+        }
     }
 
     #[test]
