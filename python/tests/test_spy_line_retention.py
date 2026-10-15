@@ -9,7 +9,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from python.tests import test_spy_distill_analysis as panels_fixture  # noqa: E402
-from tools.spy_distill import analyze, retention  # noqa: E402
+from python.tests import test_spy_distill_tools as tools_fixture  # noqa: E402
+from tools.spy_distill import analyze, phase2, retention  # noqa: E402
 from tools.spy_distill import distill_common as common  # noqa: E402
 
 UPDATES = retention.UPDATES
@@ -162,6 +163,81 @@ class Probes(Temp):
             retention.probe_commands("r1", source("d1l"), source("d1l"), games, bank, (c_games, bank), {}, [],
                                      runs, "d")
 
+    def test_the_trace_command_pins_one_complete_runs_manifest_and_completion(self):
+        record = self.run_record("A-s1")
+        run = self.root / "A-s1-native"
+        run.mkdir()
+        manifest = write(run / "run.json", {"schema": retention.RUN_SCHEMA})
+        completion = write(run / "completion.json", record)
+        command = retention.trace_command(run, str(self.root / "trace" / "r1-A-s1"))
+        self.assertEqual(command["mode"], "line_retention_trace")
+        self.assertEqual(command["run"], {**manifest, "path": manifest["path"].replace("\\", "/")})
+        self.assertEqual(command["completion"], {**completion, "path": completion["path"].replace("\\", "/")})
+        self.assertTrue(command["output_directory"].endswith("/trace/r1-A-s1"))
+        write(run / "completion.json", dict(record, completed_iterations=161))
+        with self.assertRaisesRegex(ValueError, "complete 162-update"):
+            retention.trace_command(run, str(self.root / "trace" / "r1-A-s1"))
+
+
+class Configs(unittest.TestCase):
+    """The config gate on configs written by phase2.py from O's recorded config."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        saved = Path(self.temp.name) / "checkpoint-step-1024.json"
+        saved.write_text(json.dumps({"archive_distillation": {"method": "spy-archive-distillation-phase1-v1"}}))
+        self.d1l = {**tools_fixture.source("r1"), "checkpoint": {"path": str(saved), "sha256": "7" * 64}}
+
+    def config(self, replicate=0, drop=False, workers=4, directory="D:/rt1/run"):
+        return phase2.config("r1", tools_fixture.o_config(), self.d1l, workers, directory, tools_fixture.DECKS,
+                             replicate=replicate, drop_spy_learner=drop)
+
+    def configs(self):
+        return {f"{arm}-s{k}": self.config(k, arm == "N", directory=f"D:/rt1/{arm}-s{k}")
+                for arm in "AN" for k in range(4)}
+
+    def test_the_gate_passes_phase2s_configs_against_the_screens_d2l_config(self):
+        screen = self.config(workers=8, directory="D:/spy-distill/train/r1-D2L/native")
+        result = retention.configs("r1", screen, self.configs(), tools_fixture.DECKS)
+        self.assertTrue(result["pass"], result)
+        self.assertEqual(len(result), 9)
+
+    def test_any_other_difference_fails_the_gate(self):
+        screen = self.config(workers=8, directory="D:/spy-distill/train/r1-D2L/native")
+        changed = dict(screen, value_coefficient=0.25)
+        self.assertFalse(retention.configs("r1", changed, self.configs(), tools_fixture.DECKS)
+                         ["A-s0 equals the screen's D2L config"])
+        cfgs = self.configs()
+        # A Spy learner episode's seed: N-s2 does not hold it, so only A-s2 fails.
+        spy = tools_fixture.DECKS[tools_fixture.pilot.SPY]
+        update = cfgs["A-s2"]["iterations"][0]["episodes"]
+        next(item for item in update if retention.learner_deck(item) == spy)["episode"]["seed"] += 1
+        result = retention.configs("r1", screen, cfgs, tools_fixture.DECKS)
+        self.assertEqual([k for k, v in result.items() if not v], ["A-s2 replicates A-s0", "pass"])
+        cfgs = self.configs()
+        cfgs["A-s2"]["iterations"][5]["episodes"][1]["episode"]["seed"] += 1
+        result = retention.configs("r1", screen, cfgs, tools_fixture.DECKS)
+        self.assertFalse(result["A-s2 replicates A-s0"])
+        cfgs = self.configs()
+        cfgs["A-s3"]["iterations"][7]["episodes"][0]["opponent"] = {"kind": "fixed", "id": "elsewhere"}
+        self.assertFalse(retention.configs("r1", screen, cfgs, tools_fixture.DECKS)["A-s3 replicates A-s0"])
+        cfgs = self.configs()
+        cfgs["A-s1"] = self.config(2, directory="D:/rt1/A-s1")
+        self.assertFalse(retention.configs("r1", screen, cfgs, tools_fixture.DECKS)["A-s1 replicates A-s0"])
+        cfgs = self.configs()
+        cfgs["N-s1"] = self.config(1, directory="D:/rt1/N-s1")
+        result = retention.configs("r1", screen, cfgs, tools_fixture.DECKS)
+        self.assertEqual([k for k, v in result.items() if not v], ["N-s1 drops the Spy learner from A-s1", "pass"])
+        cfgs = self.configs()
+        cfgs["N-s0"]["iterations"][3]["episodes"].pop()
+        self.assertFalse(retention.configs("r1", screen, cfgs, tools_fixture.DECKS)
+                         ["N-s0 drops the Spy learner from A-s0"])
+        cfgs = self.configs()
+        del cfgs["N-s3"]
+        with self.assertRaisesRegex(ValueError, "all eight configs"):
+            retention.configs("r1", screen, cfgs, tools_fixture.DECKS)
+
 
 class Exactness(Temp):
     def d2l(self, state: str, adam: int) -> Path:
@@ -196,6 +272,24 @@ class Exactness(Temp):
             self.assertFalse(retention.x1("r1", moved, d2l)["pass"])
         with self.assertRaisesRegex(ValueError, "not the recorded r1 checkpoint"):
             retention.x1("r1", same, d2l, screen)
+
+    def test_the_first_wave_checks_x1_alone(self):
+        screen_states = [f"screen-state-{n}" for n in range(1, UPDATES + 1)]
+        rerun, screen = self.root / "rerun.json", self.root / "screen.json"
+        rerun.write_text(json.dumps(self.run_record("rerun", states=screen_states)))
+        screen.write_text(json.dumps(self.run_record("screen", states=screen_states)))
+        d2l = self.d2l("screen-state-162", 1161)
+        out = self.root / "x1.json"
+        args = ["exactness", "--lineage", "r1", "--rerun", str(rerun), "--d2l-checkpoint", str(d2l),
+                "--screen", str(screen), "--out", str(out)]
+        with mock.patch.dict(retention.D2L_CHECKPOINT_SHA256, {"r1": hashlib.sha256(d2l.read_bytes()).hexdigest()}), \
+                mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 0)
+            result = json.loads(out.read_text())
+            self.assertEqual((result["pass"], "x3" in result), (True, False))
+            self.assertEqual(result["x1"]["compared"], "every update record and the endpoint")
+            with self.assertRaisesRegex(ValueError, "together"):
+                retention.main(args + ["--probe", str(out)])
 
     def test_x3_needs_identical_parent_readouts_and_d1l_equal_to_fit(self):
         fit = {"fits": {"r1": {"L": {"read": [

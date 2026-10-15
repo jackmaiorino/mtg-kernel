@@ -6,15 +6,21 @@ the panel rows; nothing is played or trained here.
 - ``updates``: a complete phase-2 run's 162 updates in order, each with the
   source after it, its output state and Adam step, and its update record's X1
   fields;
+- ``trace-command``: the engine's ``line_retention_trace`` command for one
+  complete run;
+- ``configs``: the config gate (A-s0's config against the screen's D2L
+  production config, each replicate's against A-s0's, each N config against
+  its A config, worker counts and output directories aside);
 - ``probes``: the probe commands of one lineage. Every probe holds the parent
   and D1L, then at most 62 run checkpoints (the engine reads at most 64
   candidates): updates 6, 12, ..., 162 of A-s0 and N-s0, and updates 18, 36,
   ..., 162 of the other six runs;
 - ``exactness``: X1 (A-s0's endpoint state and Adam step against the screen's
   D2L checkpoint and, while the screen's update records are on disk, every
-  update record's X1 fields against the screen's) and X3 (the parent's
-  readouts identical in every probe, D1L's equal to the screen's FIT.json
-  ``L-step-1024``);
+  update record's X1 fields against the screen's) and, given the lineage's
+  probes, X3 (the parent's readouts identical in every probe, D1L's equal to
+  the screen's FIT.json ``L-step-1024``). The first wave checks X1 alone;
+  ``analyze`` checks X3 again before any reading;
 - ``paths``: per run, the self path s(c) (the offer set's mean deployed
   self-target probability) and the Giant path g(c)
   (``archive.training.groups.giant_chosen.mean_deployed_probability``: the
@@ -33,14 +39,19 @@ must equal D2L's state), so its panel role is the screen's ``D2L``. Panels of
 the other runs are named ``{lineage}-{role}-vs-{opponent}``.
 
 CLI (JSON on stdout):
+  trace-command --run-directory RUN --output-directory DIR --out CMD.json
+            (RUN holds the run's run.json and completion.json)
+  configs   --lineage r1 --screen SCREEN_D2L/CONFIG-prod.json --config A-s0=CFG.json
+            [--config ROLE=CFG.json ...] (all eight) --out CONFIGS.json
+            (exits 1 when the gate fails)
   probes    --lineage r1 --parent P.json --d1l D1L.json --games GAMES.jsonl --bank BANK.json
             --completion-games GAMES.jsonl --completion-bank BANK.json --anchor ANCHOR.json
             --offers OFFERS.json --run A-s0=RUN/completion.json [--run ROLE=...]
             --output-root DIR --out-dir CMDS
   exactness --lineage r1 --rerun RUN/completion.json --d2l-checkpoint D2L.json
-            [--screen SCREEN_RUN/completion.json] --screen-fit FIT.json
-            --probe PROBE.json [--probe ...] --out X.json
-            (exits 1 when X1 or X3 fails)
+            [--screen SCREEN_RUN/completion.json]
+            [--screen-fit FIT.json --probe PROBE.json [--probe ...]] --out X.json
+            (exits 1 when X1, or X3 when probes are given, fails)
   analyze   --spec SPEC.json --out RESULT.json
 SPEC: {"screen_fit": FIT.json, "screen_index": INDEX.json, "screen_result": RESULT.json,
        "r1": {"runs": {"A-s0": RUN/completion.json, ...}, "probes": [PROBE.json, ...],
@@ -52,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import re
@@ -60,10 +72,25 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import analyze  # noqa: E402
 import phase1  # noqa: E402
 import phase2  # noqa: E402
-from distill_common import LINEAGES, check_parent, pilot, read_json, require, write_json  # noqa: E402
+from distill_common import (LINEAGES, absolute, check_parent, pilot, pin, read_json, require,  # noqa: E402
+                            write_json)
+
+
+def screen_analyzer():
+    """The screen's analyzer, this directory's analyze.py, loaded by its path:
+    other tool directories hold an analyze.py too, and a bare import returns
+    whichever one the process imported first."""
+    spec = importlib.util.spec_from_file_location("spy_distill_screen_analyze",
+                                                  Path(__file__).resolve().parent / "analyze.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+analyze = screen_analyzer()
 
 RUN_SCHEMA = "mtg-kernel-native-expanded-training-run/v1"
 ITERATION_SCHEMA = "mtg-kernel-native-expanded-iteration/v1"
@@ -181,6 +208,85 @@ def probe_commands(lineage: str, parent: dict, d1l: dict, games: Path, bank: Pat
         require(len(command["candidates"]) <= PROBE_CANDIDATES, "a probe reads at most 64 candidates")
         commands.append(command)
     return commands
+
+
+def trace_command(run_directory: Path, output_directory: str) -> dict:
+    """The engine's ``line_retention_trace`` command for a complete 162-update
+    run: its ``run.json`` and ``completion.json``, pinned."""
+    run_directory = Path(run_directory)
+    updates(read_json(run_directory / "completion.json"))
+    return {"mode": "line_retention_trace", "run": pin(run_directory / "run.json"),
+            "completion": pin(run_directory / "completion.json"), "output_directory": absolute(output_directory)}
+
+
+# --------------------------------------------------------------- configs
+
+# Fields a run's placement sets; the config gate sets them aside.
+PLACEMENT_FIELDS = ("output_directory", "collection_workers", "preparation_workers")
+
+
+def placement_free(cfg: dict) -> dict:
+    return {k: v for k, v in cfg.items() if k not in PLACEMENT_FIELDS}
+
+
+def learner_deck(item: dict) -> dict:
+    episode = item["episode"]
+    return episode["selected"][episode["learner_seat"]]
+
+
+def without(cfg: dict, field: str) -> dict:
+    return {k: v for k, v in cfg.items() if k != field}
+
+
+def replicates(lineage: str, k: int, a: dict, base: dict) -> bool:
+    """A-sk differs from A-s0 only in each unit's seed and episode ids, which
+    are replicate k's."""
+    plan = pilot.schedule(lineage)["updates"]
+    if without(a, "iterations") != without(base, "iterations") or not (
+            len(a["iterations"]) == len(base["iterations"]) == len(plan)):
+        return False
+    for entries, new_update, old_update in zip(plan, a["iterations"], base["iterations"]):
+        if not (set(new_update) == set(old_update) == {"episodes"}
+                and len(entries) == len(new_update["episodes"]) == len(old_update["episodes"])):
+            return False
+        for entry, new, old in zip(entries, new_update["episodes"], old_update["episodes"]):
+            if (without(new, "episode") != without(old, "episode")
+                    or {f: v for f, v in new["episode"].items() if f not in ("id", "seed")}
+                    != {f: v for f, v in old["episode"].items() if f not in ("id", "seed")}
+                    or new["episode"]["id"] != phase2.replicate_id(lineage, k, entry)
+                    or new["episode"]["seed"] != phase2.replicate_seed(lineage, k, entry["own"], entry["other"],
+                                                                       entry["j"])):
+                return False
+    return True
+
+
+def drops(n: dict, a: dict, spy: dict) -> bool:
+    """N-sk is A-sk without the Spy learner's 180 episodes, its 162 updates in
+    order."""
+    kept = [{"episodes": [item for item in update["episodes"] if learner_deck(item) != spy]}
+            for update in a["iterations"]]
+    dropped = sum(learner_deck(item) == spy for update in a["iterations"] for item in update["episodes"])
+    return (without(n, "iterations") == without(a, "iterations") and n["iterations"] == kept
+            and dropped == phase2.SPY_LEARNER_EPISODES and len(kept) == UPDATES
+            and all(update["episodes"] for update in kept))
+
+
+def configs(lineage: str, screen: dict, cfgs: dict, decks: list[dict] | None = None) -> dict:
+    """The config gate (DESIGN.md section 3), worker counts and output
+    directories aside: A-s0's config equals the screen's D2L production
+    config, a replicate's differs from A-s0's only in unit seeds and episode
+    ids, and an N config is its A config without the Spy learner's
+    episodes."""
+    require(set(cfgs) == set(RUNS), "all eight configs are required")
+    spy = (decks if decks is not None else pilot.load_decks())[pilot.SPY]
+    free = {role: placement_free(cfg) for role, cfg in cfgs.items()}
+    out = {"A-s0 equals the screen's D2L config": free["A-s0"] == placement_free(screen)}
+    for k in phase2.REPLICATES:
+        out[f"A-s{k} replicates A-s0"] = replicates(lineage, k, free[f"A-s{k}"], free["A-s0"])
+    for k in range(4):
+        out[f"N-s{k} drops the Spy learner from A-s{k}"] = drops(free[f"N-s{k}"], free[f"A-s{k}"], spy)
+    out["pass"] = all(out.values())
+    return out
 
 
 # ------------------------------------------------------------- exactness
@@ -690,18 +796,37 @@ def main(argv=None) -> int:
     p.add_argument("--run", type=pairs, action="append", required=True)
     p.add_argument("--output-root", required=True)
     p.add_argument("--out-dir", type=Path, required=True)
+    t = sub.add_parser("trace-command")
+    t.add_argument("--run-directory", type=Path, required=True)
+    t.add_argument("--output-directory", required=True)
+    t.add_argument("--out", type=Path, required=True)
+    c = sub.add_parser("configs")
+    c.add_argument("--lineage", required=True, choices=LINEAGES)
+    c.add_argument("--screen", type=Path, required=True)
+    c.add_argument("--config", type=pairs, action="append", required=True)
+    c.add_argument("--out", type=Path, required=True)
     x = sub.add_parser("exactness")
     x.add_argument("--lineage", required=True, choices=LINEAGES)
     x.add_argument("--rerun", type=Path, required=True)
     x.add_argument("--d2l-checkpoint", type=Path, required=True)
     x.add_argument("--screen", type=Path)
-    x.add_argument("--screen-fit", type=Path, required=True)
-    x.add_argument("--probe", type=Path, action="append", required=True)
+    x.add_argument("--screen-fit", type=Path)
+    x.add_argument("--probe", type=Path, action="append")
     x.add_argument("--out", type=Path, required=True)
     a_ = sub.add_parser("analyze")
     a_.add_argument("--spec", type=Path, required=True)
     a_.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
+    if a.op == "trace-command":
+        print(json.dumps(write_json(a.out, trace_command(a.run_directory, a.output_directory))))
+        return 0
+    if a.op == "configs":
+        cfgs = dict(a.config)
+        require(len(cfgs) == len(a.config), "a run role is given twice")
+        result = {"lineage": a.lineage, **configs(a.lineage, read_json(a.screen),
+                                                  {r: read_json(path) for r, path in cfgs.items()})}
+        print(json.dumps(write_json(a.out, result)))
+        return 0 if result["pass"] else 1
     if a.op == "probes":
         runs = dict(a.run)
         require(len(runs) == len(a.run), "a run role is given twice")
@@ -713,10 +838,13 @@ def main(argv=None) -> int:
         print(json.dumps({"commands": pins}))
         return 0
     if a.op == "exactness":
+        require(bool(a.probe) == bool(a.screen_fit), "X3 takes the probes and the screen's FIT.json together")
         screen = read_json(a.screen) if a.screen else None
-        result = {"lineage": a.lineage, "x1": x1(a.lineage, read_json(a.rerun), a.d2l_checkpoint, screen),
-                  "x3": x3(a.lineage, [read_json(p) for p in a.probe], read_json(a.screen_fit))}
-        result["pass"] = result["x1"]["pass"] and result["x3"]["pass"]
+        result = {"lineage": a.lineage, "x1": x1(a.lineage, read_json(a.rerun), a.d2l_checkpoint, screen)}
+        # The first wave checks X1 alone; X3 needs the lineage's probes.
+        if a.probe:
+            result["x3"] = x3(a.lineage, [read_json(p) for p in a.probe], read_json(a.screen_fit))
+        result["pass"] = all(part["pass"] for part in (result["x1"], result.get("x3", {"pass": True})))
         print(json.dumps(write_json(a.out, result)))
         return 0 if result["pass"] else 1
     print(json.dumps(write_json(a.out, analyze_spec(read_json(a.spec)))))
