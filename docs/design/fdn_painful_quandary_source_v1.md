@@ -36,6 +36,10 @@ Five fixture bodies prepare actual mana-paid casts for both seats, optional
 payment/decline, empty hand, own casts, genuine spell copies, source departure,
 serialized restore, private projection, and payer/hand/path/branch/frame
 forgeries. They are preparation, with no reported runtime passes.
+The paid helper advances through cast finalization before asserting the spent
+five black mana, completed cast and spell stack entry. All five fixture groups
+cover both seats. Trigger program and constant use the same pure-Limited
+feature condition as their registry dispatch arm.
 
 Observed source checks: `cargo +1.94.1 fmt --all`, `git diff --check`, JSON/deck
 consistency, unchanged predecessor enum bodies, and unchanged 252-row FDN
@@ -43,3 +47,8 @@ registry prefix. No Rust build, check, test, clippy, native execution, GPU or
 paid work was performed. Parent-owned serial integration must reconcile the
 provisional local definition ID 444 with sibling additions, generate the real
 catalog hash and update compatible profiles. No catalog hash is predicted.
+The source registry canaries expect 445 total definitions / 253 FDN rows and
+exact Partial IDs Fake 442, Ravenous 443 and Quandary 444, with Full-only deck
+preflight refusal. The affected Python deck suite passed 61 tests and the
+frozen booster-pool suite passed 6 tests. Existing prefix hashes remain intact;
+the added Quandary canary binds its actual printing and prior 252-row prefix.

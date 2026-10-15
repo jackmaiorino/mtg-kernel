@@ -3450,6 +3450,10 @@ const DELVER_OF_SECRETS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDe
 /// static `CARD_DEFS` entry, but its by-name `match` is a long chain of string
 /// compares, and trigger collection calls it for every object in every zone on
 /// every committed event batch.
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn painful_quandary_payment_v1() -> EffectOp {
     EffectOp::MayDiscardCardOtherwiseV1 {
         player: PlayerRef::Opponent,
@@ -3459,6 +3463,10 @@ pub(crate) fn painful_quandary_payment_v1() -> EffectOp {
         }),
     }
 }
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 const PAINFUL_QUANDARY_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::OpponentCastsSpellV1,
     ..etb_trigger(painful_quandary_payment_v1)

@@ -2728,14 +2728,14 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 445 (Partial Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 447 (Partial Quandary, Spinner, Phoenix, Elenda, Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Partial Fake, Ravenous and Spinner append at ids 442-444.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                447
+                448
             } else {
                 192
             }
@@ -3186,6 +3186,7 @@ mod tests {
                 (444, "Elenda, Saint of Dusk"),
                 (445, "Flamewake Phoenix"),
                 (446, "Spinner of Souls"),
+                (447, "Painful Quandary"),
             ]
         } else {
             &[]
@@ -3231,9 +3232,11 @@ mod tests {
                     (443, "Ravenous Amulet", CardCapability::Partial),
                     (444, "Elenda, Saint of Dusk", CardCapability::Partial),
                     (445, "Flamewake Phoenix", CardCapability::Partial),
+                    (446, "Spinner of Souls", CardCapability::Partial),
+                    (447, "Painful Quandary", CardCapability::Partial),
                 ]
             );
-            for id in [442, 443, 444, 445] {
+            for id in [442, 443, 444, 445, 446, 447] {
                 assert!(matches!(
                     preflight_fully_supported_deck(&[id]),
                     Err(DeckPreflightError::NotFullySupported {

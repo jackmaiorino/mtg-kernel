@@ -60,8 +60,18 @@ fn paid_quandary(actor: PlayerId) -> (GameState, ObjectId) {
         engine::step(&mut state, Action::ActivateManaAbility(land)).unwrap();
         assert!(state.objects.get(land).tapped);
     }
+    assert_eq!(
+        state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()],
+        5
+    );
     engine::step(&mut state, Action::CastSpell(source)).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    assert!(state.engine.pending_cast.is_none());
     assert_eq!(state.stack.last().unwrap().source, source);
+    assert_eq!(state.stack.last().unwrap().kind, StackItemKind::Spell);
+    assert!(state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::SpellCast { spell, controller } if *spell == source && *controller == actor)));
     assert_eq!(
         state.players[actor.index()]
             .mana_pool
@@ -202,90 +212,94 @@ fn genuine_spell_copy_for_opponent_is_not_a_cast_and_creates_no_payment_trigger(
 
 #[test]
 fn unpaid_branch_payer_hand_generation_frames_and_answer_forgeries_are_rejected() {
-    let actor = PlayerId::P0;
-    let (mut state, _) = paid_quandary(actor);
-    put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
-    cast_think_twice(&mut state, actor.opponent());
-    payment(&mut state, actor.opponent());
-    for mutation in 0..5 {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, _) = paid_quandary(actor);
+        put(&mut state, actor.opponent(), "Lightning Bolt", Zone::Hand);
+        cast_think_twice(&mut state, actor.opponent());
+        payment(&mut state, actor.opponent());
+        for mutation in 0..5 {
+            let mut forged = state.clone();
+            let pending = forged.engine.pending_effect.as_mut().unwrap();
+            let Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::DiscardPaymentV1 { choice },
+                ..
+            }) = pending.choice.as_mut()
+            else {
+                panic!("wrong payment purpose")
+            };
+            match mutation {
+                0 => choice.player = actor,
+                1 => choice.hand[0].expected_zone_change_count += 1,
+                2 => {
+                    choice.unpaid = Box::new(EffectOp::LoseLife {
+                        player: crate::effect::PlayerRef::Opponent,
+                        amount: 50,
+                    })
+                }
+                3 => choice.path.push(0),
+                _ => pending.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: crate::effect::PlayerRef::Controller,
+                        count: 3,
+                    },
+                    path: vec![],
+                }),
+            }
+            assert!(effect::validate_pending_effect_choice(&forged).is_err());
+        }
+        // A matching answer guard cannot authorize an injected trailing program.
         let mut forged = state.clone();
         let pending = forged.engine.pending_effect.as_mut().unwrap();
         let Some(PendingEffectChoice::SelectTargets {
             purpose: EffectTargetSelectionPurpose::DiscardPaymentV1 { choice },
             ..
-        }) = pending.choice.as_mut()
+        }) = pending.choice.take()
         else {
             panic!("wrong payment purpose")
         };
-        match mutation {
-            0 => choice.player = actor,
-            1 => choice.hand[0].expected_zone_change_count += 1,
-            2 => {
-                choice.unpaid = Box::new(EffectOp::LoseLife {
-                    player: crate::effect::PlayerRef::Opponent,
-                    amount: 50,
-                })
-            }
-            3 => choice.path.push(0),
-            _ => pending.frames.push(EffectFrame::Program {
-                op: EffectOp::DrawCards {
-                    player: crate::effect::PlayerRef::Controller,
-                    count: 3,
-                },
-                path: vec![],
-            }),
-        }
+        let frame = EffectFrame::DiscardPaymentV1 {
+            choice,
+            selected: vec![],
+        };
+        pending.frames.push(EffectFrame::Program {
+            op: EffectOp::DrawCards {
+                player: crate::effect::PlayerRef::Controller,
+                count: 3,
+            },
+            path: vec![],
+        });
+        pending.frames.push(frame.clone());
+        pending.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
+            frame: Box::new(frame),
+        });
         assert!(effect::validate_pending_effect_choice(&forged).is_err());
     }
-    // A matching answer guard cannot authorize an injected trailing program.
-    let mut forged = state.clone();
-    let pending = forged.engine.pending_effect.as_mut().unwrap();
-    let Some(PendingEffectChoice::SelectTargets {
-        purpose: EffectTargetSelectionPurpose::DiscardPaymentV1 { choice },
-        ..
-    }) = pending.choice.take()
-    else {
-        panic!("wrong payment purpose")
-    };
-    let frame = EffectFrame::DiscardPaymentV1 {
-        choice,
-        selected: vec![],
-    };
-    pending.frames.push(EffectFrame::Program {
-        op: EffectOp::DrawCards {
-            player: crate::effect::PlayerRef::Controller,
-            count: 3,
-        },
-        path: vec![],
-    });
-    pending.frames.push(frame.clone());
-    pending.answered_choice_guard = Some(EffectAnsweredChoiceGuard::StandardSelection {
-        frame: Box::new(frame),
-    });
-    assert!(effect::validate_pending_effect_choice(&forged).is_err());
 }
 
 #[test]
 fn opponent_projection_redacts_unpaid_private_hand_candidates() {
-    let (mut state, _) = paid_quandary(PlayerId::P0);
-    put(&mut state, PlayerId::P1, "Lightning Bolt", Zone::Hand);
-    cast_think_twice(&mut state, PlayerId::P1);
-    payment(&mut state, PlayerId::P1);
-    let surface = crate::surface_v2::HarnessSurfaceV2::new();
-    let view = crate::rl::observe_v2(&state, &surface, PlayerId::P0, 0).unwrap();
-    let bytes = serde_json::to_string(&view).unwrap();
-    assert!(!bytes.contains("Lightning Bolt"));
-    let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-        view.projection.pending_effect.unwrap().choice
-    else {
-        panic!("payment projection missing")
-    };
-    assert!(legal_targets.is_empty());
-    let payer_view = crate::rl::observe_v2(&state, &surface, PlayerId::P1, 0).unwrap();
-    let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
-        payer_view.projection.pending_effect.unwrap().choice
-    else {
-        panic!("payer payment projection missing")
-    };
-    assert_eq!(legal_targets.len(), 1);
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let payer = actor.opponent();
+        let (mut state, _) = paid_quandary(actor);
+        put(&mut state, payer, "Lightning Bolt", Zone::Hand);
+        cast_think_twice(&mut state, payer);
+        payment(&mut state, payer);
+        let surface = crate::surface_v2::HarnessSurfaceV2::new();
+        let view = crate::rl::observe_v2(&state, &surface, actor, 0).unwrap();
+        let bytes = serde_json::to_string(&view).unwrap();
+        assert!(!bytes.contains("Lightning Bolt"));
+        let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
+            view.projection.pending_effect.unwrap().choice
+        else {
+            panic!("payment projection missing")
+        };
+        assert!(legal_targets.is_empty());
+        let payer_view = crate::rl::observe_v2(&state, &surface, payer, 0).unwrap();
+        let Some(crate::rl::PendingEffectChoiceSemanticV4::Targets { legal_targets, .. }) =
+            payer_view.projection.pending_effect.unwrap().choice
+        else {
+            panic!("payer payment projection missing")
+        };
+        assert_eq!(legal_targets.len(), 1);
+    }
 }
