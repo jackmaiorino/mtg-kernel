@@ -42,9 +42,10 @@ Equipment/Fishing grant lookup and the empty Lagrella return correction.
 The later printed-equip description and granted-ability wrapper correction
 also merge without conflict. V2 still uses the complete owning V47 path;
 this parent refresh adds no separate transport or gameplay qualification.
-Source review is clear. Pinned formatting and diff checks pass; all 75 Python
-tests pass after this refresh, including 11 V2 transport tests and 64 pool/deck
-tests. Written Rust cases cover
+Source review is clear. Diff checks pass. The earlier pinned formatting and
+75 Python passes remain compatible: the V2 code and all Python test inputs
+are unchanged, including 11 V2 transport tests and 64 pool/deck tests.
+Written Rust cases cover
 schema isolation, both-seat London privacy, replay/owner/retry/forgery boundaries,
 fresh resets for all six newer families, actual paid Angel/Panda trigger execution
 and uninterrupted-backend equality, and real combat scan/range/restore. Rust
