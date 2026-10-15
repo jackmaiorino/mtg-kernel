@@ -8,6 +8,8 @@ use crate::{
 };
 mod crystal;
 mod early_activation;
+mod eaten;
+mod enchantment_hunter;
 mod entry_attack;
 mod memorial_panda;
 mod rallier_bloom;
@@ -509,4 +511,30 @@ fn rallier_bloom_paid_cast_private_pick_and_mana_restore_fake_both_seats() {
 #[test]
 fn rallier_bloom_paid_cast_private_pick_and_mana_restore_ravenous_both_seats() {
     paid_rallier_bloom::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_enchantment_hunter<O: Owner>() {
+    enchantment_hunter::paid::<O>();
+    enchantment_hunter::privacy::<O>();
+}
+#[test]
+fn enchantment_hunter_paid_cast_trigger_restore_privacy_fake_both_seats() {
+    paid_enchantment_hunter::<FakeSession>();
+}
+#[test]
+fn enchantment_hunter_paid_cast_trigger_restore_privacy_ravenous_both_seats() {
+    paid_enchantment_hunter::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_eaten<O: Owner>() {
+    eaten::paid::<O>();
+    eaten::privacy::<O>();
+}
+#[test]
+fn eaten_paid_additional_branches_exile_restore_privacy_fake_both_seats() {
+    paid_eaten::<FakeSession>();
+}
+#[test]
+fn eaten_paid_additional_branches_exile_restore_privacy_ravenous_both_seats() {
+    paid_eaten::<RavenousSession>();
 }

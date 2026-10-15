@@ -1170,3 +1170,15 @@ fn tyrant_herald_paid_cast_damage_flash_restore_privacy_elendasession_both_seats
 fn rallier_bloom_paid_cast_private_pick_and_mana_restore_elenda_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<ElendaSession>();
 }
+
+#[test]
+fn enchantment_hunter_paid_cast_trigger_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_enchantment_hunter::<
+        ElendaSession,
+    >();
+}
+
+#[test]
+fn eaten_paid_additional_branches_exile_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<ElendaSession>();
+}

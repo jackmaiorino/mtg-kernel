@@ -151,6 +151,16 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
                 "printing":values["card_db_id"],"owner":values["owner"],
                 "controller":values["controller"],"zone":values["zone"]})
         }
+        Value::Object(values) if matches!(key, "selected_sacrifice" | "sacrificed_incarnation") => {
+            // These exact Eaten V46 fields use a distinct typed wire spelling.
+            // Preserve the same physical object/incarnation binding as stable
+            // references; unknown fields and unpaired generations still refuse.
+            let bound: crate::eaten_public_v46::IncarnationV46 =
+                serde_json::from_value(Value::Object(values.clone()))
+                    .map_err(|_| Error::UnsupportedOperand(key.into()))?;
+            json!({"object_ordinal":ordinal(&mut refs.objects,u64::from(bound.object)),
+                "incarnation_ordinal":ordinal(&mut refs.incarnations,(u64::from(bound.object),u64::from(bound.zone_change_count)))})
+        }
         Value::Object(values)
             if values.contains_key("object")
                 && values.contains_key("generation")
@@ -264,6 +274,9 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     // when the public catalog already supplied every trigger/replacement root.
     for id in &cards {
         if let Some(printing) = roots::registered_permanent_printing(*id)? {
+            meanings.push(printing);
+        }
+        if let Some(printing) = roots::registered_spell_printing(*id)? {
             meanings.push(printing);
         }
     }
