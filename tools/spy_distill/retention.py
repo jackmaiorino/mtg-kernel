@@ -14,13 +14,19 @@ the panel rows; nothing is played or trained here.
 - ``probes``: the probe commands of one lineage. Every probe holds the parent
   and D1L, then at most 62 run checkpoints (the engine reads at most 64
   candidates): updates 6, 12, ..., 162 of A-s0 and N-s0, and updates 18, 36,
-  ..., 162 of the other six runs;
+  ..., 162 of the other six runs. With no runs, one reference probe of the
+  parent and D1L alone, read before the first dispatch;
+- ``x3``: X3 (the parent's readouts identical in every probe, D1L's equal to
+  the screen's FIT.json ``L-step-1024``), first on the reference probe;
 - ``exactness``: X1 (A-s0's endpoint state and Adam step against the screen's
   D2L checkpoint and, while the screen's update records are on disk, every
   update record's X1 fields against the screen's) and, given the lineage's
-  probes, X3 (the parent's readouts identical in every probe, D1L's equal to
-  the screen's FIT.json ``L-step-1024``). The first wave checks X1 alone;
-  ``analyze`` checks X3 again before any reading;
+  probes, X3. The first wave checks X1 alone; ``analyze`` checks X3 again
+  before any reading;
+- ``analyze``: the config gate on the production configs, X1's result, X3,
+  each run bound to its role (its trace's completion, its manifest's episode
+  ids and seeds, its Spy learner episodes and its panels' endpoint), then the
+  paths, the traces and every panel, X4 first;
 - ``paths``: per run, the self path s(c) (the offer set's mean deployed
   self-target probability) and the Giant path g(c)
   (``archive.training.groups.giant_chosen.mean_deployed_probability``: the
@@ -28,9 +34,10 @@ the panel rows; nothing is played or trained here.
   rows L was fit on), with the summed Giant mass and the context readouts
   beside them; the retained share rho = path(endpoint) / path(D1L) and its
   class;
-- ``panels``: X4 (the screen's D2L-D1L intervals reproduced exactly), then
-  the screen's analyzer on every endpoint's panels: its direct contrast with
-  D1L over the same panel games;
+- ``panels``: X4 (the screen's D2L-D1L points and intervals for every panel
+  metric, against H, against T1 and pooled, reproduced exactly), then the
+  screen's analyzer on every endpoint's panels: its direct contrast with D1L
+  over the same panel games;
 - ``readings``: section 5's readings in the design's words.
 
 Run roles: A-s0 to A-s3 keep the Spy learner's units and N-s0 to N-s3 drop
@@ -46,18 +53,25 @@ CLI (JSON on stdout):
             (exits 1 when the gate fails)
   probes    --lineage r1 --parent P.json --d1l D1L.json --games GAMES.jsonl --bank BANK.json
             --completion-games GAMES.jsonl --completion-bank BANK.json --anchor ANCHOR.json
-            --offers OFFERS.json --run A-s0=RUN/completion.json [--run ROLE=...]
+            --offers OFFERS.json [--run A-s0=RUN/completion.json --run ROLE=...]
             --output-root DIR --out-dir CMDS
+            (no --run: the reference probe, {lineage}-probe-ref)
+  x3        --lineage r1 --screen-fit FIT.json --probe PROBE.json [--probe ...] --out X3.json
+            (exits 1 when X3 fails)
   exactness --lineage r1 --rerun RUN/completion.json --d2l-checkpoint D2L.json
             [--screen SCREEN_RUN/completion.json]
             [--screen-fit FIT.json --probe PROBE.json [--probe ...]] --out X.json
             (exits 1 when X1, or X3 when probes are given, fails)
   analyze   --spec SPEC.json --out RESULT.json
 SPEC: {"screen_fit": FIT.json, "screen_index": INDEX.json, "screen_result": RESULT.json,
-       "r1": {"runs": {"A-s0": RUN/completion.json, ...}, "probes": [PROBE.json, ...],
+       "r1": {"screen_config": SCREEN_D2L/CONFIG-prod.json,
+              "configs": {"A-s0": RUN/CONFIG-prod.json, ...}, "x1": X.json,
+              "runs": {"A-s0": RUN/completion.json, ...}, "probes": [PROBE.json, ...],
               "traces": {"A-s0": TRACE/trace.json, ...}, "panels": [PANEL_ENTRY, ...]},
        "r2": {...}}
-A PANEL_ENTRY is an analyzer index entry for checkpoint ``{lineage}-{role}``.
+X.json is A-s0's ``exactness`` output. A PANEL_ENTRY is an analyzer index
+entry for checkpoint ``{lineage}-{role}``, one per opponent for every run but
+A-s0.
 """
 from __future__ import annotations
 
@@ -195,14 +209,16 @@ def chunks(candidates: list[dict]) -> list[list[dict]]:
 def probe_commands(lineage: str, parent: dict, d1l: dict, games: Path, bank: Path, completion: tuple[Path, Path],
                    anchor: dict, offers: list, runs: dict, output_root: str) -> list[dict]:
     """Probe commands for the runs given (role -> completion record): the s0
-    runs' checkpoints first, then the other runs'."""
+    runs' checkpoints first, then the other runs'. With no runs, the
+    reference probe: the parent and D1L alone."""
     check_parent(lineage, parent)
     require(set(runs) <= set(RUNS), "unknown run role")
     dense = [c for role in DENSE if role in runs for c in run_candidates(role, runs[role])]
     sparse = [c for role in RUNS if role in runs and role not in DENSE for c in run_candidates(role, runs[role])]
+    groups = chunks(dense) + chunks(sparse) if runs else [[]]
     commands = []
-    for index, group in enumerate(chunks(dense) + chunks(sparse)):
-        directory = f"{output_root}/{lineage}-probe-{index}"
+    for index, group in enumerate(groups):
+        directory = f"{output_root}/{lineage}-probe-{index if runs else 'ref'}"
         command = phase1.probe_command(lineage, parent, d1l, games, bank, anchor, offers, [], directory, completion)
         command["candidates"] = [{"id": "parent", "source": parent}, {"id": D1L, "source": d1l}] + group
         require(len(command["candidates"]) <= PROBE_CANDIDATES, "a probe reads at most 64 candidates")
@@ -299,8 +315,8 @@ def x1(lineage: str, rerun: dict, d2l_checkpoint: Path, screen: dict | None = No
     end = phase2.check(lineage, rerun, d2l_checkpoint, D2L_CHECKPOINT_SHA256[lineage])
     out = {"endpoint": end}
     if screen is None:
-        out.update({"compared": "the endpoint only (the screen's update records are not on disk)",
-                    "pass": end["reproduced"]})
+        # The run log says why the screen's run was not given.
+        out.update({"compared": "the endpoint only (no screen run given)", "pass": end["reproduced"]})
         return out
     differ = [{"update": u["update"], "fields": [f for f in X1_FIELDS if u["record"][f] != v["record"][f]]}
               for u, v in zip(updates(rerun), updates(screen)) if u["record"] != v["record"]]
@@ -410,8 +426,9 @@ def paths(lineage: str, probes: list[dict], runs: dict) -> dict:
 
 
 def time_course(run_paths: dict, base: dict, trace: dict | None = None) -> dict:
-    """First read update at which rho falls below 0.5 and below 0.2 (s0
-    runs), with A-s0's summed push and slope over the updates before it."""
+    """First read update n at which rho falls below 0.5 and below 0.2 (s0
+    runs), with A-s0's summed push and slope over updates 1 to n: update n's
+    step is in the state read at n. Trace iteration i is update i + 1."""
     out = {}
     for d in DECISIONS:
         first = {}
@@ -420,9 +437,9 @@ def time_course(run_paths: dict, base: dict, trace: dict | None = None) -> dict:
                       if base[d] and p[d] is not None and p[d] / base[d] < limit), None)
             entry = {"update": n}
             if trace is not None and n is not None:
-                before = [it for it in trace["iterations"] if it["iteration"] + 1 < n]
-                entry["push_before"] = sum(it["push"][d]["total"] for it in before)
-                entry["slope_before"] = sum(it["push"][d]["slope_total"] for it in before)
+                through = [it for it in trace["iterations"] if it["iteration"] < n]
+                entry["push_through"] = sum(it["push"][d]["total"] for it in through)
+                entry["slope_through"] = sum(it["push"][d]["slope_total"] for it in through)
             first[name] = entry
         out[d] = first
     return out
@@ -563,25 +580,20 @@ def panel_reading(intervals: list) -> str:
 
 
 def x4(ci: dict, pts: dict, screen_result: dict, lineages) -> dict:
-    """The screen's D2L-D1L points and intervals for J, combo_resolved and the
-    Spy score, pooled, under both bounds, reproduced exactly."""
-    differ = []
-    for lineage in lineages:
-        for metric in analyze.DIRECT_CONTEXT:
-            for bound in analyze.BOUNDS:
-                key = (lineage, f"D2L-{D1L}", metric, "pooled", bound)
-                recorded = screen_result["contrasts"]["/".join(key)]
-                if key not in ci or recorded != {"point": pts[key], "ci95": ci[key]}:
-                    differ.append("/".join(key))
-    return {"compared": len(list(lineages)) * len(analyze.DIRECT_CONTEXT) * len(analyze.BOUNDS),
-            "differing": differ, "pass": not differ}
+    """The screen's D2L-D1L points and intervals for every panel metric,
+    against H, against T1 and pooled, under both bounds, reproduced
+    exactly."""
+    keys = [(lineage, f"D2L-{D1L}", metric, opp, bound) for lineage in lineages for metric in PANEL_METRICS
+            for opp in (*analyze.OPPONENTS, "pooled") for bound in analyze.BOUNDS]
+    differ = ["/".join(key) for key in keys
+              if key not in ci or screen_result["contrasts"].get("/".join(key)) != {"point": pts[key], "ci95": ci[key]}]
+    return {"compared": len(keys), "differing": differ, "pass": not differ}
 
 
 def panels(screen_index: dict, screen_result: dict, entries: dict) -> dict:
     """X4, then each endpoint's direct contrast with D1L over the same panel
-    games, by the screen's analyzer: J, combo_resolved and the Spy score for
-    the line, and the Spy, eight-deck and nine-deck scores as win-rate
-    effects."""
+    games, by the screen's analyzer: J and combo_resolved for the line, and
+    the Spy, eight-deck and nine-deck scores as win-rate effects."""
     allowed = set().union(*(panel_ids(lin) for lin in LINEAGES))
     reused = [p for p in screen_index["panels"] if p["checkpoint"].split("-", 1)[1] in (D1L, "D2L")]
     index = {"panels": reused + [e for lin in LINEAGES for e in entries.get(lin, [])]}
@@ -719,14 +731,27 @@ def attempts_statement(summary: dict, decision: str) -> str:
     return "not separated"
 
 
+IN_LINEAGE = ", in this lineage"
+# Wordings that say a reading does not apply in a lineage.
+NOT_APPLICABLE = (READING2["none"], "too few won line attempts to read", "too few to read")
+
+
 def across(per: dict) -> str:
-    """A reading holds across lineages when both give the same wording."""
+    """A reading holds across lineages when both give the same wording, then
+    read "in both lineages". Where one lineage's reading does not apply and
+    the other's does, it applies in that other lineage only, with its
+    wording. Any other difference is lineage-dependent."""
     values = {lin: per.get(lin) for lin in LINEAGES}
     if any(v is None for v in values.values()):
         missing = [lin for lin, v in values.items() if v is None]
         return f"not read in {', '.join(missing)}"
     first = values[LINEAGES[0]]
-    return first if all(v == first for v in values.values()) else "lineage-dependent"
+    if all(v == first for v in values.values()):
+        return first.removesuffix(IN_LINEAGE) + ", in both lineages"
+    applies = [lin for lin, v in values.items() if v not in NOT_APPLICABLE]
+    if len(applies) == 1:
+        return f"applies in {applies[0]} only: {values[applies[0]].removesuffix(IN_LINEAGE)}"
+    return "lineage-dependent"
 
 
 def panel_counts(lineage_panels: dict, runs) -> dict:
@@ -736,29 +761,100 @@ def panel_counts(lineage_panels: dict, runs) -> dict:
     return {"loss": sum(r == "behavioral loss of the line established" for r in readings),
             "gain": sum(r == "behavioral gain of the line established" for r in readings),
             "no change": sum(r == "no change established" for r in readings),
+            "unread": sum(r is None for r in readings),
             "endpoints choosing the self-target in no panel game": zero}
 
 
-def analyze_spec(spec: dict) -> dict:
+# ---------------------------------------------------------------- binding
+
+
+def read_with_sha256(path) -> tuple[dict, str]:
+    data = Path(path).read_bytes()
+    return json.loads(data), hashlib.sha256(data).hexdigest()
+
+
+def episode_keys(cfg: dict) -> list:
+    """Each update's episode ids and seeds, in order."""
+    return [[(item["episode"]["id"], item["episode"]["seed"]) for item in update["episodes"]]
+            for update in cfg["iterations"]]
+
+
+def spy_learner_ids(cfg: dict, spy: dict) -> list:
+    return sorted(item["episode"]["id"] for update in cfg["iterations"] for item in update["episodes"]
+                  if learner_deck(item) == spy)
+
+
+def bind_run(role: str, completion_sha256: str, trace: tuple, config: dict, spy: dict) -> None:
+    """A run and its trace are its role's: the trace reads this completion,
+    the run's manifest plays the role's config's episodes (ids and seeds,
+    update by update), and the traced Spy learner episodes are the config's:
+    180 in an A run, none in an N run."""
+    summary, _, episodes = trace
+    require(summary["completion"]["sha256"] == completion_sha256, f"{role}: the trace reads another run")
+    manifest = read_pinned(summary["run"])
+    require(episode_keys(manifest["config"]) == episode_keys(config),
+            f"{role}: the run did not play its config's episodes")
+    expected = spy_learner_ids(config, spy)
+    require(len(expected) == (phase2.SPY_LEARNER_EPISODES if role in A_RUNS else 0),
+            f"{role}: the config is not its arm's")
+    require(summary["spy_learner_episodes"] == len(expected) and sorted(e["episode"] for e in episodes) == expected,
+            f"{role}: the traced Spy learner episodes are not the run's")
+
+
+def bind_x1(lineage: str, result: dict, completion_sha256: str) -> dict:
+    """A-s0 takes D2L's panels only once X1 holds for this A-s0 run."""
+    require(result.get("lineage") == lineage and (result.get("rerun") or {}).get("sha256") == completion_sha256,
+            f"{lineage}: the X1 result is not this A-s0 run's")
+    require(result["x1"]["pass"], f"{lineage}: X1 failed")
+    return {"compared": result["x1"]["compared"], "endpoint": result["x1"]["endpoint"], "pass": True}
+
+
+def bind_panels(lineage: str, entries: list, runs: dict) -> None:
+    """Every run but A-s0 has one new panel per opponent, played by its own
+    endpoint."""
+    seen = set()
+    for entry in entries:
+        role = entry["checkpoint"].removeprefix(f"{lineage}-")
+        require(entry["checkpoint"] == f"{lineage}-{role}" and role in RUNS and PANEL_ROLE[role] == role,
+                f"{entry['checkpoint']}: not one of this lineage's new panels")
+        require(entry["checkpoint_sha256"] == runs[role]["source"]["checkpoint"]["sha256"],
+                f"{entry['checkpoint']}-vs-{entry['opponent']}: not that run's endpoint")
+        seen.add((role, entry["opponent"]))
+    missing = [f"{role}-vs-{opp}" for role in RUNS if PANEL_ROLE[role] == role for opp in analyze.OPPONENTS
+               if (role, opp) not in seen]
+    require(not missing, f"{lineage}: no panel for {missing}")
+
+
+def analyze_spec(spec: dict, decks: list[dict] | None = None) -> dict:
     screen_fit = read_json(spec["screen_fit"])
+    spy = (decks if decks is not None else pilot.load_decks())[pilot.SPY]
     result = {"schema": "spy-line-retention-v1/result", "lineages": {}}
     panel_entries = {}
     for lineage in LINEAGES:
         if lineage not in spec:
             continue
         part = spec[lineage]
-        runs = {role: read_json(path) for role, path in part["runs"].items()}
-        require(set(runs) == set(RUNS), f"{lineage}: all eight runs are required")
+        for field in ("configs", "runs", "traces"):
+            require(set(part[field]) == set(RUNS), f"{lineage}: every run's {field} are required")
+        cfgs = {role: read_json(path) for role, path in part["configs"].items()}
+        gate = configs(lineage, read_json(part["screen_config"]), cfgs, decks)
+        require(gate["pass"], f"{lineage}: the config gate failed")
+        loaded = {role: read_with_sha256(path) for role, path in part["runs"].items()}
+        runs = {role: value for role, (value, _) in loaded.items()}
+        exact = bind_x1(lineage, read_json(part["x1"]), loaded["A-s0"][1])
+        traces = {role: read_trace(path) for role, path in part["traces"].items()}
+        for role in RUNS:
+            bind_run(role, loaded[role][1], traces[role], cfgs[role], spy)
+        bind_panels(lineage, part["panels"], runs)
         probes = [read_json(p) for p in part["probes"]]
         x3_result = x3(lineage, probes, screen_fit)
         require(x3_result["pass"], f"{lineage}: X3 failed")
         p = paths(lineage, probes, runs)
         classes = {d: {role: p["runs"][role]["class"][d] for role in RUNS} for d in DECISIONS}
-        traces = {role: read_trace(path) for role, path in part["traces"].items()}
-        require(set(traces) == set(RUNS), f"{lineage}: every run's trace is required")
         summary = trace_summary([traces[role] for role in A_RUNS])
+        summary["push_by_run"] = {role: push_sums([traces[role][0]]) for role in A_RUNS}
         result["lineages"][lineage] = {
-            "x3": x3_result, "paths": p,
+            "configs": gate, "x1": exact, "x3": x3_result, "paths": p,
             "time_course": {role: time_course(p["runs"][role], p["d1l"],
                                               traces[role][0] if role in A_RUNS else None) for role in DENSE},
             "timeline": timeline(traces["A-s0"][0]),
@@ -770,13 +866,22 @@ def analyze_spec(spec: dict) -> dict:
                             for name, statement in (("credited", credited_statement), ("raw", raw_statement),
                                                     ("attempts", attempts_statement))},
                          "explanations": READING3_EXPLANATIONS, "raw_explanations": READING3_RAW_EXPLANATIONS}}
-        panel_entries[lineage] = part.get("panels", [])
+        panel_entries[lineage] = part["panels"]
     panel_result = panels(read_json(spec["screen_index"]), read_json(spec["screen_result"]), panel_entries)
     result["x4"] = panel_result["x4"]
     for lineage, entry in result["lineages"].items():
         lineage_panels = panel_result.get(lineage, {})
+        unread = [run for run in RUNS if PANEL_ROLE[run] not in lineage_panels]
+        require(not unread, f"{lineage}: no panel contrast for {unread}")
         entry["panels"] = lineage_panels
-        entry["panel_readings"] = {run: (lineage_panels.get(PANEL_ROLE[run]) or {}).get("reading") for run in RUNS}
+        # J's reading, with combo_resolved and the self-target counts beside
+        # it: a change in J can be one in playing the line or in winning
+        # with it.
+        entry["panel_readings"] = {run: {"J": lineage_panels[PANEL_ROLE[run]]["reading"],
+                                         "combo_resolved": lineage_panels[PANEL_ROLE[run]]["metrics"]["combo_resolved"],
+                                         "self_target": {opp: s["self_target"] for opp, s in
+                                                         lineage_panels[PANEL_ROLE[run]]["secondary"].items()}}
+                                   for run in RUNS}
         entry["panel_counts"] = {"A": panel_counts(lineage_panels, A_RUNS), "N": panel_counts(lineage_panels, N_RUNS)}
     per = result["lineages"]
     result["across"] = {f"reading{k}": {d: across({lin: per[lin][f"reading{k}"][d]["reading"] for lin in per})
@@ -793,9 +898,14 @@ def main(argv=None) -> int:
     p.add_argument("--lineage", required=True, choices=LINEAGES)
     for name in ("parent", "d1l", "games", "bank", "completion-games", "completion-bank", "anchor", "offers"):
         p.add_argument(f"--{name}", type=Path, required=True)
-    p.add_argument("--run", type=pairs, action="append", required=True)
+    p.add_argument("--run", type=pairs, action="append", default=[])
     p.add_argument("--output-root", required=True)
     p.add_argument("--out-dir", type=Path, required=True)
+    r = sub.add_parser("x3")
+    r.add_argument("--lineage", required=True, choices=LINEAGES)
+    r.add_argument("--screen-fit", type=Path, required=True)
+    r.add_argument("--probe", type=Path, action="append", required=True)
+    r.add_argument("--out", type=Path, required=True)
     t = sub.add_parser("trace-command")
     t.add_argument("--run-directory", type=Path, required=True)
     t.add_argument("--output-directory", required=True)
@@ -834,13 +944,21 @@ def main(argv=None) -> int:
                                   (a.completion_games, a.completion_bank), read_json(a.anchor),
                                   read_json(a.offers), {r: read_json(path) for r, path in runs.items()},
                                   a.output_root)
-        pins = [write_json(a.out_dir / f"{a.lineage}-probe-{i}.command.json", c) for i, c in enumerate(commands)]
+        pins = [write_json(a.out_dir / f"{c['output_directory'].rsplit('/', 1)[-1]}.command.json", c)
+                for c in commands]
         print(json.dumps({"commands": pins}))
         return 0
+    if a.op == "x3":
+        result = {"lineage": a.lineage, "probes": [pin(p) for p in a.probe],
+                  "x3": x3(a.lineage, [read_json(p) for p in a.probe], read_json(a.screen_fit))}
+        result["pass"] = result["x3"]["pass"]
+        print(json.dumps(write_json(a.out, result)))
+        return 0 if result["pass"] else 1
     if a.op == "exactness":
         require(bool(a.probe) == bool(a.screen_fit), "X3 takes the probes and the screen's FIT.json together")
         screen = read_json(a.screen) if a.screen else None
-        result = {"lineage": a.lineage, "x1": x1(a.lineage, read_json(a.rerun), a.d2l_checkpoint, screen)}
+        result = {"lineage": a.lineage, "rerun": pin(a.rerun), "screen": pin(a.screen) if a.screen else None,
+                  "x1": x1(a.lineage, read_json(a.rerun), a.d2l_checkpoint, screen)}
         # The first wave checks X1 alone; X3 needs the lineage's probes.
         if a.probe:
             result["x3"] = x3(a.lineage, [read_json(p) for p in a.probe], read_json(a.screen_fit))

@@ -67,6 +67,43 @@ def empty_trace(push=0.0):
                                      for d in retention.DECISIONS}} for n in range(UPDATES)]}
 
 
+def run_record(root: Path, name: str, states=None, first=None, changes=None) -> dict:
+    """A complete 162-update run's completion record with real receipt,
+    update record and checkpoint files; ``changes`` maps an update index to
+    update-record fields to change."""
+    directory = root / name
+    directory.mkdir()
+    states = states or [f"{name}-state-{n}" for n in range(1, UPDATES + 1)]
+    current = first or source("d1l")
+    pins = []
+    for index in range(UPDATES):
+        checkpoint = write(directory / f"ck-{index}.json", {"state_sha256": states[index],
+                                                            "adam_step": 1000 + index})
+        record = {"checkpoint": checkpoint, **x1_fields(states[index], index), **(changes or {}).get(index, {})}
+        update = write(directory / f"update-{index}.json", record)
+        receipt = {"schema": retention.ITERATION_SCHEMA, "iteration": index, "source": current,
+                   "update": update, "output_identity": {"state_sha256": states[index], "adam_step": 1000 + index,
+                                                         "checkpoint_sha256": f"{name}-{index}"}}
+        pins.append(write(directory / f"complete-{index}.json", receipt))
+        current = {**current, "checkpoint": checkpoint}
+    return {"schema": retention.RUN_SCHEMA, "complete": True, "completed_iterations": UPDATES,
+            "iterations": pins, "source": current,
+            "actual_identity": {"state_sha256": states[-1], "adam_step": 1000 + UPDATES - 1}}
+
+
+def probe_of(lineage: str, runs: dict, value, d1l_state: str = "d") -> dict:
+    """A probe of the parent, D1L and every read update of the runs given;
+    ``value(role, n)`` gives (s, g)."""
+    candidates = [readout("parent", "p", 5), readout("D1L", d1l_state, 9, self_p=0.2, giant_p=0.8)]
+    for role, record in runs.items():
+        for u in retention.updates(record):
+            if u["update"] in retention.read_updates(role):
+                s, g = value(role, u["update"])
+                candidates.append(readout(retention.candidate_id(role, u["update"]), u["state_sha256"],
+                                          u["adam_step"], self_p=s, giant_p=g))
+    return {"schema": retention.PROBE_SCHEMA, "complete": True, "lineage": lineage, "candidates": candidates}
+
+
 class Temp(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -74,27 +111,7 @@ class Temp(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def run_record(self, name: str, states=None, first=None, changes=None) -> dict:
-        """A complete 162-update run's completion record with real receipt,
-        update record and checkpoint files; ``changes`` maps an update index
-        to update-record fields to change."""
-        directory = self.root / name
-        directory.mkdir()
-        states = states or [f"{name}-state-{n}" for n in range(1, UPDATES + 1)]
-        current = first or source("d1l")
-        pins = []
-        for index in range(UPDATES):
-            checkpoint = write(directory / f"ck-{index}.json", {"state_sha256": states[index],
-                                                                "adam_step": 1000 + index})
-            record = {"checkpoint": checkpoint, **x1_fields(states[index], index), **(changes or {}).get(index, {})}
-            update = write(directory / f"update-{index}.json", record)
-            receipt = {"schema": retention.ITERATION_SCHEMA, "iteration": index, "source": current,
-                       "update": update, "output_identity": {"state_sha256": states[index], "adam_step": 1000 + index,
-                                                             "checkpoint_sha256": f"{name}-{index}"}}
-            pins.append(write(directory / f"complete-{index}.json", receipt))
-            current = {**current, "checkpoint": checkpoint}
-        return {"schema": retention.RUN_SCHEMA, "complete": True, "completed_iterations": UPDATES,
-                "iterations": pins, "source": current,
-                "actual_identity": {"state_sha256": states[-1], "adam_step": 1000 + UPDATES - 1}}
+        return run_record(self.root, name, states, first, changes)
 
 
 class Updates(Temp):
@@ -159,6 +176,11 @@ class Probes(Temp):
         alone = retention.probe_commands("r1", source("parent"), source("d1l"), games, bank, (c_games, bank), {},
                                          [], {"A-s0": runs["A-s0"]}, "/rt1/probe")
         self.assertEqual([len(c["candidates"]) for c in alone], [29])
+        # With no runs, the reference probe reads the parent and D1L alone.
+        reference = retention.probe_commands("r1", source("parent"), source("d1l"), games, bank, (c_games, bank),
+                                             {}, [], {}, "/rt1/probe")
+        self.assertEqual([[c["id"] for c in command["candidates"]] for command in reference], [["parent", "D1L"]])
+        self.assertEqual(reference[0]["output_directory"], "/rt1/probe/r1-probe-ref")
         with self.assertRaisesRegex(ValueError, "parent"):
             retention.probe_commands("r1", source("d1l"), source("d1l"), games, bank, (c_games, bank), {}, [],
                                      runs, "d")
@@ -267,7 +289,7 @@ class Exactness(Temp):
             self.assertEqual(result["differing_updates"], [{"update": 11, "fields": ["loss"]}])
             only = retention.x1("r1", same, d2l)
             self.assertTrue(only["pass"])
-            self.assertIn("endpoint only", only["compared"])
+            self.assertEqual(only["compared"], "the endpoint only (no screen run given)")
             moved = self.run_record("moved")
             self.assertFalse(retention.x1("r1", moved, d2l)["pass"])
         with self.assertRaisesRegex(ValueError, "not the recorded r1 checkpoint"):
@@ -288,6 +310,7 @@ class Exactness(Temp):
             result = json.loads(out.read_text())
             self.assertEqual((result["pass"], "x3" in result), (True, False))
             self.assertEqual(result["x1"]["compared"], "every update record and the endpoint")
+            self.assertEqual(result["rerun"]["sha256"], hashlib.sha256(rerun.read_bytes()).hexdigest())
             with self.assertRaisesRegex(ValueError, "together"):
                 retention.main(args + ["--probe", str(out)])
 
@@ -303,6 +326,16 @@ class Exactness(Temp):
                     "candidates": [readout("parent", "p", 5, self_p=parent_p),
                                    readout("D1L", "d1l-state", 9, self_p=d1l_p, giant_p=d1l_giant)]}
         self.assertTrue(retention.x3("r1", [probe(), probe()], fit)["pass"])
+        # Before the first dispatch: the reference probe alone, by the x3 command.
+        fit_path, probe_path, out = self.root / "fit.json", self.root / "ref.json", self.root / "x3.json"
+        fit_path.write_text(json.dumps(fit))
+        probe_path.write_text(json.dumps(probe()))
+        args = ["x3", "--lineage", "r1", "--screen-fit", str(fit_path), "--probe", str(probe_path), "--out", str(out)]
+        with mock.patch("sys.stdout"):
+            self.assertEqual(retention.main(args), 0)
+            self.assertTrue(json.loads(out.read_text())["pass"])
+            probe_path.write_text(json.dumps(probe(d1l_p=0.21)))
+            self.assertEqual(retention.main(args), 1)
         self.assertFalse(retention.x3("r1", [probe(), probe(parent_p=0.31)], fit)["parent_identical"])
         self.assertFalse(retention.x3("r1", [probe(d1l_p=0.21)], fit)["d1l_equals_fit"])
         # The Giant path is the target action's probability, not the summed Giant mass.
@@ -311,14 +344,7 @@ class Exactness(Temp):
 
 class Paths(Temp):
     def probe(self, runs, value):
-        candidates = [readout("parent", "p", 5), readout("D1L", "d", 9, self_p=0.2, giant_p=0.8)]
-        for role, record in runs.items():
-            for u in retention.updates(record):
-                if u["update"] in retention.read_updates(role):
-                    s, g = value(role, u["update"])
-                    candidates.append(readout(retention.candidate_id(role, u["update"]), u["state_sha256"],
-                                              u["adam_step"], self_p=s, giant_p=g))
-        return {"schema": retention.PROBE_SCHEMA, "complete": True, "lineage": "r1", "candidates": candidates}
+        return probe_of("r1", runs, value)
 
     def test_rho_classes_and_time_course_follow_the_paths(self):
         runs = {"A-s0": self.run_record("A-s0"), "A-s1": self.run_record("A-s1")}
@@ -340,8 +366,10 @@ class Paths(Temp):
         course = retention.time_course(a0, out["d1l"])
         self.assertEqual(course["self"], {"below_0.5": {"update": 84}, "below_0.2": {"update": 132}})
         self.assertEqual(course["giant"], {"below_0.5": {"update": None}, "below_0.2": {"update": None}})
+        # Update 84's step is in the state read at update 84.
         course = retention.time_course(a0, out["d1l"], empty_trace(push=0.5))
-        self.assertEqual(course["self"]["below_0.5"], {"update": 84, "push_before": 0.5 * 83, "slope_before": 0.25 * 83})
+        self.assertEqual(course["self"]["below_0.5"],
+                         {"update": 84, "push_through": 0.5 * 84, "slope_through": 0.25 * 84})
 
     def test_a_probe_of_another_state_is_refused(self):
         runs = {"A-s1": self.run_record("A-s1")}
@@ -438,9 +466,21 @@ class Readings(unittest.TestCase):
         self.assertIsNone(retention.wilson(0, 0))
 
     def test_across_lineages(self):
-        self.assertEqual(retention.across({"r1": "a", "r2": "a"}), "a")
-        self.assertEqual(retention.across({"r1": "a", "r2": "b"}), "lineage-dependent")
-        self.assertEqual(retention.across({"r1": "a"}), "not read in r2")
+        kept = retention.READING1["reliably kept"]
+        needed = retention.READING2["needed"]
+        self.assertEqual(retention.across({"r1": kept, "r2": kept}),
+                         "ordinary training from D1L reliably kept this decision's probability at the fixed states, "
+                         "in both lineages")
+        self.assertEqual(retention.across({"r1": kept, "r2": retention.READING1["other"]}), "lineage-dependent")
+        self.assertEqual(retention.across({"r1": kept}), "not read in r2")
+        # A lineage where the reading does not apply is named.
+        self.assertEqual(retention.across({"r1": retention.READING2["none"], "r2": needed}),
+                         "applies in r2 only: " + needed.removesuffix(", in this lineage"))
+        self.assertEqual(retention.across({"r1": "not separated", "r2": "too few to read"}),
+                         "applies in r1 only: not separated")
+        self.assertEqual(retention.across({"r1": "too few won line attempts to read",
+                                           "r2": "too few won line attempts to read"}),
+                         "too few won line attempts to read, in both lineages")
 
 
 class Panels(panels_fixture.Fixture):
@@ -461,7 +501,7 @@ class Panels(panels_fixture.Fixture):
         entries = {"r2": [screen_panel(f"r2-{role}", opp, combo) for role, combo in (("A-s1", half), ("N-s2", every))
                           for opp in ("T1", "H")]}
         out = retention.panels(screen, screen_result, entries)
-        self.assertEqual(out["x4"], {"compared": 6, "differing": [], "pass": True})
+        self.assertEqual(out["x4"], {"compared": 30, "differing": [], "pass": True})
         out = out["r2"]
         self.assertEqual(set(out), {"D2L", "A-s1", "N-s2"})
         self.assertEqual(out["D2L"]["reading"], "behavioral loss of the line established")
@@ -474,10 +514,180 @@ class Panels(panels_fixture.Fixture):
         counts = retention.panel_counts(out, retention.A_RUNS)
         self.assertEqual((counts["loss"], counts["no change"]), (1, 1))
         self.assertEqual(counts["endpoints choosing the self-target in no panel game"], 1)
-        changed = json.loads(json.dumps(screen_result))
-        changed["contrasts"]["r2/D2L-D1L/J/pooled/worst"]["ci95"][0] -= 1e-9
-        with self.assertRaisesRegex(ValueError, "X4 failed: \\['r2/D2L-D1L/J/pooled/worst'\\]"):
-            retention.panels(screen, changed, entries)
+        for key in ("r2/D2L-D1L/J/pooled/worst", "r2/D2L-D1L/nine_deck/H/best"):
+            changed = json.loads(json.dumps(screen_result))
+            changed["contrasts"][key]["ci95"][0] -= 1e-9
+            with self.assertRaisesRegex(ValueError, f"X4 failed: \\['{key}'\\]"):
+                retention.panels(screen, changed, entries)
+
+
+def write_lines(path: Path, items) -> dict:
+    path.write_bytes("".join(json.dumps(item) + "\n" for item in items).encode())
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+def sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class Analysis(unittest.TestCase):
+    """analyze_spec on one lineage, each run bound to its role through its
+    config, completion, trace, X1 result and panels."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.root = root = Path(cls.temp.name)
+        cls.draws = mock.patch.object(retention.analyze, "DRAWS", panels_fixture.DRAWS)
+        cls.draws.start()
+        decks = tools_fixture.DECKS
+        cls.spy = decks[tools_fixture.pilot.SPY]
+        saved = root / "checkpoint-step-1024.json"
+        saved.write_text(json.dumps({"archive_distillation": {"method": "spy-archive-distillation-phase1-v1"}}))
+        d1l = {**tools_fixture.source("r1"), "checkpoint": {"path": str(saved), "sha256": "7" * 64}}
+        o = tools_fixture.o_config()
+        cls.cfgs = {role: phase2.config("r1", o, d1l, 4, f"D:/rt1/train/r1-{role}/native", decks,
+                                        replicate=int(role[-1]), drop_spy_learner=role.startswith("N"))
+                    for role in retention.RUNS}
+        part = {"screen_config": cls.json("screen-config.json",
+                                          phase2.config("r1", o, d1l, 8, "D:/screen/train/r1-D2L/native", decks)),
+                "configs": {role: cls.json(f"{role}-config.json", cfg) for role, cfg in cls.cfgs.items()}}
+        cls.runs = {role: run_record(root, role) for role in retention.RUNS}
+        part["runs"] = {role: cls.json(f"{role}-completion.json", run) for role, run in cls.runs.items()}
+        part["traces"] = {role: cls.trace(role, part["runs"][role]) for role in retention.RUNS}
+        part["x1"] = cls.x1_result(part["runs"]["A-s0"], True)
+
+        def value(role, n):
+            return (0.2 * (1 - n / UPDATES), 0.8) if role.startswith("A") else (0.19, 0.79)
+        part["probes"] = [cls.json("probe.json", probe_of("r1", cls.runs, value, d1l_state="d1l-state"))]
+        fit = {"fits": {"r1": {"L": {"read": [
+            {"candidate": "L-step-1024", "state_sha256": "d1l-state",
+             "learner_offers": {"mean_deployed_self_probability": 0.2},
+             "G1": {"self": {"mean_deployed_probability": 0.9}, "giant": {"mean_deployed_probability": 0.8}}}]}}}}
+        half = lambda o, t, k, s: o == analyze.SPY and k < 6  # noqa: E731
+        every = lambda o, t, k, s: o == analyze.SPY  # noqa: E731
+        never = lambda o, t, k, s: False  # noqa: E731
+
+        def panel(name, opp, combo, sha="a" * 64):
+            return panels_fixture.panel(root / "panels", name, opp, panels_fixture.constant(lambda o, t, k, s: 1, combo),
+                                        sha)
+        screen = {"panels": [panel(f"r1-{role}", opp, half if role == "D1L" else never)
+                             for role in ("D1L", "D2L", "parent") for opp in ("T1", "H")]}
+        combos = {"A-s1": half, "A-s2": never, "A-s3": half, "N-s0": every, "N-s1": half, "N-s2": half, "N-s3": half}
+        part["panels"] = [panel(f"r1-{role}", opp, combo, cls.runs[role]["source"]["checkpoint"]["sha256"])
+                          for role, combo in combos.items() for opp in ("T1", "H")]
+        cls.spec = {"screen_fit": cls.json("fit.json", fit), "screen_index": cls.json("index.json", screen),
+                    "screen_result": cls.json("result.json", retention.analyze.analyze(screen, None)), "r1": part}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.draws.stop()
+        cls.temp.cleanup()
+
+    @classmethod
+    def json(cls, name: str, value) -> str:
+        path = cls.root / name
+        path.write_text(json.dumps(value))
+        return str(path)
+
+    @classmethod
+    def trace(cls, role: str, completion: str, drop: int = 0, name: str = "") -> str:
+        directory = cls.root / f"trace-{role}{name}"
+        directory.mkdir()
+        manifest = write(directory / "run.json", {"schema": retention.RUN_SCHEMA, "config": cls.cfgs[role]})
+        ids = retention.spy_learner_ids(cls.cfgs[role], cls.spy)[drop:]
+        episodes = [{"episode": eid, "learner_seat": int(eid[-1]), "starting_player": k % 2,
+                     "self": {"offered": 1, "chosen": int(k % 3 == 0)},
+                     "giant": {"offered": int(k % 3 == 0), "chosen": int(k % 6 == 0)},
+                     "cast": {"offered": 1, "chosen": 1}, "line_completed": k % 6 == 0,
+                     "terminal_return": 1 if k % 2 == 0 else -1} for k, eid in enumerate(ids)]
+        rows = [trace_row(True, k % 2 == 0, -0.1 if k % 2 == 0 else 0.3) for k in range(12)] if ids else []
+        trace = {"schema": retention.TRACE_SCHEMA, "complete": True, "x2": "passed", "run": manifest,
+                 "completion": {"path": completion, "sha256": sha256(completion)},
+                 "iterations": empty_trace(push=0.01)["iterations"],
+                 "rows": write_lines(directory / "rows.jsonl", rows),
+                 "episodes": write_lines(directory / "episodes.jsonl", episodes), "spy_learner_episodes": len(ids)}
+        return cls.json(f"trace-{role}{name}.json", trace)
+
+    @classmethod
+    def x1_result(cls, rerun: str, passed: bool, name: str = "x1.json") -> str:
+        return cls.json(name, {"lineage": "r1", "rerun": {"path": rerun, "sha256": sha256(rerun)},
+                               "x1": {"pass": passed, "compared": "every update record and the endpoint",
+                                      "endpoint": {"reproduced": passed}}})
+
+    def changed(self, **fields) -> dict:
+        spec = json.loads(json.dumps(self.spec))
+        spec["r1"].update(fields)
+        return spec
+
+    def test_every_run_is_read_through_its_bindings(self):
+        result = retention.analyze_spec(self.spec, tools_fixture.DECKS)
+        out = result["lineages"]["r1"]
+        self.assertEqual((out["configs"]["pass"], out["x1"]["pass"], out["x3"]["pass"]), (True, True, True))
+        self.assertEqual(result["x4"], {"compared": 30, "differing": [], "pass": True})
+        self.assertEqual(out["reading1"]["self"]["reading"], retention.READING1["reliably lost"])
+        self.assertEqual(out["reading1"]["giant"]["reading"], retention.READING1["reliably kept"])
+        self.assertEqual(out["reading2"]["self"]["reading"], retention.READING2["needed"])
+        self.assertEqual(out["reading2"]["giant"]["reading"], retention.READING2["none"])
+        self.assertEqual({run: r["J"] for run, r in out["panel_readings"].items()},
+                         {"A-s0": "behavioral loss of the line established",
+                          "A-s1": "no change established", "A-s2": "behavioral loss of the line established",
+                          "A-s3": "no change established", "N-s0": "behavioral gain of the line established",
+                          "N-s1": "no change established", "N-s2": "no change established",
+                          "N-s3": "no change established"})
+        self.assertEqual(set(out["panel_readings"]["A-s1"]["combo_resolved"]), {"worst", "best"})
+        self.assertEqual(set(out["panel_readings"]["A-s1"]["self_target"]), {"T1", "H"})
+        self.assertEqual({k: out["panel_counts"]["A"][k] for k in ("loss", "gain", "no change", "unread")},
+                         {"loss": 2, "gain": 0, "no change": 2, "unread": 0})
+        self.assertEqual(out["panel_counts"]["N"]["gain"], 1)
+        summary = out["reading3"]["summary"]
+        self.assertEqual(summary["spy_learner_episodes"], 4 * phase2.SPY_LEARNER_EPISODES)
+        self.assertEqual(set(summary["push_by_run"]), set(retention.A_RUNS))
+        self.assertAlmostEqual(out["time_course"]["A-s0"]["self"]["below_0.5"]["push_through"],
+                               0.01 * out["time_course"]["A-s0"]["self"]["below_0.5"]["update"])
+        self.assertEqual(result["across"]["reading1"]["self"], "not read in r2")
+
+    def test_a_trace_bound_to_another_run_is_refused(self):
+        part = self.spec["r1"]
+        traces = dict(part["traces"], **{"A-s1": part["traces"]["N-s1"]})
+        with self.assertRaisesRegex(ValueError, "A-s1: the trace reads another run"):
+            retention.analyze_spec(self.changed(traces=traces), tools_fixture.DECKS)
+        # Swapping two runs with their traces leaves each completion with its
+        # trace, but not with its role's episodes.
+        runs = dict(part["runs"], **{"A-s1": part["runs"]["A-s2"], "A-s2": part["runs"]["A-s1"]})
+        traces = dict(part["traces"], **{"A-s1": part["traces"]["A-s2"], "A-s2": part["traces"]["A-s1"]})
+        with self.assertRaisesRegex(ValueError, "A-s1: the run did not play its config's episodes"):
+            retention.analyze_spec(self.changed(runs=runs, traces=traces), tools_fixture.DECKS)
+        short = self.trace("A-s3", part["runs"]["A-s3"], drop=1, name="-short")
+        with self.assertRaisesRegex(ValueError, "A-s3: the traced Spy learner episodes are not the run's"):
+            retention.analyze_spec(self.changed(traces=dict(part["traces"], **{"A-s3": short})), tools_fixture.DECKS)
+
+    def test_x1_must_hold_for_this_a_s0_run(self):
+        part = self.spec["r1"]
+        failed = self.x1_result(part["runs"]["A-s0"], False, "x1-failed.json")
+        with self.assertRaisesRegex(ValueError, "r1: X1 failed"):
+            retention.analyze_spec(self.changed(x1=failed), tools_fixture.DECKS)
+        other = self.x1_result(part["runs"]["A-s1"], True, "x1-other.json")
+        with self.assertRaisesRegex(ValueError, "not this A-s0 run's"):
+            retention.analyze_spec(self.changed(x1=other), tools_fixture.DECKS)
+
+    def test_panels_must_be_each_runs_own_and_complete(self):
+        entries = self.spec["r1"]["panels"]
+        wrong = json.loads(json.dumps(entries))
+        wrong[0]["checkpoint_sha256"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "r1-A-s1-vs-T1: not that run's endpoint"):
+            retention.analyze_spec(self.changed(panels=wrong), tools_fixture.DECKS)
+        missing = [e for e in entries if (e["checkpoint"], e["opponent"]) != ("r1-N-s2", "H")]
+        with self.assertRaisesRegex(ValueError, "no panel for \\['N-s2-vs-H'\\]"):
+            retention.analyze_spec(self.changed(panels=missing), tools_fixture.DECKS)
+        a0 = entries + [dict(entries[0], checkpoint="r1-A-s0")]
+        with self.assertRaisesRegex(ValueError, "r1-A-s0: not one of this lineage's new panels"):
+            retention.analyze_spec(self.changed(panels=a0), tools_fixture.DECKS)
+
+    def test_the_config_gate_runs_on_the_production_configs(self):
+        configs = dict(self.spec["r1"]["configs"], **{"A-s2": self.spec["r1"]["configs"]["A-s1"]})
+        with self.assertRaisesRegex(ValueError, "r1: the config gate failed"):
+            retention.analyze_spec(self.changed(configs=configs), tools_fixture.DECKS)
 
 
 if __name__ == "__main__":
