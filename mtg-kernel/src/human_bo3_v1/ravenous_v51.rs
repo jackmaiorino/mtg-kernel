@@ -850,6 +850,28 @@ pub(super) fn project_base_with_handles(
     project_with_handles(observation, actions, human, families, true)
 }
 
+/// Shared by fixed-seat Human and actor-facing V3 transport. The complete
+/// V51 artifact and exact row values are checked before any safe DTO exists.
+pub(super) fn project_exact_base_with_handles(
+    observation: &RavenousObservationV51,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        HumanVisibleStateRavenousV51,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) =
+        project_base_with_handles(observation, actions, human, families)?;
+    let state = exact_state::project(state, observation, &handles)?;
+    Ok((state, actions, indexes, handles))
+}
+
 type ProjectionWithHandles = (
     HumanVisibleStateV1<HumanRavenousExtensionsV51>,
     Vec<HumanLegalActionV1>,
@@ -1241,9 +1263,12 @@ impl HumanRavenousProjectorV51 {
             .next_prompt_seq
             .checked_add(1)
             .ok_or(Error::PromptSequenceExhausted)?;
-        let (state, actions, engine_indexes, handles) =
-            project_base_with_handles(&observation, &actions, self.human_seat, &binding.families)?;
-        let state = exact_state::project(state, &observation, &handles)?;
+        let (state, actions, engine_indexes, _) = project_exact_base_with_handles(
+            &observation,
+            &actions,
+            self.human_seat,
+            &binding.families,
+        )?;
         let visible = HumanDecisionRavenousV51 {
             schema: "mtg-kernel-human-ravenous-decision/v51".into(),
             human_seat: self.human_seat,

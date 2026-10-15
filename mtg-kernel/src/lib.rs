@@ -199,6 +199,7 @@ pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod limited_common_session_v1;
 pub mod limited_common_session_v2;
+pub mod limited_common_session_v3;
 pub mod limited_session_v1;
 pub mod london_mulligan_v1;
 pub mod mana;
