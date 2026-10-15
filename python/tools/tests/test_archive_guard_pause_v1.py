@@ -58,6 +58,7 @@ class PauseChecks(unittest.TestCase):
                 self.guard.check()
         self.guard.tree.set_suspended.assert_not_called()
 
+    @unittest.skipUnless(os.name == "nt", "Windows suspended process creation API")
     def test_default_spawn_retains_suspended_adoption_and_initial_resume(self):
         self.guard.pause_on_reservation = False
         self.guard.check = mock.Mock()
@@ -131,6 +132,7 @@ class PauseChecks(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "reserve unavailable"):
                     self.guard.check(admission=True)
 
+    @unittest.skipUnless(os.name == "nt", "Windows suspended process creation API")
     def test_new_conflict_at_spawn_adds_pause_before_removing_creation_count(self):
         self.guard.check = mock.Mock()
         child = mock.Mock(pid=789, _handle=123)
