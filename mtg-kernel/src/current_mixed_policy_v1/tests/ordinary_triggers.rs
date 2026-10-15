@@ -11,6 +11,7 @@ mod early_activation;
 mod eaten;
 mod enchantment_hunter;
 mod entry_attack;
+mod faebloom;
 mod memorial_panda;
 mod rallier_bloom;
 mod tyrant_herald;
@@ -537,4 +538,17 @@ fn eaten_paid_additional_branches_exile_restore_privacy_fake_both_seats() {
 #[test]
 fn eaten_paid_additional_branches_exile_restore_privacy_ravenous_both_seats() {
     paid_eaten::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_faebloom<O: Owner>() {
+    faebloom::paid::<O>();
+    faebloom::privacy::<O>();
+}
+#[test]
+fn faebloom_paid_instant_reflexive_season_restore_privacy_fake_both_seats() {
+    paid_faebloom::<FakeSession>();
+}
+#[test]
+fn faebloom_paid_instant_reflexive_season_restore_privacy_ravenous_both_seats() {
+    paid_faebloom::<RavenousSession>();
 }

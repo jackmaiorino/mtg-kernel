@@ -1182,3 +1182,8 @@ fn enchantment_hunter_paid_cast_trigger_restore_privacy_elendasession_both_seats
 fn eaten_paid_additional_branches_exile_restore_privacy_elendasession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<ElendaSession>();
 }
+
+#[test]
+fn faebloom_paid_instant_reflexive_season_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_faebloom::<ElendaSession>();
+}
