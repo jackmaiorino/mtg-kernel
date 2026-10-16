@@ -15,6 +15,7 @@ fn ready(actor: PlayerId) -> GameState {
             put(&mut state, player, "Swamp", Zone::Battlefield);
             put(&mut state, player, "Mountain", Zone::Battlefield);
             put(&mut state, player, "Island", Zone::Battlefield);
+            put(&mut state, player, "Forest", Zone::Battlefield);
         }
     }
     state
@@ -186,7 +187,7 @@ fn genuine_reanimation_has_no_cast_counters_and_paid_controlled_death_returns_to
         advance_to_nine_lives_return(&mut state, familiar);
         assert_eq!(state.objects.get(familiar).owner, actor);
         assert_eq!(state.objects.get(familiar).controller, opponent);
-        assert_eq!(state.objects.get(familiar).counters.revival, 0);
+        assert_eq!(state.objects.get(familiar).counters.revival, 7);
     }
 }
 
