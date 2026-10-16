@@ -307,7 +307,7 @@ mod tests {
         let mut prefix = Vec::new();
         let d = loop {
             let d = decision(&session).unwrap();
-            if acting(&d) == PlayerId(src.seat) && d.legal_action_count >= 2 {
+            if !prefix.is_empty() && acting(&d) == PlayerId(src.seat) && d.legal_action_count >= 2 {
                 break d;
             }
             assert!(prefix.len() < MAX_PREFIX as usize);
@@ -500,6 +500,10 @@ mod tests {
             assert_eq!(batch["cases"][2]["case"]["id"], "missing-record");
             assert_eq!(batch["cases"][2]["status"], "error");
             assert_eq!(batch["cases"][2]["prefix_transitions"], 0);
+            let first = batch["cases"][0]["prefix_transitions"].as_u64().unwrap();
+            let failed = batch["cases"][1]["prefix_transitions"].as_u64().unwrap();
+            assert!(first > 0 && failed > 0);
+            assert_eq!(batch["prefix_transitions"], first + failed);
         });
     }
 
