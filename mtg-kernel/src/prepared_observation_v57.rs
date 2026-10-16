@@ -73,6 +73,7 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_quandary_v55.rs"),
             include_str!("rules_meaning_phoenix_v56.rs"),
             include_str!("akroma_family_public_v40.rs"),
+            include_str!("juggernaut_public_v1.rs"),
             include_str!("crystal_public_v1.rs"),
             include_str!("twinflame_observation_v1.rs"),
             include_str!("engine.rs"),

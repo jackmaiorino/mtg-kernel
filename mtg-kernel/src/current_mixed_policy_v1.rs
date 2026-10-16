@@ -171,6 +171,7 @@ pub fn feature_identity() -> String {
             include_str!("rules_meaning_high_society_hunter_v1.rs"),
             include_str!("rules_meaning_inspiration_v1.rs"),
             include_str!("rules_meaning_juggernaut_v1.rs"),
+            include_str!("juggernaut_public_v1.rs"),
             include_str!("rules_meaning_krenko_v1.rs"),
             include_str!("rules_meaning_librarian_v1.rs"),
             include_str!("rules_meaning_ooze_v1.rs"),
