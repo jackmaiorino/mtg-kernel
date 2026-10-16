@@ -832,6 +832,10 @@ impl NativePolicyValueNetV1 {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "preserve the existing scalar path with independently optional successor inputs"
+    )]
     fn forward_registration_validated_rows_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,

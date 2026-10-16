@@ -208,7 +208,7 @@ impl RegistrationFeatureRowsV1 {
         }
         let mut cards = Vec::with_capacity(size as usize);
         for (card, &count) in self.counts.iter().enumerate() {
-            cards.extend(std::iter::repeat(card as u16).take(count as usize));
+            cards.extend(std::iter::repeat_n(card as u16, count as usize));
         }
         if mainboard_slice_sha256_v1(&cards) != self.selected_mainboard_sha256 {
             return Err("own registration mainboard digest differs".into());
