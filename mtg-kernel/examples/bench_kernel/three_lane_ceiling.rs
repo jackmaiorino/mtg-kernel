@@ -440,6 +440,11 @@ fn sample_blocker_choice(rng: &mut SplitMix64, count: usize) -> Option<usize> {
 
 fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
     match decision {
+        Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseFullRangeCastXValueV59 { .. } => Err(
+            "creature-type entry and full-range cast-X are outside the frozen H2 benchmark surface"
+                .into(),
+        ),
         Decision::ChooseEntryColorV36 { .. } => {
             Err("Banner entry color is outside the frozen H2 benchmark surface".into())
         }
@@ -533,6 +538,10 @@ fn factorial(n: usize) -> Result<usize, String> {
 
 fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action, String> {
     let action = match decision {
+        Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseFullRangeCastXValueV59 { .. } => {
+            return Err("creature-type entry and full-range cast-X are outside the frozen H2 benchmark surface".into());
+        }
         Decision::ChooseEntryColorV36 { .. } => {
             return Err("Banner entry color is outside the frozen H2 benchmark surface".into());
         }
