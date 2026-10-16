@@ -685,6 +685,42 @@ fn genuine_paid_original_mill_public_api_and_erased_resume_refuse_readonly_both_
             changed.engine.halted = None;
             assert_eq!(changed, original);
         }
+        // Keep the real public stack row and captured context unchanged:
+        // editable pending metadata cannot hide its original printed family.
+        for changed_kind in [false, true] {
+            let mut changed = restore(&state);
+            let p = changed.engine.pending_effect.as_mut().unwrap();
+            p.resolving_item.inline_effect = Some(EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            });
+            if changed_kind {
+                p.resolving_item.kind = crate::state::StackItemKind::Spell;
+            } else {
+                p.resolving_item.v4.granted_by = p.ctx.ability_source_contract;
+            }
+            p.choice = None;
+            p.frames = vec![EffectFrame::Program {
+                op: p.resolving_item.inline_effect.clone().unwrap(),
+                path: vec![],
+            }];
+            p.answered_choice_guard = None;
+            let item = p.resolving_item.clone();
+            let foreign = item.inline_effect.clone().unwrap();
+            let before = changed.clone();
+            assert!(resume_resumable_resolution(&mut changed).is_err());
+            assert_eq!(changed, before);
+            assert!(acquire_tutelage_resume_v1(&changed, &item).is_err());
+            assert_eq!(changed, before);
+            changed.engine.pending_effect = None;
+            let before_begin = changed.clone();
+            assert!(
+                begin_resumable_resolution(&foreign, &ctx, item.clone(), &mut changed).is_err()
+            );
+            assert_eq!(changed, before_begin);
+            assert!(acquire_tutelage_begin_v1(&changed, &item).is_err());
+            assert_eq!(changed, before_begin);
+        }
         for erase in [false, true] {
             let mut bad = restore(&state);
             if erase {

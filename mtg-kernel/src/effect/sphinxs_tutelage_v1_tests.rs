@@ -723,3 +723,90 @@ fn paid_deep_analysis_captures_each_real_draw_then_orders_two_native_triggers_bo
         );
     }
 }
+
+#[test]
+fn paid_published_mill_changed_root_and_erased_stages_refuse_public_apis_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Elvish Mystic", "Llanowar Elves", "Forest"]);
+        let source = paid_tutelage(&mut state, actor);
+        // This is the original genuine 5U draw/discard activation. Its own
+        // stack incarnation is not selected by the published mill receipt.
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        to_mill_order(&mut state);
+        let waiting = restore(&state);
+        for _ in 0..2 {
+            let decision = engine::advance_until_decision(&mut state);
+            respond(&mut state, decision, false);
+        }
+        let answered = restore(&state);
+        assert!(answered
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .is_none());
+        assert!(answered
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .answered_choice_guard
+            .is_some());
+        for original in [waiting, answered] {
+            validate_pending_effect_choice(&original).unwrap();
+            let original_pending = original.engine.pending_effect.as_ref().unwrap();
+            let ctx = original_pending.ctx.clone();
+            let mut changed_item = original_pending.resolving_item.clone();
+            let foreign = EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            };
+            changed_item.inline_effect = Some(foreign.clone());
+            let mut forged = restore(&original);
+            let pending = forged.engine.pending_effect.as_mut().unwrap();
+            pending.resolving_item = changed_item.clone();
+            pending.choice = None;
+            pending.frames = vec![EffectFrame::Program {
+                op: foreign.clone(),
+                path: vec![],
+            }];
+            pending.answered_choice_guard = None;
+            let before = forged.clone();
+            assert!(validate_pending_effect_choice(&forged).is_err());
+            assert!(resume_resumable_resolution(&mut forged).is_err());
+            assert_eq!(forged, before);
+            assert!(acquire_tutelage_resume_v1(&forged, &changed_item).is_err());
+            assert_eq!(forged, before);
+            execute(&foreign, &ctx, &mut forged);
+            assert_eq!(
+                forged.engine.halted,
+                Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source
+                ))
+            );
+            forged.engine.halted = None;
+            assert_eq!(forged, before);
+            // Remove the pending stage only for this readonly attack on begin.
+            // The actual published native row and its receipt stay unchanged.
+            forged.engine.pending_effect = None;
+            let before_begin = forged.clone();
+            assert!(
+                begin_resumable_resolution(&foreign, &ctx, changed_item.clone(), &mut forged)
+                    .is_err()
+            );
+            assert_eq!(forged, before_begin);
+            assert!(acquire_tutelage_begin_v1(&forged, &changed_item).is_err());
+            assert_eq!(forged, before_begin);
+            let mut genuine = original.clone();
+            let mut replay = restore(&original);
+            finish(&mut genuine, false);
+            finish(&mut replay, false);
+            assert_eq!(genuine, replay);
+            assert_eq!(genuine.players[actor.opponent().index()].graveyard.len(), 3);
+        }
+    }
+}
