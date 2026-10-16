@@ -5397,7 +5397,7 @@ pub(crate) fn batch_with_linked_aura_attachments_v1(
         crate::effect::EffectObjectBinding,
     )>,
 ) {
-    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None);
+    batch_with_aura_token_hosts_v1(state, events, attachments, None, None, None, None);
 }
 
 /// The bound copy continuation supplies one untargeted host per actual expanded
@@ -5408,7 +5408,15 @@ pub(crate) fn batch_with_copied_aura_hosts_v1(
     event: ProposedEvent,
     hosts: Vec<crate::state::ObjectLinkV4>,
 ) {
-    batch_with_aura_token_hosts_v1(state, vec![event], Vec::new(), Some(hosts), None, None);
+    batch_with_aura_token_hosts_v1(
+        state,
+        vec![event],
+        Vec::new(),
+        Some(hosts),
+        None,
+        None,
+        None,
+    );
 }
 /// Consumes one private genuine finishing permit. It cannot be reconstructed
 /// from serialized frames or reused for a second batch.
@@ -5420,7 +5428,7 @@ pub(crate) fn commit_goblin_excess_tokens_owned(
     if !permit.allows(state, &events) {
         return Err("excess token batch lost exact continuation owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit), None);
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, Some(&permit), None, None);
     if state.engine.halted.is_some() {
         return Err("excess token batch halted".into());
     }
@@ -5436,9 +5444,11 @@ fn batch_with_aura_token_hosts_v1(
     aura_hosts: Option<Vec<crate::state::ObjectLinkV4>>,
     excess_permit: Option<&crate::goblin_negotiation_v1::owned::TokenBatchPermitV1<'_>>,
     kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
+    spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
 ) {
     if events.iter().any(unsupported_partial_token_v1)
         && kykar_permit.is_none_or(|p| !p.allows(state, &events))
+        && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -9804,9 +9814,26 @@ pub(crate) fn commit_kykar_spirit_owned_v1(
     if !permit.allows(state, &events) {
         return Err("Kykar Spirit lost genuine mode owner".into());
     }
-    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, Some(&permit));
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, Some(&permit), None);
     if state.engine.halted.is_some() {
         return Err("Kykar Spirit batch halted".into());
+    }
+    Ok(())
+}
+
+/// Consumes a distinct lexical spell-copy permit. Raw Partial-token events
+/// and Kykar's printed mode retain their original gates.
+pub(crate) fn commit_spirit_copy_owned_v1(
+    state: &mut GameState,
+    permit: crate::effect::SpiritCopyPermitV1<'_, '_>,
+) -> Result<(), String> {
+    let events = permit.events();
+    if !permit.allows(state, &events) {
+        return Err("Spirit copy lost its actual spell/target/proposal".into());
+    }
+    batch_with_aura_token_hosts_v1(state, events, Vec::new(), None, None, None, Some(&permit));
+    if state.engine.halted.is_some() {
+        return Err("Spirit copy batch halted".into());
     }
     Ok(())
 }
