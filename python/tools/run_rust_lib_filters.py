@@ -16,6 +16,7 @@ FILTERS_ENV = "MTG_CI_RUST_LIB_FILTERS"
 FILTER_TIMEOUT_ENV = "MTG_CI_RUST_LIB_FILTER_TIMEOUT_SECONDS"
 SHARD_ENV = "MTG_CI_RUST_LIB_SHARD"
 NOCAPTURE_ENV = "MTG_CI_RUST_LIB_NOCAPTURE"
+SKIP_IGNORED_ENV = "MTG_CI_RUST_LIB_SKIP_IGNORED"
 
 
 def valid_filters(value: object) -> list[str]:
@@ -69,6 +70,7 @@ def main() -> int:
         if filter_timeout <= 0:
             raise ValueError("Library filter timeout must be positive")
         nocapture = os.environ.get(NOCAPTURE_ENV, "0") == "1"
+        skip_ignored = os.environ.get(SKIP_IGNORED_ENV, "0") == "1"
         shard = json.loads(os.environ.get(SHARD_ENV, "null"))
         commands = [(test_filter, [sys.argv[2], test_filter]) for test_filter in filters]
         if shard is not None:
@@ -80,15 +82,19 @@ def main() -> int:
                 raise ValueError("Expected one filter and a valid shard index/count")
             names = compiled_names(sys.argv[2], filters[0], filter_timeout, ignored=False)
             ignored = compiled_names(sys.argv[2], filters[0], filter_timeout, ignored=True)
-            if not names or ignored:
-                raise ValueError("Sharded inventory must be nonempty and contain no ignored tests")
-            selected = names[shard[0]::shard[1]]
+            if not names or not set(ignored) <= set(names) or (ignored and not skip_ignored):
+                raise ValueError("Sharded inventory is empty or contains unexpected ignored tests")
+            # Preserve existing #[ignore] behavior only when explicitly requested.
+            # Log every skipped compiled name; never enable its unregistered fixture.
+            runnable = [name for name in names if name not in ignored]
+            selected = runnable[shard[0]::shard[1]]
             if not selected:
                 raise ValueError("Compiled test shard is empty")
             encoded = json.dumps(names, separators=(",", ":")).encode("utf-8")
             print(json.dumps({
                 "filter": filters[0], "inventory": names, "count": len(names),
                 "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
+                "ignored": ignored, "runnable_count": len(runnable),
                 "shard_index": shard[0], "shard_count": shard[1], "selected": selected,
             }), flush=True)
             commands = [(f"{filters[0]} shard {shard[0]}/{shard[1]}",
@@ -119,6 +125,7 @@ def main() -> int:
     parser.add_argument("--shard-index", type=int)
     parser.add_argument("--shard-count", type=int)
     parser.add_argument("--nocapture", action="store_true")
+    parser.add_argument("--skip-ignored", action="store_true")
     parser.add_argument("filters", nargs="+")
     args = parser.parse_args()
     filters = valid_filters(args.filters)
@@ -130,11 +137,14 @@ def main() -> int:
                 or not 0 <= args.shard_index < args.shard_count or len(filters) != 1):
             parser.error("Sharding requires one filter and 0 <= --shard-index < --shard-count")
         shard = [args.shard_index, args.shard_count]
+    if args.skip_ignored and shard is None:
+        parser.error("--skip-ignored requires sharding")
     environment = os.environ.copy()
     environment[FILTERS_ENV] = json.dumps(filters)
     environment[FILTER_TIMEOUT_ENV] = str(args.filter_timeout_seconds)
     environment[SHARD_ENV] = json.dumps(shard)
     environment[NOCAPTURE_ENV] = "1" if args.nocapture else "0"
+    environment[SKIP_IGNORED_ENV] = "1" if args.skip_ignored else "0"
     runner = [sys.executable, str(Path(__file__).resolve()), "--run"]
     configuration = "target.'cfg(all())'.runner=" + json.dumps(runner)
     command = [
