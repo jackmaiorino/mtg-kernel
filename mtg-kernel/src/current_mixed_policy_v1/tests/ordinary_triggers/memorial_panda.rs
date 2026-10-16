@@ -72,10 +72,7 @@ fn memorial<O: Owner>(actor: PlayerId) {
         // The actually paid Elf can attack in this same turn solely through haste.
         let turn = s.world().turn_key_v1();
         for _ in 0..32 {
-            if s.actions().iter().any(|a| {
-                matches!(a, ActionSemanticV1::DeclareAttackers { attackers, .. }
-                if attackers.len() == 1 && attackers[0].arena_id == elf.0)
-            }) {
+            if s.actions().iter().any(|a| attack_choice(a, elf)) {
                 break;
             }
             pass(&mut s);
@@ -84,15 +81,13 @@ fn memorial<O: Owner>(actor: PlayerId) {
         let index = s
             .actions()
             .iter()
-            .position(|a| {
-                matches!(a, ActionSemanticV1::DeclareAttackers { attackers, .. }
-            if attackers.len() == 1 && attackers[0].arena_id == elf.0)
-            })
+            .position(|a| attack_choice(a, elf))
             .unwrap();
         choice_guards(&mut s, index);
         let prompt = s.snapshot();
         let attack = s.actions()[index].clone();
         step(&mut s, |a| a == &attack);
+        finish_attack_declaration(&mut s, elf);
         assert!(
             !s.world().objects.get(elf).tapped,
             "actual vigilance declaration does not tap"
@@ -102,6 +97,7 @@ fn memorial<O: Owner>(actor: PlayerId) {
         let declared = (gameplay(&s), O::packet(&s.encode()).clone());
         s.restore(&prompt).unwrap();
         step(&mut s, |a| a == &attack);
+        finish_attack_declaration(&mut s, elf);
         assert_eq!((gameplay(&s), O::packet(&s.encode()).clone()), declared);
     }
 }
