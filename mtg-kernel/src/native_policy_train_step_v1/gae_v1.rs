@@ -472,8 +472,14 @@ impl NativePolicyValueTrainStateV1 {
         )?;
         phase_recorder.finish_v1(setup_timer);
         let forward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
-        let mut precomputed_tapes =
-            precompute_encoded_forward_tapes_v1(&parameters, input_config, groups, forward_workers);
+        let input_major = InputMajorWeightsV1::of_v1(&parameters);
+        let mut precomputed_tapes = precompute_encoded_forward_tapes_v1(
+            &parameters,
+            &input_major,
+            input_config,
+            groups,
+            forward_workers,
+        );
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -491,7 +497,12 @@ impl NativePolicyValueTrainStateV1 {
                     Some(tapes) => tapes
                         .next()
                         .expect("one precomputed forward tape per substep")?,
-                    None => Box::new(forward_with_tape(&parameters, input_config, **encoded)?),
+                    None => Box::new(forward_with_tape_input_major_v1(
+                        &parameters,
+                        Some(&input_major),
+                        input_config,
+                        **encoded,
+                    )?),
                 };
                 validate_forward_output_bits_v1(
                     &recomputed,
@@ -799,6 +810,7 @@ enum GaeForwardOutcomeV1 {
 /// loop would have hit.
 fn precompute_encoded_forward_tapes_v1(
     parameters: &[NativeNamedParameterV1],
+    input_major: &InputMajorWeightsV1,
     config: NativePolicyValueModelConfigV1,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     forward_workers: usize,
@@ -825,7 +837,7 @@ fn precompute_encoded_forward_tapes_v1(
                 let spawned = thread::Builder::new()
                     .name(format!("native-gae-forward-{worker_index}"))
                     .spawn_scoped(scope, move || {
-                        forward_encoded_chunk_v1(parameters, config, chunk)
+                        forward_encoded_chunk_v1(parameters, input_major, config, chunk)
                     });
                 (spawned, chunk)
             })
@@ -844,7 +856,12 @@ fn precompute_encoded_forward_tapes_v1(
                     }
                     Err(payload) => resume_unwind(payload),
                 },
-                Err(_) => outcomes.extend(forward_encoded_chunk_v1(parameters, config, chunk)),
+                Err(_) => outcomes.extend(forward_encoded_chunk_v1(
+                    parameters,
+                    input_major,
+                    config,
+                    chunk,
+                )),
             }
         }
         outcomes
@@ -857,6 +874,7 @@ fn precompute_encoded_forward_tapes_v1(
 
 fn forward_encoded_chunk_v1(
     parameters: &[NativeNamedParameterV1],
+    input_major: &InputMajorWeightsV1,
     config: NativePolicyValueModelConfigV1,
     chunk: &[NativeEncodedDecisionViewV1<'_>],
 ) -> Vec<GaeForwardOutcomeV1> {
@@ -864,7 +882,8 @@ fn forward_encoded_chunk_v1(
         .iter()
         .map(|encoded| {
             match catch_unwind(AssertUnwindSafe(|| {
-                forward_with_tape(parameters, config, *encoded).map(Box::new)
+                forward_with_tape_input_major_v1(parameters, Some(input_major), config, *encoded)
+                    .map(Box::new)
             })) {
                 Ok(result) => GaeForwardOutcomeV1::Completed(result),
                 Err(payload) => GaeForwardOutcomeV1::Panicked(payload),
