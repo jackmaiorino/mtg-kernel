@@ -2917,6 +2917,13 @@ pub enum ExpandedTrainingCommandV1 {
         banks: Vec<archive_distillation_v1::ArchiveDistillationProbeBankV1>,
         anchor: archive_distillation_v1::ArchiveDistillationAnchorV1,
         offers: Vec<PinnedFileV1>,
+        /// SD1's search-evidence keep-set files (training and held-out
+        /// games), both keyed to the training bank. Some adds each
+        /// candidate's evidence fit and its held-out anchor readings over
+        /// all decks, the non-Spy decks and each deck; omission keeps every
+        /// prior output byte.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence: Option<archive_distillation_v1::ArchiveDistillationProbeEvidenceV1>,
         output_directory: PathBuf,
     },
     /// Spy line retention trace (collab LANES/spy-line-retention-20261015):
@@ -3025,6 +3032,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             banks,
             anchor,
             offers,
+            evidence,
             output_directory,
         } => archive_distillation_v1::probe_v1(
             parent,
@@ -3033,6 +3041,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             banks,
             anchor,
             offers,
+            evidence,
             output_directory,
         ),
         ExpandedTrainingCommandV1::LineRetentionTrace {

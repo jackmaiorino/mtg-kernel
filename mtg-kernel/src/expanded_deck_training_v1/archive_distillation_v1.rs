@@ -23,7 +23,15 @@
 //!   record. The loader reads the named parent checkpoint and requires that
 //!   state bit for bit, so ordinary training resumes exactly the parent's
 //!   optimizer and distilled parameters never pass as ordinary ones.
-//! - The probe reads candidates offline, with forward passes only.
+//! - The probe reads candidates offline, with forward passes only. Given
+//!   the search-evidence keep-set files of SD1 (collab
+//!   LANES/search-evidence-distillation-20261016), it also reads each
+//!   candidate's fit to those targets on training and held-out evidence
+//!   rows, and its held-out anchor readings over all decks, the non-Spy
+//!   decks and each deck.
+//! - A cell labeled exactly `SD1-T-s{k}`, k from 0 to 7, seeds phase 1's
+//!   batch orders with k ([`order_seed_v1`]); seed 0 and every other label
+//!   keep the unseeded orders.
 //! - Phase-1 options run one cell of the U collapse diagnostic (collab
 //!   LANES/spy-u-collapse-20261014): arm U with one change to its step size,
 //!   anchor coefficient, rows or checkpoint steps. Absent, phase 1 is the
@@ -649,6 +657,18 @@ pub struct ArchiveDistillationProbeBankV1 {
     pub role: String,
     pub games: PinnedFileV1,
     pub bank: PinnedFileV1,
+}
+
+/// SD1's search-evidence keep-set files, both keyed to the probe's training
+/// bank and listing disjoint games: `training` lists the training games'
+/// evidence rows (the rows phase 1 trains), `held_out` the held-out games'
+/// (never trained). At each listed row the kept actions are every action
+/// the search did not separate from the executed one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveDistillationProbeEvidenceV1 {
+    pub training: PinnedFileV1,
+    pub held_out: PinnedFileV1,
 }
 
 /// A phase-1 checkpoint loads only as itself: its identity and provenance
@@ -2049,6 +2069,189 @@ fn chosen_share_v1(chosen: Option<&Vec<ReadingV1>>, offered: Option<&Vec<Reading
     }
 }
 
+/// One evidence row of a keep-set file: its training-bank row, its kept
+/// actions, its target (the parent's softmax over the kept actions,
+/// [`kept_target_v1`]) and its game's ordered matchup (focal deck label,
+/// other deck label).
+struct EvidenceRowV1 {
+    index: usize,
+    keep: Vec<u32>,
+    target: LineBSoftmaxV1,
+    matchup: [String; 2],
+}
+
+/// Each game's ordered matchup: its focal seat's deck label, then the other
+/// seat's.
+fn matchups_v1(games: &[ArchiveGameV1]) -> HashMap<String, [String; 2]> {
+    games
+        .iter()
+        .map(|game| {
+            let seat = usize::from(game.episode.learner_seat);
+            let selected = &game.episode.selected;
+            (
+                game.id.clone(),
+                [
+                    selected[seat].label.clone(),
+                    selected[1 - seat].label.clone(),
+                ],
+            )
+        })
+        .collect()
+}
+
+/// One keep-set file's evidence rows on the training bank, in bank order.
+/// Every listed row separates at least one action (its keep set is not the
+/// whole menu).
+fn evidence_rows_v1(
+    pin: &PinnedFileV1,
+    lineage: &str,
+    bank_rows_sha256: &str,
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+    matchups: &HashMap<String, [String; 2]>,
+) -> Result<Vec<EvidenceRowV1>, String> {
+    keep_sets_v1(pin, lineage, bank_rows_sha256, rows)?
+        .into_iter()
+        .map(|(index, keep)| {
+            let row = &rows[index].0;
+            ensure(
+                keep.len() < row.k as usize,
+                "an evidence row's keep set separates at least one action",
+            )?;
+            let matchup = matchups
+                .get(&row.game)
+                .ok_or("an evidence row's game is not a bank game")?
+                .clone();
+            Ok(EvidenceRowV1 {
+                index,
+                target: kept_target_v1(row, &keep)?,
+                keep,
+                matchup,
+            })
+        })
+        .collect()
+}
+
+/// Both keep-set files' evidence rows; the two files list disjoint games.
+fn evidence_split_v1(
+    evidence: &ArchiveDistillationProbeEvidenceV1,
+    lineage: &str,
+    bank_rows_sha256: &str,
+    rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
+    games: &[ArchiveGameV1],
+) -> Result<[Vec<EvidenceRowV1>; 2], String> {
+    let matchups = matchups_v1(games);
+    let training = evidence_rows_v1(
+        &evidence.training,
+        lineage,
+        bank_rows_sha256,
+        rows,
+        &matchups,
+    )?;
+    let held_out = evidence_rows_v1(
+        &evidence.held_out,
+        lineage,
+        bank_rows_sha256,
+        rows,
+        &matchups,
+    )?;
+    let trained: BTreeSet<&str> = training
+        .iter()
+        .map(|e| rows[e.index].0.game.as_str())
+        .collect();
+    ensure(
+        held_out
+            .iter()
+            .all(|e| !trained.contains(rows[e.index].0.game.as_str())),
+        "the training and held-out evidence files share a game",
+    )?;
+    Ok([training, held_out])
+}
+
+/// The deployed mass on a row's separated actions: every action outside its
+/// (strictly increasing) keep set, summed in action order.
+fn separated_mass_v1(deployed: &[f64], keep: &[u32]) -> f64 {
+    (0..deployed.len())
+        .filter(|&a| keep.binary_search(&(a as u32)).is_err())
+        .map(|a| deployed[a])
+        .sum()
+}
+
+/// One candidate's reading at one evidence row.
+struct EvidenceReadingV1<'a> {
+    game: &'a str,
+    step: u64,
+    matchup: &'a [String; 2],
+    separated_mass: f64,
+    /// KL(q || p_theta): the row's target against the candidate's softmax.
+    kl_target: f64,
+}
+
+/// The evidence fit over one file's rows: the mean deployed mass on
+/// separated actions and the mean KL(q || p_theta), overall and per focal
+/// deck, with each row's values and held-out matchup when asked.
+fn evidence_summary_v1(readings: &[EvidenceReadingV1], row_values: bool) -> Value {
+    let group = |members: &[&EvidenceReadingV1]| {
+        let masses: Vec<f64> = members.iter().map(|r| r.separated_mass).collect();
+        let kls: Vec<f64> = members.iter().map(|r| r.kl_target).collect();
+        json!({"rows":members.len(),"mean_separated_mass":mean(&masses),
+            "mean_kl_target":mean(&kls)})
+    };
+    let mut decks: BTreeMap<&str, Vec<&EvidenceReadingV1>> = BTreeMap::new();
+    for reading in readings {
+        decks.entry(&reading.matchup[0]).or_default().push(reading);
+    }
+    let mut out = group(&readings.iter().collect::<Vec<_>>());
+    out["by_deck"] = decks
+        .iter()
+        .map(|(deck, members)| (deck.to_string(), group(members)))
+        .collect::<serde_json::Map<_, _>>()
+        .into();
+    if row_values {
+        out["row_values"] = readings
+            .iter()
+            .map(|r| {
+                json!({"game":r.game,"step":r.step,"matchup":r.matchup,
+                    "separated_mass":r.separated_mass,"kl_target":r.kl_target})
+            })
+            .collect::<Vec<_>>()
+            .into();
+    }
+    out
+}
+
+/// One held-out anchor row's reading: its deck label, its clamped top-two
+/// gap, whether the parent's top action is still top, and KL(p_parent || p).
+struct AnchorReadingV1<'a> {
+    deck: &'a str,
+    gap: f64,
+    agrees: bool,
+    kl: f64,
+}
+
+/// Held-out anchor readings over all decks, the non-Spy decks and each deck:
+/// the median clamped top-two gap, the share of rows whose parent top action
+/// is still top, and the mean KL from the parent.
+fn anchor_decks_v1(readings: &[AnchorReadingV1]) -> Value {
+    let group = |members: &[&AnchorReadingV1]| {
+        let agree = members.iter().filter(|r| r.agrees).count();
+        json!({"rows":members.len(),
+            "median_clamped_top_two_gap":median(members.iter().map(|r| r.gap).collect()),
+            "top_agreement":(!members.is_empty())
+                .then(|| agree as f64 / members.len() as f64),
+            "mean_kl_from_parent":mean(&members.iter().map(|r| r.kl).collect::<Vec<_>>())})
+    };
+    let mut decks: BTreeMap<&str, Vec<&AnchorReadingV1>> = BTreeMap::new();
+    for reading in readings {
+        decks.entry(reading.deck).or_default().push(reading);
+    }
+    let all: Vec<&AnchorReadingV1> = readings.iter().collect();
+    let non_spy: Vec<&AnchorReadingV1> =
+        readings.iter().filter(|r| !is_spy_label(r.deck)).collect();
+    json!({"all":group(&all),"non_spy":group(&non_spy),
+        "by_deck":decks.iter().map(|(deck, members)| (deck.to_string(), group(members)))
+            .collect::<serde_json::Map<_, _>>()})
+}
+
 /// `ArchiveDistillationProbe`: forward-only readouts of each candidate.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn probe_v1(
@@ -2058,6 +2261,7 @@ pub(super) fn probe_v1(
     banks: Vec<ArchiveDistillationProbeBankV1>,
     anchor: ArchiveDistillationAnchorV1,
     offers: Vec<PinnedFileV1>,
+    evidence: Option<ArchiveDistillationProbeEvidenceV1>,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = std::time::Instant::now();
@@ -2083,6 +2287,7 @@ pub(super) fn probe_v1(
     let mut roles = BTreeSet::new();
     let mut extracted = Vec::new();
     let mut parent_inputs: Option<ArchiveInputsV1> = None;
+    let mut evidence_rows: Option<[Vec<EvidenceRowV1>; 2]> = None;
     for bank in &banks {
         ensure(
             (bank.role == "training" || bank.role == "completion")
@@ -2090,7 +2295,17 @@ pub(super) fn probe_v1(
             "probe banks are one training and at most one completion bank",
         )?;
         let inputs = load_inputs_v1(&parent, &lineage, &bank.games)?;
-        let (_, rows) = reproduce_bank_v1(&inputs, &parent, &lineage, &bank.games, &bank.bank)?;
+        let (record, rows) =
+            reproduce_bank_v1(&inputs, &parent, &lineage, &bank.games, &bank.bank)?;
+        if let (Some(pins), "training") = (&evidence, bank.role.as_str()) {
+            evidence_rows = Some(evidence_split_v1(
+                pins,
+                &lineage,
+                &record.rows_sha256,
+                &rows,
+                &inputs.games,
+            )?);
+        }
         extracted.push((bank.role.clone(), rows));
         parent_inputs.get_or_insert(inputs);
     }
@@ -2212,9 +2427,11 @@ pub(super) fn probe_v1(
         let (mut kl_all, mut kl_spy, mut kl_non_spy) = (Vec::new(), Vec::new(), Vec::new());
         let mut value_change = Vec::with_capacity(held_out.len());
         let (mut agree, mut non_spy) = (0usize, 0usize);
+        let mut deck_readings = Vec::with_capacity(held_out.len());
         for (row, parent_target) in held_out.iter().zip(&parent_targets) {
             let (logits, value) = forward_v1(model, &row.tensor, generation)?;
-            gaps.push(clamped_top_two_gap_v1(&logits));
+            let gap = clamped_top_two_gap_v1(&logits);
+            gaps.push(gap);
             let kl = line_b_divergence_v1(
                 LineBDivergenceV1::Forward,
                 &f64_logits(&logits),
@@ -2224,13 +2441,20 @@ pub(super) fn probe_v1(
             .divergence;
             kl_all.push(kl);
             value_change.push((f64::from(value) - f64::from(f32::from_bits(row.value))).abs());
+            let agrees = top_v1(&logits) == top_v1(&recorded_logits(&row.logits));
             if is_spy_label(&row.learner_deck) {
                 kl_spy.push(kl);
             } else {
                 kl_non_spy.push(kl);
                 non_spy += 1;
-                agree += usize::from(top_v1(&logits) == top_v1(&recorded_logits(&row.logits)));
+                agree += usize::from(agrees);
             }
+            deck_readings.push(AnchorReadingV1 {
+                deck: &row.learner_deck,
+                gap,
+                agrees,
+                kl,
+            });
         }
         let mut offer_readings = Vec::with_capacity(offer_rows.len());
         let (mut offer_deployed, mut offer_raw, mut offer_top) = (Vec::new(), Vec::new(), 0usize);
@@ -2249,7 +2473,7 @@ pub(super) fn probe_v1(
             offer_readings.push(json!({"episode":offer.episode,"step":offer.step,
                 "deployed_self_probability":d,"raw_self_probability":r,"self_top":top}));
         }
-        readouts.push(json!({"id":candidate.id,"source":candidate.source,
+        let mut readout = json!({"id":candidate.id,"source":candidate.source,
             "state_sha256":hex(&state.state_sha256_v1().map_err(err)?),
             "adam_step":state.adam_step_v1(),"archive":archive,
             "anchor_held_out":{"rows":held_out.len(),
@@ -2264,9 +2488,44 @@ pub(super) fn probe_v1(
                 "mean_raw_self_probability":mean(&offer_raw),
                 "self_top_share":(!offer_rows.is_empty())
                     .then(|| offer_top as f64 / offer_rows.len() as f64),
-                "rows":offer_readings}}));
+                "rows":offer_readings}});
+        if let Some([training, held]) = &evidence_rows {
+            let bank_rows = &extracted
+                .iter()
+                .find(|(role, _)| role == "training")
+                .expect("the probe reads the training bank")
+                .1;
+            let mut fit = serde_json::Map::new();
+            for (name, members) in [("training", training), ("held_out", held)] {
+                let mut readings = Vec::with_capacity(members.len());
+                for member in members {
+                    let (row, tensor) = &bank_rows[member.index];
+                    let (logits, _) = forward_v1(model, tensor, generation)?;
+                    readings.push(EvidenceReadingV1 {
+                        game: &row.game,
+                        step: row.step,
+                        matchup: &member.matchup,
+                        separated_mass: separated_mass_v1(&deployed_v1(&logits)?, &member.keep),
+                        kl_target: line_b_divergence_v1(
+                            LineBDivergenceV1::Forward,
+                            &f64_logits(&logits),
+                            &member.target,
+                        )
+                        .map_err(err)?
+                        .divergence,
+                    });
+                }
+                fit.insert(
+                    name.into(),
+                    evidence_summary_v1(&readings, name == "held_out"),
+                );
+            }
+            readout["evidence"] = fit.into();
+            readout["anchor_held_out_decks"] = anchor_decks_v1(&deck_readings);
+        }
+        readouts.push(readout);
     }
-    let result = json!({"schema":PROBE_SCHEMA,"complete":true,"lineage":lineage,
+    let mut result = json!({"schema":PROBE_SCHEMA,"complete":true,"lineage":lineage,
         "parent":parent,"parent_state_sha256":inputs.state_sha256,"banks":banks,
         "anchor":anchor,"offers":offers,"anchor_held_out_rows":held_out.len(),
         "offer_episodes":offers.len(),"learner_offers":offer_rows.len(),
@@ -2274,6 +2533,9 @@ pub(super) fn probe_v1(
         "runtime_commit":env!("MTG_KERNEL_BUILD_GIT_HEAD"),
         "runtime_tree":env!("MTG_KERNEL_BUILD_TRACKED_TREE_SHA256"),
         "wall_seconds":started.elapsed().as_secs_f64()});
+    if let Some(pins) = &evidence {
+        result["evidence"] = json!(pins);
+    }
     fs::create_dir_all(&output_directory).map_err(err)?;
     publish_json(&output_directory, "probe.json", &result)?;
     Ok(result)
