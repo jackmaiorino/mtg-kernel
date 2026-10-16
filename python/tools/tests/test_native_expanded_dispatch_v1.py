@@ -379,6 +379,11 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
             child = unittest.mock.MagicMock(pid=4242, returncode=1)
             child.poll.return_value = 1
             return child
+        recorded = []
+
+        def record(token, pid):  # the reservation's lock, which packed trials take in turn
+            recorded.append(time.time())
+            time.sleep(0.2)
         timer = threading.Timer(0.5, lambda: release.write_text('{"go": true}'))
         self.addCleanup(timer.cancel)
         with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
@@ -386,7 +391,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                 patch.object(dispatch, "set_affinity"), \
                 patch.object(dispatch, "require_mapped_libraries"), \
                 patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
-                patch("host_reservation_v1.record_descendant"), \
+                patch("host_reservation_v1.record_descendant", side_effect=record), \
                 patch.object(dispatch.subprocess, "Popen", side_effect=popen) as spawn:
             timer.start()
             with self.assertRaisesRegex(RuntimeError, "native process failed"):
@@ -396,6 +401,8 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         execution = dispatch.read(Path(request["root"]) / "execution.json")
         self.assertGreaterEqual(execution["barrier_seconds"], 0.4)
         self.assertLess(execution["seconds"], execution["barrier_seconds"])
+        # The start is taken at the spawn, before the reservation's lock.
+        self.assertLessEqual(dispatch.read(Path(request["root"]) / "started.json")["started_unix"], recorded[0])
 
     def test_fastest_choice_rejects_profiled_qualification(self):
         choice = self.choice()
@@ -855,9 +862,12 @@ class PackChoiceTests(AdmissionTestCase):
         return {"host": "desktop", "cpu_affinity": cpus, "workers": 1, "preparation_workers": 1,
                 "memory_bytes": 1024**3}
 
-    def pack_trial(self, name, slot, seconds, start, child_seconds, tensors=(1, 2)):
+    def pack_trial(self, name, slot, seconds, start, child_seconds, tensors=(1, 2), barrier=False):
         request = self.request(slot["workers"])
         request.update(placement=dict(slot), root=str(self.root / name), cold_root=str(self.root / f"cold-{name}"))
+        if barrier:
+            request["start_barrier"] = {"ready": str(self.root / f"{name}.ready.json"),
+                                        "release": str(self.root / "release.json"), "timeout_seconds": 600}
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
         native = Path(config["output_directory"])
@@ -900,7 +910,14 @@ class PackChoiceTests(AdmissionTestCase):
                   for i, slot in enumerate(slots)]
         return {"schema": dispatch.PACK, "workload": dispatch.workload(self.config, "training"),
                 "slots": slots, "kinds": dispatch.slot_kinds(slots, topology), "topology": topology,
+                "load": {point: self.load() for point in ("start", "packed", "end")},
                 "solo": solo, "packed": packed}
+
+    def load(self, cores=(0, 1, 2, 3, 4, 5), claims=(), token="a" * 64):
+        """One recorded point: the qualifying reservation's declaration and the host's claims."""
+        return {"at_unix": 1.0, "token_sha256": token, "cores": None if cores is None else list(cores),
+                "claims": [{"id": "-".join(map(str, cpus)), "cores": list(cpus), "state": state, "lane": "other"}
+                           for cpus, state in claims]}
 
     def study(self, runs, pack, select_pack=True):
         choice = self.choice()
@@ -939,6 +956,7 @@ class PackChoiceTests(AdmissionTestCase):
         self.assertEqual(selected["slot_seconds"], [768, 768, 768, 768])  # 12 s x 64 updates, each slot
         self.assertEqual(selected["slowdown"], {"class0-cores1-cpus1-w1-p1": 12 / 11,
                                                 "class1-cores1-cpus1-w1-p1": 12 / 10})
+        self.assertEqual(selected["background_claims"], 0)
         for slot in (self.slot([0]), self.slot([2]), self.slot([5])):
             self.assertEqual(self.admit(choice, slot), selected)
             self.assertEqual(dispatch.placed_config(dict(self.request(1), placement=slot), self.config, False),
@@ -1008,6 +1026,43 @@ class PackChoiceTests(AdmissionTestCase):
         del choice["study_runs"]
         with self.assertRaisesRegex(ValueError, "study size"):
             self.admit(choice, self.slot([0]))
+
+    def test_pack_slots_share_one_worker_count(self):
+        """A member's config implements its slot's counts, so mixed counts run fewer members per wave."""
+        pack = self.pack()
+        pack["slots"][3] = dict(pack["slots"][3], preparation_workers=2)
+        with self.assertRaisesRegex(ValueError, "one worker count"):
+            self.admit(self.study(8, pack), self.slot([0]))
+
+    def test_pack_needs_its_declaration_and_records_background_load(self):
+        """At each recorded point one declaration of the qualifying reservation held the slots
+        and their SMT siblings (CPUs 1 and 3), and no other claim ran on it."""
+        def admitted(**loads):
+            pack = self.pack()
+            pack["load"].update(loads)
+            return self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        del pack["load"]
+        with self.assertRaisesRegex(ValueError, "record its host load"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        for loads in ({"start": self.load(cores=(0, 2, 3, 4, 5))}, {"end": self.load(cores=None)},
+                      {"packed": self.load(token="b" * 64)}, {"start": self.load(token=None)}):
+            with self.assertRaisesRegex(ValueError, "one declaration"):
+                admitted(**loads)
+        with self.assertRaisesRegex(ValueError, "another claim ran"):
+            admitted(packed=self.load(claims=[((3, 6), "running")]))
+        quiet = admitted(start=self.load(claims=[((3,), "suspended")]))
+        self.assertEqual(quiet["background_claims"], 0)
+        loaded = admitted(start=self.load(claims=[((6, 7), "running")]), end=self.load(claims=[((6, 7), "running")]))
+        self.assertEqual(loaded["background_claims"], 1)  # one claim, seen twice
+
+    def test_a_packed_trial_cannot_price_a_solo_allocation(self):
+        """A packed trial ran beside others, so it is no serial/parallel qualification."""
+        choice = self.choice()
+        packed = self.pack_trial("packed-solo", self.request(1)["placement"], 5, 0, 4, barrier=True)
+        choice["qualifications"].append(packed["report"])
+        with self.assertRaisesRegex(ValueError, "cannot price a solo allocation"):
+            self.admit(choice, self.request(1)["placement"])
 
     def test_a_study_runs_in_one_layout(self):
         """Every family a pack choice selects for must use the same slots."""

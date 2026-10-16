@@ -685,6 +685,35 @@ def layout(slots):
                   for slot in slots)
 
 
+def pack_load(pack, cpus):
+    """The load a pack recorded before its solo trials, at its packed trials' release
+    and after them: at each point one live timed declaration of the qualifying
+    reservation, holding every slot CPU and its SMT siblings, and no other claim
+    running on the declared cores. Returns how many claims ran elsewhere on the
+    host (background load)."""
+    import host_slots_v1
+    core_of = {}
+    for row in pack["topology"]:
+        core = set(host_slots_v1.parse_cores(row["cpus"]))
+        for cpu in core:
+            core_of[cpu] = core
+    covered = set().union(*(core_of[cpu] for cpu in cpus))
+    load = pack.get("load")
+    require(type(load) is dict and sorted(load) == ["end", "packed", "start"], "a pack must record its host load")
+    points = [load[point] for point in ("start", "packed", "end")]
+    token = points[0]["token_sha256"]
+    require(token and all(point["token_sha256"] == token and point["cores"] is not None
+                          and covered <= set(point["cores"]) for point in points),
+            "a pack must qualify under one declaration of its slots and their SMT siblings")
+    background = set()
+    for point in points:
+        for claim in point["claims"]:
+            if claim["state"] != "suspended":
+                require(not set(claim["cores"]) & set(point["cores"]), "another claim ran on the pack's declared cores")
+                background.add(claim["id"])
+    return len(background)
+
+
 def pack_candidate(entry, request, config, runtime, family, choice, eligible, verify_outputs, reference):
     """A pack qualification of this family, or None for another family's.
 
@@ -695,11 +724,13 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     sample and outputs equal `reference` (the family's serial/parallel
     qualifications'), the packed trials started together (within a tenth of the
     shortest one's native seconds) and each solo trial overlapped no other.
-    Kinds come from the host topology recorded at qualification, which must
-    still be this host's when the pack is on this host. Returns the slowest
-    packed slot's projected seconds, the host's overheads, the pin, the slots,
-    each slot's packed projected seconds and the slowdown of each kind (mean
-    packed over solo projected seconds)."""
+    Its slots share one worker count, and it qualified under a declaration of
+    its slots (pack_load). Kinds come from the host topology recorded at
+    qualification, which must still be this host's when the pack is on this
+    host. Returns the slowest packed slot's projected seconds, the host's
+    overheads, the pin, the slots, each slot's packed projected seconds, the
+    slowdown of each kind (mean packed over solo projected seconds) and the
+    number of background claims it recorded."""
     ref = entry.get("report", entry)
     resolve = artifact_reader(entry.get("path_mappings", []))
     pack = read(checked(ref))
@@ -714,10 +745,15 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
             "pack placement no longer eligible")
     cpus = [cpu for slot in slots for cpu in slot["cpu_affinity"]]
     require(len(cpus) == len(set(cpus)), "pack slots overlap")
+    # A member's configuration implements its slot's worker counts, so in a pack of
+    # mixed counts fewer members than slots could run at once.
+    require(len({(slot["workers"], slot["preparation_workers"]) for slot in slots}) == 1,
+            "a pack's slots must share one worker count")
     require(set(cpus) <= set(choice["inventory"][host]["cpu_affinity"]), "pack exceeds eligible CPU set")
     if host == request["placement"]["host"]:
         require(pack["topology"] == host_topology(), "host topology changed since the pack qualified")
     kinds = slot_kinds(slots, pack["topology"])
+    background = pack_load(pack, cpus)
     solo, packed = pack["solo"], pack["packed"]
     require([member["slot"] for member in packed] == list(range(len(slots))),
             "a pack needs one packed trial per slot, in slot order")
@@ -753,7 +789,7 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     slowdown = {kind: sum(value for value, other in zip(packed_seconds, kinds) if other == kind)
                 / kinds.count(kind) / baseline[kind] for kind in sorted(set(kinds))}
     transport, queue = placement_overheads(choice, host)
-    return max(packed_seconds), transport, queue, ref, slots, packed_seconds, slowdown
+    return max(packed_seconds), transport, queue, ref, slots, packed_seconds, slowdown, background
 
 
 def selected_slots(ref):
@@ -787,6 +823,7 @@ def require_choice(path, request, verify_outputs=False):
             continue
         original, original_config, actual_config, actual = qualification_evidence(
             report, request, config, runtime, family, resolve, verify_outputs)
+        require("start_barrier" not in original, "a packed trial cannot price a solo allocation")
         placement = report["placement"]
         require(placement == original["placement"] and placement["host"] in eligible,
                 "qualification placement no longer eligible")
@@ -827,9 +864,10 @@ def require_choice(path, request, verify_outputs=False):
             pack = pack_candidate(entry, request, config, runtime, family, choice, eligible, verify_outputs,
                                   reference)
             if pack is not None:
-                wave, transport, queue, ref, slots, slot_seconds, slowdown = pack
+                wave, transport, queue, ref, slots, slot_seconds, slowdown, background = pack
                 options.append((math.ceil(runs / len(slots)) * (wave + transport) + queue, ref, slots,
-                                "pack", {"slots": len(slots), "slot_seconds": slot_seconds, "slowdown": slowdown}))
+                                "pack", {"slots": len(slots), "slot_seconds": slot_seconds, "slowdown": slowdown,
+                                         "background_claims": background}))
         best = min(options, key=lambda item: item[0])
         require(choice["selected"][family] == best[1] and request["placement"] in best[2],
                 "production does not use fastest qualified eligible allocation")
@@ -856,8 +894,14 @@ def set_affinity(cpus):
     kernel = ctypes.windll.kernel32
     kernel.GetCurrentProcess.restype = ctypes.c_void_p
     kernel.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-    require(kernel.SetProcessAffinityMask(kernel.GetCurrentProcess(), sum(1 << c for c in cpus)),
-            "cannot bind eligible CPU affinity")
+    kernel.GetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                              ctypes.POINTER(ctypes.c_size_t)]
+    process, mask = kernel.GetCurrentProcess(), sum(1 << c for c in cpus)
+    actual, system = ctypes.c_size_t(0), ctypes.c_size_t(0)
+    # Read back: inside a job with an affinity limit the call can fail or change nothing.
+    require(kernel.SetProcessAffinityMask(process, mask)
+            and kernel.GetProcessAffinityMask(process, ctypes.byref(actual), ctypes.byref(system))
+            and actual.value == mask, "cannot bind eligible CPU affinity")
 
 
 def process_sample(child):
@@ -949,8 +993,10 @@ def execute(request_path, qualification):
         child_started = time.monotonic()
         child = subprocess.Popen(command, stdout=stdout, stderr=stderr,
                                  env=native_child_environment(request), **options)
+        # Before the reservation's lock, which packed trials take one after another.
+        started_unix = time.time()
         reservations.record_descendant(token, child.pid)
-        write(root/"started.json", {"pid": child.pid, "started_unix": time.time(),
+        write(root/"started.json", {"pid": child.pid, "started_unix": started_unix,
                                     "placement": request["placement"], "request": pin(request_path)})
         try:
             if not WINDOWS:

@@ -7,10 +7,9 @@ after their checks and start together. It writes the pack index
 (native_expanded_dispatch_v1.PACK) that a choice's `packs` cites.
 
 run PLAN keeps one production dispatch on every slot of the members' selected
-pack until the members are done, starting each member on the first free slot
-with its own worker counts, and runs an optional post command per member (a
-trace) on the plan's post CPUs, declared beside the slots, so it overlaps the
-next member.
+pack until the members are done, starting each member on the first free slot,
+and runs an optional post command per member (a trace) on the plan's post CPUs,
+declared beside the slots, so it overlaps the next member.
 
 Every trial and member goes through native_expanded_dispatch_v1 (nested in the
 held reservation), which admits each one as it does any other dispatch; this
@@ -25,6 +24,7 @@ import json
 import os
 import queue
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -40,7 +40,9 @@ QUALIFY = "native-expanded-pack-qualify/v1"
 RUN = "native-expanded-pack-run/v1"
 DISPATCHER = str(Path(dispatch.__file__).resolve())
 POLL_SECONDS = 5.0
+POST_POLL_SECONDS = 0.2
 POST_TIMEOUT_CODE = 124
+CREATE_SUSPENDED = 0x4
 # A busy refusal spawns nothing: other work on the host ends, and a sibling of
 # this reservation caught before it was recorded is exempt on the next look
 # (as nine_deck_eval_driver_v1 waits it out).
@@ -72,6 +74,7 @@ def plan_slots(plan, host):
         out.append({"host": host, **{key: slot[key] for key in SLOT_KEYS}})
     every = [cpu for slot in out for cpu in slot["cpu_affinity"]]
     require(len(every) == len(set(every)), "slots overlap")
+    require(len({shape(slot) for slot in out}) == 1, "a pack's slots must share one worker count")
     return out
 
 
@@ -83,6 +86,17 @@ def declared_cores():
     require(timed.get("token_sha256") == slots.token_hash(token) and timed.get("cores") is not None,
             "the reservation must declare its timed cores (host_slots_v1.py timed)")
     return set(timed["cores"])
+
+
+def host_load():
+    """The reservation's timed declaration and every live host_slots claim, which
+    the pack records around its trials (dispatch.pack_load reads them)."""
+    timed = slots.timed_state()
+    with slots.Mutex():
+        claims = slots.live_claims()
+    return {"at_unix": time.time(), "token_sha256": timed.get("token_sha256"), "cores": timed.get("cores"),
+            "claims": [{"id": claim.get("id"), "cores": sorted(claim["cores"]), "state": claim.get("state"),
+                        "lane": claim.get("lane")} for claim in claims]}
 
 
 def available_memory() -> int:
@@ -210,16 +224,15 @@ def wait(request, supervisor, timeout, poll=POLL_SECONDS):
 
 def await_ready(trials, timeout, poll=POLL_SECONDS):
     """Waits until every packed trial (request, supervisor pid) waits at its start
-    barrier. A trial that ends first fails the wait."""
+    barrier. A trial that ends first, waiting or not, fails the wait."""
     watched = [(request, Supervisor(request, pid)) for request, pid in trials]
     deadline = time.monotonic() + timeout
     while True:
-        waiting = [supervisor for request, supervisor in watched
-                   if not Path(request["start_barrier"]["ready"]).exists()]
+        for _, supervisor in watched:
+            require(supervisor.done() is None, f"{supervisor.root}: ended before its start barrier")
+        waiting = [request for request, _ in watched if not Path(request["start_barrier"]["ready"]).exists()]
         if not waiting:
             return
-        for supervisor in waiting:
-            require(supervisor.done() is None, f"{supervisor.root}: ended before its start barrier")
         if time.monotonic() > deadline:
             raise TimeoutError(f"{len(waiting)} packed trials not at their start barrier within {timeout} s")
         time.sleep(poll)
@@ -247,7 +260,19 @@ def host_arguments(plan):
     return {"compute_host_name": name} if name else {}
 
 
-def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, ready_=await_ready):
+def summed_storage(storages):
+    """One storage admission for work that writes at once: the first block's roots,
+    reserve and allowance, with every block's projections added."""
+    total = copy.deepcopy(storages[0])
+    for other in storages[1:]:
+        total["projected_additional_bytes"] += other["projected_additional_bytes"]
+        for volume, value in other["projected_volume_bytes"].items():
+            total["projected_volume_bytes"][volume] = total["projected_volume_bytes"].get(volume, 0) + value
+    return total
+
+
+def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, ready_=await_ready,
+            storage_=None, load_=host_load):
     plan = read(plan_path)
     require(plan["schema"] == QUALIFY, "unsupported pack qualification plan")
     base = read(checked(plan["base_request"]))
@@ -261,6 +286,9 @@ def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, r
     root = absolute(plan["root"])
     root.mkdir(parents=True)
     timeout = dispatch.positive(plan["timeout_seconds"], "trial timeout")
+    # A packed trial waits at its barrier while the later ones start, each of which
+    # may retry busy refusals.
+    barrier_timeout = timeout + len(pack_slots) * BUSY_RETRIES * BUSY_RETRY_SECONDS
     tag = pin(plan_path)["sha256"][:12]
     solo = [kinds.index(kind) for kind in dict.fromkeys(kinds)]
     requests = {}
@@ -269,27 +297,33 @@ def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, r
         if name.startswith("packed-"):  # packed trials start together, after all their checks
             requests[name]["start_barrier"] = {"ready": (root / f"{name}.ready.json").as_posix(),
                                                "release": (root / "release.json").as_posix(),
-                                               "timeout_seconds": timeout}
+                                               "timeout_seconds": barrier_timeout}
         write(root / f"{name}.request.json", requests[name])
     family = dispatch.workload(read(checked(base["config"])), "training", family=base.get("schedule_family"))
+    # The declaration and the host's claims before the solo trials, at the packed
+    # trials' release and after them.
     index = {"schema": dispatch.PACK, "workload": family, "slots": pack_slots, "kinds": kinds,
-             "topology": topology, "plan": pin(plan_path), "solo": [], "packed": []}
+             "topology": topology, "plan": pin(plan_path), "load": {"start": load_()}, "solo": [], "packed": []}
     for i in solo:  # one after another, each alone
         name = f"solo-{i}"
         supervisor = start_("qualify", root / f"{name}.request.json", **host)
         index["solo"].append(trial_record(i, requests[name], wait_(requests[name], supervisor, timeout)))
     names = [f"packed-{i}" for i in range(len(pack_slots))]
+    # Each trial admits its own storage before any of them writes; together they must fit.
+    (storage_ or dispatch.validate_storage)(summed_storage([requests[name]["storage"] for name in names]))
     supervisors = []
     try:
         for name in names:
             supervisors.append(start_("qualify", root / f"{name}.request.json", **host))
         ready_([(requests[name], supervisor) for name, supervisor in zip(names, supervisors)], timeout)
+        index["load"]["packed"] = load_()
     except BaseException:
         release(root / "release.json", False)  # trials already waiting fail at once
         raise
     release(root / "release.json", True)
     reports = [wait_(requests[name], supervisor, timeout) for name, supervisor in zip(names, supervisors)]
     index["packed"] = [trial_record(i, requests[name], path) for i, (name, path) in enumerate(zip(names, reports))]
+    index["load"]["end"] = load_()
     write(root / "pack.json", index)
     summary = summarize(index)
     print(json.dumps({"pack": pin(root / "pack.json"), **summary}))
@@ -319,9 +353,9 @@ def shape(placement):
 
 
 def run_post(cpu, command, timeout):
-    """A post command on one post CPU at below-normal priority, inside the
-    reservation's declared cores, stopped after `timeout` seconds. Returns its
-    exit code (POST_TIMEOUT_CODE when it was stopped)."""
+    """A post command and every process it starts on one post CPU at below-normal
+    priority, inside the reservation's declared cores, all stopped after `timeout`
+    seconds. Returns its exit code (POST_TIMEOUT_CODE when it was stopped)."""
     return subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()), "_post", str(cpu), str(timeout),
                            "--", *command], check=False).returncode
 
@@ -330,19 +364,17 @@ class Runner:
     """One production dispatch per slot until the queue is empty, a member fails or STOP.
 
     A member is a complete production request whose placement is one of its
-    pack's slots; it runs on the first free slot with its own worker counts (its
-    placement rewritten to that slot) with its own roots. The launcher admits
-    each member against its choice. Post commands queue for the post CPUs."""
+    pack's slots, which share one worker count; it runs on the first free slot
+    (its placement rewritten to that slot) with its own roots. The launcher
+    admits each member against its choice. Post commands queue for the post CPUs."""
 
-    def __init__(self, plan, root, start_=start, wait_=wait, post_=run_post, storage_=None, poll=POLL_SECONDS,
-                 shapes=None):
+    def __init__(self, plan, root, start_=start, wait_=wait, post_=run_post, storage_=None, poll=POLL_SECONDS):
         self.plan, self.root, self.poll = plan, root, poll
         self.start_, self.wait_, self.post_ = start_, wait_, post_
         self.storage_ = storage_ or dispatch.validate_storage
         self.host = host_arguments(plan)
         self.lock = threading.Lock()
         self.queue = list(plan["members"])
-        self.shapes = shapes or {}
         self.active = {}
         self.failures = []
         self.posts = queue.Queue()
@@ -369,14 +401,9 @@ class Runner:
         members already running added to its own: each volume keeps its reserve
         and the allowance holds retained bytes plus every projection. False
         while running members make it fail; a member that fails alone fails."""
-        storage = copy.deepcopy(request["storage"])
         running = [other["storage"] for other in self.active.values()]
-        for other in running:
-            storage["projected_additional_bytes"] += other["projected_additional_bytes"]
-            for volume, value in other["projected_volume_bytes"].items():
-                storage["projected_volume_bytes"][volume] = storage["projected_volume_bytes"].get(volume, 0) + value
         try:
-            self.storage_(storage)
+            self.storage_(summed_storage([request["storage"], *running]))
         except ValueError:
             if not running:
                 raise
@@ -384,16 +411,14 @@ class Runner:
         return True
 
     def next_member(self, slot_index):
-        """The first queued member this slot can run, moved onto it; "wait" while the
-        storage has no room for it yet; None when this slot is done."""
+        """The first queued member, moved onto this slot; "wait" while the storage has
+        no room for it yet; None when this slot is done."""
         with self.lock:
-            slot = self.slots[slot_index]
-            fits = [member for member in self.queue if self.shapes.get(member["name"], shape(slot)) == shape(slot)]
-            if self.failures or any(Path(path).exists() for path in self.plan["stop_files"]) or not fits:
+            if self.failures or any(Path(path).exists() for path in self.plan["stop_files"]) or not self.queue:
                 return None
-            member = fits[0]
+            member = self.queue[0]
             try:
-                request = on_slot(read(checked(member["request"])), slot)
+                request = on_slot(read(checked(member["request"])), self.slots[slot_index])
                 if not self.storage_room(request):
                     return "wait"
             except BaseException as error:
@@ -494,7 +519,7 @@ def run(plan_path, start_=start, wait_=wait, admit_=admit, post_=run_post, stora
     names = [member["name"] for member in plan["members"]]
     require(names and len(set(names)) == len(names) and all(NAME.fullmatch(name) for name in names),
             "invalid member names")
-    pack_slots, shapes, roots, families = None, {}, set(), {}
+    pack_slots, roots, outputs, families = None, set(), set(), {}
     for member in plan["members"]:
         request = read(checked(member["request"]))
         require(request["schema"] == dispatch.SCHEMA and request["kind"] == "training"
@@ -506,12 +531,17 @@ def run(plan_path, start_=start, wait_=wait, admit_=admit, post_=run_post, stora
         require(sorted(map(json.dumps, own)) == sorted(map(json.dumps, pack_slots)),
                 "members' packs must have the same slots")
         require(request["placement"] in pack_slots, "a member's placement must be one of its pack's slots")
-        shapes[member["name"]] = shape(request["placement"])
         found = {str(Path(request[key]).resolve()) for key in ("root", "cold_root")}
         require(not found & roots, "members need their own roots")
         roots |= found
-        families[selected["workload"]] = families.get(selected["workload"], 0) + 1
-        require(families[selected["workload"]] <= selected["study_runs"], "more members than the study's runs")
+        output = str(Path(read(checked(request["config"]))["output_directory"]).resolve())
+        require(output not in outputs, "members need their own output directories")
+        outputs.add(output)
+        runs = families.setdefault(selected["workload"], [selected["study_runs"], 0])
+        require(runs[0] == selected["study_runs"], "a family's members must cite one study size")
+        runs[1] += 1
+        require(runs[1] <= runs[0], "more members than the study's runs")
+    require(len({shape(slot) for slot in pack_slots}) == 1, "a pack's slots must share one worker count")
     post, post_cpus = plan.get("post"), plan.get("post_cpus", [])
     if post is None:
         require(not post_cpus and "post_timeout_seconds" not in plan,
@@ -527,24 +557,73 @@ def run(plan_path, start_=start, wait_=wait, admit_=admit, post_=run_post, stora
     root = absolute(plan["root"])
     root.mkdir(parents=True)
     (root / "requests").mkdir()
-    summary = Runner(plan, root, start_, wait_, post_, storage_, poll, shapes).run(pack_slots)
+    summary = Runner(plan, root, start_, wait_, post_, storage_, poll).run(pack_slots)
     print(json.dumps(summary))
     return summary
 
 
 def post_main(argv):
-    """_post CPU TIMEOUT -- CMD...: CMD bound to one CPU at below-normal priority,
-    killed after TIMEOUT seconds."""
+    """_post CPU TIMEOUT -- CMD...: CMD and every process it starts on one CPU at
+    below-normal priority, all stopped after TIMEOUT seconds; any still running
+    when CMD exits are stopped then."""
     cpu, timeout, separator, *command = argv
     require(separator == "--" and command, "usage: _post CPU TIMEOUT -- CMD...")
-    dispatch.set_affinity([int(cpu)])
-    options = {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == "nt" else {
-        "preexec_fn": lambda: os.nice(10)}
-    try:
-        return subprocess.run(command, check=False, timeout=float(timeout), **options).returncode
-    except subprocess.TimeoutExpired:
+    cpu, timeout = int(cpu), float(timeout)
+    code = post_windows(cpu, timeout, command) if os.name == "nt" else post_linux(cpu, timeout, command)
+    if code is None:
         print(f"post command stopped after {timeout} s", file=sys.stderr)
         return POST_TIMEOUT_CODE
+    return code
+
+
+def post_linux(cpu, timeout, command):
+    """The command in its own process group; the group is stopped at the timeout
+    or once the command exits. Returns its exit code, None when stopped."""
+    dispatch.set_affinity([cpu])  # read back; every process of the command inherits it
+    child = subprocess.Popen(command, start_new_session=True, preexec_fn=lambda: os.nice(10))
+    deadline, stopped = time.monotonic() + timeout, False
+    # Wait without reaping: an unreaped leader keeps its group's id from reuse.
+    while os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        if time.monotonic() > deadline:
+            stopped = True
+            break
+        time.sleep(POST_POLL_SECONDS)
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    code = child.wait()
+    return None if stopped else code
+
+
+def post_windows(cpu, timeout, command):
+    """The command started suspended, then put in its own one-CPU below-normal job
+    nested in the declaration's (whose affinity limit stops a process from setting
+    its own) and its affinity read back before it runs. The job is stopped at the
+    timeout and closed once the command exits, which stops what is left in it.
+    Returns the command's exit code, None when stopped."""
+    child = subprocess.Popen(command, creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS | CREATE_SUSPENDED)
+    tree = None
+    try:
+        tree = slots.Tree([cpu], "below_normal", contain_self=False)
+        tree.adopt(child.pid, slots.creation_time(child.pid))  # refuses any other affinity
+        require(slots._NtResumeProcess(int(child._handle)) >= 0, "cannot resume the post command")
+        try:
+            return child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            tree.kill()
+            child.wait()
+            return None
+    except BaseException:
+        if tree is not None:
+            tree.kill()
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+        raise
+    finally:
+        if tree is not None:
+            slots._CloseHandle(tree.job)
 
 
 def main(argv=None):

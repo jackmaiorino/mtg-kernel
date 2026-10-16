@@ -170,9 +170,11 @@ A slot is a fixed CPU set plus its worker counts and memory limit:
 {"cpu_affinity": [6], "workers": 1, "preparation_workers": 1, "memory_bytes": 8589934592}
 ```
 
-Slots of a layout are disjoint. A slot's kind is its core type (efficiency
-class from `host_slots_v1.py topology`), physical cores, logical CPUs and worker
-counts, e.g. one thread of a P core, both threads of a P core, or one E core. A
+Slots of a layout are disjoint and share one worker count: a member's config
+implements its slot's worker counts, so in a layout of mixed counts fewer
+members than slots could run at once. A slot's kind is its core type
+(efficiency class from `host_slots_v1.py topology`), physical cores and logical
+CPUs, e.g. one thread of a P core, both threads of a P core, or one E core. A
 slot may not span core types.
 
 The pack tool runs inside the study's held reservation under a
@@ -200,16 +202,22 @@ python -B python/tools/host_slots_v1.py timed --cores CPUS -- python -B python/t
 The tool runs the base request's one-update payload as nested `qualify`
 dispatches, unchanged apart from placement and roots (the base request's roots
 with the plan's SHA256 prefix and the trial's name appended): alone on the
-first slot of each kind, one after another, then on every slot at once. Each
-packed trial carries a `start_barrier`. It waits after all of its checks until
-every packed trial waits, and then they all start; the wait counts in neither
-its seconds nor its wall-time limit, and a trial that fails before the barrier
-fails the others. The tool writes `root/pack.json`
-(`native-expanded-cpu-pack/v1`: workload, slots, kinds, the host topology, and
-pins of each trial's report and start record). It prints each trial's seconds,
-whether every output matched, the packed trials' start spread and the mean
-packed over solo seconds of each kind, and exits nonzero if any output
-differed.
+first slot of each kind, one after another, then on every slot at once. The
+packed trials write at once, so their storage blocks must fit together (one
+storage check with every projection added) before the first of them starts.
+Each packed trial carries a `start_barrier`. It waits after all of its checks
+until every packed trial waits, and then they all start; the wait counts in
+neither its seconds nor its wall-time limit, and is limited to the trial
+timeout plus an hour of busy retries per packed trial, since each later trial
+may retry busy refusals before it starts. A trial that ends before the release,
+or fails before the barrier, fails the others. The tool writes `root/pack.json`
+(`native-expanded-cpu-pack/v1`: workload, slots, kinds, the host topology, pins
+of each trial's report and start record, and the host load before the solo
+trials, at the packed trials' release and after them: the reservation's timed
+declaration, as its token digest and cores, and every live host_slots claim).
+It prints each trial's seconds, whether every output matched, the packed
+trials' start spread and the mean packed over solo seconds of each kind, and
+exits nonzero if any output differed.
 
 **Choosing a pack.** Add to the choice JSON the pack indexes and the study's
 size per family:
@@ -225,24 +233,31 @@ those of the family's serial/parallel qualifications (so each packed output is
 byte-equal to the serial run's), the packed trials started within a tenth of
 the shortest one's native seconds of each other, no solo trial overlapped
 another trial, there is one solo trial per kind and one packed trial per slot,
-and the slots lie inside the host's eligible CPU set. Kinds come from the
-topology recorded in the pack, which must still be the host's own when the
-pack is on the admitting host. For a study of N runs the launcher compares,
-per option, N x (projected seconds + transport) + queue for each solo
-allocation with ceil(N / slots) x (the slowest packed slot's projected seconds
-+ transport) + queue for each pack, and requires `selected` to name the
-fastest and the production placement to be one of its slots. Every family a
-choice selects for must run in one layout (the same hosts, CPUs and worker
-counts), so a study's arms stay comparable. The verified snapshot then records
-the pack, the study's projected seconds and size, the number of slots, each
-slot's packed projected seconds (`slot_seconds`) and the slowdown of each
-kind. Choices without `packs` behave as before.
+the slots share one worker count and lie inside the host's eligible CPU set,
+and all three load records name one timed declaration that holds every slot
+CPU and its SMT siblings with no other running claim on its cores. Kinds come
+from the topology recorded in the pack, which must still be the host's own
+when the pack is on the admitting host. A packed trial (one with a
+`start_barrier`) never counts as a solo allocation's qualification. For a
+study of N runs the launcher compares, per option, N x (projected seconds +
+transport) + queue for each solo allocation with ceil(N / slots) x (the
+slowest packed slot's projected seconds + transport) + queue for each pack,
+and requires `selected` to name the fastest and the production placement to
+be one of its slots. A pack pays transport once per wave because a wave's
+members move their outputs at the same time; a solo allocation pays it once
+per run. Every family a choice selects for must run in one layout (the same
+hosts, CPUs and worker counts), so a study's arms stay comparable. The
+verified snapshot then records the pack, the study's projected seconds and
+size, the number of slots, each slot's packed projected seconds
+(`slot_seconds`), the slowdown of each kind and how many other claims ran
+elsewhere on the host while the pack qualified (`background_claims`). Choices
+without `packs` behave as before.
 
 **Running a pack.** List the members, each a complete production request with
 `choice` and `choice_verification` whose verified choice selects a pack. All
 members' packs must have the same slots, each member's placement is one of
-them, members have their own roots, and no family has more members than its
-`study_runs`:
+them, members have their own roots and output directories, a family's members
+cite one `study_runs`, and no family has more members than it:
 
 ```json
 {"schema": "native-expanded-pack-run/v1", "root": "ABS/pack-run", "stop_files": ["ABS/STOP"],
@@ -254,9 +269,9 @@ them, members have their own roots, and no family has more members than its
 python -B python/tools/host_slots_v1.py timed --cores CPUS -- python -B python/tools/native_expanded_pack_v1.py run ABS_PLAN.json
 ```
 
-Members start in list order, each on the first free slot with its own worker
-counts. The copy of the request under `root/requests` differs from the
-member's only in its placement, which is that slot. Each goes through the
+Members start in list order, each on the first free slot. The copy of the
+request under `root/requests` differs from the member's only in its placement,
+which is that slot. Each goes through the
 nested `dispatch` action, so the launcher admits it against its choice as it
 does any production request; a busy refusal is retried every minute for an
 hour. Before a member starts, the launcher's storage check runs with the
@@ -267,7 +282,11 @@ ends without a receipt, or a supervisor that ends without that record, fails
 the member. A failed member or a STOP file stops new starts, and running
 members finish. The optional post command runs after each member on one of
 the post CPUs at below-normal priority, so a trace overlaps the next member.
-Post CPUs are declared and share no physical core with a slot. In the command,
+It runs with every process it starts in its own process group on Linux, and
+on Windows in its own one-CPU job nested in the declaration's job, whose
+affinity is read back before the command runs. Every process of it still
+running when it exits or times out is stopped. Post CPUs are declared and
+share no physical core with a slot. In the command,
 `{name}`, `{report}` and `{request_root}` are replaced and other text, braces
 included, stays. A post command that fails, cannot start or outlives
 `post_timeout_seconds` also stops new starts. The tool writes `root/log.jsonl`

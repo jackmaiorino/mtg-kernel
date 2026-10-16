@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,11 +43,13 @@ class PackTestCase(unittest.TestCase):
 
 
 class SlotTests(PackTestCase):
-    def test_slots_are_disjoint_cpu_sets_with_their_workers(self):
-        found = pack.plan_slots({"slots": [slot([0]), slot([2, 3], 2)]}, "computehost")
-        self.assertEqual(found, [{"host": "computehost", **slot([0])}, {"host": "computehost", **slot([2, 3], 2)}])
+    def test_slots_are_disjoint_cpu_sets_with_one_worker_count(self):
+        found = pack.plan_slots({"slots": [slot([0, 1], 2), slot([2, 3], 2)]}, "computehost")
+        self.assertEqual(found, [{"host": "computehost", **slot([0, 1], 2)},
+                                 {"host": "computehost", **slot([2, 3], 2)}])
         for slots_, message in (([slot([0]), slot([0, 1])], "overlap"), ([slot([0], 2)], "exceed"),
                                 ([slot([])], "CPU set"), ([slot([1, 1])], "CPU set"),
+                                ([slot([0]), slot([2, 3], 2)], "one worker count"),
                                 ([dict(slot([0]), host="desktop")], "invalid slots"), ([], "invalid slots")):
             with self.assertRaisesRegex(ValueError, message):
                 pack.plan_slots({"slots": slots_}, "computehost")
@@ -84,6 +86,17 @@ class SlotTests(PackTestCase):
             declared("holds", None)
         with self.assertRaisesRegex(ValueError, "held host reservation"):
             declared("released", [0, 1])
+
+    def test_the_load_record_names_the_declaration_and_every_claim(self):
+        timed = {"held": True, "token_sha256": "a" * 64, "cores": [0, 1], "why": "timed work declared its cores"}
+        claims = [{"id": "c1", "cores": [5, 4], "state": "running", "lane": "other", "pid": 9, "path": "p"}]
+        with patch.object(pack.slots, "timed_state", return_value=timed), \
+                patch.object(pack.slots, "live_claims", return_value=claims), \
+                patch.object(pack.slots, "Mutex", return_value=nullcontext()):
+            load = pack.host_load()
+        self.assertEqual({key: value for key, value in load.items() if key != "at_unix"},
+                         {"token_sha256": "a" * 64, "cores": [0, 1],
+                          "claims": [{"id": "c1", "cores": [4, 5], "state": "running", "lane": "other"}]})
 
     def test_trials_change_only_the_placement_and_roots(self):
         base = {"placement": {"host": "computehost", **slot([0, 1, 2, 3], 4)}, "root": "/hot/qual",
@@ -210,6 +223,16 @@ class BarrierTests(SupervisorTestCase):
         with self.assertRaisesRegex(ValueError, "without recording"):
             self.ready(self.trials(1), [mine], state=lambda pid, creation: "absent")
 
+    def test_a_waiting_trial_that_ends_fails_the_wait(self):
+        """A trial whose barrier timed out while a later trial was still starting."""
+        both = [self.event("handoff", 7, 100), self.event("handoff", 8, 100)]
+        failed = both + [self.event("nested-done", 7, 100, outcome="failure", detail="start barrier timed out")]
+        (waiting, _), (starting, _) = self.trials(2)
+        write(Path(waiting["start_barrier"]["ready"]), {"pid": 1})
+        with self.assertRaisesRegex(RuntimeError, "start barrier timed out"):
+            self.ready([(waiting, 7), (starting, 8)], [both, both, failed], timeout=5,
+                       state=lambda pid, creation: "alive" if creation == 100 else "absent")
+
     def test_release_renames_a_complete_file_into_place(self):
         pack.release(self.root / "release.json", True)
         self.assertEqual(read(self.root / "release.json"), {"go": True})
@@ -223,6 +246,7 @@ class QualifyTests(PackTestCase):
         base = {"schema": dispatch.SCHEMA, "kind": "training", "config": self.save({"config": 1}),
                 "placement": {"host": "computehost", **slot([0, 1, 2, 3], 4)},
                 "root": str(self.root / "hot" / "qual"), "cold_root": str(self.root / "cold" / "qual"),
+                "storage": {"projected_additional_bytes": 10, "projected_volume_bytes": {"": 10}},
                 **(base_fields or {})}
         plan = {"schema": pack.QUALIFY, "base_request": self.save(base), "slots": slots_,
                 "root": str(self.root / "pack"), "timeout_seconds": 600, **fields}
@@ -231,7 +255,7 @@ class QualifyTests(PackTestCase):
     def fakes(self, fail_start=None):
         """start/wait/ready that follow the trials: solo trials run alone, packed
         trials wait at their barrier until it is released."""
-        state = {"calls": [], "running": set(), "paths": {}, "hosts": set()}
+        state = {"calls": [], "running": set(), "paths": {}, "hosts": set(), "storage": []}
         release = self.root / "pack" / "release.json"
 
         def start(action, path, **host):
@@ -245,9 +269,12 @@ class QualifyTests(PackTestCase):
             if name.startswith("solo-"):
                 self.assertIsNone(barrier)
             else:
+                count = len(read(self.root / "plan.json")["slots"])
+                # The plan's 600 s, plus every packed start's busy retries.
                 self.assertEqual(barrier, {"ready": (self.root / "pack" / f"{name}.ready.json").as_posix(),
-                                           "release": release.as_posix(), "timeout_seconds": 600})
+                                           "release": release.as_posix(), "timeout_seconds": 600 + count * 3600})
                 self.assertFalse(release.exists())
+                self.assertEqual(state["storage"], [10 * count])  # admitted together, before the first start
             state["calls"].append(("start", name))
             state["running"].add(request["root"])
             state["paths"][request["root"]] = (name, path)
@@ -274,16 +301,23 @@ class QualifyTests(PackTestCase):
             return root / "report.json"
         return start, wait, ready, state
 
-    def qualify(self, plan, start, wait, ready, admit=lambda found: None):
+    def qualify(self, plan, start, wait, ready, admit=lambda found: None, state=None, storage=None):
+        loads = iter(range(3))
+
+        def record(value):  # what the packed trials project together
+            state["storage"].append(value["projected_additional_bytes"])
+
+        def load():
+            return {"at_unix": next(loads), "token_sha256": "a" * 64, "cores": list(range(10)), "claims": []}
         with patch.object(dispatch, "workload", side_effect=lambda config, kind, family=None: f"family-{family}"), \
                 redirect_stdout(io.StringIO()):
-            return pack.qualify(plan["path"], start, wait, admit, TOPOLOGY, ready)
+            return pack.qualify(plan["path"], start, wait, admit, TOPOLOGY, ready, storage or record, load)
 
     def test_solo_trials_one_at_a_time_then_every_slot_at_once(self):
         start, wait, ready, state = self.fakes()
         admitted = []
         summary = self.qualify(self.plan([slot([0]), slot([2]), slot([8]), slot([9])]), start, wait, ready,
-                               admitted.append)
+                               admitted.append, state)
         self.assertEqual([[item["cpu_affinity"] for item in found] for found in admitted], [[[0], [2], [8], [9]]])
         self.assertEqual(state["calls"],
                          [("start", "solo-0"), ("wait", "solo-0"), ("start", "solo-2"), ("wait", "solo-2")]
@@ -295,6 +329,8 @@ class QualifyTests(PackTestCase):
         self.assertEqual((index["schema"], index["workload"], index["kinds"], index["topology"]),
                          (dispatch.PACK, "family-None", kinds, TOPOLOGY))
         self.assertEqual(index["slots"][2], {"host": "computehost", **slot([8])})
+        self.assertEqual({point: value["at_unix"] for point, value in index["load"].items()},
+                         {"start": 0, "packed": 1, "end": 2})
         self.assertEqual([member["slot"] for member in index["solo"]], [0, 2])
         self.assertEqual([member["slot"] for member in index["packed"]], [0, 1, 2, 3])
         for member in index["solo"] + index["packed"]:
@@ -309,16 +345,27 @@ class QualifyTests(PackTestCase):
     def test_the_compute_host_name_and_schedule_family_travel_with_the_trials(self):
         start, wait, ready, state = self.fakes()
         self.qualify(self.plan([slot([0])], {"schedule_family": "permuted-units-v1"}, compute_host_name="node7"),
-                     start, wait, ready)
+                     start, wait, ready, state=state)
         self.assertEqual(state["hosts"], {json.dumps({"compute_host_name": "node7"})})
         self.assertEqual(read(self.root / "pack" / "pack.json")["workload"], "family-permuted-units-v1")
 
     def test_a_failed_packed_start_fails_the_waiting_trials(self):
         start, wait, ready, state = self.fakes(fail_start="packed-1")
         with self.assertRaisesRegex(ValueError, "packed-1: busy refusal"):
-            self.qualify(self.plan([slot([0]), slot([2]), slot([4])]), start, wait, ready)
+            self.qualify(self.plan([slot([0]), slot([2]), slot([4])]), start, wait, ready, state=state)
         self.assertEqual(read(self.root / "pack" / "release.json"), {"go": False})
         self.assertFalse((self.root / "pack" / "pack.json").exists())
+
+    def test_packed_trials_must_fit_the_storage_together(self):
+        """Each trial admits only its own projection, so the tool admits their sum first."""
+        start, wait, ready, state = self.fakes()
+
+        def storage(value):
+            dispatch.require(value["projected_additional_bytes"] <= 20, "retained plus projected storage")
+        with self.assertRaisesRegex(ValueError, "retained plus projected storage"):
+            self.qualify(self.plan([slot([0]), slot([2]), slot([4])]), start, wait, ready, storage=storage)
+        self.assertEqual(state["calls"], [("start", "solo-0"), ("wait", "solo-0")])
+        self.assertFalse((self.root / "pack" / "release.json").exists())
 
     def test_qualification_starts_from_a_training_qualification_request(self):
         for fields in ({"choice": {"path": "c", "sha256": "0"}}, {"start_barrier": {}}):
@@ -340,6 +387,7 @@ class RunTests(PackTestCase):
 
     def member(self, name, placement, verification=None, **fields):
         request = {"schema": dispatch.SCHEMA, "kind": "training", "choice": {"path": "c", "sha256": "0"},
+                   "config": self.save({"output_directory": str(self.root / "native" / name)}),
                    "choice_verification": verification or self.verification, "placement": placement,
                    "root": str(self.root / "hot" / name), "cold_root": str(self.root / "cold" / name),
                    "wall_seconds": 3600,
@@ -444,15 +492,15 @@ class RunTests(PackTestCase):
         self.run_plan(self.plan(2, compute_host_name="node7"), start, wait, storage=lambda storage: None)
         self.assertEqual(state["hosts"], {json.dumps({"compute_host_name": "node7"})})
 
-    def test_members_run_only_on_slots_of_their_own_worker_counts(self):
+    def test_a_pack_of_mixed_worker_counts_is_refused(self):
+        """A member runs only on slots of its own counts, so such a pack would run
+        fewer members at once than its slots."""
         self.slots = [{"host": "computehost", **slot([0])}, {"host": "computehost", **slot([2, 3], 2)},
                       {"host": "computehost", **slot([4, 5], 2)}]
         start, wait, state = self.fakes()
-        path = self.plan(6, [self.slots[0], self.slots[1]] * 3)
-        summary = self.run_plan(path, start, wait, storage=lambda storage: None)
-        self.assertTrue(summary["complete"])
-        for i in range(6):
-            self.assertIn(state["slots"][f"m{i}"], ([0],) if i % 2 == 0 else ([2, 3], [4, 5]))
+        with self.assertRaisesRegex(ValueError, "one worker count"):
+            self.run_plan(self.plan(2, [self.slots[0], self.slots[1]]), start, wait, storage=lambda storage: None)
+        self.assertEqual(state["started"], [])
 
     def test_a_failed_member_stops_new_starts(self):
         summary, state = self.run_gated(self.plan(9), fail={"m1"})
@@ -556,6 +604,9 @@ class RunTests(PackTestCase):
         plan["members"][1]["request"] = self.save(request)
         cases.append((plan, "study's runs"))
         cases.append((changed(1, root=read(base["members"][0]["request"]["path"])["root"]), "own roots"))
+        cases.append((changed(1, config=read(base["members"][0]["request"]["path"])["config"]),
+                      "own output directories"))
+        cases.append((changed(1, choice_verification=self.selection(self.slots, runs=10)), "one study size"))
         plan = changed()
         plan["slots"] = []
         cases.append((plan, "unsupported pack run plan"))
@@ -593,6 +644,30 @@ class PostTests(PackTestCase):
         self.assertEqual(pack.run_post(cpu, [sys.executable, "-c", "import time; time.sleep(60)"], 0.5),
                          pack.POST_TIMEOUT_CODE)
         self.assertLess(time.monotonic() - started, 30)
+
+    def test_a_post_stops_every_process_it_started(self):
+        """At its timeout, and when the command exits first, nothing it started keeps running."""
+        def running(pid):
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                return False
+            return state not in ("Z", "X")
+        marker = self.root / "grandchild.pid"
+        code = ("import subprocess, sys, time; "
+                "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                "open(sys.argv[1], 'w').write(str(child.pid)); time.sleep(float(sys.argv[2]))")
+        cpu = min(os.sched_getaffinity(0))
+        for sleep, timeout, expected in ((60, 1.0, pack.POST_TIMEOUT_CODE), (0, 60, 0)):
+            started = time.monotonic()
+            self.assertEqual(pack.run_post(cpu, [sys.executable, "-c", code, str(marker), str(sleep)], timeout),
+                             expected)
+            self.assertLess(time.monotonic() - started, 30)
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 10
+            while running(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(running(pid))
 
 
 if __name__ == "__main__":
