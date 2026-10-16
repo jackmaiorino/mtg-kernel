@@ -32,6 +32,20 @@ def _shape(value: Any, spec: Any, field: str) -> None:
     def fail():
         raise LimitedSessionError(f"invalid next-five value or fields: {field}")
     if isinstance(spec, dict):
+        if (spec is QUOTE or spec is ORDERING or spec is COMPLETED) and type(value) is dict and "intersection" in value:
+            intersection = value["intersection"]
+            _shape(intersection, INTERSECTION, field + ".intersection")
+            creature = intersection["creature_lethal_damage"]
+            effective = intersection["effective_lethal_damage"]
+            if creature < 0 or effective != min(creature, intersection["predamage_loyalty"]):
+                fail()
+            if spec is QUOTE:
+                if not value.get("target_legal_now") or value.get("creature_lethal_damage_now") != creature:
+                    fail()
+            elif value.get("lethal_damage") != effective:
+                fail()
+            _shape({k: v for k, v in value.items() if k != "intersection"}, spec, field)
+            return
         if type(value) is not dict or set(value) != set(spec):
             fail()
         for key, child in spec.items():
@@ -153,12 +167,17 @@ def _expected_next_five_meanings() -> list[dict[str, Any]]:
         "actual_committed_damage_after_replacement_and_prevention":True}}, {"CreateExcessGoblins":{
         "token":{"printed":printed(0,[],["Creature"],subtypes=["Goblin"],power=1,toughness=1,token=True,colors=["R"])},
         "controller":"OriginalSpellController","lethal_uses_predamage_effective_toughness_less_marked_damage":True,
-        "source_deathtouch_lethal_one":True,"no_sba_between_damage_and_tokens":True,"one_complete_replacement_batch":True}}]
+        "source_deathtouch_lethal_one":True,"no_sba_between_damage_and_tokens":True,"one_complete_replacement_batch":True,
+        "creature_planeswalker_intersection":{"schema":"rules-meaning/goblin-excess-intersection/v1",
+            "greatest_of_creature_and_planeswalker_excess":True,"planeswalker_uses_predamage_unsigned_loyalty":True}}}]
     result.append({"family":"Goblin","printed":printed(0,["R","R"],["Sorcery"],x=1),"ordered_rules":[{"Cast":goblin_cast}]})
     return result
 
 
 FAMILY = ("enum", ("Snack", "Replication", "Infernal", "Giada", "Goblin"))
+INTERSECTION = {"schema": ("enum", ("mtg-kernel/goblin-excess-intersection/v1",)),
+                "creature_lethal_damage": I64, "predamage_loyalty": U32,
+                "effective_lethal_damage": I64}
 NEXT_TARGET = ("variant", {"Player":SEAT,"Object":REF})
 CURRENT = {"family":FAMILY, **OPTIONAL_CURRENT}
 CAST = {"family":FAMILY,"source":REF,"original_controller":SEAT,"is_copy":bool,

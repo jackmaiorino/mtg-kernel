@@ -7,6 +7,7 @@ use crate::{
     policy_observation_v6::tests::put,
     state::{GameState, Target, Zone},
 };
+mod intersection;
 fn ready(actor: PlayerId) -> GameState {
     let mut s = crate::extra_turn_v1::tests::ready(actor);
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
