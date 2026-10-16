@@ -39,7 +39,6 @@ pub struct ChoiceV1 {
 }
 impl std::hash::Hash for ChoiceV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.source.hash(state);
         self.historical_source.hash(state);
         self.batch.hash(state);
@@ -140,7 +139,6 @@ pub struct ExecutionStepV1 {
 }
 impl std::hash::Hash for ExecutionStepV1 {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        use std::hash::Hash;
         self.frame.hash(h);
         self.conditional_result.hash(h);
         self.offered_menu.hash(h);

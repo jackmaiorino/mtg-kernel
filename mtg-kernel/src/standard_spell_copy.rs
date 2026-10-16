@@ -142,6 +142,7 @@ pub(crate) fn copy_snapshot_legal_targets(
             card_def: source.card_def,
             zone: Zone::Stack,
             zone_change_count: source.zone_change_count,
+            power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
         }),

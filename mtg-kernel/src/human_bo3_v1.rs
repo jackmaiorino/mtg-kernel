@@ -350,8 +350,9 @@ pub use limited_next_five_v6::LimitedNextFiveDecisionV6;
 pub(crate) use limited_prepared_v5::project_limited_prepared_v5;
 pub use limited_prepared_v5::LimitedPreparedDecisionV5;
 pub use next_five_v59::{
-    HumanDecisionNextFiveV59, HumanNextFiveProjectorV59, HumanNextFiveSessionV59,
-    HumanNextFiveSnapshotV59, HumanVisibleStateNextFiveV59,
+    HumanDecisionNextFiveV59, HumanNextFiveActivationV59, HumanNextFiveProjectorV59,
+    HumanNextFiveSessionV59, HumanNextFiveSnapshotV59, HumanNextFiveTargetV59,
+    HumanVisibleStateNextFiveV59,
 };
 
 pub mod ajani_v42;

@@ -201,11 +201,7 @@ fn all_five_exact_meanings_keep_order_costs_and_partial_truth_both_seats() {
         assert!(card_def::preflight_fully_supported_deck(&[m.card_id]).is_err());
         let d = &CARD_DEFS[usize::from(m.card_id)];
         let mut foreign = crate::midnight_snack_v1::tests::definition_fixture(d);
-        foreign.ward_cost = Some(crate::mana::Cost {
-            generic: 1,
-            pips: &[],
-            x_count: 0,
-        });
+        foreign.ward_cost = Some(crate::card_def::WardCostDef::Generic(1));
         assert!(!meaning::owns_definition(family, m.card_id, &foreign));
         let mut wrong = m.clone();
         wrong.ordered_rules.reverse();

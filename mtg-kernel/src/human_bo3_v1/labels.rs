@@ -2580,7 +2580,7 @@ mod next_five_native_label_tests {
     }
 
     fn paid_giada_entry(actor: PlayerId) -> crate::state::GameState {
-        use crate::engine::{self, Action, Decision};
+        use crate::engine;
         use crate::state::Step;
         let mut state = ready(actor);
         for _ in 0..10 {
@@ -3265,7 +3265,7 @@ mod next_five_native_label_tests {
     #[test]
     fn infernal_death_order_labels_two_paid_native_triggers_and_restores_both_seats() {
         use crate::{
-            engine::{self, Action, Decision},
+            engine::{self, Decision},
             event::{self, ProposedEvent},
         };
 
@@ -3399,7 +3399,7 @@ mod next_five_native_label_tests {
             let mut session =
                 crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(inner, actor.into())
                     .unwrap();
-            let foreign = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+            let mut foreign = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
                 FastActorSessionV1::from_next_five_v59_fixture_state(ready(actor)),
                 actor.into(),
             )
@@ -3553,7 +3553,7 @@ mod next_five_native_label_tests {
             // A native life-gain event supplies the exact current-turn public
             // total used by the actual Snack activation label.
             let mut state = ready(actor);
-            let snack = put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
+            put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
             put(
                 &mut state,
                 actor.opponent(),

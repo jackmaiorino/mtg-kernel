@@ -1,4 +1,3 @@
-use super::*;
 use crate::{
     card_def::{self, CardCapability},
     engine::{self, Action, Decision},
@@ -184,7 +183,13 @@ fn genuine_reanimation_has_no_cast_counters_and_paid_controlled_death_returns_to
         let abrade = put(&mut state, actor, "Abrade", Zone::Hand);
         paid_cast(&mut state, actor, abrade, Some(familiar));
         assert_eq!(state.objects.get(familiar).owner, actor);
-        assert_eq!(state.objects.get(familiar).zone, Zone::Graveyard);
+        assert_eq!(
+            (
+                state.objects.get(familiar).zone,
+                state.objects.get(familiar).zone_change_count
+            ),
+            (Zone::Graveyard, battlefield_generation + 1)
+        );
         assert_eq!(
             state.nine_lives_delayed_v1.as_ref().unwrap()[0]
                 .source

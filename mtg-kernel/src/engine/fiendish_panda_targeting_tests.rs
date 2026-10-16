@@ -10,6 +10,7 @@ fn source_for(state: &GameState, source: ObjectId) -> TargetingSource {
         card_def: object.card_def,
         zone: object.zone,
         zone_change_count: object.zone_change_count,
+        power_lki: None,
         other_than: None,
         original_source_incarnation_only: false,
     }

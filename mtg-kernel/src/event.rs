@@ -98,7 +98,6 @@ pub struct DamageProposed {
 
 impl std::hash::Hash for DamageProposed {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.source.hash(state);
         self.target.hash(state);
         self.amount.hash(state);
@@ -1752,7 +1751,7 @@ pub enum CommittedEvent {
     /// effect names only the damage-history index; this publication binds that
     /// index and observer to the native stack item that may consume it.
     NivMizzetVisionaryTriggerStackedV1 {
-        stack_item_id: crate::state::StackItemId,
+        stack_item_id: crate::ids::StackItemId,
         observer: crate::state::AbilitySourceContractV4,
         damage_history_index: u64,
     },
@@ -2094,7 +2093,7 @@ fn find_niv_damage_source(
 
 pub(crate) fn publish_niv_mizzet_visionary_trigger_v1(
     state: &mut GameState,
-    stack_item_id: crate::state::StackItemId,
+    stack_item_id: crate::ids::StackItemId,
     observer: crate::state::AbilitySourceContractV4,
     damage_history_index: u64,
 ) {

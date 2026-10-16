@@ -1,6 +1,6 @@
 //! Fixed-seat Human consumer for the sealed NextFive V59 owner.
 //! Backend bindings, raw decisions and executable facts remain private.
-use super::visible::{self, Handles};
+use super::visible::Handles;
 use super::*;
 use crate::{
     next_five_observation_v59 as observation, next_five_public_v59 as public,
@@ -452,7 +452,6 @@ fn project_facts(
     value: &public::FactsV59,
     handles: &mut Handles,
 ) -> Result<HumanNextFiveFactsV59, Error> {
-    use crate::rules_meaning_next_five_v59::FamilyV59;
     let snack = &value.snack;
     let snack = HumanNextFiveSnackFactsV59 {
         viewer: snack.viewer,
