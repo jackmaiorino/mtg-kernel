@@ -720,3 +720,107 @@ fn paid_edict_nontargeting_sacrifice_replaces_without_a_death_both_seats() {
         crate::progenitus_v1::validate(&s).unwrap();
     }
 }
+
+#[test]
+fn paid_tutelage_same_green_creature_pair_native_harvester_receipts_repeat_restore_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        let top = primitive_top(
+            &mut s,
+            p.opponent(),
+            &["Llanowar Elves", "Llanowar Elves", "Forest", "Island"],
+        );
+        cast(
+            &mut s,
+            p,
+            "Sphinx's Tutelage",
+            (false, 0, false),
+            &[],
+            None,
+            3,
+        );
+        finish(&mut s);
+        let history = s.engine.event_history.len();
+        cast(&mut s, p, "Think Twice", (false, 0, false), &[], None, 2);
+        for _ in 0..24 {
+            let d = next(&mut s);
+            if matches!(d, Decision::ChooseEffectTargets { .. }) {
+                break;
+            }
+            pass(&mut s, d);
+        }
+        assert!(
+            matches!(next(&mut s),Decision::ChooseEffectTargets{legal_targets,..}if legal_targets==vec![Target::Object(top[0]),Target::Object(top[1])])
+        );
+        let mut r = restore(&s);
+        step(&mut s, Action::ChooseEffectTarget(Target::Object(top[1]))).unwrap();
+        step(&mut r, Action::ChooseEffectTarget(Target::Object(top[1]))).unwrap();
+        let d = next(&mut s);
+        assert_eq!(d, next(&mut r));
+        assert_eq!(s, r);
+        assert!(
+            matches!(d,Decision::ChooseEffectTargets{legal_targets,..}if legal_targets==vec![Target::Object(top[2]),Target::Object(top[3])])
+        );
+        assert!(matches!(
+            &s.engine.pending_effect.as_ref().unwrap().choice,
+            Some(crate::effect::PendingEffectChoice::SelectTargets {
+                purpose: crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+                    previous_batch: Some(_),
+                    ..
+                },
+                ..
+            })
+        ));
+        assert_eq!(
+            &s.players[p.opponent().index()].graveyard[..],
+            &[top[1], top[0]]
+        );
+        let receipts = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .skip(history)
+            .filter_map(|(at, e)| {
+                matches!(e, event::CommittedEvent::HarvesterGraveyardEntryV1 { .. }).then_some(at)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(receipts.len(), 2);
+        for edit in 0..2 {
+            let mut bad = restore(&s);
+            let event::CommittedEvent::HarvesterGraveyardEntryV1 { entry } =
+                &mut bad.engine.event_history[receipts[0]]
+            else {
+                panic!();
+            };
+            if edit == 0 {
+                entry.card.expected_zone_change_count += 1;
+            } else {
+                let crate::effect::harvester_v1::GraveyardOriginV1::ZoneChange { history_index } =
+                    &mut entry.origin
+                else {
+                    panic!();
+                };
+                *history_index += 1;
+            }
+            let before = bad.clone();
+            assert!(crate::effect::validate_pending_effect_choice(&bad).is_err());
+            assert_eq!(bad, before);
+        }
+        let mut during_repeat = restore(&s);
+        finish(&mut s);
+        finish(&mut during_repeat);
+        assert_eq!(s, during_repeat);
+        assert_eq!(
+            &s.players[p.opponent().index()].graveyard[..],
+            &[top[1], top[0], top[2], top[3]]
+        );
+        assert_eq!(
+            s.engine.event_history[history..]
+                .iter()
+                .filter(|e| matches!(e, event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }))
+                .count(),
+            2
+        );
+    }
+}
