@@ -1822,3 +1822,216 @@ fn genuine_paid_harvester_target_roster_and_public_rows_ignore_unrevealed_oppone
         assert_eq!(worlds[0], worlds[1]);
     }
 }
+
+#[test]
+fn genuine_paid_nightmare_native_aegis_layer_save_restore_and_paid_copy_values_both_seats() {
+    use crate::state::{AbilitySourceContractV4, ObjectLinkV4};
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let harvester = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let elf = hv_death(&mut s, p);
+        hv_activate(&mut s, p, harvester, elf);
+        hv_finish_pair(&mut s);
+        let original = hv_nightmares(&s, p)[0];
+        let host = ObjectLinkV4 {
+            object: original,
+            zone_change_count: s.objects.get(original).zone_change_count,
+        };
+        assert!(harvester_v1::copiable_nightmare(&s, original).unwrap());
+        assert_eq!(s.objects.get(original).card_def, id("Llanowar Elves"));
+        assert_eq!(s.objects.get(original).owner, p);
+        assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+
+        let attachment = paid(&mut s, p, "Viridian Longbow", 1);
+        let attachment_generation = s.objects.get(attachment).zone_change_count;
+        // Accepted native Aegis copy-value primitive with registered physical
+        // stand-ins. Longbow is genuinely paid, but has no printed Aegis ability.
+        // Donor exile/link and attachment are labelled setup primitives. The
+        // Nightmare component itself came only from the paid Harvester above.
+        let donor = put(&mut s, p.opponent(), "Axgard Cavalry", Zone::Hand);
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(donor, Zone::Exile),
+        );
+        s.attach_object_exact(
+            attachment,
+            attachment_generation,
+            host.object,
+            host.zone_change_count,
+        )
+        .unwrap();
+        let source = AbilitySourceContractV4::capture(&s, attachment);
+        s.objects.get_mut(donor).v4.exiled_by = Some(ObjectLinkV4 {
+            object: attachment,
+            zone_change_count: attachment_generation,
+        });
+        let mut ctx = ExecCtx::no_targets(attachment, p);
+        ctx.ability_source_contract = Some(source);
+        let timestamp = s.objects.get(attachment).v4.layer_timestamp.unwrap();
+        let binding = EffectObjectBinding {
+            object: donor,
+            expected_zone: Zone::Exile,
+            expected_zone_change_count: s.objects.get(donor).zone_change_count,
+        };
+        assert_eq!(
+            crate::standard_cards_v1::aegis_copy_candidates(&s, &ctx, host, timestamp),
+            [binding]
+        );
+        let mut stale = binding;
+        stale.expected_zone_change_count += 1;
+        let before = s.clone();
+        crate::standard_cards_v1::apply_aegis_copy(&mut s, &ctx, host, timestamp, stale);
+        assert_eq!(s, before);
+        crate::standard_cards_v1::apply_aegis_copy(
+            &mut s,
+            &ctx,
+            ObjectLinkV4 {
+                zone_change_count: host.zone_change_count + 1,
+                ..host
+            },
+            timestamp,
+            binding,
+        );
+        assert_eq!(s, before);
+
+        let history_start = s.engine.event_history.len();
+        let mut replay = restore(&s);
+        for branch in [&mut s, &mut replay] {
+            crate::standard_cards_v1::apply_aegis_copy(branch, &ctx, host, timestamp, binding);
+            let live = branch.objects.get(original);
+            assert_eq!(
+                (live.zone, live.zone_change_count),
+                (Zone::Battlefield, host.zone_change_count)
+            );
+            assert_eq!((live.owner, live.controller), (p, p));
+            assert!(live.v4.is_token);
+            assert_eq!(live.card_def, id("Axgard Cavalry"));
+            assert!(!harvester_v1::copiable_nightmare(branch, original).unwrap());
+            assert!(!engine::has_effective_subtype(
+                branch,
+                original,
+                card_def::Subtype::Nightmare
+            ));
+            assert!(crate::standard_cards_v1::had_card_def(
+                branch,
+                original,
+                host.zone_change_count,
+                id("Llanowar Elves")
+            ));
+            assert!(crate::standard_cards_v1::had_card_def(
+                branch,
+                original,
+                host.zone_change_count,
+                id("Axgard Cavalry")
+            ));
+            assert_eq!(branch.objects.get(donor).owner, p.opponent());
+            assert_eq!(branch.objects.get(donor).zone, Zone::Exile);
+            harvester_v1::validate_state(branch).unwrap();
+        }
+        assert_eq!(s, replay);
+        restore(&s);
+
+        // A real paid copy while the layer is active sees Cavalry, without the
+        // saved Nightmare exception. This is not a hand-authored token blueprint.
+        let before_copy = s.players[p.index()].battlefield.clone();
+        cast(&mut s, p, "Self-Reflection", &[Target::Object(original)], 6);
+        hv_finish_pair(&mut s);
+        let plain = *s.players[p.index()]
+            .battlefield
+            .iter()
+            .find(|object| {
+                let live = s.objects.get(**object);
+                !before_copy.contains(object)
+                    && live.v4.is_token
+                    && live.card_def == id("Axgard Cavalry")
+            })
+            .unwrap();
+        assert!(!harvester_v1::copiable_nightmare(&s, plain).unwrap());
+        assert_eq!(
+            (s.objects.get(plain).owner, s.objects.get(plain).controller),
+            (p, p)
+        );
+
+        let mut replay = restore(&s);
+        for branch in [&mut s, &mut replay] {
+            // Native source departure invalidates the actual attachment and
+            // restores the saved copiable values on the same host incarnation.
+            event::propose_and_commit(
+                branch,
+                event::ProposedEvent::zone_change(attachment, Zone::Hand),
+            );
+            let live = branch.objects.get(original);
+            assert_eq!(
+                (live.zone, live.zone_change_count),
+                (Zone::Battlefield, host.zone_change_count)
+            );
+            assert_eq!((live.owner, live.controller), (p, p));
+            assert_eq!(live.card_def, id("Llanowar Elves"));
+            assert!(live.v4.is_token);
+            assert!(harvester_v1::copiable_nightmare(branch, original).unwrap());
+            assert!(engine::has_effective_subtype(
+                branch,
+                original,
+                card_def::Subtype::Nightmare
+            ));
+            assert!(!harvester_v1::copiable_nightmare(branch, plain).unwrap());
+            branch.validate_attachment_relations().unwrap();
+            harvester_v1::validate_state(branch).unwrap();
+        }
+        assert_eq!(s, replay);
+        assert_eq!(s.state_hash(), replay.state_hash());
+        let layers: Vec<_> = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .skip(history_start)
+            .filter_map(|(at, event)| {
+                if let CommittedEvent::NightmareCopyLayerV1 { layer } = event {
+                    assert_eq!(layer.source.source, original);
+                    assert_eq!(layer.source.zone_change_count, host.zone_change_count);
+                    assert_eq!((layer.source.owner, layer.source.controller), (p, p));
+                    Some((at, layer.nightmare, layer.source.card_def))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            layers
+                .iter()
+                .map(|(_, value, def)| (*value, *def))
+                .collect::<Vec<_>>(),
+            [(false, id("Axgard Cavalry")), (true, id("Llanowar Elves"))]
+        );
+        let mut forged = restore(&s);
+        if let CommittedEvent::NightmareCopyLayerV1 { layer } =
+            &mut forged.engine.event_history[layers[0].0]
+        {
+            layer.nightmare = true;
+        }
+        let before = forged.clone();
+        assert!(harvester_v1::validate_state(&forged).is_err());
+        assert_eq!(forged, before);
+
+        let before_copy = hv_nightmares(&s, p);
+        cast(&mut s, p, "Self-Reflection", &[Target::Object(original)], 6);
+        hv_finish_pair(&mut s);
+        let copied = *hv_nightmares(&s, p)
+            .iter()
+            .find(|object| !before_copy.contains(object))
+            .unwrap();
+        assert_eq!(s.objects.get(copied).card_def, id("Llanowar Elves"));
+        assert!(harvester_v1::copiable_nightmare(&s, copied).unwrap());
+        assert_eq!(
+            (
+                s.objects.get(copied).owner,
+                s.objects.get(copied).controller
+            ),
+            (p, p)
+        );
+        assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+        restore(&s);
+    }
+}
