@@ -232,14 +232,56 @@ fn shared_query_preserves_cancellation_and_sequence_stops_on_lower_boundary_both
         ]);
         let mut restored = restore(&lower);
         for branch in [&mut lower, &mut restored] {
-            effect::execute_without_linked_aura_v1(
-                &program,
-                &ExecCtx::no_targets(object, actor),
-                branch,
-            );
-            let mut expected = original.clone();
-            expected.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, object));
+            let mut halted = original.clone();
+            halted.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, object));
+            // The primitive itself must refuse before any modifier, timestamp,
+            // event or custody write. A sequence's public child dispatcher also
+            // authenticates that refused instruction as a whole native input.
+            let mut primitive = branch.clone();
+            effect::install_temporary_boost(&mut primitive, binding, -2, -4, Keywords::NONE);
+            assert_eq!(bytes(&primitive), bytes(&halted));
+            let ctx = ExecCtx::no_targets(object, actor);
+            effect::execute_without_linked_aura_v1(&program, &ctx, branch);
+            // This is only an expected comparison value, never an engine input.
+            // Bind the full actual original/output scenes and empty emitted
+            // segment rather than copying or removing the observed history.
+            let index = u64::try_from(original.engine.event_history.len()).unwrap();
+            let mut input_scene = original.clone();
+            input_scene.engine.event_history.clear();
+            let mut output_scene = halted.clone();
+            output_scene.engine.event_history.clear();
+            let mut expected = halted;
+            expected
+                .engine
+                .event_history
+                .push(CommittedEvent::DrakeJournalV1 {
+                    record: Box::new(crate::drake_hatcher_v1::custody::RecordV1 {
+                        index,
+                        value: crate::drake_hatcher_v1::custody::JournalV1::Enclosing {
+                            start: index,
+                            original: Box::new(input_scene),
+                            operation: crate::linked_aura_operation_v1::OperationV1::Effect {
+                                op: EffectOp::BoostBoundObjectUntilEndOfTurn {
+                                    object: binding,
+                                    power: -2,
+                                    toughness: -4,
+                                },
+                                ctx: Box::new(ctx),
+                            },
+                            answers: vec![],
+                            used_banner: false,
+                            output: Box::new(output_scene),
+                        },
+                    }),
+                });
+            expected.engine.drake_ledger_v1.issued = original
+                .engine
+                .drake_ledger_v1
+                .issued
+                .checked_add(1)
+                .unwrap();
             assert_eq!(bytes(branch), bytes(&expected));
+            crate::drake_hatcher_v1::custody::validate(branch).unwrap();
         }
         assert_eq!(bytes(&lower), bytes(&restored));
     }
