@@ -115,6 +115,71 @@ thread_local! {
     static REPLAY_MEMO: RefCell<VecDeque<ReplayKey>> = const { RefCell::new(VecDeque::new()) };
 }
 
+// Only the pure history-to-key computation is reused, within one immutable
+// observation borrow. Full custody validation and replay remain independent.
+struct ObservationReplayKeys {
+    history: *const CommittedEvent,
+    length: usize,
+    keys: Option<BTreeMap<u64, ReplayKey>>,
+}
+impl ObservationReplayKeys {
+    fn matches(&self, history: &[CommittedEvent]) -> bool {
+        self.history == history.as_ptr() && self.length == history.len()
+    }
+}
+thread_local! {
+    static OBSERVATION_REPLAY_KEYS: RefCell<Option<ObservationReplayKeys>> = const { RefCell::new(None) };
+}
+struct ObservationReplayKeysGuard(Option<ObservationReplayKeys>);
+impl Drop for ObservationReplayKeysGuard {
+    fn drop(&mut self) {
+        OBSERVATION_REPLAY_KEYS.with(|frame| *frame.borrow_mut() = self.0.take());
+    }
+}
+/// The shared borrow keeps the actual history allocation and all typed fields
+/// immutable until the frame is removed, including on unwind. No pointer is
+/// dereferenced, and neither the frame nor its contents escape this call.
+pub(crate) fn with_observation_replay_keys<T>(
+    state: &GameState,
+    run: impl FnOnce(&GameState) -> T,
+) -> T {
+    let history = &state.engine.event_history;
+    let previous = OBSERVATION_REPLAY_KEYS.with(|frame| {
+        frame.replace(Some(ObservationReplayKeys {
+            history: history.as_ptr(),
+            length: history.len(),
+            keys: None,
+        }))
+    });
+    let _guard = ObservationReplayKeysGuard(previous);
+    run(state)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static REPLAY_KEY_FRAME_STATS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn reset_replay_key_frame_stats_for_test() {
+    REPLAY_KEY_FRAME_STATS.with(|stats| stats.set((0, 0)));
+}
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn replay_key_frame_stats_for_test() -> (u64, u64) {
+    REPLAY_KEY_FRAME_STATS.with(Cell::get)
+}
+
 /// Every byte of the actual history before the physical row, including the
 /// operation's actual emitted segment, and the complete current enclosing row
 /// are committed. Round-trip equality makes serde injective on eligible typed
@@ -125,6 +190,34 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeReplayKeys,
     );
+    let cached = OBSERVATION_REPLAY_KEYS.with(|frame| {
+        frame
+            .borrow()
+            .as_ref()
+            .filter(|frame| frame.matches(history))
+            .and_then(|frame| frame.keys.clone())
+    });
+    if let Some(keys) = cached {
+        #[cfg(all(
+            test,
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        REPLAY_KEY_FRAME_STATS.with(|stats| {
+            let (builds, hits) = stats.get();
+            stats.set((builds, hits.saturating_add(1)));
+        });
+        return keys;
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    REPLAY_KEY_FRAME_STATS.with(|stats| {
+        let (builds, hits) = stats.get();
+        stats.set((builds.saturating_add(1), hits));
+    });
     let mut keys = BTreeMap::new();
     let mut prefix = Sha256::new();
     prefix.update(b"drake-enclosing-actual-history/v1");
@@ -154,6 +247,15 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
         prefix.update(length.to_le_bytes());
         prefix.update(&bytes);
     }
+    OBSERVATION_REPLAY_KEYS.with(|frame| {
+        if let Some(frame) = frame
+            .borrow_mut()
+            .as_mut()
+            .filter(|frame| frame.matches(history))
+        {
+            frame.keys = Some(keys.clone());
+        }
+    });
     keys
 }
 
