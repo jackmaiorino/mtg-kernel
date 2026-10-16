@@ -94,6 +94,7 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-budget-replay"
             | "s4a-search-profile"
             | "s4a-utility-root"
+            | "s4a-utility-root-inspect"
     )
 }
 
@@ -1016,6 +1017,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     if cfg.mode == "s4a-utility-root" {
         return utility_root::run(cfg, policy, &sh, &spec_bytes);
     }
+    if cfg.mode == "s4a-utility-root-inspect" {
+        return utility_root::run_inspect(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-branch" {
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
         // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
@@ -1464,13 +1468,22 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    if cfg.mode == "s4a-utility-root-inspect" && !cfg!(feature = "gameplay-decision-trace-v1") {
+        return Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into());
+    }
     // Every mode refuses a best-line `S4A_BACKUP` it would not use.
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     match cfg.mode.as_str() {
-        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" | "s4a-search-profile" | "s4a-utility-root" => {
-            return run_bank_mode(cfg, policy)
-        }
+        "s4a-bank"
+        | "s4a-bank-trace"
+        | "s4a-refresh"
+        | "s4a-branch"
+        | "s4a-canon-offline"
+        | "s4a-budget"
+        | "s4a-budget-replay"
+        | "s4a-search-profile"
+        | "s4a-utility-root"
+        | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}
