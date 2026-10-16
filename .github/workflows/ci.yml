@@ -216,6 +216,13 @@ jobs:
           - limited-v4
           - limited-v5
           - limited-model
+          - limited-model-1
+          - limited-model-2
+          - limited-model-3
+          - limited-model-4
+          - limited-model-5
+          - limited-model-6
+          - limited-model-7
           - standard
           - workspace
           - cuda
@@ -228,7 +235,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -479,10 +486,17 @@ jobs:
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_prepared_env_v5
           MTG_LIMITED_PREPARED_TIMING_V5=1 python python/tools/check_limited_prepared_client_v5.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_prepared_env_v5$binary_suffix"
 
+      # Enumerate the compiled subtree in each job and partition exact names.
+      # Preserve the 30-minute bound while retaining immediate panic details.
       - name: Validate complete current mixed model subtree
-        if: ${{ !cancelled() && matrix.group == 'limited-model' }}
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
         run: |
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures current_mixed_policy_v1::
+          shard=0
+          if [ '${{ matrix.group }}' != limited-model ]; then
+            shard='${{ matrix.group }}'
+            shard="${shard##*-}"
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 8 --nocapture current_mixed_policy_v1::
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'
