@@ -615,6 +615,7 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Creature => (ObjF::Typed(CardTypeF::Creature), None),
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
+        PermanentFilter::AnotherWithSubtype(_) => (ObjF::Permanent, None),
     }
 }
 

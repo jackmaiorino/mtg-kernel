@@ -144,7 +144,7 @@ pub(crate) fn resume_owned(
     }
     drive_owned(state, owner)
 }
-fn tracked(state: &GameState) -> Result<bool, String> {
+pub(super) fn tracked(state: &GameState) -> Result<bool, String> {
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(false);
     };

@@ -942,6 +942,22 @@ pub(super) fn choice_label_next_five(
     )
 }
 
+pub(super) fn choice_label_graveyard_return(
+    obs: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
 fn choice_label_parts(
     common: &crate::ravenous_observation_v51::RavenousObservationV51,
     trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,

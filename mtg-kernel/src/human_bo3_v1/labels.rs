@@ -596,8 +596,7 @@ pub(super) fn label_parts_v59(
     facts: &crate::next_five_public_v59::FactsV59,
 ) -> Result<String, Error> {
     use crate::{
-        next_five_public_v59::{self as public, TargetV59, TriggerStageV59},
-        optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+        next_five_public_v59 as public,
         rules_meaning_next_five_v59::{self as meaning, FamilyV59},
     };
 
@@ -620,6 +619,39 @@ pub(super) fn label_parts_v59(
             return Err(Error::UnsupportedPrompt);
         }
     }
+    label_parts_next_five(action, observation, handles, human, facts)
+}
+
+pub(super) fn label_parts_graveyard_return_v61(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    complete: &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
+) -> Result<String, Error> {
+    // The private complete V61 menu builder validated this immutable envelope
+    // before registering references. Do not hash the whole envelope per label.
+    if complete.graveyard_return.viewer != human
+        || observation.projection != &complete.common.common.projection
+    {
+        return Err(Error::InvalidVisibleReference);
+    }
+    label_parts_next_five(action, observation, handles, human, &complete.next_five)
+}
+
+// Pure inherited field mapping after the caller's distinct complete validator.
+fn label_parts_next_five(
+    action: &A,
+    observation: &super::life_ward_v8::ProjectionPartsV8<'_>,
+    handles: &Handles,
+    human: PlayerSeatV1,
+    facts: &crate::next_five_public_v59::FactsV59,
+) -> Result<String, Error> {
+    use crate::{
+        next_five_public_v59::{TargetV59, TriggerStageV59},
+        optional_trigger_public_v1::{IdentityV1, ReferenceV1},
+        rules_meaning_next_five_v59::FamilyV59,
+    };
     if actor(action) != Some(human) {
         return Err(Error::NotHumanTurn);
     }
