@@ -110,26 +110,12 @@ fn pass_until_halted(state: &mut GameState) -> (UnsupportedMechanic, ObjectId) {
 }
 
 fn execute_pending_trigger(state: &mut GameState, pending: &PendingTrigger) {
-    effect::execute(
-        &pending.effect,
-        &ExecCtx {
-            source: pending.source,
-            ability_source_contract: pending.source_contract,
-            controller: pending.controller,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: pending.targets.clone(),
-            target_contracts: pending.target_contracts.clone(),
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            optional_additional_cost_paid: None,
-            hidden_ability_source: None,
-            kicked: pending.kicked,
-            x_value: 0,
-            ..ExecCtx::no_targets(pending.source, pending.controller)
-        },
-        state,
-    );
+    let mut ctx = ExecCtx::no_targets(pending.source, pending.controller);
+    ctx.ability_source_contract = pending.source_contract;
+    ctx.targets = pending.targets.clone();
+    ctx.target_contracts = pending.target_contracts.clone();
+    ctx.kicked = pending.kicked;
+    effect::execute(&pending.effect, &ctx, state);
 }
 
 #[test]
@@ -587,24 +573,12 @@ fn unexpected_fangs_counters_are_permanent_lifelink_and_incarnation_bound() {
         &mut stale,
         ProposedEvent::zone_change(target, Zone::Battlefield),
     );
+    let mut ctx = ExecCtx::no_targets(source, PlayerId::P0);
+    ctx.targets = vec![Target::Object(target)];
+    ctx.target_contracts = vec![old_contract];
     effect::execute(
         &(CARD_DEFS[card_id("Unexpected Fangs") as usize].spell_effect)().unwrap(),
-        &ExecCtx {
-            source,
-            ability_source_contract: None,
-            controller: PlayerId::P0,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: vec![Target::Object(target)],
-            target_contracts: vec![old_contract],
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            optional_additional_cost_paid: None,
-            hidden_ability_source: None,
-            kicked: false,
-            x_value: 0,
-            ..ExecCtx::no_targets(source, PlayerId::P0)
-        },
+        &ctx,
         &mut stale,
     );
     assert_eq!(stale.objects.get(target).counters.plus1_plus1, 0);
@@ -710,26 +684,15 @@ fn attach_effect_rejects_a_stale_target_incarnation_without_mutation() {
         &mut state,
         ProposedEvent::zone_change(target, Zone::Battlefield),
     );
+    let mut ctx = ExecCtx::no_targets(equipment, PlayerId::P0);
+    ctx.ability_source_contract = Some(source_contract);
+    ctx.targets = vec![Target::Object(target)];
+    ctx.target_contracts = vec![target_contract];
     effect::execute(
         &EffectOp::AttachSourceToTarget {
             object: ObjectRef::Target(0),
         },
-        &ExecCtx {
-            source: equipment,
-            ability_source_contract: Some(source_contract),
-            controller: PlayerId::P0,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: vec![Target::Object(target)],
-            target_contracts: vec![target_contract],
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            optional_additional_cost_paid: None,
-            hidden_ability_source: None,
-            kicked: false,
-            x_value: 0,
-            ..ExecCtx::no_targets(equipment, PlayerId::P0)
-        },
+        &ctx,
         &mut state,
     );
     assert!(state.objects.get(equipment).v4.attached_to.is_none());

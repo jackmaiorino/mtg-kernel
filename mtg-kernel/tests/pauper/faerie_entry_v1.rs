@@ -69,26 +69,9 @@ fn enter(state: &mut GameState, object: ObjectId) -> Vec<trigger::PendingTrigger
 }
 
 fn execute_trigger(state: &mut GameState, trigger: &trigger::PendingTrigger) {
-    effect::execute(
-        &trigger.effect,
-        &ExecCtx {
-            source: trigger.source,
-            controller: trigger.controller,
-            cauldron_grant: Default::default(),
-            stack_item_id: None,
-            targets: Vec::new(),
-            target_contracts: Vec::new(),
-            discarded: Vec::new(),
-            paid_cost_refs: Vec::new(),
-            hidden_ability_source: None,
-            ability_source_contract: trigger.source_contract,
-            kicked: false,
-            optional_additional_cost_paid: None,
-            x_value: 0,
-            ..ExecCtx::no_targets(trigger.source, trigger.controller)
-        },
-        state,
-    );
+    let mut ctx = ExecCtx::no_targets(trigger.source, trigger.controller);
+    ctx.ability_source_contract = trigger.source_contract;
+    effect::execute(&trigger.effect, &ctx, state);
 }
 
 #[test]
