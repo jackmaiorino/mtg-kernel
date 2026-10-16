@@ -17803,7 +17803,6 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if card.zone != Zone::Graveyard
                 || card.owner != source.owner
                 || card.zone_change_count != graveyard.zone_change_count
-                || card.card_def != source.card_def
             {
                 return;
             }

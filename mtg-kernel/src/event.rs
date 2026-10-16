@@ -129,8 +129,8 @@ pub struct ZoneChangeProposed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_added_subtype_v1: Option<crate::card_def::Subtype>,
     pub touched_by: Vec<ReplacementId>,
-    /// Nine-Lives Familiar counters installed simultaneously with a delayed
-    /// return entry, before entry-trigger collection and replacements.
+    /// Revival counters installed simultaneously with a delayed return entry,
+    /// before entry-trigger collection and replacements.
     /// Kept last so the existing serialized field prefix remains stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_revival_v1: Option<i32>,
@@ -2897,12 +2897,7 @@ fn commit_with_entry_batch_and_source_color(
         entry_context;
     if let ProposedEvent::ZoneChange(change) = &event {
         if let Some(revival) = change.battlefield_revival_v1 {
-            if revival < 0
-                || (change.to_zone == Zone::Battlefield
-                    && crate::card_def::CARD_DEFS
-                        .get(usize::from(state.objects.get(change.object).card_def))
-                        .is_none_or(|definition| definition.name != "Nine-Lives Familiar"))
-            {
+            if revival < 0 {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     change.object,

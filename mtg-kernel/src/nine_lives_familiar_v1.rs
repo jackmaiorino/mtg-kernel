@@ -19,6 +19,23 @@ pub(crate) const TRIGGERS: [crate::trigger::TriggeredAbilityDef; 1] =
         effect: death_trigger,
     }];
 
+/// Frozen RL card rows have no revival-counter field. Refuse before projecting
+/// any card carrying one through those older shapes.
+pub(crate) fn require_legacy_public_counter_schema(
+    state: &crate::state::GameState,
+    object: crate::ids::ObjectId,
+) -> Result<(), String> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.counters.revival != 0)
+    {
+        Err("legacy public counter schema cannot represent revival counters".into())
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",

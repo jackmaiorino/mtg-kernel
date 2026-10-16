@@ -147,6 +147,18 @@ fn paid_cast_death_and_delayed_season_return_restore_both_seats() {
 }
 
 #[test]
+fn legacy_observation_refuses_paid_native_revival_counters_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let familiar = put(&mut state, actor, "Nine-Lives Familiar", Zone::Hand);
+        paid_cast(&mut state, actor, familiar, None);
+        assert_eq!(state.objects.get(familiar).counters.revival, 8);
+        let error = crate::rl::observe_v1(&state, actor, 0).unwrap_err();
+        assert!(error.0.contains("revival counters"), "{error}");
+    }
+}
+
+#[test]
 fn genuine_reanimation_has_no_cast_counters_and_paid_controlled_death_returns_to_controller() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
@@ -165,6 +177,7 @@ fn genuine_reanimation_has_no_cast_counters_and_paid_controlled_death_returns_to
         assert_eq!(state.objects.get(familiar).counters.revival, 8);
         let battlefield_generation = state.objects.get(familiar).zone_change_count;
         let opponent = actor.opponent();
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, opponent);
         let employment = put(&mut state, opponent, "Involuntary Employment", Zone::Hand);
         paid_cast(&mut state, opponent, employment, Some(familiar));
         assert_eq!(state.objects.get(familiar).controller, opponent);
