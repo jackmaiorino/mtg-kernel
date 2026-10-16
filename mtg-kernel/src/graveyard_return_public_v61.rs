@@ -282,8 +282,78 @@ pub(crate) fn require_legacy_visible(
     Ok(())
 }
 
+pub(crate) fn require_call_legacy_visible_v62(
+    state: &GameState,
+    viewer: Option<PlayerId>,
+) -> Result<(), String> {
+    if !cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) {
+        return Ok(());
+    }
+    if crate::card_def::card_id_by_name("Valkyrie's Call").is_none() {
+        return Ok(());
+    }
+    let selected = 459;
+    if crate::card_def::card_id_by_name("Valkyrie's Call") != Some(selected) {
+        return Err("Call printing ID changed".into());
+    }
+    let visible =
+        state.objects.iter().any(|(id, live)| {
+            public::reference(state, id, viewer).is_some_and(
+            |r| matches!(r.identity, public::IdentityV1::Known { card_id } if card_id == selected),
+        ) || viewer.is_some_and(|viewer| {
+            live.v4.face_down_v1.is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
+                && live.card_def == selected
+        })
+        });
+    let source = |s: AbilitySourceContractV4| s.card_def == selected;
+    let retained = state.stack.iter().any(|r| {
+        r.v4.ability_source_contract.is_some_and(source)
+            || r.v4.source_contract.is_some_and(|s| s.card_def == selected)
+    }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.resolving_item
+            .v4
+            .ability_source_contract
+            .is_some_and(source)
+            || p.ctx.ability_source_contract.is_some_and(source)
+    }) || public::held(state)
+        .iter()
+        .any(|p| p.source_contract.is_some_and(source))
+        || state.engine.event_history.iter().chain(&state.engine.event_log).any(
+            |e| matches!(e, E::ControlledCreatureDeathCaptureV1 { source: s, .. } if source(*s)),
+        );
+    if visible || retained {
+        Err("Valkyrie's Call requires its distinct complete consumer".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV61, String> {
+    counter_values_scoped(state, id, false)
+}
+/// Private compatibility prefix: the distinct Call observation retains the
+/// complete seventeen-field roster. No old V61 artifact admits fellowship.
+pub(crate) fn counter_values_call_compat_v62(
+    state: &GameState,
+    id: ObjectId,
+) -> Result<CountersV61, String> {
+    if state.objects.get(id).counters.fellowship < 0 {
+        return Err("Call negative native fellowship counter".into());
+    }
+    counter_values_scoped(state, id, true)
+}
+fn counter_values_scoped(
+    state: &GameState,
+    id: ObjectId,
+    call: bool,
+) -> Result<CountersV61, String> {
     let live = state.objects.get(id);
+    if call && live.counters.fellowship < 0 {
+        return Err("Call negative native fellowship counter".into());
+    }
     let Counters {
         plus1_plus1,
         minus1_minus1,
@@ -299,7 +369,7 @@ pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<Counters
         revival,
         fellowship,
     } = live.counters;
-    if fellowship != 0 {
+    if fellowship != 0 && !call {
         return Err("V61 does not expose fellowship counters".into());
     }
     let lifelink = live.v4.lifelink_keyword_counters;
@@ -601,6 +671,15 @@ fn trigger(
     }))
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV61, String> {
+    capture_scoped(state, viewer, false)
+}
+pub(crate) fn capture_complete_call_v62(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV61, String> {
+    capture_scoped(state, viewer, true)
+}
+fn capture_scoped(state: &GameState, viewer: PlayerId, call: bool) -> Result<FactsV61, String> {
     let ids = FamilyV61::ALL
         .into_iter()
         .map(|f| Ok((f, meaning::selected_id(f)?)))
@@ -672,7 +751,7 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV61, String> 
             battlefield_counters[seat.index()].push(BattlefieldCountersV61 {
                 card: public::reference(state, id, Some(viewer))
                     .ok_or("V61 public battlefield reference absent")?,
-                counters: counter_values(state, id)?,
+                counters: counter_values_scoped(state, id, call)?,
             });
         }
     }

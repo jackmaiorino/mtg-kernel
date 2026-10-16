@@ -185,6 +185,7 @@ pub(crate) fn root(
 pub(crate) enum CounterScopeV61 {
     Legacy,
     CompleteV61,
+    CallV62,
 }
 pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
     current_with_form(state, id, form, CounterScopeV61::Legacy)
@@ -197,6 +198,12 @@ pub(crate) fn current_checked(state: &GameState, id: u16) -> Result<Vec<CurrentV
 }
 pub(crate) fn current_complete_v61(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
     current_with_form(state, id, checked_form, CounterScopeV61::CompleteV61)
+}
+pub(crate) fn current_complete_call_v62(
+    state: &GameState,
+    id: u16,
+) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::CallV62)
 }
 fn current_with_form(
     state: &GameState,
@@ -380,10 +387,13 @@ fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<C
         revival,
         fellowship,
     } = live.counters;
-    if fellowship != 0 {
+    if fellowship != 0 && scope != CounterScopeV61::CallV62 {
         return Err(error(
             "optional trigger public projection does not expose fellowship counters",
         ));
+    }
+    if scope == CounterScopeV61::CallV62 {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)?;
     }
     if scope == CounterScopeV61::CompleteV61 {
         crate::graveyard_return_public_v61::counter_values(state, id)?;

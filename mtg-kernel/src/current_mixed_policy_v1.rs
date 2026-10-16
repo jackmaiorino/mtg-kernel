@@ -1,10 +1,12 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod call;
 mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
 mod fishing_public_operands;
 mod graveyard_return;
+pub use call::{CallDecision, CallSession, CallSnapshot};
 mod kellan_public_operands;
 mod network;
 mod next_five;
@@ -58,6 +60,7 @@ pub enum Source {
     PreparedV57,
     NextFiveV59,
     GraveyardReturnV61,
+    CallV62,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -284,6 +287,16 @@ pub fn feature_identity() -> String {
             include_str!("twinflame_observation_v1.rs"),
             include_str!("wildwood_public_v1.rs"),
             include_str!("zul_ashur_observation_v1.rs"),
+            include_str!("current_mixed_policy_v1/call.rs"),
+            include_str!("human_bo3_v1/call_v62.rs"),
+            include_str!("limited_call_session_v8.rs"),
+            include_str!("human_bo3_v1/limited_call_v8.rs"),
+            include_str!("call_observation_v62.rs"),
+            include_str!("call_candidates_v62.rs"),
+            include_str!("rl_session/call_v62.rs"),
+            include_str!("rules_meaning_valkyries_call_v62.rs"),
+            include_str!("valkyries_call_public_v62.rs"),
+            include_str!("valkyries_call_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

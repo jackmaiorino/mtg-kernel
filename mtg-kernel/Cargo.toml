@@ -185,3 +185,7 @@ path = "src/bin/kernel_limited_next_five_env_v6.rs"
 [[bin]]
 name = "kernel_limited_graveyard_return_env_v7"
 path = "src/bin/kernel_limited_graveyard_return_env_v7.rs"
+
+[[bin]]
+name = "kernel_limited_call_env_v8"
+path = "src/bin/kernel_limited_call_env_v8.rs"

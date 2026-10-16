@@ -75,6 +75,12 @@ pub(crate) fn capture_complete_v61(
 ) -> Result<FactsV55, String> {
     capture_scoped(state, viewer, public::CounterScopeV61::CompleteV61)
 }
+pub(crate) fn capture_complete_call_v62(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV55, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::CallV62)
+}
 fn capture_scoped(
     state: &GameState,
     viewer: PlayerId,
@@ -168,7 +174,9 @@ fn capture_scoped(
         producer_sha256: meaning::producer_sha256(),
         viewer: viewer.into(),
         meaning,
-        current: if scope == public::CounterScopeV61::CompleteV61 {
+        current: if scope == public::CounterScopeV61::CallV62 {
+            public::current_complete_call_v62(state, id)?
+        } else if scope == public::CounterScopeV61::CompleteV61 {
             public::current_complete_v61(state, id)?
         } else {
             public::current(state, id)?

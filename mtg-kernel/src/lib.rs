@@ -795,3 +795,8 @@ pub mod limited_next_five_session_v6;
 
 pub mod drakuseth_public_v67;
 pub mod rules_meaning_drakuseth_v67;
+
+pub mod call_candidates_v62;
+pub mod call_observation_v62;
+
+pub mod limited_call_session_v8;

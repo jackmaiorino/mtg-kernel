@@ -21,6 +21,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::PreparedV57
                 | FlatActionContractModeV1::NextFiveV59
                 | FlatActionContractModeV1::GraveyardReturnV61
+                | FlatActionContractModeV1::CallV62
         )
     }
     #[cfg(all(

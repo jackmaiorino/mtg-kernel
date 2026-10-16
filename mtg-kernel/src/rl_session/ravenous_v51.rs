@@ -445,6 +445,9 @@ pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
+    if session.flat_action_contract_mode == FlatActionContractModeV1::CallV62 {
+        return super::call_v62::prepare_current(session, current);
+    }
     if session.flat_action_contract_mode == FlatActionContractModeV1::GraveyardReturnV61 {
         return super::graveyard_return_v61::prepare_current(session, current);
     }

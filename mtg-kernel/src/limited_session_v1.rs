@@ -50,6 +50,9 @@ impl CustomDeckV1 {
     pub(crate) fn resolve_graveyard_return_v61(&self) -> Result<Vec<u16>, String> {
         self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::GraveyardReturnV61)
     }
+    pub(crate) fn resolve_call_v62(&self) -> Result<Vec<u16>, String> {
+        self.resolve_for_scope(crate::rl::CommonProjectionScopeV42::CallV62)
+    }
     fn resolve_for_scope(
         &self,
         scope: crate::rl::CommonProjectionScopeV42,
