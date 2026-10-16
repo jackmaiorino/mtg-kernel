@@ -91,6 +91,10 @@ impl NativeModel {
         Ok(pooled)
     }
     pub fn forward(&self, packet: &Packet) -> Result<Vec<f32>> {
+        #[cfg(test)]
+        let _timing = crate::rl_session::test_timing_v1::span(
+            crate::rl_session::test_timing_v1::Phase::NativeModelForwardInclusive,
+        );
         if self.config != ModelConfig::current() || packet.actions.is_empty() {
             return Err(Error::ModelContract);
         }

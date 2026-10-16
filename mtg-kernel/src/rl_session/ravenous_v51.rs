@@ -727,7 +727,22 @@ impl FastActorSessionV1 {
         human_seat: PlayerSeatV1,
         binding: &RavenousDecisionBindingV51,
     ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-        let (_, _, current) = self.ravenous_current_decision_input_v51(expected, human_seat)?;
+        self.ravenous_validated_current_input_v51(expected, human_seat, binding)
+            .map(|_| ())
+    }
+
+    /// Return only the public parts of this fresh, fully compared input. The
+    /// owning model can normalize them before its native step without capturing
+    /// the identical immutable decision a second time. No authority escapes.
+    pub(crate) fn ravenous_validated_current_input_v51(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+        binding: &RavenousDecisionBindingV51,
+    ) -> Result<(RavenousObservationV51, Vec<ActionSemanticV1>), FlatActionDecisionSliceErrorV1>
+    {
+        let (observation, actions, current) =
+            self.ravenous_current_decision_input_v51(expected, human_seat)?;
         if current.expected != binding.expected
             || current.candidates != binding.candidates
             || current.observation != binding.observation
@@ -735,6 +750,6 @@ impl FastActorSessionV1 {
         {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        Ok(())
+        Ok((observation, actions))
     }
 }

@@ -41,6 +41,8 @@ use std::fmt;
 /// summed. The policy span includes construction of its deterministic fixture.
 #[cfg(test)]
 pub(crate) mod test_timing_v1 {
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
     use std::sync::OnceLock;
     use std::time::Instant;
 
@@ -52,6 +54,8 @@ pub(crate) mod test_timing_v1 {
         DrakeReplayKeys,
         DrakeActualEnclosingReplay,
         FaebloomValidateState,
+        NumericNormalizeInclusive,
+        NativeModelForwardInclusive,
         #[cfg(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
@@ -95,6 +99,8 @@ pub(crate) mod test_timing_v1 {
                 Self::DrakeReplayKeys => "drake.replay_keys",
                 Self::DrakeActualEnclosingReplay => "drake.actual_enclosing_replay",
                 Self::FaebloomValidateState => "faebloom.validate_state",
+                Self::NumericNormalizeInclusive => "numeric.normalize_inclusive",
+                Self::NativeModelForwardInclusive => "model.forward_inclusive",
                 #[cfg(all(
                     feature = "limited-fdn-fixtures",
                     not(feature = "standard-magezero-fixtures")
@@ -134,12 +140,50 @@ pub(crate) mod test_timing_v1 {
 
     impl Drop for Span {
         fn drop(&mut self) {
+            static AGGREGATE: OnceLock<bool> = OnceLock::new();
+            if *AGGREGATE.get_or_init(|| {
+                std::env::var_os("MTG_FDN_TEST_TIMING_AGGREGATE_V1")
+                    .is_some_and(|value| value == "1")
+            }) {
+                aggregate(self.phase.label(), self.started.elapsed().as_nanos());
+                return;
+            }
             eprintln!(
                 "fdn_test_timing_v1 phase={} count=1 elapsed_ns={}",
                 self.phase.label(),
                 self.started.elapsed().as_nanos()
             );
         }
+    }
+
+    /// Cumulative per-thread diagnostics, flushed at most once per30s.
+    /// A killed/unfinished span contributes nothing; nested totals overlap.
+    /// This contains only phase labels, counts and elapsed nanoseconds.
+    fn aggregate(phase: &'static str, elapsed_ns: u128) {
+        struct Totals {
+            last_flush: Instant,
+            phases: BTreeMap<&'static str, (u64, u128)>,
+        }
+        thread_local! {
+            static TOTALS: RefCell<Totals> = RefCell::new(Totals {
+                last_flush: Instant::now(),
+                phases: BTreeMap::new(),
+            });
+        }
+        TOTALS.with(|totals| {
+            let mut totals = totals.borrow_mut();
+            let row = totals.phases.entry(phase).or_default();
+            row.0 = row.0.saturating_add(1);
+            row.1 = row.1.saturating_add(elapsed_ns);
+            if totals.last_flush.elapsed().as_secs() >= 30 {
+                for (phase, (count, elapsed_ns)) in &totals.phases {
+                    eprintln!(
+                        "fdn_test_timing_aggregate_v1 phase={phase} count={count} elapsed_ns={elapsed_ns}"
+                    );
+                }
+                totals.last_flush = Instant::now();
+            }
+        });
     }
 }
 

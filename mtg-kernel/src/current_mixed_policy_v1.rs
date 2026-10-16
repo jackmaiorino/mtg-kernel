@@ -271,8 +271,24 @@ pub fn feature_identity() -> String {
     .clone()
 }
 
+// Pure normalization of a fresh public input, without recapturing any decision
+// or acquiring authority. Encode and apply share this identical packet grammar.
+fn packet_from_current(
+    source: Source,
+    observation: &impl serde::Serialize,
+    actions: &[crate::rl::ActionSemanticV1],
+) -> Result<Packet> {
+    let state = serde_json::to_value(observation).map_err(|e| Error::Projection(e.to_string()))?;
+    let actions = actions
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Projection(e.to_string()))?;
+    normalize::encode(source, state, actions)
+}
+
 macro_rules! session {
-    ($session:ident,$decision:ident,$snapshot:ident,$binding:ty,$into:ident,$input:ident,$validate:ident,$restore:ident,$source:ident) => {
+    ($session:ident,$decision:ident,$snapshot:ident,$binding:ty,$into:ident,$input:ident,$validated_input:ident,$restore:ident,$source:ident) => {
         /// Owning source-specific session. No conversion to a predecessor model contract.
         pub struct $session {
             inner: FastActorSessionV1,
@@ -333,14 +349,7 @@ macro_rules! session {
                     .inner
                     .$input(expected, expected.acting_player)
                     .map_err(|_| Error::StaleBinding)?;
-                let state = serde_json::to_value(&observation)
-                    .map_err(|e| Error::Projection(e.to_string()))?;
-                let actions = actions
-                    .iter()
-                    .map(serde_json::to_value)
-                    .collect::<std::result::Result<Vec<_>, _>>()
-                    .map_err(|e| Error::Projection(e.to_string()))?;
-                let packet = normalize::encode(Source::$source, state, actions)?;
+                let packet = packet_from_current(Source::$source, &observation, &actions)?;
                 Ok($decision {
                     expected,
                     binding,
@@ -362,15 +371,17 @@ macro_rules! session {
                 if index as usize >= decision.packet.actions.len() {
                     return Err(Error::ActionRange);
                 }
-                self.inner
-                    .$validate(
+                let (observation, actions) = self
+                    .inner
+                    .$validated_input(
                         decision.expected,
                         decision.expected.acting_player,
                         &decision.binding,
                     )
                     .map_err(|_| Error::StaleBinding)?;
                 // Numeric packet equality is additional to, never a substitute for, full private authority.
-                if self.encode(decision.expected)?.packet != decision.packet {
+                if packet_from_current(Source::$source, &observation, &actions)? != decision.packet
+                {
                     return Err(Error::StaleBinding);
                 }
                 self.inner
@@ -406,7 +417,7 @@ session!(
     crate::rl_session::fake_v50::FakeDecisionBindingV50,
     into_fake_v50,
     fake_current_decision_input_v50,
-    fake_validate_bound_decision_v50,
+    fake_validated_current_input_v50,
     fake_restore_v50,
     FakeV50
 );
@@ -417,7 +428,7 @@ session!(
     crate::rl_session::ravenous_v51::RavenousDecisionBindingV51,
     into_ravenous_v51,
     ravenous_current_decision_input_v51,
-    ravenous_validate_bound_decision_v51,
+    ravenous_validated_current_input_v51,
     ravenous_restore_v51,
     RavenousV51
 );

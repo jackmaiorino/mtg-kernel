@@ -266,6 +266,10 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
 }
 
 pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) -> Result<Packet> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::NumericNormalizeInclusive,
+    );
     if source == Source::GraveyardReturnV61 {
         let observation = state
             .get_mut("observation")
