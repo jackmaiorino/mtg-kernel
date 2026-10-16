@@ -117,6 +117,10 @@ pub fn source_sha256() -> String {
             "effect/inspiration_resolution_v1.rs",
             include_str!("effect/inspiration_resolution_v1.rs"),
         ),
+        (
+            "effect/standard_exile.rs",
+            include_str!("effect/standard_exile.rs"),
+        ),
     ] {
         digest.update(path.as_bytes());
         digest.update([0]);

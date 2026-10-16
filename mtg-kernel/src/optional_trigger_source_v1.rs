@@ -114,6 +114,7 @@ pub(crate) fn producer(schema: &str) -> String {
         include_str!("effect/nonland_copy_v1.rs"),
         include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
         include_str!("effect/inspiration_resolution_v1.rs"),
+        include_str!("effect/standard_exile.rs"),
     ] {
         h.update((s.len() as u64).to_le_bytes());
         h.update(s.as_bytes());

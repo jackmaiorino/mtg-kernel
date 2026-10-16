@@ -263,6 +263,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("effect/nonland_copy_v1.rs"),
         include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
         include_str!("effect/inspiration_resolution_v1.rs"),
+        include_str!("effect/standard_exile.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {

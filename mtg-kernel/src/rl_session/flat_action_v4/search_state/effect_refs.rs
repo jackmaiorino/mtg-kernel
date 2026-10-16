@@ -126,6 +126,7 @@ impl Scan<'_> {
             DiscardUpToThenDraw { .. }
             | ExileRandomGraveyardCardPlayableThisTurn { .. }
             | ExileUntilThenCastV1 { .. }
+            | ExileTopEachPlayerThenCastV1
             | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers

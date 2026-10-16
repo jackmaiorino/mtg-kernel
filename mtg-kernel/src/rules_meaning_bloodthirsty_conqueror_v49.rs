@@ -65,6 +65,7 @@ pub fn producer_sha256() -> String {
             include_str!("source_power_activation_v1.rs"),
             include_str!("effect/nonland_copy_v1.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

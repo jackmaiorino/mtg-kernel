@@ -73,6 +73,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("policy_observation_v7.rs"),
             include_str!("progenitus_v1.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
         ] {
             h.update(source.as_bytes());
             h.update([0]);

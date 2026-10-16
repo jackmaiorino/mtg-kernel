@@ -2168,6 +2168,7 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         "Drakuseth, Maw of Flames" => &DRAKUSETH_TRIGGERS_V1,
+        "Etali, Primal Storm" => &ETALI_PRIMAL_STORM_TRIGGERS_V1,
         "Thousand Moons Smithy" => &SMITHY_TRIGGERS,
         "Etali, Primal Conqueror" => &ETALI_TRIGGERS,
         "Subterranean Schooner" => &SCHOONER_TRIGGERS,
@@ -2208,6 +2209,19 @@ pub fn drakuseth_attack_v1() -> EffectOp {
         other_amount: 3,
     })
 }
+
+fn etali_primal_storm_attack_v1() -> EffectOp {
+    EffectOp::ExileTopEachPlayerThenCastV1
+}
+// FDN194 follows the actual contiguous Progenitus480 prerequisite.
+static ETALI_PRIMAL_STORM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: etali_primal_storm_attack_v1,
+}];
 
 static DRAKUSETH_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
