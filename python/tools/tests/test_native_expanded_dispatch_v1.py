@@ -82,10 +82,11 @@ class AdmissionTestCase(unittest.TestCase):
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
     def trial(self, workers, seconds, e_packet=None, update_seconds=None, stdout_updates=1,
-              artifact_timing={"fingerprint_seconds": 1, "archive_seconds": .5}):
+              artifact_timing=None):
         """A one-update qualification report. With `update_seconds` it pins a
         stdout whose `stdout_updates` update lines carry that native timing, and
-        records `artifact_timing` (None leaves it out)."""
+        records `artifact_timing` (by default a 1 s fingerprint and a 0.5 s
+        archive; {} leaves it out)."""
         request = self.request(workers)
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
@@ -129,8 +130,10 @@ class AdmissionTestCase(unittest.TestCase):
                                       for i in range(stdout_updates)) + json.dumps(result) + "\n",
                               encoding="utf-8")
             report["native_stdout"] = dispatch.pin(stdout)
-            if artifact_timing is not None:
-                report["artifact_timing"] = dict(artifact_timing)
+            artifact = ({"fingerprint_seconds": 1, "archive_seconds": .5}
+                        if artifact_timing is None else artifact_timing)
+            if artifact:
+                report["artifact_timing"] = artifact
         return self.save(report)
 
     def choice(self):
@@ -521,7 +524,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
                                     ({"update_seconds": 9.5}, "outlasts its native execution"),
                                     ({"update_seconds": 8.75}, "outlast its trial"),
                                     ({"update_seconds": 0}, "native update seconds"),
-                                    ({"update_seconds": 4, "artifact_timing": None}, "artifact timing"),
+                                    ({"update_seconds": 4, "artifact_timing": {}}, "artifact timing"),
                                     ({"update_seconds": 4, "artifact_timing": {"fingerprint_seconds": 1}},
                                      "archive seconds")):
                 report = dispatch.read(self.trial(1, 10, **kwargs)["path"])
