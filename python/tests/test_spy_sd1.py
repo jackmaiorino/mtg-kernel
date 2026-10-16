@@ -2,10 +2,12 @@
 played or trained; every schedule, record, replay, bank, probe and run here is synthetic."""
 import copy
 import hashlib
+import io
 import json
 import math
 import struct
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -424,7 +426,7 @@ def readout(cid, training=0.1, held=(7, 7, 7, 7), gap=4.0, agree=0.95, kl=0.01, 
             "anchor_held_out_decks": {"all": anchor, "non_spy": dict(anchor), "by_deck": {}}}
 
 
-class Select(Temp):
+class SelectFixture(Temp):
     def setUp(self):
         super().setUp()
         telemetry = [{"anchor_loss": 0.1, "archive_loss": 0.2, "anchor_components": {"a": {"auxiliary_l2": 0.0}},
@@ -467,6 +469,8 @@ class Select(Temp):
         return sd1.select("r1", 3, probe or self.probe(), self.reference, self.full, rerun or self.rerun,
                           split, names=NAMES)
 
+
+class Select(SelectFixture):
     def test_d1_is_the_earliest_checkpoint_within_one_clustered_se_of_the_minimum(self):
         out = self.select()
         self.assertEqual(out["reading"], "passes")
@@ -675,7 +679,7 @@ class Commands(Temp):
                 sd1.probe_command("r1", r1_parent(), self.o_final, self.anchor, [], self.census, run, "probes/x")
 
 
-class PhaseTwoConfigs(Temp):
+class PhaseTwoFixture(Temp):
     def setUp(self):
         super().setUp()
         its, _ = pilot.iterations("r1", "O", pilot.load_decks(), None)
@@ -702,6 +706,8 @@ class PhaseTwoConfigs(Temp):
     def first_episode(self, config: dict) -> dict:
         return config["iterations"][0]["episodes"][0]["episode"]
 
+
+class PhaseTwoConfigs(PhaseTwoFixture):
     def test_d2_k_starts_from_d1_k_and_o_k_from_the_parent_on_seed_k(self):
         out = sd1.phase2_configs("r1", self.o_config, [self.selection(k) for k in sd1.SEEDS], 4, "runs")
         self.assertEqual(sorted(out), sorted([f"D2-{k}" for k in sd1.SEEDS] + [f"O-{k}" for k in range(1, 8)]))
@@ -885,6 +891,580 @@ class ToolChecks(Temp):
             out = sd1.o_check("r1", mine, moved, Path("o.json"))
             self.assertEqual(out["first_differing_update"], {"update": 8, "fields": ["after_state_sha256"]})
             self.assertFalse(out["pass"])
+
+
+# ------------------------------------------------------- stage 0: custody
+
+# Synthetic roots: the utility screen's hot root on the maintainer's desktop
+# (a Windows spelling) and computehost's runtime and run roots.
+HOT = "Q:/utility-hot"
+REMOTE = "/srv/computehost/runtime"
+REMOTE_RUNS = "/srv/computehost/runs"
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def as_pin(path: str, data: bytes) -> dict:
+    return {"path": path, "sha256": digest(data)}
+
+
+def write_bytes(path: Path, data: bytes) -> dict:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"path": str(path), "sha256": digest(data)}
+
+
+class Custody(Temp):
+    """A sealed EVIDENCE.tar like the utility screen's: two input bundles
+    (the desktop's and computehost's, staged on the desktop with computehost's
+    paths inside), a desktop game and a computehost game with their job
+    specs, ANALYSIS-SOURCES-001 and the allocation it pins."""
+
+    def setUp(self):
+        super().setUp()
+        self.sealed = {}
+        self.objects = {}
+        for host, runtime in (("desk", f"{HOT}/inputs-001/desk"), ("remote", REMOTE)):
+            local = f"{HOT}/inputs-001/{host}"
+            checkpoint, parameters = b'{"checkpoint":1}', b"parameters"
+            ck, par = digest(checkpoint), digest(parameters)
+            self.objects = {"checkpoint": ck, "parameters": par}
+            self.seal(f"inputs/{host}/objects/{ck}.json", f"{local}/objects/{ck}.json", checkpoint)
+            self.seal(f"inputs/{host}/objects/{par}.bin", f"{local}/objects/{par}.bin", parameters)
+            imported = json.dumps({"schema": "import",
+                                   "parameters": as_pin(f"{runtime}/objects/{par}.bin", parameters)}).encode()
+            self.seal(f"inputs/{host}/metadata/import.json", f"{local}/metadata/import.json", imported)
+            source = {"checkpoint": as_pin(f"{runtime}/objects/{ck}.json", checkpoint),
+                      "play_import": as_pin(f"{runtime}/metadata/import.json", imported), "feature_transfer": {}}
+            self.seal(f"inputs/{host}/sources/r1-source.json", f"{local}/sources/r1-source.json",
+                      json.dumps(source).encode())
+            self.seal(f"inputs/{host}/bin/regret.exe", f"{local}/bin/regret.exe", b"binary")
+        desk_source = f"{HOT}/inputs-001/desk/sources/r1-source.json"
+        self.seal("formal/job-001/game.jsonl", f"{HOT}/formal/job-001/game.jsonl",
+                  b'{"kind":"budget_game","id":"g1"}\n')
+        # Windows spellings: backslashes and another case name the same file.
+        self.seal("formal/job-001/command.json", f"{HOT}/formal/job-001/command.json", json.dumps({
+            "command": [f"{HOT}/inputs-001/desk/bin/regret.exe".replace("/", "\\"), "source=" + desk_source,
+                        "out=" + f"{HOT}/formal/job-001/game.jsonl".replace("/", "\\"), "mode=s4a-budget"],
+            "environment": {"OPPONENTS": f"T1={desk_source},A48={desk_source.upper()}", "S4A_MODEL": "r1"},
+            "cwd": f"{HOT}/formal/job-001".replace("/", "\\")}).encode())
+        self.seal("remote-runs/job-002/game.jsonl", f"{HOT}/remote-runs/job-002/game.jsonl",
+                  b'{"kind":"budget_game","id":"g2"}\n')
+        self.seal("remote-runs/job-002/command.json", f"{HOT}/remote-runs/job-002/command.json", json.dumps({
+            "command": [f"{REMOTE}/bin/regret.exe", f"source={REMOTE}/sources/r1-source.json",
+                        f"out={REMOTE_RUNS}/job-002/game.jsonl", "mode=s4a-budget"],
+            "environment": {"OPPONENTS": f"T1={REMOTE}/sources/r1-source.json",
+                            "TRACE": f"{REMOTE_RUNS}/scratch/trace"},
+            "cwd": f"{REMOTE_RUNS}/job-002"}).encode())
+        allocation = b'{"allocation":1}'
+        self.seal("metadata/allocation.json", f"{HOT}/allocation.json", allocation)
+        records = [as_pin(*self.sealed[m]) for m in ("formal/job-001/game.jsonl", "remote-runs/job-002/game.jsonl")]
+        self.seal("metadata/ANALYSIS-SOURCES-001.json", f"{HOT}/ANALYSIS-SOURCES-001.json", json.dumps(
+            {"records": records, "allocation": as_pin(f"{HOT}/allocation.json", allocation)}).encode())
+        self.seal("metadata/stale.json", f"{HOT}/stale.json", json.dumps(
+            {"allocation": {"path": f"{HOT}/allocation.json", "sha256": "0" * 64}}).encode())
+        build = self.root / "build" / "EVIDENCE.tar"
+        build.parent.mkdir()
+        with tarfile.open(build, "w", format=tarfile.USTAR_FORMAT) as tar:
+            for name, (_, data) in sorted(self.sealed.items()):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = len(data), 0
+                tar.addfile(info, io.BytesIO(data))
+        archive = build.read_bytes()
+        desk_bytes = self.sealed["inputs/desk/sources/r1-source.json"][1]
+        self.targets = [self.root / "cold" / "evidence-002", self.root / "recovery" / "evidence-002"]
+        seal = {"schema": sd1.SEAL_SCHEMA, "complete": True, "originals_retained": True,
+                "files": [{"name": m, "bytes": len(d), "sha256": digest(d)}
+                          for m, (_, d) in sorted(self.sealed.items())],
+                "original_archive_members": [{"original": as_pin(o, d), "member": m}
+                                             for m, (o, d) in sorted(self.sealed.items())]
+                # An alias: another retained original path of a sealed member.
+                + [{"original": as_pin(f"{HOT}/staged/r1-source.json", desk_bytes),
+                    "member": "inputs/desk/sources/r1-source.json"}],
+                "archives": [{"path": common.absolute(t / "EVIDENCE.tar"), "sha256": digest(archive)}
+                             for t in self.targets],
+                "completion_record": "CUSTODY-COMPLETION.json"}
+        for t in self.targets:
+            write_bytes(t / "EVIDENCE.tar", archive)
+            write(t / "SOURCE-SEAL.json", seal)
+        seals = [common.pin(t / "SOURCE-SEAL.json") for t in self.targets]
+        for t in self.targets:
+            write(t / "CUSTODY-COMPLETION.json",
+                  {"complete": True, "archives": seal["archives"], "source_seals": seals})
+        write_bytes(self.root / "hot-copy" / "EVIDENCE.tar", archive)
+        self.parent = write(self.root / "screen" / "parent-r1.json", {"parent": 1})
+        self.binary = write_bytes(self.root / "runtime" / "regret_census_v1.exe", b"binary")
+
+    def seal(self, member: str, original: str, data: bytes):
+        self.sealed[member] = (original, data)
+
+    def member(self, name: str, role: str, remap: bool = False) -> dict:
+        entry = {"role": role, "member": name, "sha256": digest(self.sealed[name][1])}
+        return {**entry, "remap": True} if remap else entry
+
+    def spec(self, target: int = 0, **changes) -> dict:
+        durable = self.targets[target]
+        members = [self.member("formal/job-001/game.jsonl", "record-r1"),
+                   {"role": "record-r1", "original": as_pin(*self.sealed["remote-runs/job-002/game.jsonl"])},
+                   self.member("formal/job-001/command.json", "job-spec", remap=True),
+                   self.member("remote-runs/job-002/command.json", "job-spec", remap=True),
+                   self.member("metadata/ANALYSIS-SOURCES-001.json", "analysis-sources", remap=True),
+                   self.member("metadata/allocation.json", "allocation")]
+        for name in sorted(self.sealed):
+            if name.startswith("inputs/") and not name.endswith(".exe"):
+                members.append(self.member(name, "input", remap="/sources/" in name or "/metadata/" in name))
+        value = {"schema": sd1.CUSTODY_SPEC_SCHEMA, "seal": common.pin(durable / "SOURCE-SEAL.json"),
+                 "archive": common.pin(durable / "EVIDENCE.tar"),
+                 "completion": common.pin(durable / "CUSTODY-COMPLETION.json"),
+                 "forbidden": [HOT, common.absolute(self.root / "hot-copy")], "members": members,
+                 "rewrite": [{"from": f"{HOT}/inputs-001/desk/bin/regret.exe", "to": self.binary["path"]},
+                             {"from": f"{REMOTE}/bin/regret.exe", "to": self.binary["path"]},
+                             {"from": REMOTE, "to": f"{HOT}/inputs-001/remote"},
+                             {"from": REMOTE_RUNS, "to": f"{HOT}/remote-runs"}],
+                 "keep": [f"{REMOTE_RUNS}/scratch"],
+                 "files": [{"role": "parent", **self.parent}, {"role": "utility-binary", **self.binary}],
+                 "counts": {"record-r1": 2, "job-spec": 2}}
+        value.update(changes)
+        return value
+
+    def test_members_extract_through_the_seal_and_inner_paths_name_sd1s_copies(self):
+        out_dir = self.root / "sd1" / "custody"
+        out = sd1.custody(self.spec(), out_dir)
+        self.assertEqual(out["failures"], [])
+        self.assertTrue(out["pass"])
+        members = {m["member"]: m for m in out["members"]}
+        self.assertEqual(len(members), 6 + 2 * 4)
+        for name in members:
+            self.assertEqual((out_dir / "members" / name).read_bytes(), self.sealed[name][1])
+
+        def mine(*parts):
+            return common.absolute(out_dir.joinpath(*parts))
+
+        desk = json.loads((out_dir / "remapped/formal/job-001/command.json").read_text(encoding="utf-8"))
+        desk_source = mine("remapped", "inputs/desk/sources/r1-source.json")
+        self.assertEqual(desk["command"], [self.binary["path"], "source=" + desk_source,
+                                           "out=" + mine("members", "formal/job-001/game.jsonl"), "mode=s4a-budget"])
+        self.assertEqual(desk["environment"], {"OPPONENTS": f"T1={desk_source},A48={desk_source}", "S4A_MODEL": "r1"})
+        self.assertEqual(desk["cwd"], mine("members", "formal/job-001"))
+        remote = json.loads((out_dir / "remapped/remote-runs/job-002/command.json").read_text(encoding="utf-8"))
+        remote_source = mine("remapped", "inputs/remote/sources/r1-source.json")
+        self.assertEqual(remote["command"], [self.binary["path"], "source=" + remote_source,
+                                             "out=" + mine("members", "remote-runs/job-002/game.jsonl"),
+                                             "mode=s4a-budget"])
+        self.assertEqual(remote["cwd"], mine("members", "remote-runs/job-002"))
+        self.assertEqual(remote["environment"]["TRACE"], f"{REMOTE_RUNS}/scratch/trace")
+        self.assertEqual(members["remote-runs/job-002/command.json"]["kept"], [f"{REMOTE_RUNS}/scratch/trace"])
+        # The source's pins name SD1's copies: the checkpoint's bytes as
+        # sealed, the descriptor remapped in turn (so its SHA-256 is new).
+        ck, par = self.objects["checkpoint"], self.objects["parameters"]
+        source = json.loads(Path(remote_source).read_text(encoding="utf-8"))
+        self.assertEqual(source["checkpoint"], {"path": mine("members", f"inputs/remote/objects/{ck}.json"),
+                                                "sha256": ck})
+        descriptor = members["inputs/remote/metadata/import.json"]["remapped"]
+        self.assertEqual(source["play_import"], descriptor)
+        self.assertNotEqual(descriptor["sha256"], digest(self.sealed["inputs/remote/metadata/import.json"][1]))
+        self.assertEqual(json.loads(Path(descriptor["path"]).read_text(encoding="utf-8"))["parameters"],
+                         {"path": mine("members", f"inputs/remote/objects/{par}.bin"), "sha256": par})
+        analysis = json.loads((out_dir / "remapped/metadata/ANALYSIS-SOURCES-001.json").read_text(encoding="utf-8"))
+        self.assertEqual([r["path"] for r in analysis["records"]],
+                         [mine("members", "formal/job-001/game.jsonl"),
+                          mine("members", "remote-runs/job-002/game.jsonl")])
+        for m in out["members"]:
+            if m.get("remapped"):
+                self.assertNotIn("utility-hot", Path(m["remapped"]["path"]).read_text(encoding="utf-8").casefold())
+        self.assertEqual(Path(out["lists"]["record-r1"]["path"]).read_text(encoding="utf-8").splitlines(),
+                         [mine("members", "formal/job-001/game.jsonl"),
+                          mine("members", "remote-runs/job-002/game.jsonl")])
+        self.assertEqual(Path(out["lists"]["parent"]["path"]).read_text(encoding="utf-8").splitlines(),
+                         [self.parent["path"]])
+        self.assertEqual(members["remote-runs/job-002/game.jsonl"]["originals"],
+                         [f"{HOT}/remote-runs/job-002/game.jsonl"])
+        self.assertEqual(members["inputs/desk/sources/r1-source.json"]["originals"],
+                         [f"{HOT}/inputs-001/desk/sources/r1-source.json", f"{HOT}/staged/r1-source.json"])
+        # The recovery copy is the other durable archive.
+        self.assertTrue(sd1.custody(self.spec(target=1), self.root / "sd1" / "again")["pass"])
+
+    def test_every_gap_and_mismatch_is_listed_and_refuses(self):
+        spec = self.spec()
+        par = self.objects["parameters"]
+        spec["members"] = [m for m in spec["members"] if m.get("member") != f"inputs/remote/objects/{par}.bin"]
+        spec["members"][0] = {**spec["members"][0], "sha256": "0" * 64}
+        spec["members"].append(self.member("metadata/stale.json", "allocation", remap=True))
+        spec["files"].append({"role": "parent", "path": str(self.root / "screen" / "missing.json"), "sha256": "1" * 64})
+        Path(self.binary["path"]).write_bytes(b"another binary")
+        spec["keep"] = []
+        spec["counts"]["job-spec"] = 3
+        spec_path = write(self.root / "spec.json", spec)["path"]
+        with mock.patch("sys.stdout"):
+            code = sd1.main(["custody", "--spec", spec_path, "--out-dir", str(self.root / "sd1"),
+                             "--out", str(self.root / "RECORD-PINS.json")])
+        self.assertEqual(code, 1)
+        record = json.loads((self.root / "RECORD-PINS.json").read_text(encoding="utf-8"))
+        self.assertFalse(record["pass"])
+        failures = "\n".join(record["failures"])
+        for needle in ("no member formal/job-001/game.jsonl with SHA-256 " + "0" * 64,
+                       "missing.json is missing",
+                       "regret_census_v1.exe has SHA-256 " + digest(b"another binary"),
+                       f"is sealed as inputs/remote/objects/{par}.bin, which custody did not extract",
+                       "metadata/stale.json: the pin of " + f"{HOT}/allocation.json has SHA-256 " + "0" * 64,
+                       f"{REMOTE_RUNS}/scratch/trace resolves to no extracted member",
+                       f"{REMOTE}/bin/regret.exe resolves to no extracted member",
+                       "role job-spec: the spec lists 2 members and files, not 3"):
+            self.assertIn(needle, failures)
+        self.assertEqual(record["spec"]["sha256"], digest(Path(spec_path).read_bytes()))
+
+    def test_only_a_durable_archive_beside_its_complete_seal_is_read(self):
+        out = sd1.custody(self.spec(archive=common.pin(self.root / "hot-copy" / "EVIDENCE.tar")), self.root / "a")
+        self.assertIn("is not one of the seal's durable archives", "\n".join(out["failures"]))
+        self.assertFalse((self.root / "a" / "members").exists())
+        out = sd1.custody(self.spec(seal=common.pin(self.targets[1] / "SOURCE-SEAL.json")), self.root / "b")
+        self.assertIn("the seal does not sit beside the archive", out["failures"])
+        out = sd1.custody(self.spec(seal={**self.spec()["seal"], "sha256": "0" * 64}), self.root / "c")
+        self.assertIn("the source seal: ", out["failures"][0])
+        self.assertIn("no member is extracted: the seal or the archive did not verify", out["failures"])
+        incomplete = json.loads((self.targets[0] / "SOURCE-SEAL.json").read_text(encoding="utf-8"))
+        incomplete["complete"] = False
+        out = sd1.custody(self.spec(seal=write(self.targets[0] / "SOURCE-SEAL.json", incomplete)), self.root / "d")
+        self.assertIn("the source seal is not a complete search-player-utility source seal", out["failures"])
+        other = write(self.targets[0] / "CUSTODY-COMPLETION.json", {"complete": True, "archives": [],
+                                                                     "source_seals": []})
+        out = sd1.custody(self.spec(completion=other), self.root / "e")
+        self.assertIn("the custody completion is not complete for this seal and archive", out["failures"])
+
+    def test_a_malformed_spec_or_a_used_directory_refuses_before_reading(self):
+        bad = self.spec()
+        bad["members"].append({"role": "input", "member": "../outside", "sha256": "0" * 64})
+        with self.assertRaisesRegex(ValueError, r"malformed: members\[14\]"):
+            sd1.custody(bad, self.root / "a")
+        with self.assertRaisesRegex(ValueError, "unknown field 'extra'"):
+            sd1.custody({**self.spec(), "extra": 1}, self.root / "a")
+        with self.assertRaisesRegex(ValueError, "rewrite"):
+            sd1.custody(self.spec(rewrite=[{"from": "relative/path", "to": HOT}]), self.root / "a")
+        used = self.root / "used"
+        write(used / "x.json", {})
+        with self.assertRaisesRegex(ValueError, "not a fresh directory"):
+            sd1.custody(self.spec(), used)
+        with self.assertRaisesRegex(ValueError, "hot or holding root"):
+            sd1.custody(self.spec(forbidden=[common.absolute(self.root)]), self.root / "new")
+        self.assertFalse((self.root / "a").exists())
+
+
+# ------------------------------------------------ stage 0: parent identity
+
+
+class Parents(Temp):
+    def setUp(self):
+        super().setUp()
+        self.recorded, self.entries = {}, {}
+        for name in ("r1", "r2", "T1", "A48"):
+            checkpoint, parameters = f"checkpoint {name}".encode(), f"parameters {name}".encode()
+            self.recorded[name] = digest(checkpoint)
+            for side in ("utility", "screen"):
+                folder = self.root / side / name
+                source = self.source(folder, checkpoint, parameters)
+                if side == "screen" and name in common.LINEAGES:
+                    # The distillation screen's parent is O's recorded initial source.
+                    config = write(folder / "O-config.json", {"initial_source": source, "iterations": []})
+                    entry = {**config, "field": ["initial_source"]}
+                else:
+                    entry = {"path": write(folder / "source.json", source)["path"]}
+                self.entries.setdefault(name, {})[side] = entry
+
+    def source(self, folder: Path, checkpoint: bytes, parameters: bytes, transfer="c") -> dict:
+        descriptor = write(folder / "import.json", {"schema": "import",
+                                                    "parameters": write_bytes(folder / "par.bin", parameters)})
+        return {"checkpoint": write_bytes(folder / "ck.json", checkpoint), "play_import": descriptor,
+                "feature_transfer": {"expected_feature_contract_digest": transfer}}
+
+    def spec(self) -> dict:
+        return {"schema": sd1.PARENTS_SPEC_SCHEMA, **copy.deepcopy(self.entries)}
+
+    def parents(self, spec: dict) -> dict:
+        with mock.patch.dict(sd1.RECORDED_CHECKPOINTS, self.recorded):
+            return sd1.parents(spec)
+
+    def test_the_parents_and_references_are_their_recorded_checkpoints_and_sources(self):
+        self.assertEqual(sd1.RECORDED_CHECKPOINTS, {**common.PARENT_CHECKPOINT_SHA256,
+                                                    "T1": sd1.T1_CHECKPOINT_SHA256, "A48": sd1.A48_CHECKPOINT_SHA256})
+        out = self.parents(self.spec())
+        self.assertEqual(out["failures"], [])
+        self.assertTrue(out["pass"])
+        self.assertTrue(all(out["sources"][name]["sources_match"] for name in self.recorded))
+        spec = self.spec()
+        del spec["T1"]["screen"], spec["A48"]["screen"]
+        out = self.parents(spec)
+        self.assertTrue(out["pass"])
+        self.assertNotIn("sources_match", out["sources"]["T1"])
+
+    def test_a_different_checkpoint_or_source_fails_with_every_reason(self):
+        spec = self.spec()
+        # r1: the utility screen's descriptor names other parameters.
+        other = self.source(self.root / "other" / "r1", b"checkpoint r1", b"other parameters")
+        spec["r1"]["utility"] = {"path": write(self.root / "other" / "r1" / "source.json", other)["path"]}
+        # r2: the distillation screen's config changed after its pin.
+        Path(spec["r2"]["screen"]["path"]).write_text("{}", encoding="utf-8")
+        # T1: its checkpoint's bytes changed in place.
+        Path(self.root / "utility" / "T1" / "ck.json").write_bytes(b"changed")
+        # A48: a source whose checkpoint is not the recorded A48 (another transfer besides).
+        wrong = self.source(self.root / "other" / "A48", b"checkpoint T1", b"parameters A48", transfer="d")
+        spec["A48"]["utility"] = {"path": write(self.root / "other" / "A48" / "source.json", wrong)["path"]}
+        out_path = self.root / "PARENTS.json"
+        with mock.patch.dict(sd1.RECORDED_CHECKPOINTS, self.recorded), mock.patch("sys.stdout"):
+            code = sd1.main(["parents", "--spec", write(self.root / "spec.json", spec)["path"], "--out", str(out_path)])
+        self.assertEqual(code, 1)
+        failures = json.loads(out_path.read_text(encoding="utf-8"))["failures"]
+        text = "\n".join(failures)
+        self.assertIn("r1: the utility screen's source differs from the distillation screen's in ['play_import']", text)
+        self.assertIn("r2: the distillation screen's source: ", text)
+        self.assertIn("T1: the utility screen's source checkpoint: ", text)
+        self.assertIn(f"A48: the utility screen's source: its checkpoint is {self.recorded['T1']}, not the recorded "
+                      f"{self.recorded['A48']}", text)
+        self.assertIn("A48: the utility screen's source differs from the distillation screen's in "
+                      "['checkpoint', 'feature_transfer']", text)
+
+    def test_the_spec_names_both_screens_sources_of_each_parent(self):
+        spec = self.spec()
+        del spec["r1"]["screen"]
+        with self.assertRaisesRegex(ValueError, "r1: the utility screen's source and the distillation screen's"):
+            self.parents(spec)
+        spec = self.spec()
+        del spec["A48"]
+        with self.assertRaisesRegex(ValueError, "naming r1, r2, T1 and A48"):
+            self.parents(spec)
+
+
+# --------------------------------------- stage 0: the probe's references
+
+
+def reference_readout(cid: str, gap=4.0, agree=0.9, kl=0.05) -> dict:
+    offers = {"offers": 2, "mean_deployed_self_probability": 0.25, "mean_raw_self_probability": 0.2,
+              "self_top_share": 0.5, "rows": [{"episode": "e1", "step": 3, "deployed_self_probability": 0.3,
+                                               "raw_self_probability": 0.2, "self_top": True},
+                                              {"episode": "e2", "step": 5, "deployed_self_probability": 0.2,
+                                               "raw_self_probability": 0.2, "self_top": False}]}
+    return {"id": cid, "state_sha256": f"state-{cid}", "learner_offers": offers,
+            "anchor_held_out": {"rows": 10, "median_clamped_top_two_gap": gap, "non_spy_top_agreement": agree,
+                                "mean_kl_from_parent_non_spy": kl, "mean_kl_from_parent_all": 0.1}}
+
+
+class ReferenceCheck(Temp):
+    def probe(self, where="screen", extra=()) -> dict:
+        candidates = [reference_readout("parent", gap=5.0, agree=1.0, kl=0.0), reference_readout("O-final")]
+        return {"schema": sd1.PROBE_SCHEMA, "complete": True, "lineage": "r1", "parent_state_sha256": "ps",
+                "anchor": {"held_out": {"path": f"{where}/anchor.json", "sha256": "a" * 64}},
+                "offers": [{"path": f"{where}/offers.json", "sha256": "b" * 64}],
+                "banks": [{"role": "training", "bank": {"path": f"{where}/bank.json", "sha256": "c" * 64}}],
+                "runtime_commit": where, "candidates": candidates + [reference_readout(c) for c in extra]}
+
+    def test_the_stage0_probes_references_equal_the_screens_bit_for_bit(self):
+        screen = self.probe(extra=("U-step-1",))
+        out = sd1.reference_check("r1", self.probe("sd1"), screen)
+        self.assertEqual(out["differing"], [])
+        self.assertTrue(out["pass"] and out["banks_equal"])
+        self.assertEqual(out["checks"]["parent learner_offers"]["probe"]["offers"], 2)
+        changes = {"O-final mean_kl_from_parent_non_spy": lambda p: p["candidates"][1]["anchor_held_out"].update(
+                       mean_kl_from_parent_non_spy=math.nextafter(0.05, 1.0)),
+                   "parent mean_kl_from_parent_non_spy": lambda p: p["candidates"][0]["anchor_held_out"].update(
+                       mean_kl_from_parent_non_spy=-0.0),
+                   "parent median_clamped_top_two_gap": lambda p: p["candidates"][0]["anchor_held_out"].update(
+                       median_clamped_top_two_gap=None),
+                   "parent learner_offers": lambda p: p["candidates"][0]["learner_offers"]["rows"][1].update(
+                       self_top=True),
+                   "O-final state_sha256": lambda p: p["candidates"][1].update(state_sha256="other"),
+                   "anchor": lambda p: p["anchor"]["held_out"].update(sha256="d" * 64)}
+        for name, change in changes.items():
+            mine = self.probe("sd1")
+            change(mine)
+            out = sd1.reference_check("r1", mine, screen)
+            self.assertEqual(out["differing"], [name])
+            self.assertFalse(out["pass"])
+        with self.assertRaisesRegex(ValueError, "another lineage"):
+            sd1.reference_check("r2", self.probe("sd1"), screen)
+        lacking = self.probe("sd1")
+        lacking["candidates"] = lacking["candidates"][:1]
+        with self.assertRaisesRegex(ValueError, "lacks the O-final"):
+            sd1.reference_check("r1", lacking, screen)
+
+    def test_the_cli_reads_the_screens_probe_by_its_recorded_sha256(self):
+        mine = write(self.root / "sd1" / "probe.json", self.probe("sd1"))
+        screen = write(self.root / "screen" / "probe.json", self.probe())
+        base = ["reference-check", "--lineage", "r1", "--probe", mine["path"], "--screen-probe", screen["path"],
+                "--out", str(self.root / "REFERENCES.json")]
+        with self.assertRaisesRegex(ValueError, "recorded SHA-256"):
+            sd1.main(base + ["--screen-probe-sha256", "0" * 64])
+        with mock.patch("sys.stdout"):
+            self.assertEqual(sd1.main(base + ["--screen-probe-sha256", screen["sha256"]]), 0)
+        record = json.loads((self.root / "REFERENCES.json").read_text(encoding="utf-8"))
+        self.assertEqual((record["probe"], record["screen_probe"]), (mine, screen))
+
+
+# ------------------------------------------------------------- fit table
+
+
+class FitTable(SelectFixture):
+    def seed_inputs(self, seed: int, changes=None) -> tuple:
+        label = f"SD1-T-s{seed}"
+
+        def relabel(value):
+            return json.loads(json.dumps(value).replace(LABEL, label))
+
+        return relabel(self.full), relabel(self.rerun), relabel(self.probe(changes))
+
+    def selections(self, changes=None) -> tuple:
+        selections, probes = [], []
+        for k in sd1.SEEDS:
+            full, rerun, probe = self.seed_inputs(k, (changes or {}).get(k))
+            selections.append(sd1.select("r1", k, probe, self.reference, full, rerun, names=NAMES))
+            probes.append(probe)
+        return selections, probes
+
+    def test_every_seed_passing_reads_d1_and_the_held_out_values_at_read_checkpoints(self):
+        out = sd1.fit_table(*self.selections())
+        r1 = out["lineages"]["r1"]
+        self.assertEqual(r1["summary"], "passes in 8 of 8 seeds; phase 2 and panels follow")
+        self.assertTrue(r1["phase2"])
+        self.assertFalse(out["engineering"])
+        row = r1["seeds"][3]
+        self.assertEqual((row["seed"], row["label"], row["result"]),
+                         (3, "SD1-T-s3", "F, G2 and G3 pass at some read gated checkpoint"))
+        self.assertEqual(row["reading"], "passes: selected step s = 64, fit dose f = 64, highest passing step h = 8192")
+        self.assertEqual({k: row["d1"][k] for k in ("s", "f", "h", "minimizing_step")},
+                         {"s": 64, "f": 64, "h": 8192, "minimizing_step": 128})
+        self.assertEqual(row["d1"]["checkpoint"]["state_sha256"], "state-SD1-T-s3-step-64")
+        self.assertEqual((row["f_first_pass"], row["g2_first_failure"]), (64, None))
+        self.assertTrue(row["g3"]["pass"])
+        self.assertEqual([c["step"] for c in row["read_checkpoints"]], list(sd1.CHECKPOINT_STEPS))
+        at64 = row["read_checkpoints"][3]
+        self.assertEqual(at64["held_out"], {"separated_mass": sd1.naive_mean([8 / 64, 6 / 64, 9 / 64, 7 / 64]),
+                                            "mean_kl_target": 0.3, "rows": 4})
+        self.assertEqual(at64["non_spy"], {"top_agreement": 0.95, "mean_kl_from_parent": 0.01})
+        self.assertEqual(r1["non_spy_beside"]["agreement_floor"], 0.9 - sd1.AGREEMENT_MARGIN)
+        self.assertEqual(r1["non_spy_beside"]["kl_ceiling"], 0.05)
+
+    def test_seeds_without_d1_read_their_rows_and_the_lineage_runs_no_phase_2(self):
+        collapse = dict(training=0.3, held=(24, 16, 20, 20), agree=0.5)
+        together = dict(training=0.2, held=(24, 16, 20, 20), agree=0.5)
+        unfit = {s: dict(training=0.3, held=(9, 9, 9, 9)) for s in sd1.GATED_STEPS}
+        out = sd1.fit_table(*self.selections({5: unfit, 6: {32: collapse}, 7: {32: together}}))
+        r1 = out["lineages"]["r1"]
+        self.assertEqual(r1["summary"], "passes in 5 of 8 seeds; required fit reached only together with collapse "
+                                        "in 1; collapse before the required fit in 1; required fit not reached in 1; "
+                                        "no phase 2 or panels")
+        self.assertFalse(r1["phase2"])
+        five, six, seven = r1["seeds"][5:]
+        self.assertEqual(five["result"], "F never passes, with G2 holding through 8,192 steps")
+        self.assertEqual(len(five["read_checkpoints"]), len(sd1.CHECKPOINT_STEPS))
+        self.assertEqual(six["result"], "G2 fails before any checkpoint passes F")
+        self.assertEqual(six["reading"],
+                         "collapse before the required fit, at this dose, optimizer, targets and anchor")
+        self.assertEqual(six["g2_first_failure"], {"step": 32, "failed": ["agreement"]})
+        self.assertIsNone(six["f_first_pass"])
+        self.assertEqual([c["step"] for c in six["read_checkpoints"]], [8, 16, 32])
+        self.assertEqual(six["read_checkpoints"][-1]["held_out"]["separated_mass"], sd1.naive_mean([24 / 64, 16 / 64,
+                                                                                                    20 / 64, 20 / 64]))
+        self.assertEqual(seven["result"], "F first passes at the checkpoint where G2 first fails")
+        self.assertEqual(seven["f_first_pass"], 32)
+        self.assertIn("most plausibly r1's KL", seven["explanations"][-1])
+        self.assertNotIn("d1", six)
+
+    def test_an_engineering_stop_is_its_own_row_and_the_cli_exits_1(self):
+        selections, probes = self.selections({2: {64: dict(training=float("nan"), held=(8, 6, 9, 7))}})
+        out = sd1.fit_table(selections, probes)
+        r1 = out["lineages"]["r1"]
+        two = r1["seeds"][2]
+        self.assertEqual((two["result"], two["cause"]),
+                         ("G3 fails", "engineering: G3 failed, so SD1 stops until the cause is fixed"))
+        self.assertEqual([c["step"] for c in two["read_checkpoints"]], [8, 16, 32])
+        self.assertEqual(r1["summary"], "passes in 7 of 8 seeds; engineering stop in 1; SD1 stops until the cause "
+                                        "is fixed")
+        self.assertTrue(out["engineering"])
+        paths = [write(self.root / f"SELECT-{k}.json", s)["path"] for k, s in enumerate(selections)]
+        probe_paths = [write(self.root / f"PROBE-{k}.json", p)["path"] for k, p in enumerate(probes)]
+        with mock.patch("sys.stdout"):
+            code = sd1.main(["fit", "--selection", *paths, "--probes", *probe_paths, "--out",
+                             str(self.root / "FIT.json")])
+        self.assertEqual(code, 1)
+        record = json.loads((self.root / "FIT.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["lineages"]["r1"]["summary"], r1["summary"])
+        self.assertEqual(len(record["selections"]), 8)
+
+    def test_every_value_is_read_again_from_the_seeds_probe(self):
+        selections, probes = self.selections()
+        changed = copy.deepcopy(probes)
+        changed[4]["candidates"][-1]["evidence"]["held_out"]["row_values"][0]["separated_mass"] += 1 / 64
+        with self.assertRaisesRegex(ValueError, "SD1-T-s4 step 8192: the selection's values are not this probe's"):
+            sd1.fit_table(selections, changed)
+        with self.assertRaisesRegex(ValueError, "all eight seeds"):
+            sd1.fit_table(selections[:7], probes)
+        with self.assertRaisesRegex(ValueError, "two probes read this seed"):
+            sd1.fit_table(selections, probes + probes[:1])
+        with self.assertRaisesRegex(ValueError, "no probe read this seed"):
+            sd1.fit_table(selections, probes[1:])
+
+
+# ----------------------------------------------------- phase-2 config gate
+
+
+class ConfigsCheck(PhaseTwoFixture):
+    def configs(self) -> tuple:
+        selections = [self.selection(k) for k in sd1.SEEDS]
+        cfgs = sd1.phase2_configs("r1", self.o_config, selections, 4, "runs")
+        cfgs["O-0"] = phase2.config("r1", self.o_config, None, 6, "runs/r1-O-s0/native")
+        return selections, cfgs
+
+    def test_placement_aside_each_config_differs_from_o_0_only_as_designed(self):
+        selections, cfgs = self.configs()
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs)
+        self.assertTrue(out["pass"], out["checks"])
+        self.assertEqual(len(out["checks"]), 17)
+        units = sum(len(u["episodes"]) for u in self.o_config["iterations"])
+        diff = out["differences_from_O-0"]
+        self.assertEqual(diff["O-0"], {"fields": [], "units": units, "same_updates": True, "episode_ids": 0,
+                                       "seeds": 0, "other_unit_fields": 0})
+        self.assertEqual(diff["O-3"], {**diff["O-0"], "episode_ids": units, "seeds": units})
+        self.assertEqual(diff["D2-0"], {**diff["O-0"], "fields": ["initial_source"]})
+        self.assertEqual(diff["D2-5"], {**diff["O-3"], "fields": ["initial_source"]})
+        self.assertEqual(out["placement"]["O-0"]["collection_workers"], 6)
+        self.assertEqual(out["placement"]["D2-1"]["collection_workers"], 4)
+
+    def test_any_other_difference_fails_the_gate(self):
+        selections, cfgs = self.configs()
+        bad = copy.deepcopy(cfgs)
+        bad["O-2"]["iterations"][5]["episodes"][0]["episode"]["starting_player"] ^= 1
+        bad["D2-4"] = copy.deepcopy(cfgs["D2-5"])
+        bad["O-0"] = copy.deepcopy(cfgs["O-1"])
+        bad["O-6"]["update_backend"] = {"kind": "other"}
+        bad["O-7"]["output_directory"] = bad["O-5"]["output_directory"]
+        out = sd1.configs_check("r1", self.o_config, selections, bad)
+        self.assertFalse(out["pass"])
+        self.assertEqual(sorted(k for k, v in out["checks"].items() if not v),
+                         ["D2-4 is O-4 from D1-4", "O-0 is O's recorded config with the named parent",
+                          "O-2 is O-0 on replicate 2's seeds and episode ids",
+                          "O-6 is O-0 on replicate 6's seeds and episode ids",
+                          "each run writes its own output directory"])
+        diff = out["differences_from_O-0"]
+        self.assertEqual((diff["O-2"]["other_unit_fields"], diff["O-6"]["fields"]), (1, ["update_backend"]))
+
+    def test_the_cli_reads_all_sixteen_configs_and_every_selection(self):
+        selections, cfgs = self.configs()
+        o_path = write(self.root / "O.json", self.o_config)["path"]
+        select = [write(self.root / f"SELECT-{k}.json", s)["path"] for k, s in enumerate(selections)]
+        configs = [f"{name}={write(self.root / f'{name}.json', cfg)['path']}" for name, cfg in sorted(cfgs.items())]
+        base = ["configs-check", "--lineage", "r1", "--o-config", o_path, "--select", *select,
+                "--out", str(self.root / "CONFIGS.json")]
+        with mock.patch("sys.stdout"):
+            self.assertEqual(sd1.main(base + ["--config", *configs]), 0)
+        record = json.loads((self.root / "CONFIGS.json").read_text(encoding="utf-8"))
+        self.assertTrue(record["pass"])
+        self.assertEqual(sorted(record["configs"]), sorted(sd1.PHASE2_RUNS))
+        with self.assertRaisesRegex(ValueError, "the gate reads D2-0 to D2-7 and O-0 to O-7"):
+            sd1.main(base + ["--config", *configs[1:]])
+        with self.assertRaisesRegex(ValueError, "once for each"):
+            sd1.main(base + ["--config", *configs, configs[0]])
+        with self.assertRaisesRegex(ValueError, "every seed's selection"):
+            sd1.main(base[:6] + select[:7] + base[-2:] + ["--config", *configs])
 
 
 if __name__ == "__main__":

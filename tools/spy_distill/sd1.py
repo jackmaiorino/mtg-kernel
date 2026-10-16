@@ -1,11 +1,25 @@
-"""Search-evidence distillation (SD1): split, records, root maps, bank, targets, census and D1 selection.
+"""Search-evidence distillation (SD1): custody, identity checks, records, root maps, targets, selection and gates.
 
-collab design SD1 (search-evidence distillation), sections 3 to 5. Offline:
+collab design SD1 (search-evidence distillation), sections 3 to 6 and 7.1. Offline:
 nothing here plays, searches or trains. The teacher games are the search arm
 of the search-player utility screen (`mode=s4a-budget`, one budget_game record
 per scheduled case, nine decks, both seats). No label or outcome selects a
 game, a row or a target.
 
+Stage 0, before any replay (each writes its record and exits 1 on a failure):
+  custody     every input SD1 reads, each against its SHA-256: the members of
+              the utility screen's EVIDENCE.tar (one of the durable archives
+              its SOURCE-SEAL lists, read beside that seal; never a hot or
+              holding copy) extracted through the seal's member map into SD1's
+              own directory, the absolute paths inside the job specs and their
+              inputs resolved to the extracted copies; and the plain files read
+              in place. Every gap and mismatch is listed
+  parents     section 3's parent identity: the parents', T1's and A48's
+              checkpoints are their recorded pins, and each parent's source in
+              the utility screen's inputs is the distillation screen's, paths
+              aside
+  reference-check  phase-1 exactness's probe references: the stage-0 probe's
+              parent and O-final values equal the screen's recorded probe's
 Per lineage, in order (each step pins what it read):
   split       the held-out split, fixed on the frozen schedule before any
               replay: within each focal deck the ordered matchups are ordered
@@ -60,10 +74,19 @@ Per lineage and seed run:
               failed part) at each checkpoint until the first gated one failing
               G2 (later ones are never selected, counted or reported), the fit
               reading and D1-k by the clustered-SE rule, with D1-k's checkpoint
+Per lineage, once every seed is selected:
+  fit         section 7.1's fit table: per seed the G3 result, F's first pass,
+              G2's first failure and its failing parts, the reading row and D1
+              with s, f and h; the lineage's summary in the fixed form; the
+              held-out separated mass and KL at every read checkpoint only, each
+              value read again from the seed's probe. Reads no panel
 Per lineage, once all eight seeds have a D1:
   phase2      stage 4: D2-k from D1-k and O-k (k >= 1) from the parent, each on
               schedule seed k under the sd1 namespace (phase2.py); O-0 is
               stage 0's O-s0
+  configs-check  the phase-2 config gate, as RT1's: placement aside, O-0 is O's
+              recorded config with the named parent, O-k differs from it only
+              in replicate k's seeds and episode ids, and D2-k is O-k from D1-k
 Checks of the tools and builds:
   known-answer   the rebuild's maps over the Spy archive's games against BT1's
                  committed live maps (the new_root rows of BT1's ROWS in archive
@@ -94,7 +117,15 @@ CLI (JSON summary on stdout; a failed check exits 1 after writing its record):
   bt1-regression --rows r1=ROWS-r1.jsonl [r2=...] --out REGRESSION.json
   o-check --lineage r1 --run O-s0/completion.json --recorded O/completion.json
           --o-final O_FINAL_CHECKPOINT.json --out OCHECK.json
+  custody --spec CUSTODY-SPEC.json --out-dir DIR --out RECORD-PINS.json
+  parents --spec PARENTS-SPEC.json --out PARENTS.json
+  reference-check --lineage r1 --probe STAGE0-PROBE.json --screen-probe SCREEN-PROBE.json
+                  --screen-probe-sha256 SHA --out REFERENCES.json
+  fit --selection SELECT.json ... --probes PROBE.json ... --out FIT.json
+  configs-check --lineage r1 --o-config O.json --select SELECT-0.json ... SELECT-7.json
+                --config D2-0=CFG.json ... D2-7=CFG.json O-0=CFG.json ... O-7=CFG.json --out CONFIGS.json
 SPEC: {"r1": {"split": PIN, "games": PIN (GAMES-r1.json), "bank_check": PIN}, "r2": {...}}
+CUSTODY-SPEC and PARENTS-SPEC: see custody() and parents().
 """
 from __future__ import annotations
 
@@ -104,6 +135,7 @@ import json
 import math
 import re
 import sys
+import tarfile
 import types
 from collections import Counter
 from pathlib import Path
@@ -114,8 +146,8 @@ import bt1  # noqa: E402
 import fit  # noqa: E402
 import phase1  # noqa: E402
 import phase2  # noqa: E402
-from distill_common import (LINEAGES, absolute, check_parent, episode, pilot, pin, read_json,  # noqa: E402
-                            read_jsonl, require, write_json)
+from distill_common import (LINEAGES, PARENT_CHECKPOINT_SHA256, absolute, check_parent, episode, pilot,  # noqa: E402
+                            pin, read_json, read_jsonl, require, write_json)
 
 RESCORE = bt1.RESCORE
 HOLDOUT_NS = "sd1-evidence-holdout-v1"
@@ -1007,6 +1039,841 @@ def o_check(lineage: str, run: dict, recorded: dict, o_final: Path) -> dict:
             "pass": end["reproduced"] and first is None}
 
 
+# ------------------------------------------------------- stage 0: custody
+
+CUSTODY_SPEC_SCHEMA = "sd1-v1/custody-spec"
+CUSTODY_SCHEMA = "sd1-v1/custody"
+# The utility screen's source seal (its seal_evidence.py): each member of
+# EVIDENCE.tar with its SHA-256, each retained original path's member, and
+# the durable archives (the hot root's copy is not among them).
+SEAL_SCHEMA = "search-player-utility-source-seal/v1"
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+SAFE_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
+WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
+POSIX_ABSOLUTE = re.compile(r"^/[^/]+/[^/]")
+# A string may carry several paths ("T1=PATH,A48=PATH", "source=PATH").
+PATH_DELIMITERS = re.compile(r"([,;=])")
+CHUNK = 1 << 20
+CUSTODY_SPEC_KEYS = {"schema", "seal", "archive", "completion", "forbidden", "members", "rewrite", "keep", "files",
+                     "counts"}
+
+
+def path_key(path) -> str:
+    """A path's identity for lookups: forward slashes, no trailing slash and
+    case folded, as the seal's own lookup folds case."""
+    return str(path).replace("\\", "/").rstrip("/").casefold()
+
+
+def is_under(path, root) -> bool:
+    p, r = path_key(path), path_key(root)
+    return p == r or p.startswith(r + "/")
+
+
+def parent_key(path) -> str:
+    return path_key(path).rsplit("/", 1)[0]
+
+
+def is_absolute_token(token) -> bool:
+    return isinstance(token, str) and bool(WINDOWS_ABSOLUTE.match(token) or POSIX_ABSOLUTE.match(token))
+
+
+def safe_name(name) -> bool:
+    return isinstance(name, str) and all(SAFE_PART.match(p) and p not in (".", "..") for p in name.split("/"))
+
+
+def stream_sha256(path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def is_pin(value) -> bool:
+    return (isinstance(value, dict) and isinstance(value.get("path"), str)
+            and isinstance(value.get("sha256"), str) and HEX64.match(value["sha256"]) is not None)
+
+
+def verify_file(entry, what: str, failures: list, forbidden=()) -> bool:
+    """A pinned file in place: present, outside every forbidden root, its
+    bytes' SHA-256 the pin's. A failure is listed, not raised."""
+    if not is_pin(entry):
+        failures.append(f"{what}: not a pin (a path and a SHA-256)")
+        return False
+    if any(is_under(entry["path"], root) for root in forbidden):
+        failures.append(f"{what}: {entry['path']} lies under a hot or holding root, which SD1 never reads")
+        return False
+    path = Path(entry["path"])
+    if not path.is_file():
+        failures.append(f"{what}: {entry['path']} is missing")
+        return False
+    got = stream_sha256(path)
+    if got != entry["sha256"]:
+        failures.append(f"{what}: {entry['path']} has SHA-256 {got}, not {entry['sha256']}")
+        return False
+    return True
+
+
+def custody_spec_problems(spec) -> list:
+    if not isinstance(spec, dict) or spec.get("schema") != CUSTODY_SPEC_SCHEMA:
+        return [f"not an {CUSTODY_SPEC_SCHEMA} spec"]
+    problems = [f"unknown field {k!r}" for k in sorted(set(spec) - CUSTODY_SPEC_KEYS)]
+    problems += [f"{k}: not a pin" for k in ("seal", "archive") if not is_pin(spec.get(k))]
+    if spec.get("completion") is not None and not is_pin(spec["completion"]):
+        problems.append("completion: not a pin")
+    for key in ("forbidden", "keep"):
+        value = spec.get(key, [])
+        if not (isinstance(value, list) and all(is_absolute_token(v) for v in value)):
+            problems.append(f"{key}: a list of absolute paths")
+    rewrite = spec.get("rewrite", [])
+    if not (isinstance(rewrite, list) and all(isinstance(r, dict) and set(r) == {"from", "to"}
+                                              and is_absolute_token(r["from"]) and is_absolute_token(r["to"])
+                                              for r in rewrite)):
+        problems.append("rewrite: a list of {from, to} absolute path prefixes")
+    members = spec.get("members")
+    if not (isinstance(members, list) and members):
+        problems.append("members: a nonempty list")
+    for i, m in enumerate(members if isinstance(members, list) else []):
+        by_name = (isinstance(m, dict) and "member" in m and "original" not in m and safe_name(m["member"])
+                   and isinstance(m.get("sha256"), str) and HEX64.match(m["sha256"]) is not None)
+        by_original = (isinstance(m, dict) and "original" in m and "member" not in m and "sha256" not in m
+                       and is_pin(m["original"]))
+        if not ((by_name or by_original) and safe_name(m.get("role")) and "/" not in m["role"]
+                and isinstance(m.get("remap", False), bool)
+                and set(m) <= {"role", "member", "sha256", "original", "remap"}):
+            problems.append(f"members[{i}]: {{role, member, sha256}} or {{role, original}}, with an optional remap")
+    files = spec.get("files", [])
+    if not isinstance(files, list):
+        problems.append("files: a list")
+    for i, f in enumerate(files if isinstance(files, list) else []):
+        if not (is_pin(f) and set(f) == {"role", "path", "sha256"} and safe_name(f["role"]) and "/" not in f["role"]):
+            problems.append(f"files[{i}]: {{role, path, sha256}}")
+    counts = spec.get("counts", {})
+    if not (isinstance(counts, dict) and all(type(n) is int and n >= 0 for n in counts.values())):
+        problems.append("counts: {role: count}")
+    return problems
+
+
+def seal_index(seal: dict, failures: list) -> dict | None:
+    """The seal's members by name and by retained original path (aliases
+    included), each original bound to its member's SHA-256."""
+    files = {}
+    for entry in seal.get("files") or []:
+        name = entry.get("name")
+        if not safe_name(name) or name in files or not HEX64.match(str(entry.get("sha256", ""))):
+            failures.append(f"the seal lists an unsafe, repeated or unhashed member {name!r}")
+            return None
+        files[name] = entry
+    by_original, originals_of = {}, {}
+    for row in seal.get("original_archive_members") or []:
+        original, name = row.get("original") or {}, row.get("member")
+        if name not in files or original.get("sha256") != files[name]["sha256"] or not isinstance(
+                original.get("path"), str):
+            failures.append(f"the seal maps {original.get('path')!r} to {name!r} with another SHA-256")
+            return None
+        key = path_key(original["path"])
+        if key in by_original and by_original[key][0] != name:
+            failures.append(f"the seal maps {original['path']} to two members")
+            return None
+        by_original[key] = (name, original["sha256"])
+        originals_of.setdefault(name, []).append(original["path"])
+    return {"files": files, "by_original": by_original, "originals_of": originals_of}
+
+
+def extract_members(archive: Path, wanted: dict, out_dir: Path, failures: list) -> dict:
+    """Each wanted member of the archive, streamed to DIR/members/NAME with its
+    size and SHA-256 checked against the seal's."""
+    out = {}
+    with tarfile.open(archive, mode="r:") as tar:
+        entries, repeated = {}, set()
+        for info in tar.getmembers():
+            if info.name in entries:
+                repeated.add(info.name)
+            entries[info.name] = info
+        for name, want in wanted.items():
+            info = entries.get(name)
+            if info is None or not info.isfile() or name in repeated:
+                failures.append(f"{name}: not one regular file in the archive")
+                continue
+            if info.size != want["bytes"]:
+                failures.append(f"{name}: {info.size} bytes in the archive, not the seal's {want['bytes']}")
+                continue
+            target = out_dir / "members" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            source = tar.extractfile(info)
+            with target.open("xb") as handle:
+                for block in iter(lambda: source.read(CHUNK), b""):
+                    digest.update(block)
+                    handle.write(block)
+            if digest.hexdigest() != want["sha256"]:
+                failures.append(f"{name}: extracted with SHA-256 {digest.hexdigest()}, not {want['sha256']}")
+                continue
+            out[name] = target
+    return out
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for v in value:
+            yield from strings(v)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from strings(k)
+            yield from strings(v)
+
+
+def names_root(text: str, root: str) -> bool:
+    folded, key = text.replace("\\", "/").casefold(), path_key(root)
+    return path_key(text) == key or key + "/" in folded
+
+
+class Remap:
+    """The absolute paths inside the remap members, each resolved by the
+    spec's rewrite rules (first match), then the seal's member map (to the
+    member's extracted copy, or its remapped copy when it is remapped too),
+    then the verified plain files, then a directory of extracted members. A
+    pin's SHA-256 must be the sealed bytes' and becomes its new file's. A path
+    under a keep prefix stays; any other path that resolves nowhere, or a
+    remapped copy that still names a forbidden root, is a failure."""
+
+    def __init__(self, out_dir: Path, index: dict, wanted: dict, extracted: dict, files: list, spec: dict,
+                 failures: list):
+        self.out_dir, self.index, self.wanted, self.extracted = out_dir, index, wanted, extracted
+        self.files = {path_key(f["path"]): f for f in files if f["verified"]}
+        self.rewrite, self.keep = spec.get("rewrite", []), spec.get("keep", [])
+        self.forbidden, self.failures = spec.get("forbidden", []), failures
+        self.done, self.active, self.notes = {}, set(), {}
+
+    def copy_path(self, name: str) -> Path:
+        return self.out_dir / ("remapped" if self.wanted[name]["remap"] else "members") / name
+
+    def rewritten(self, token: str) -> str:
+        for rule in self.rewrite:
+            if is_under(token, rule["from"]):
+                head = rule["from"].replace("\\", "/").rstrip("/")
+                return rule["to"].replace("\\", "/").rstrip("/") + token.replace("\\", "/")[len(head):]
+        return token
+
+    def directory(self, path: str) -> str | None:
+        key, prefixes = path_key(path), set()
+        for name in self.extracted:
+            for original in self.index["originals_of"].get(name, []):
+                original = original.replace("\\", "/")
+                if path_key(original).startswith(key + "/"):
+                    rest = original[len(key) + 1:]
+                    prefixes.add(name[:-len(rest) - 1] if name.endswith("/" + rest) else None)
+        if len(prefixes) == 1 and None not in prefixes:
+            return absolute(self.out_dir / "members" / prefixes.pop())
+        return None
+
+    def target(self, member: str, token: str, pinned: bool):
+        """(new path, sealed SHA-256, new SHA-256) for one absolute path, or
+        None when it stays (kept, or listed as a failure)."""
+        if any(is_under(token, root) for root in self.keep):
+            self.notes[member]["kept"].append(token)
+            return None
+        path = self.rewritten(token)
+        hit = self.index["by_original"].get(path_key(path))
+        if hit is not None:
+            name, sealed = hit
+            if name not in self.extracted:
+                self.failures.append(f"{member}: {token} is sealed as {name}, which custody did not extract")
+                return None
+            current = sealed
+            if self.wanted[name]["remap"] and pinned:
+                remapped = self.remapped(name)
+                if remapped is None:
+                    self.failures.append(f"{member}: {token} names {name}, whose remapped copy failed")
+                    return None
+                current = remapped["sha256"]
+            return absolute(self.copy_path(name)), sealed, current
+        plain = self.files.get(path_key(path))
+        if plain is not None:
+            return plain["path"], plain["sha256"], plain["sha256"]
+        directory = None if pinned else self.directory(path)
+        if directory is not None:
+            return directory, None, None
+        self.failures.append(f"{member}: {token} resolves to no extracted member, verified file or directory")
+        return None
+
+    def string(self, member: str, text):
+        if not isinstance(text, str):
+            return text
+        parts, changed = PATH_DELIMITERS.split(text), False
+        for i in range(0, len(parts), 2):
+            if is_absolute_token(parts[i]):
+                found = self.target(member, parts[i], False)
+                if found is not None:
+                    parts[i], changed = found[0], True
+                    self.notes[member]["replaced"] += 1
+        return "".join(parts) if changed else text
+
+    def value(self, member: str, value):
+        if isinstance(value, list):
+            return [self.value(member, v) for v in value]
+        if not isinstance(value, dict):
+            return self.string(member, value)
+        pinned = is_pin(value) and is_absolute_token(value["path"])
+        path, sha = value.get("path"), value.get("sha256")
+        if pinned:
+            found = self.target(member, value["path"], True)
+            if found is not None and found[1] != value["sha256"]:
+                self.failures.append(f"{member}: the pin of {value['path']} has SHA-256 {value['sha256']}, "
+                                     f"but the file it names has {found[1]}")
+            elif found is not None:
+                path, sha = found[0], found[2]
+                self.notes[member]["replaced"] += 1
+        out = {}
+        for key, item in value.items():
+            if pinned and key in ("path", "sha256"):
+                out[key] = path if key == "path" else sha
+            else:
+                out[self.string(member, key)] = self.value(member, item)
+        return out
+
+    def remapped(self, name: str) -> dict | None:
+        """The remapped copy of one member, DIR/remapped/NAME (the extracted
+        bytes when nothing in it changes), with its pin."""
+        if name in self.done:
+            return self.done[name]
+        if name in self.active:
+            self.failures.append(f"{name}: its pins form a cycle")
+            return None
+        self.active.add(name)
+        self.notes[name] = {"replaced": 0, "kept": []}
+        result = None
+        try:
+            data = self.extracted[name].read_bytes()
+            lines = name.endswith(".jsonl")
+            if not (lines or name.endswith(".json")):
+                self.failures.append(f"{name}: only JSON and JSONL members are remapped")
+            else:
+                text = data.decode("utf-8")
+                values = [json.loads(x) for x in text.splitlines() if x.strip()] if lines else [json.loads(text)]
+                new = [self.value(name, v) for v in values]
+                for root in self.forbidden:
+                    if any(names_root(s, root) for s in strings(new)):
+                        self.failures.append(f"{name}: its remapped copy still names {root}")
+                target = self.out_dir / "remapped" / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if self.notes[name]["replaced"]:
+                    body = ("".join(json.dumps(v, separators=(",", ":")) + "\n" for v in new) if lines
+                            else json.dumps(new[0], separators=(",", ":")) + "\n")
+                    target.write_bytes(body.encode("utf-8"))
+                else:
+                    target.write_bytes(data)
+                result = {"path": absolute(target), "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
+        except (ValueError, UnicodeDecodeError) as error:
+            self.failures.append(f"{name}: not readable JSON ({error})")
+        finally:
+            self.active.discard(name)
+        self.done[name] = result
+        return result
+
+
+def custody(spec: dict, out_dir: Path, spec_pin: dict | None = None) -> dict:
+    """Stage 0's custody of SD1's inputs. SPEC (schema sd1-v1/custody-spec):
+      seal        PIN of SOURCE-SEAL.json in one durable target
+      archive     PIN of the EVIDENCE.tar beside it, one of the seal's archives
+      completion  optional PIN of the CUSTODY-COMPLETION.json beside them
+      forbidden   optional hot and holding roots: nothing is read from under them
+      members     [{role, member, sha256} or {role, original: PIN}, optional
+                  remap: true]: each sealed member SD1 reads (the search-arm
+                  records, their job specs and inputs, ANALYSIS-SOURCES-001),
+                  extracted through the seal's member map to DIR/members; a
+                  remap member (JSON or JSONL) also gets DIR/remapped/NAME with
+                  the absolute paths inside it resolved (class Remap)
+      rewrite     optional [{from, to}] absolute prefixes applied first (for
+                  example a computehost bundle's runtime root to that bundle's
+                  path on the maintainer's desktop, as the seal knows it)
+      keep        optional absolute prefixes left as they are
+      files       [{role, path, sha256}]: the plain files SD1 reads in place
+      counts      optional {role: n}: exactly n members and files have role
+    Every gap and mismatch is listed in the record and fails it; DIR/lists/
+    ROLE.txt lists each role's files (remapped copies where remapped)."""
+    problems = custody_spec_problems(spec)
+    require(not problems, "the custody spec is malformed: " + "; ".join(problems))
+    out_dir = Path(out_dir)
+    require(not out_dir.exists() or (out_dir.is_dir() and not any(out_dir.iterdir())),
+            f"{out_dir} is not a fresh directory")
+    forbidden = spec.get("forbidden", [])
+    require(not any(is_under(absolute(out_dir), root) for root in forbidden),
+            "the output directory lies under a hot or holding root")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    failures: list = []
+    seal, index = None, None
+    if verify_file(spec["seal"], "the source seal", failures, forbidden):
+        seal = json.loads(Path(spec["seal"]["path"]).read_text(encoding="utf-8"))
+        if seal.get("schema") != SEAL_SCHEMA or seal.get("complete") is not True:
+            failures.append("the source seal is not a complete search-player-utility source seal")
+            seal = None
+    archive_ok = False
+    if seal is not None:
+        index = seal_index(seal, failures)
+        durable = [a for a in seal.get("archives") or [] if path_key(a.get("path", "")) ==
+                   path_key(spec["archive"]["path"])]
+        if len(durable) != 1 or durable[0].get("sha256") != spec["archive"]["sha256"]:
+            failures.append(f"{spec['archive']['path']} with this SHA-256 is not one of the seal's durable archives")
+        elif parent_key(spec["archive"]["path"]) != parent_key(spec["seal"]["path"]):
+            failures.append("the seal does not sit beside the archive")
+        else:
+            archive_ok = verify_file(spec["archive"], "the durable archive", failures, forbidden)
+    completion = spec.get("completion")
+    if completion is not None and verify_file(completion, "the custody completion", failures, forbidden):
+        done = json.loads(Path(completion["path"]).read_text(encoding="utf-8"))
+        seals = [s.get("sha256") for s in done.get("source_seals") or []]
+        archives = [a.get("sha256") for a in done.get("archives") or []]
+        if not (done.get("complete") is True and spec["seal"]["sha256"] in seals
+                and archives and set(archives) == {spec["archive"]["sha256"]}):
+            failures.append("the custody completion is not complete for this seal and archive")
+        if parent_key(completion["path"]) != parent_key(spec["seal"]["path"]) or (
+                seal is not None and path_key(completion["path"]).rsplit("/", 1)[-1]
+                != path_key(seal.get("completion_record", ""))):
+            failures.append("the custody completion is not the seal's completion record beside it")
+    files, seen = [], set()
+    for entry in spec.get("files", []):
+        if path_key(entry["path"]) in seen:
+            failures.append(f"{entry['path']} is listed twice")
+            continue
+        seen.add(path_key(entry["path"]))
+        files.append({**entry, "verified": verify_file(entry, f"{entry['role']} file", failures, forbidden)})
+    wanted, roles = {}, Counter(f["role"] for f in spec.get("files", []))
+    for i, m in enumerate(spec["members"]):
+        roles[m["role"]] += 1
+        if index is None:
+            continue
+        what = f"members[{i}] ({m['role']})"
+        if "original" in m:
+            hit = index["by_original"].get(path_key(m["original"]["path"]))
+            if hit is None or hit[1] != m["original"]["sha256"]:
+                failures.append(f"{what}: the seal maps no member with this SHA-256 to {m['original']['path']}")
+                continue
+            name, sha = hit
+        else:
+            name, sha = m["member"], m["sha256"]
+        sealed = index["files"].get(name)
+        if sealed is None or sealed["sha256"] != sha:
+            failures.append(f"{what}: the seal lists no member {name} with SHA-256 {sha}")
+        elif name in wanted:
+            failures.append(f"{what}: {name} is listed twice")
+        else:
+            wanted[name] = {"role": m["role"], "sha256": sha, "bytes": sealed.get("bytes"),
+                            "remap": m.get("remap", False)}
+    if index is None or not archive_ok:
+        failures.append("no member is extracted: the seal or the archive did not verify")
+    extracted = (extract_members(Path(spec["archive"]["path"]), wanted, out_dir, failures)
+                 if index is not None and archive_ok else {})
+    remap = Remap(out_dir, index or {}, wanted, extracted, files, spec, failures)
+    for name, want in wanted.items():
+        if want["remap"] and name in extracted:
+            remap.remapped(name)
+    members, lists = [], {}
+    for name, want in wanted.items():
+        got = name in extracted
+        entry = {"role": want["role"], "member": name, "sha256": want["sha256"],
+                 "originals": index["originals_of"].get(name, []),
+                 "extracted": {"path": absolute(extracted[name]), "sha256": want["sha256"]} if got else None}
+        if want["remap"]:
+            entry.update(remapped=remap.done.get(name), **remap.notes.get(name, {"replaced": 0, "kept": []}))
+        members.append(entry)
+        listed = entry.get("remapped") or entry["extracted"]
+        if listed is not None:
+            lists.setdefault(want["role"], []).append(listed["path"])
+    for f in files:
+        if f["verified"]:
+            lists.setdefault(f["role"], []).append(f["path"])
+    for role, n in spec.get("counts", {}).items():
+        if roles[role] != n:
+            failures.append(f"role {role}: the spec lists {roles[role]} members and files, not {n}")
+    list_pins = {}
+    for role, paths in lists.items():
+        target = out_dir / "lists" / f"{role}.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(p + "\n" for p in paths), encoding="utf-8", newline="\n")
+        list_pins[role] = pin(target)
+    return {"schema": CUSTODY_SCHEMA, "spec": spec_pin, "out_dir": absolute(out_dir),
+            "seal": {**spec["seal"], "complete": seal is not None}, "archive": {**spec["archive"],
+                                                                                  "verified": archive_ok},
+            "completion": completion, "forbidden": forbidden, "members": members, "files": files,
+            "lists": list_pins, "counts": dict(sorted(roles.items())), "failures": failures, "pass": not failures}
+
+
+# ------------------------------------------------ stage 0: parent identity
+
+PARENTS_SPEC_SCHEMA = "sd1-v1/parents-spec"
+PARENTS_SCHEMA = "sd1-v1/parents"
+# The fixed references' checkpoint files (T1 is g115).
+T1_CHECKPOINT_SHA256 = "88c0b997708c2b5156b44f3940ad9d5d682f78ac24d346978bb3c9f34c59e8d1"
+A48_CHECKPOINT_SHA256 = "beb86b4116c6eaa8406f12eb391adde1a637e063375740ea0b9812251bcff4a4"
+RECORDED_CHECKPOINTS = {**PARENT_CHECKPOINT_SHA256, "T1": T1_CHECKPOINT_SHA256, "A48": A48_CHECKPOINT_SHA256}
+
+
+def located_source(entry, what: str, failures: list) -> dict | None:
+    """The model source a parents-spec entry names: {path, optional sha256,
+    optional field}, with field the keys leading to the source inside the
+    file (["initial_source"] in O's recorded config)."""
+    if not (isinstance(entry, dict) and isinstance(entry.get("path"), str)
+            and set(entry) <= {"path", "sha256", "field"} and isinstance(entry.get("field", []), list)):
+        failures.append(f"{what}: give {{path, optional sha256, optional field}}")
+        return None
+    if "sha256" in entry and not verify_file(entry, what, failures):
+        return None
+    if not Path(entry["path"]).is_file():
+        failures.append(f"{what}: {entry['path']} is missing")
+        return None
+    value = json.loads(Path(entry["path"]).read_text(encoding="utf-8"))
+    for key in entry.get("field", []):
+        try:
+            value = value[key]
+        except (KeyError, IndexError, TypeError):
+            failures.append(f"{what}: {entry['path']} has no field {entry['field']}")
+            return None
+    if not (isinstance(value, dict) and is_pin(value.get("checkpoint")) and is_pin(value.get("play_import"))):
+        failures.append(f"{what}: not a model source with checkpoint and play_import pins")
+        return None
+    return value
+
+
+def source_identity(source: dict, what: str, failures: list) -> dict:
+    """A model source with its paths aside, each pinned file checked in place:
+    the checkpoint by its SHA-256, the play-import descriptor by its content
+    (whose own pins compare by SHA-256), since the utility screen rewrote the
+    descriptor's paths when it staged its inputs."""
+    identity = unpathed(source)
+    for key in ("checkpoint", "play_import"):
+        verify_file(source[key], f"{what} {key}", failures)
+    imported = Path(source["play_import"]["path"])
+    if imported.is_file():
+        try:
+            content = json.loads(imported.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            content = None
+        if isinstance(content, dict):
+            for key, ref in content.items():
+                if is_pin(ref):
+                    verify_file(ref, f"{what} play import {key}", failures)
+            identity["play_import"] = {"content": unpathed(content)}
+    return identity
+
+
+def parents(spec: dict) -> dict:
+    """Section 3's parent identity (stage 0). SPEC (schema sd1-v1/parents-spec):
+    {"r1": {"utility": SRC, "screen": SRC}, "r2": {...}, "T1": {"utility": SRC
+    [, "screen": SRC]}, "A48": {...}}, SRC as located_source. Every source's
+    checkpoint is its recorded pin and hashes to it; each parent's source in
+    the utility screen's inputs is the distillation screen's, paths aside
+    (and T1's and A48's, when the screen's are given)."""
+    require(isinstance(spec, dict) and spec.get("schema") == PARENTS_SPEC_SCHEMA
+            and set(spec) == {"schema", *RECORDED_CHECKPOINTS},
+            f"not an {PARENTS_SPEC_SCHEMA} spec naming r1, r2, T1 and A48")
+    failures, out = [], {}
+    for name, recorded in RECORDED_CHECKPOINTS.items():
+        entry = spec[name]
+        require(isinstance(entry, dict) and "utility" in entry and set(entry) <= {"utility", "screen"}
+                and (name not in LINEAGES or "screen" in entry),
+                f"{name}: the utility screen's source" + (" and the distillation screen's" if name in LINEAGES
+                                                          else ""))
+        row, identities = {"recorded_checkpoint_sha256": recorded}, {}
+        for side in ("utility", "screen"):
+            if side not in entry:
+                continue
+            what = f"{name}: the {'utility' if side == 'utility' else 'distillation'} screen's source"
+            source = located_source(entry[side], what, failures)
+            row[side] = None if source is None else {"checkpoint": source["checkpoint"]}
+            if source is None:
+                continue
+            if source["checkpoint"]["sha256"] != recorded:
+                failures.append(f"{what}: its checkpoint is {source['checkpoint']['sha256']}, not the recorded "
+                                f"{recorded}")
+            identities[side] = source_identity(source, what, failures)
+        if len(identities) == 2:
+            a, b = identities["utility"], identities["screen"]
+            differ = sorted(k for k in set(a) | set(b) if canonical(a.get(k)) != canonical(b.get(k)))
+            row["sources_match"] = not differ
+            if differ:
+                failures.append(f"{name}: the utility screen's source differs from the distillation screen's in "
+                                f"{differ}")
+        out[name] = row
+    return {"schema": PARENTS_SCHEMA, "sources": out, "failures": failures, "pass": not failures}
+
+
+# --------------------------------------- stage 0: the probe's references
+
+REFERENCE_CHECK_SCHEMA = "sd1-v1/reference-check"
+# BT1's G2 references, read on every probe's held-out anchor rows.
+ANCHOR_REFERENCES = ("median_clamped_top_two_gap", "non_spy_top_agreement", "mean_kl_from_parent_non_spy")
+OFFER_SUMMARY = ("offers", "mean_deployed_self_probability", "mean_raw_self_probability", "self_top_share")
+
+
+def reference_check(lineage: str, probe: dict, screen_probe: dict) -> dict:
+    """Phase-1 exactness's probe references (stage 0): the SD1 build's probe
+    on the distillation screen's bank against the screen's recorded probe.
+    The parent's and O-final's held-out median clamped gap, non-Spy top-action
+    agreement and non-Spy KL, and the parent's learner-offer values (every
+    field, each offer's row included), must be equal bit for bit, and so must
+    both probes' parent state, anchor pool and offer sets (pins by SHA-256)
+    and both candidates' states."""
+    mine, theirs = readouts(probe), readouts(screen_probe)
+    require(probe.get("lineage") == lineage and screen_probe.get("lineage") == lineage, "a probe of another lineage")
+    for cid in REFERENCE_IDS:
+        require(cid in mine and cid in theirs, f"a probe lacks the {cid} candidate")
+    checks = {}
+
+    def compare(name, a, b, show=True):
+        same = canonical(a) == canonical(b)
+        checks[name] = ({"probe": a, "screen": b, "equal": same} if show else
+                        {"probe_sha256": hashlib.sha256(canonical(a).encode()).hexdigest(),
+                         "screen_sha256": hashlib.sha256(canonical(b).encode()).hexdigest(), "equal": same})
+
+    compare("parent_state_sha256", probe.get("parent_state_sha256"), screen_probe.get("parent_state_sha256"))
+    for field in ("anchor", "offers"):
+        compare(field, unpathed(probe.get(field)), unpathed(screen_probe.get(field)), show=False)
+    for cid in REFERENCE_IDS:
+        compare(f"{cid} state_sha256", mine[cid].get("state_sha256"), theirs[cid].get("state_sha256"))
+        for field in ANCHOR_REFERENCES:
+            compare(f"{cid} {field}", (mine[cid].get("anchor_held_out") or {}).get(field),
+                    (theirs[cid].get("anchor_held_out") or {}).get(field))
+    a, b = mine["parent"].get("learner_offers"), theirs["parent"].get("learner_offers")
+    checks["parent learner_offers"] = {"probe": {k: (a or {}).get(k) for k in OFFER_SUMMARY},
+                                       "screen": {k: (b or {}).get(k) for k in OFFER_SUMMARY},
+                                       "equal": a is not None and canonical(a) == canonical(b)}
+    differing = [name for name, c in checks.items() if not c["equal"]]
+    return {"schema": REFERENCE_CHECK_SCHEMA, "lineage": lineage, "checks": checks, "differing": differing,
+            "banks_equal": canonical(unpathed(probe.get("banks"))) == canonical(unpathed(screen_probe.get("banks"))),
+            "pass": not differing}
+
+
+# ------------------------------------------------------------- fit table
+
+FIT_SCHEMA = "sd1-v1/fit"
+COLLAPSE_EXPLANATIONS = (
+    "the evidence rows may move shared parameters",
+    "the anchor may be too weak",
+    "the step size may be too large",
+    "G2's references come from ordinary training (O-final), and the intended change near evidence states may "
+    "exceed them, most plausibly r1's KL")
+# Section 7.1: each selection reading's row (what was observed, the reading,
+# its competing explanations) and its label in the lineage's summary.
+FIT_ROWS = {
+    "engineering": ("G3 fails", "engineering: SD1 stops until the cause is fixed; the seed's rerun is a recorded "
+                    "repeat", (), "engineering stop"),
+    "required fit reached only together with collapse": (
+        "F first passes at the checkpoint where G2 first fails",
+        "required fit reached only together with collapse, at this dose, optimizer, targets and anchor",
+        COLLAPSE_EXPLANATIONS, "required fit reached only together with collapse"),
+    "collapse before the required fit": (
+        "G2 fails before any checkpoint passes F",
+        "collapse before the required fit, at this dose, optimizer, targets and anchor",
+        COLLAPSE_EXPLANATIONS, "collapse before the required fit"),
+    "required fit not reached": (
+        "F never passes, with G2 holding through 8,192 steps",
+        "required fit not reached at this dose, optimizer, targets and anchor",
+        ("the evidence rows may be too few against the anchor",
+         "the student's input may not separate them from similar rows"), "required fit not reached"),
+    "passes": ("F, G2 and G3 pass at some read gated checkpoint", "passes", (), "passes"),
+}
+SUMMARY_ORDER = ("passes", "required fit reached only together with collapse", "collapse before the required fit",
+                 "required fit not reached", "engineering")
+
+
+def reading_kind(reading: str) -> str:
+    kind = "engineering" if reading.startswith("engineering") else reading
+    require(kind in FIT_ROWS, f"unknown selection reading {reading!r}")
+    return kind
+
+
+def read_checkpoints(selection: dict, values: dict | None) -> list:
+    """Every read checkpoint of a selection (the first gated G2 failure
+    included, nothing after it), each F and G2 value read again from the
+    seed's probe and required to equal the selection's, with the held-out
+    separated mass and KL(q || p_theta) and the non-Spy values beside."""
+    label = selection["label"]
+    entries = [dict(e) for e in selection.get("checkpoints", [])]
+    stop = selection.get("g2_stop")
+    if stop is not None:
+        entries.append({"step": stop["step"], "gated": True, "F": stop["F"], "G2": stop["G2"]})
+    require(not entries or values is not None, f"{selection['lineage']} {label}: no probe read this seed")
+    out = []
+    for e in entries:
+        readout = values.get(f"{label}-step-{e['step']}")
+        require(readout is not None, f"{label}: the probe did not read checkpoint step {e['step']}")
+        g2 = g2_parts(readout, values["parent"], values["O-final"])
+        mass = readout["evidence"]["training"]["mean_separated_mass"]
+        rows = held_out_rows(readout)
+        held = {"separated_mass": naive_mean([r["separated_mass"] for r in rows]),
+                "mean_kl_target": readout["evidence"]["held_out"]["mean_kl_target"], "rows": len(rows)}
+        same = (canonical(e["F"]["training_separated_mass"]) == canonical(mass)
+                and canonical(e["G2"]["parts"]) == canonical(g2["parts"])
+                and ("held_out" not in e or canonical(e["held_out"]) == canonical(held)))
+        require(same, f"{label} step {e['step']}: the selection's values are not this probe's")
+        out.append({"step": e["step"], "gated": e["gated"], "F": e["F"],
+                    "G2": {"failed": g2["failed"], "pass": g2["pass"]}, "held_out": held,
+                    "non_spy": {k: g2["non_spy"].get(k) for k in ("top_agreement", "mean_kl_from_parent")}})
+    return out
+
+
+def fit_row(selection: dict, values: dict | None) -> dict:
+    kind = reading_kind(selection["reading"])
+    result, reading, explanations, _ = FIT_ROWS[kind]
+    row = {"seed": selection["seed"], "label": selection["label"], "kind": kind, "result": result,
+           "reading": reading, "explanations": list(explanations), "probe_identity": selection["identity"]["pass"],
+           "g3": selection.get("g3")}
+    if kind == "engineering":
+        row["cause"] = selection["reading"]
+    checkpoints = read_checkpoints(selection, values)
+    stop = selection.get("g2_stop")
+    row["f_first_pass"] = next((c["step"] for c in checkpoints if c["gated"] and c["F"]["pass"]), None)
+    row["g2_first_failure"] = None if stop is None else {"step": stop["step"], "failed": stop["failed"]}
+    if kind == "passes":
+        s, f, h = selection["selected_step"], selection["fit_dose"], selection["highest_passing_step"]
+        row["reading"] = f"passes: selected step s = {s}, fit dose f = {f}, highest passing step h = {h}"
+        row["d1"] = {"s": s, "f": f, "h": h, "minimizing_step": selection["d1"]["minimizing_step"],
+                     "checkpoint": selection["d1_checkpoint"]}
+    row["read_checkpoints"] = checkpoints
+    return row
+
+
+def lineage_summary(rows: list) -> str:
+    """The fixed form, for example "passes in 7 of 8 seeds; collapse before
+    the required fit in 1; no phase 2 or panels"."""
+    counts = Counter(r["kind"] for r in rows)
+    parts = [f"passes in {counts['passes']} of {len(rows)} seeds"]
+    parts += [f"{FIT_ROWS[k][3]} in {counts[k]}" for k in SUMMARY_ORDER[1:] if counts[k]]
+    if counts["engineering"]:
+        parts.append("SD1 stops until the cause is fixed")
+    else:
+        parts.append("phase 2 and panels follow" if counts["passes"] == len(rows) else "no phase 2 or panels")
+    return "; ".join(parts)
+
+
+def fit_table(selections: list, probes: list) -> dict:
+    """Section 7.1's fit table, per lineage and seed, from each seed's
+    selection (``select``) and its probe: the G3 result, F's first pass at a
+    gated checkpoint, G2's first failure and its failing parts, the reading
+    row with its explanations, D1 with s, f and h, and the held-out separated
+    mass and KL(q || p_theta) at every read checkpoint and no other; then
+    each lineage's summary in the fixed form with counts. Reads no panel."""
+    by_lineage: dict = {}
+    for s in selections:
+        require(s.get("schema") == SELECT_SCHEMA and s.get("lineage") in LINEAGES and s.get("seed") in SEEDS,
+                "not an SD1 selection")
+        seeds = by_lineage.setdefault(s["lineage"], {})
+        require(s["seed"] not in seeds, f"{s['lineage']} seed {s['seed']} is selected twice")
+        seeds[s["seed"]] = s
+    for lineage, seeds in by_lineage.items():
+        require(sorted(seeds) == list(SEEDS), f"{lineage}: the fit table reads all eight seeds")
+    probe_of: dict = {}
+    for p in probes:
+        values = readouts(p)
+        for label in sorted({cid.rsplit("-step-", 1)[0] for cid in values if "-step-" in cid}):
+            key = (p.get("lineage"), label)
+            require(key not in probe_of, f"{key[0]} {label}: two probes read this seed")
+            probe_of[key] = values
+    out = {"schema": FIT_SCHEMA, "lineages": {}}
+    for lineage in LINEAGES:
+        if lineage not in by_lineage:
+            continue
+        rows = [fit_row(by_lineage[lineage][k], probe_of.get((lineage, cell_label(k)))) for k in SEEDS]
+        references = next((by_lineage[lineage][k]["references"] for k in SEEDS
+                           if "references" in by_lineage[lineage][k]), None)
+        beside = None
+        if references is not None:
+            o_non_spy = references["O-final"]["anchor_held_out_decks"]["non_spy"]
+            beside = {"agreement_floor": o_non_spy["top_agreement"] - AGREEMENT_MARGIN,
+                      "kl_ceiling": o_non_spy["mean_kl_from_parent"], "references": references}
+        passes = sum(r["kind"] == "passes" for r in rows)
+        out["lineages"][lineage] = {"summary": lineage_summary(rows), "phase2": passes == len(SEEDS),
+                                    "engineering": any(r["kind"] == "engineering" for r in rows), "seeds": rows,
+                                    "non_spy_beside": beside}
+    out["engineering"] = any(v["engineering"] for v in out["lineages"].values())
+    return out
+
+
+# ----------------------------------------------------- phase-2 config gate
+
+CONFIGS_SCHEMA = "sd1-v1/configs-check"
+PHASE2_RUNS = tuple(f"D2-{k}" for k in SEEDS) + tuple(f"O-{k}" for k in SEEDS)
+# RT1's placement fields (retention.py): set aside by the gate.
+PLACEMENT_FIELDS = ("output_directory", "collection_workers", "preparation_workers")
+
+
+def placement_free(cfg: dict) -> dict:
+    return {k: v for k, v in cfg.items() if k not in PLACEMENT_FIELDS}
+
+
+def config_differences(base: dict, cfg: dict) -> dict:
+    """What separates a config from O-0's, placement aside (descriptive)."""
+    fields = sorted(k for k in set(base) | set(cfg)
+                    if k not in ("iterations", *PLACEMENT_FIELDS) and canonical(base.get(k)) != canonical(cfg.get(k)))
+    a = [item for update in base["iterations"] for item in update["episodes"]]
+    b = [item for update in cfg.get("iterations", []) for item in update["episodes"]]
+    out = {"fields": fields, "units": len(b), "same_updates": [len(u["episodes"]) for u in base["iterations"]]
+           == [len(u["episodes"]) for u in cfg.get("iterations", [])]}
+    out["episode_ids"] = sum(x["episode"]["id"] != y["episode"]["id"] for x, y in zip(a, b))
+    out["seeds"] = sum(x["episode"]["seed"] != y["episode"]["seed"] for x, y in zip(a, b))
+    out["other_unit_fields"] = sum(
+        canonical({**x, "episode": {k: v for k, v in x["episode"].items() if k not in ("id", "seed")}})
+        != canonical({**y, "episode": {k: v for k, v in y["episode"].items() if k not in ("id", "seed")}})
+        for x, y in zip(a, b))
+    return out
+
+
+def named_configs(values: list) -> dict:
+    out = {}
+    for value in values:
+        name, _, path = value.partition("=")
+        require(name in PHASE2_RUNS and path and name not in out,
+                f"--config: give NAME=PATH once for each of {', '.join(PHASE2_RUNS)}")
+        out[name] = Path(path)
+    return out
+
+
+def configs_check(lineage: str, o_config: dict, selections: list, cfgs: dict) -> dict:
+    """The phase-2 config gate (stage 4), as RT1's: placement (output
+    directories and worker counts) aside, O-0's config is O's recorded config
+    with the named-parent mapping (phase2.py --reproduce, which O-s0 ran); O-k
+    (k = 1 to 7) differs from it only in replicate k's unit seeds and episode
+    ids under the sd1 namespace; D2-k is O-k from the selected D1-k (its
+    initial source the D1-k source verbatim). Each run writes its own output
+    directory."""
+    require(set(cfgs) == set(PHASE2_RUNS), "the gate reads D2-0 to D2-7 and O-0 to O-7")
+    by_seed = {}
+    for selection in selections:
+        require(selection.get("schema") == SELECT_SCHEMA and selection.get("lineage") == lineage
+                and selection.get("reading") == "passes" and selection["seed"] not in by_seed,
+                "each seed's passing selection, once")
+        by_seed[selection["seed"]] = selection
+    require(sorted(by_seed) == list(SEEDS), "the gate reads every seed's selection")
+    base = phase2.config(lineage, o_config, None, 1, "o-0")
+    expected = {"O-0": base}
+    for k in SEEDS:
+        chosen = by_seed[k]["d1_checkpoint"]
+        source = read_pinned(chosen["source"], f"{lineage} D1-{k} source")
+        require(source.get("checkpoint") == chosen["checkpoint"], f"{lineage} D1-{k}: the source's checkpoint is not "
+                "the selected one")
+        pinned(chosen["checkpoint"], f"{lineage} D1-{k} checkpoint")
+        expected[f"D2-{k}"] = phase2.config(lineage, o_config, source, 1, f"d2-{k}", replicate=k,
+                                            namespace=phase2.SD1_NS)
+        if k:
+            expected[f"O-{k}"] = phase2.config(lineage, o_config, None, 1, f"o-{k}", replicate=k,
+                                               namespace=phase2.SD1_NS)
+    checks = {}
+    for name in PHASE2_RUNS:
+        what = ("O's recorded config with the named parent" if name == "O-0" else
+                f"{name.replace('D2', 'O')} from D1-{name[-1]}" if name.startswith("D2") else
+                f"O-0 on replicate {name[-1]}'s seeds and episode ids")
+        checks[f"{name} is {what}"] = canonical(placement_free(cfgs[name])) == canonical(placement_free(expected[name]))
+    directories = [path_key(cfgs[name].get("output_directory", "")) for name in PHASE2_RUNS]
+    checks["each run writes its own output directory"] = len(set(directories)) == len(directories)
+    return {"schema": CONFIGS_SCHEMA, "lineage": lineage, "checks": checks,
+            "differences_from_O-0": {name: config_differences(base, cfgs[name]) for name in PHASE2_RUNS},
+            "placement": {name: {f: cfgs[name].get(f) for f in PLACEMENT_FIELDS} for name in PHASE2_RUNS},
+            "pass": all(checks.values())}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="op", required=True)
@@ -1076,6 +1943,29 @@ def main(argv=None) -> int:
     o.add_argument("--recorded", type=Path, required=True)
     o.add_argument("--o-final", type=Path, required=True)
     o.add_argument("--out", type=Path, required=True)
+    cu = sub.add_parser("custody")
+    cu.add_argument("--spec", type=Path, required=True)
+    cu.add_argument("--out-dir", type=Path, required=True)
+    cu.add_argument("--out", type=Path, required=True)
+    pa = sub.add_parser("parents")
+    pa.add_argument("--spec", type=Path, required=True)
+    pa.add_argument("--out", type=Path, required=True)
+    rc = sub.add_parser("reference-check")
+    rc.add_argument("--lineage", required=True, choices=LINEAGES)
+    rc.add_argument("--probe", type=Path, required=True)
+    rc.add_argument("--screen-probe", type=Path, required=True)
+    rc.add_argument("--screen-probe-sha256", required=True)
+    rc.add_argument("--out", type=Path, required=True)
+    fi = sub.add_parser("fit")
+    fi.add_argument("--selection", type=Path, nargs="+", required=True)
+    fi.add_argument("--probes", type=Path, nargs="+", required=True)
+    fi.add_argument("--out", type=Path, required=True)
+    cc = sub.add_parser("configs-check")
+    cc.add_argument("--lineage", required=True, choices=LINEAGES)
+    cc.add_argument("--o-config", type=Path, required=True)
+    cc.add_argument("--select", type=Path, nargs="+", required=True)
+    cc.add_argument("--config", nargs="+", required=True, help="NAME=CFG.json for D2-0 to D2-7 and O-0 to O-7")
+    cc.add_argument("--out", type=Path, required=True)
     a = ap.parse_args(argv)
     ok = True
     if a.op == "split":
@@ -1113,6 +2003,29 @@ def main(argv=None) -> int:
         result, ok = write_json(a.out, value), value["pass"]
     elif a.op == "bt1-regression":
         value = bt1_regression(pairs(a.rows, "--rows"))
+        result, ok = write_json(a.out, value), value["pass"]
+    elif a.op == "custody":
+        value = custody(read_json(a.spec), a.out_dir, pin(a.spec))
+        result, ok = write_json(a.out, value), value["pass"]
+    elif a.op == "parents":
+        value = {**parents(read_json(a.spec)), "spec": pin(a.spec)}
+        result, ok = write_json(a.out, value), value["pass"]
+    elif a.op == "reference-check":
+        require(stream_sha256(a.screen_probe) == a.screen_probe_sha256,
+                "the screen's probe differs from its recorded SHA-256")
+        value = {**reference_check(a.lineage, read_json(a.probe), read_json(a.screen_probe)),
+                 "probe": pin(a.probe), "screen_probe": pin(a.screen_probe)}
+        result, ok = write_json(a.out, value), value["pass"]
+    elif a.op == "fit":
+        value = {**fit_table([read_json(p) for p in a.selection], [read_json(p) for p in a.probes]),
+                 "selections": [pin(p) for p in a.selection], "probes": [pin(p) for p in a.probes]}
+        result, ok = write_json(a.out, value), not value["engineering"]
+    elif a.op == "configs-check":
+        paths = named_configs(a.config)
+        value = {**configs_check(a.lineage, read_json(a.o_config), [read_json(p) for p in a.select],
+                                 {name: read_json(path) for name, path in paths.items()}),
+                 "o_config": pin(a.o_config), "configs": {name: pin(path) for name, path in paths.items()},
+                 "selections": [pin(p) for p in a.select]}
         result, ok = write_json(a.out, value), value["pass"]
     else:
         value = o_check(a.lineage, read_json(a.run), read_json(a.recorded), a.o_final)
