@@ -102,7 +102,20 @@ Build a choice JSON:
 Get each key with `workload(config, kind)`. Training replicas differ only in
 IDs/seeds; decks, seat order, opponents, complete schedule shape, initial state,
 loss and optimizer must match. The fastest eligible candidate minimizes complete
-projected work plus transport and any measured remaining host queue. Optional
+projected work plus transport and any measured remaining host queue. A training
+qualification runs the first update. Its projection pays once what a run pays
+once: the launcher's setup, the native child's initialization and exit, the
+storage checks and the report. The child times the update itself in the
+report's pinned `native_stdout`, and the report's `artifact_timing` times the
+fingerprint and archive. Every update then repeats the native update and its
+archive. The trial fingerprints its one update in one process, while a run
+spreads its updates over `fingerprint_workers(placement)` processes, so the
+projection spreads the fingerprint the same way. A run's first update is
+slower than its later ones, so projections stay somewhat high: for 162-update
+runs on the desktop they were 1.14x (pack of 8), 1.15x (w2) and 1.18x (w8) the
+measured wall time. Reports from before `native_stdout` project the whole trial
+once per update, so they count the start-up once per update; the
+qualifications of one choice must share one projection basis. Optional
 `queue_seconds` requires a `queue_evidence` pin; this allows an otherwise slower
 free PC to finish an independent job sooner while the faster PC is occupied.
 The research lead owns the total campaign queue and shared storage accounting.
