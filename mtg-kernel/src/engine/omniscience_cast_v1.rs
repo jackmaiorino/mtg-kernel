@@ -152,7 +152,9 @@ fn options(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
     {
         return Err("Omniscience original hand/source contract changed".into());
     }
-    let d = &card_def::CARD_DEFS[o.hand.card_def as usize];
+    let d = card_def::CARD_DEFS
+        .get(o.hand.card_def as usize)
+        .ok_or("Omniscience original printing absent")?;
     if !d.is_executable() || !d.is_castable() || d.has_type(CardType::Land) {
         return Err("Omniscience original hand printing changed".into());
     }
@@ -232,6 +234,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
         || cast.origin_zone != Zone::Hand
         || cast.route != origin(c, p.controller, o.hand.zone_change_count)
         || (c.free == Some(false) || c.free.is_none()) && !o.paid
+        || c.free == Some(true) && p.x_value != Some(0)
     {
         return Err("Omniscience pending original choice/source changed".into());
     }
@@ -353,10 +356,13 @@ pub(super) fn paid_contract(
                 || r.route != origin(*choice, contract.controller, o.hand.zone_change_count)
         })
         || choice.free == Some(true)
-            && !matches!(
-                contract.cast_method,
-                CastMethodV4::Normal | CastMethodV4::Omen | CastMethodV4::Alternative
-            )
+            && (contract
+                .finalized_cast_binding
+                .is_none_or(|b| b.x_value != 0)
+                || !matches!(
+                    contract.cast_method,
+                    CastMethodV4::Normal | CastMethodV4::Omen | CastMethodV4::Alternative
+                ))
     {
         return Err("Omniscience finalized original cost/source changed".into());
     }
@@ -584,3 +590,11 @@ pub(crate) fn definition(id: u16) -> bool {
                 && d.creature_type_entry_v1.is_none()
         })
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "omniscience_cast_v1_tests.rs"]
+mod tests;

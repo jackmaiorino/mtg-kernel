@@ -2252,6 +2252,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == item.controller
                 && source.owner == holder
                 && hand_generation == origin.origin_zone_change_count
+                && item.v4.x_value == 0
                 && omniscience_cast_v1::free_cast_for(state, item.source, holder)
                 && resolution_cast_v1::form_allowed(state, item.source, cast_method)
         }
