@@ -123,6 +123,17 @@ pub fn source_sha256() -> String {
             "effect/standard_exile.rs",
             include_str!("effect/standard_exile.rs"),
         ),
+        (
+            "continuous_characteristics_v1.rs",
+            include_str!("continuous_characteristics_v1.rs"),
+        ),
+        ("mana.rs", include_str!("mana.rs")),
+        ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+        (
+            "doubling_season_v48.rs",
+            include_str!("doubling_season_v48.rs"),
+        ),
+        ("rl.rs", include_str!("rl.rs")),
     ] {
         hash.update(path.as_bytes());
         hash.update([0]);

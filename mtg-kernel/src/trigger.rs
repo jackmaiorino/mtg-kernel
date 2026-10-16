@@ -4883,11 +4883,7 @@ fn sba_fixed_point_with_protected_triggers(
                     state.objects.try_get(link.object).is_some_and(|host| {
                         host.zone == Zone::Battlefield
                             && host.zone_change_count == link.zone_change_count
-                            && crate::engine::object_has_type(
-                                state,
-                                link.object,
-                                attachment.enchanted_type(),
-                            )
+                            && attachment.host_matches(state, link.object)
                             && host.attachments.contains(&id)
                     })
                 });

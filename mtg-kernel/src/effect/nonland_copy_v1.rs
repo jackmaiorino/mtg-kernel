@@ -165,7 +165,7 @@ fn hosts(state: &GameState, t: &CopyTemplateV1) -> Result<Vec<EffectObjectBindin
         .iter()
         .filter_map(|(id, live)| {
             (live.zone == Zone::Battlefield
-                && crate::engine::object_has_type(state, id, attachment.enchanted_type())
+                && attachment.host_matches(state, id)
                 && !crate::engine::has_effective_keyword(
                     state,
                     id,

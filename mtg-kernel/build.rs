@@ -3457,6 +3457,7 @@ fn special_for(name: &str) -> Special {
             Special::BindTheMonster
         }
         "Zoetic Glyph" => Special::Program { target:"ArtifactPermanent",recipe:"PutSourceOntoBattlefieldAttachedToTarget(Target0)",effect:"EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target: ObjectRef::Target(0) }",mode2:None },
+        "Imprisoned in the Moon" => Special::Program { target:"StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureLandOrPlaneswalkerV1)",recipe:"PutSourceOntoBattlefieldAttachedToTarget(Target0)",effect:"EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target: ObjectRef::Target(0) }",mode2:None },
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
@@ -7170,6 +7171,7 @@ fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
         "Witness Protection" => "Some(AttachmentDef::AuraCreatureOverride(CreatureCharacteristicsOverrideDef { name: \"Legitimate Businessperson\", subtype: Subtype::Citizen, colors: &[ManaColor::G, ManaColor::W], power: 1, toughness: 1, loses_abilities: true }))",
+        "Imprisoned in the Moon" => "Some(AttachmentDef::AuraLandOverride)",
         "Twinblade Blessing" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 0, toughness: 0, keywords: Keywords::DOUBLE_STRIKE, per_controlled_subtype: None }))",
         "Monster Role Token" => "Some(AttachmentDef::AuraCreatureStatic(AuraCreatureStaticDef { power: 1, toughness: 1, keywords: Keywords::TRAMPLE, per_controlled_subtype: None }))",
         "Zoetic Glyph" => "Some(AttachmentDef::AuraArtifactAnimation(AnimationDef { power:5, toughness:4, artifact:false, colors:&[], subtypes:&[Subtype::Golem], keywords:Keywords::NONE, until_end_of_turn:false }))",

@@ -190,6 +190,13 @@ pub fn producer_sha256_v1() -> String {
                 "effect/standard_exile.rs",
                 include_str!("effect/standard_exile.rs"),
             ),
+            ("mana.rs", include_str!("mana.rs")),
+            ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+            (
+                "doubling_season_v48.rs",
+                include_str!("doubling_season_v48.rs"),
+            ),
+            ("rl.rs", include_str!("rl.rs")),
         ] {
             hash.update(path.as_bytes());
             hash.update([0]);

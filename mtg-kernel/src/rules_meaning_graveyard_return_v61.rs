@@ -166,6 +166,8 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
             include_str!("effect/standard_exile.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("rl.rs"),
         ] {
             hash.update((text.len() as u64).to_le_bytes());
             hash.update(text.as_bytes());

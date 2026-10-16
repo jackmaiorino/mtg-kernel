@@ -68,6 +68,10 @@ pub fn producer_sha256() -> String {
             include_str!("effect/nonland_copy_v1.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
             include_str!("effect/standard_exile.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("rl.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

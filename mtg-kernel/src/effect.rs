@@ -8312,14 +8312,10 @@ fn returning_aura_hosts_in_zone(
                     object,
                     Keywords::PROTECTION_FROM_EVERYTHING,
                 )
-                && crate::engine::object_has_type(
-                    state,
-                    object,
-                    crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
-                        .attachment
-                        .unwrap()
-                        .enchanted_type(),
-                )
+                && crate::card_def::CARD_DEFS[state.objects.get(aura.object).card_def as usize]
+                    .attachment
+                    .unwrap()
+                    .host_matches(state, object)
                 && !(crate::engine::object_is_monocolored(state, aura.object)
                     && crate::engine::has_effective_keyword(
                         state,
@@ -19978,13 +19974,12 @@ fn execute_with_native_row_v1(
             let source_is_stack = state.objects.get(ctx.source).zone == Zone::Stack;
             let target_is_creature = ctx.target_incarnation_matches(target_index, state)
                 && state.objects.get(target).zone == Zone::Battlefield
-                && crate::engine::object_has_type(
-                    state,
-                    target,
-                    crate::card_def::CARD_DEFS[state.objects.get(ctx.source).card_def as usize]
-                        .attachment
-                        .map_or(CardType::Creature, |a| a.enchanted_type()),
-                );
+                && crate::card_def::CARD_DEFS[state.objects.get(ctx.source).card_def as usize]
+                    .attachment
+                    .map_or_else(
+                        || crate::engine::object_has_type(state, target, CardType::Creature),
+                        |a| a.host_matches(state, target),
+                    );
             if !source_is_stack || !target_is_creature {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

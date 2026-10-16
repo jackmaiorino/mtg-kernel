@@ -181,6 +181,13 @@ pub fn producer_sha256() -> String {
                 "effect/standard_exile.rs",
                 include_str!("effect/standard_exile.rs"),
             ),
+            (
+                "continuous_characteristics_v1.rs",
+                include_str!("continuous_characteristics_v1.rs"),
+            ),
+            ("mana.rs", include_str!("mana.rs")),
+            ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
+            ("rl.rs", include_str!("rl.rs")),
         ] {
             h.update(path.as_bytes());
             h.update([0]);

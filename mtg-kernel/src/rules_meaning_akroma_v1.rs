@@ -89,6 +89,10 @@ pub fn producer_sha256_v1() -> String {
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
             include_str!("effect/standard_exile.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("rl.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());

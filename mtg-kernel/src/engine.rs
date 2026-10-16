@@ -8973,6 +8973,17 @@ pub(crate) fn available_mana_ability_choices_into(
     let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
         return;
     };
+    if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
+        if !object.tapped
+            && !creature_summoning_sick(state, source, def)
+            && state.players[player.index()].mana_pool[ManaColor::C.pool_index()]
+                .checked_add(1)
+                .is_some()
+        {
+            out.push(ManaColor::C);
+        }
+        return;
+    }
     if def
         .mana_ability_def
         .is_some_and(|ability| ability.amount == ManaAbilityAmountDef::EachControlledPermanentColor)
@@ -9232,6 +9243,20 @@ fn activate_mana_ability_for_with_checkpoint(
     let card_def = state.objects.get(source).card_def;
     let chosen_color = state.objects.get(source).v4.chosen_color;
     let definition = &card_def::CARD_DEFS[card_def as usize];
+    if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, source) {
+        if cost_target.is_some() || choice != ManaColor::C {
+            return Err("land override mana has no other cost or color".into());
+        }
+        event::propose_and_commit(state, ProposedEvent::tap(source));
+        event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![ManaColor::C]));
+        state.engine.priority_passes = [false, false];
+        state.engine.mana_ability_activations += 1;
+        state.engine.last_mana_ability_activator = Some(player);
+        if checkpoint {
+            collect_and_queue_triggers(state);
+        }
+        return Ok(());
+    }
     if crate::standard_legends_v1::katilda_mana_colors(state, source).contains(&choice) {
         if cost_target.is_some() {
             return Err("Katilda's granted mana has no other cost target".into());
@@ -18426,6 +18451,18 @@ fn bestow_host_counter_bonus(state: &GameState, host: ObjectId) -> i128 {
 /// Effective card-type query for one live object face. Nonbattlefield cards
 /// are always front-face objects because every zone change resets the face.
 pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    if let Some(timestamp) = crate::continuous_characteristics_v1::land_type_timestamp(state, id) {
+        return card_type == CardType::Land
+            || (crate::continuous_characteristics_v1::later_land_animation(state, id, timestamp)
+                && matches!(card_type, CardType::Creature | CardType::Artifact))
+            || crate::continuous_characteristics_v1::animation(state, id).is_some_and(
+                |(animation, other)| {
+                    other > timestamp
+                        && (card_type == CardType::Creature
+                            || (animation.artifact && card_type == CardType::Artifact))
+                },
+            );
+    }
     if let Some(face) = state.objects.get(id).v4.face_down_v1 {
         return face.disguised && card_type == CardType::Creature;
     }
@@ -18472,6 +18509,9 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
 /// Effective W/U/B/R/G/C mask already materialized on the object's current
 /// incarnation. Missing objects fail closed as colorless.
 pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
+    if crate::continuous_characteristics_v1::land_colorless(state, id) {
+        return 0;
+    }
     if let Some(object) = state.objects.try_get(id) {
         if object.zone == Zone::Stack
             && object
@@ -19508,7 +19548,7 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     };
     let override_effect = crate::continuous_characteristics_v1::creature_override(state, id);
     let upgrade = crate::standard_creatures_v1::creature_types(state, id);
-    let replacement_timestamp = upgrade
+    let mut replacement_timestamp = upgrade
         .as_ref()
         .map(|(_, timestamp)| *timestamp)
         .or_else(|| override_effect.map(|(_, timestamp)| timestamp));
@@ -19530,6 +19570,10 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
             |(characteristics, _)| vec![characteristics.subtype.stable_id()],
         )
     });
+    if let Some(timestamp) = crate::continuous_characteristics_v1::land_type_timestamp(state, id) {
+        subtype_ids.retain(|id| crate::continuous_characteristics_v1::is_land_subtype(*id));
+        replacement_timestamp = Some(timestamp);
+    }
     if object.zone == Zone::Battlefield {
         if let Some((subtype, timestamp)) = object.v4.added_subtype_v1 {
             // A creature subtype grant remains stored on the incarnation, but
@@ -19578,6 +19622,11 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
         subtype_ids.push(card_def::Subtype::Equipment.stable_id());
     }
     subtype_ids.sort_unstable();
+    if crate::continuous_characteristics_v1::land_type_timestamp(state, id).is_some()
+        && !object_has_type(state, id, CardType::Creature)
+    {
+        subtype_ids.retain(|id| crate::continuous_characteristics_v1::is_land_subtype(*id));
+    }
     subtype_ids.dedup();
     subtype_ids
 }
@@ -31367,3 +31416,11 @@ mod progenitus_v1_tests;
 ))]
 #[path = "engine/fiend_artisan_v1_tests.rs"]
 mod fiend_artisan_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/imprisoned_moon_v1_tests.rs"]
+mod imprisoned_moon_v1_tests;
