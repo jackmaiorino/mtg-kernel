@@ -35,3 +35,13 @@ queries. This command does not terminate processes or rewrite the lock. Reclaim
 has no descendant override.
 Linux refuses the override because its session/subreaper containment is weaker
 than a Windows job object.
+
+## Recorded cores
+
+`acquire --cores SPEC` (and `reclaim --cores SPEC`) stores the logical CPUs the
+work will use in the lock record as `cores`. `host_slots_v1.py` then lets
+untimed claims keep the other cores from the moment the lock exists, instead of
+pausing them until `timed` declares its cores. Without `--cores`, the lock
+reserves the whole host, as before. Pass `--cores` only when the work is
+pinned to those cores (normally `timed --cores` with the same set). A lock whose `cores` field is malformed
+reads as unknown, never dead.

@@ -16,7 +16,13 @@ Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
    acquirer wins and a second fails closed, printing the holder. The record:
    token (unique per reservation), generation, lane, host, work_id,
    owner_pid, owner_process_creation_time, boot_id, acquired_at,
-   transport_record, release_condition. The lock file is never rewritten.
+   transport_record, release_condition, and optionally cores: the logical
+   CPUs the work will use (`--cores 0-15`). Recording them in the lock itself
+   lets untimed host_slots claims keep the other cores from the moment the
+   lock exists, before `host_slots_v1.py timed` declares them; without
+   cores the lock reserves the whole host until that declaration. Pass
+   cores only when the work is pinned to them (run under `timed --cores`
+   with the same set). The lock file is never rewritten.
 3. Spawn handoff: acquire before WMI creation; right after creation the
    caller records the created process (handoff). The supervisor also records
    itself when it starts (adopt), so a lost creation response still leaves a
@@ -68,12 +74,14 @@ and renamed into place. Released and reclaimed locks stay in the root as
 
 CLI (JSON on stdout; exit 0 ok, 3 held, 4 reclaimable, 5 unknown, 6 refused):
   acquire --lane L --work-id W --release-condition TEXT [--transport-record JSON] [--owner-pid PID]
+          [--cores SPEC]                (SPEC like 0-15 or 0,2,4-7)
   handoff --token T --pid PID          (the created supervisor only; adoption is the
                                         supervisor's own act, after it contains itself)
   note --token T --kind KIND [--detail TEXT]
   release --token T --outcome success|failure|cancelled|spawn-failed [--detail TEXT]
           [--ignore-descendant PID:CREATION]  (repeat for audited false positives)
   reclaim --lane L --work-id W --release-condition TEXT [--transport-record JSON] [--owner-pid PID]
+          [--cores SPEC]
   status [--token T] [--line]          exempt-pids --token T
   supervise --token T [--nested] [--cwd DIR] -- COMMAND...
 
@@ -977,7 +985,27 @@ def parse_record(body: bytes) -> dict | None:
         return None
     if record["owner_pid"] <= 0 or record["owner_process_creation_time"] <= 0 or record["host"] != HOST:
         return None
+    if "cores" in record and not _valid_cores(record["cores"]):
+        return None
     return record
+
+
+def _valid_cores(cores) -> bool:
+    return (isinstance(cores, list) and bool(cores) and len(set(cores)) == len(cores)
+            and all(isinstance(c, int) and not isinstance(c, bool) and c >= 0 for c in cores))
+
+
+def parse_cores(spec: str) -> list[int]:
+    """'0-3,8' -> [0, 1, 2, 3, 8]: the logical CPUs a reservation records (sorted, no repeats)."""
+    out: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not re.fullmatch(r"\d+(-\d+)?", part):
+            raise ValueError(f"bad core spec {spec!r}")
+        lo, _, hi = part.partition("-")
+        a, b = int(lo), int(hi or lo)
+        out.update(range(min(a, b), max(a, b) + 1))
+    return sorted(out)
 
 
 def read_events(token: str) -> tuple[list[dict], list[str]]:
@@ -1129,9 +1157,11 @@ def read_lock() -> tuple[dict | None, bytes | None]:
 
 
 def acquire(lane: str, work_id: str, release_condition: str, transport_record: dict | None = None,
-            owner_pid: int | None = None) -> dict:
+            owner_pid: int | None = None, cores: list[int] | None = None) -> dict:
     """Reserve this host. The owner is the process that keeps the reservation
-    until handoff (default: this process). Raises Held with the holder."""
+    until handoff (default: this process). cores, when given, names the
+    logical CPUs the work will use (recorded in the lock; see contract item
+    2). Raises Held with the holder."""
     nested = os.environ.get(TOKEN_ENV)
     if nested:
         record, body = read_lock()
@@ -1140,6 +1170,10 @@ def acquire(lane: str, work_id: str, release_condition: str, transport_record: d
         raise Held(f"{TOKEN_ENV}={nested} does not hold {HOST}", record)
     if not (lane and work_id and release_condition):
         raise ValueError("lane, work_id and release_condition are required")
+    if cores is not None:
+        cores = sorted(cores)
+        if not _valid_cores(cores):
+            raise ValueError(f"cores must be distinct non-negative logical CPU numbers, got {cores}")
     if owner_pid is None:
         owner_pid, owner_creation = self_identity()
     else:
@@ -1155,6 +1189,8 @@ def acquire(lane: str, work_id: str, release_condition: str, transport_record: d
         "boot_id": boot_id(), "acquired_at": now_utc(), "transport_record": transport_record or {},
         "release_condition": release_condition,
     }
+    if cores is not None:
+        record["cores"] = cores
     tmp = root / f".{HOST}.acquire.{token}.tmp"
     fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o644)
     with os.fdopen(fd, "wb") as f:
@@ -1278,7 +1314,7 @@ def release(token: str, outcome: str, detail: str = "", ignore_descendants=()) -
 
 
 def reclaim(lane: str, work_id: str, release_condition: str, transport_record: dict | None = None,
-            owner_pid: int | None = None) -> dict:
+            owner_pid: int | None = None, cores: list[int] | None = None) -> dict:
     """Recovery authority: retire an abandoned reservation on positive evidence
     and acquire a new generation. A second reclaimer finds the lock gone or
     held by the winner and is refused."""
@@ -1297,7 +1333,7 @@ def reclaim(lane: str, work_id: str, release_condition: str, transport_record: d
         _write_event(record["token"], "reclaim", evidence=verdict["why"], reclaimer_lane=lane,
                      reclaimer_work_id=work_id)
         handle.rename(f"{HOST}.g{record['generation']:08d}.{record['token']}.reclaimed-{stamp}.json")
-    fresh = acquire(lane, work_id, release_condition, transport_record, owner_pid)
+    fresh = acquire(lane, work_id, release_condition, transport_record, owner_pid, cores)
     return {**fresh, "reclaimed": {"token": record["token"], "generation": record["generation"],
                                    "evidence": verdict["why"]}}
 
@@ -1574,6 +1610,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--release-condition", required=True)
         p.add_argument("--transport-record")
         p.add_argument("--owner-pid", type=int, help="default: the calling process (the CLI's parent)")
+        p.add_argument("--cores", type=parse_cores, help="logical CPUs the work will use, e.g. 0-15 (default: the whole host)")
     for op in ("handoff", "note", "release", "exempt-pids", "supervise"):
         p = sub.add_parser(op)
         p.add_argument("--token", required=True)
@@ -1600,7 +1637,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.op in ("acquire", "reclaim"):
             owner = args.owner_pid if args.owner_pid is not None else os.getppid()
             fn = acquire if args.op == "acquire" else reclaim
-            result = fn(args.lane, args.work_id, args.release_condition, _transport(args.transport_record), owner)
+            result = fn(args.lane, args.work_id, args.release_condition, _transport(args.transport_record), owner,
+                        args.cores)
         elif args.op == "handoff":
             result = handoff(args.token, args.pid)
         elif args.op == "note":
