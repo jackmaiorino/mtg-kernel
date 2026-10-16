@@ -319,6 +319,21 @@ pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, FlatActionDecisionSliceErrorV1> {
+    normalized_origin_with_parts(session, current).map(|(candidates, _)| candidates)
+}
+
+// Keep the genuine complete parts built for normalization within this one
+// immutable request. No stored cache/proof or executable caller permission.
+fn normalized_origin_with_parts(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<
+    (
+        Vec<CorePolicyActionCandidateV1>,
+        crate::ravenous_observation_v51::RavenousPublicPartsV51,
+    ),
+    FlatActionDecisionSliceErrorV1,
+> {
     crate::ravenous_observation_v51::validate_state(&session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     // A mandatory cast menu is engine-owned, not an interpreter option menu.
@@ -399,7 +414,7 @@ pub(super) fn normalized_origin(
             diagnose_origin_error("ravenous_v51.normalized.candidate_operands", error)
         })?;
     }
-    let projection = crate::ravenous_observation_v51::observe_v51(
+    let (projection, families) = crate::ravenous_observation_v51::observe_parts_v51(
         &session.state,
         &session.surface,
         (current.actor, &current.origin_decision),
@@ -423,7 +438,7 @@ pub(super) fn normalized_origin(
             diagnose_origin_error("ravenous_v51.normalized.visible_semantic", error)
         })?;
     }
-    Ok(original.candidates)
+    Ok((original.candidates, (projection, families)))
 }
 
 pub(super) fn prepare_current(
@@ -676,19 +691,11 @@ impl FastActorSessionV1 {
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch);
         }
-        let candidates = normalized_origin(self, current)?;
+        let (candidates, (observation, mut families)) =
+            normalized_origin_with_parts(self, current)?;
         if candidates != current.candidates {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        let (observation, mut families) = crate::ravenous_observation_v51::observe_parts_v51(
-            &self.state,
-            &self.surface,
-            (current.actor, &current.origin_decision),
-            self.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )
-        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
         let actions = candidates
             .iter()
             .map(|candidate| {
