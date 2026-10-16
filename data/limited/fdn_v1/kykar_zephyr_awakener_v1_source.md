@@ -11,3 +11,13 @@ Modes use the original printed order at trigger announcement, before mandatory t
 Four effect variants and two private history variants append at their enum tails. No GameState field or absent-world serialized/hash extension is added. Existing producer source lists explicitly include `effect/kykar_v1.rs`. Legacy projections refuse the visible new printing/token and historical delayed/token facts instead of omitting them. Frozen V1 mechanics remain Opaque for the custom mode/return roots.
 
 Ten Rust source fixture groups cover genuine paid Kykar/noncreature casts, announcement and targets, paid target/source removal responses, token/Season batches, physical-owner control primitives, exact exile generations, one-shot counter/removal primitives and later end steps after consumption, labelled native copied-Kykar source with a genuinely paid opposite-seat cast, next-any-end-step timing, serialized restore, independent initial opponent hidden worlds with equal native mode/target decisions, and native/public operation refusals. Setup/control/exile/counter primitives are labelled where they do not represent paid spells. All Rust is uncompiled and unrun. Affected Python tests and pinned formatting/static checks are reported separately; they do not qualify native gameplay or consumers.
+
+A later equal-valued beginning-of-end-step cannot reconstruct an erased consumed
+marker: an unconsumed schedule requires its first later end step to remain the
+latest end-step occurrence in native history, plus the existing event-input value
+check. This is a mutable-world structural refusal, not cryptographic event
+attestation. An added paid/countered-return source fixture retains one marker
+through two later equal-valued native end steps, then explicitly deletes only
+that marker in a separate restored world and requires readonly collection refusal.
+The original ten fixture bodies remain unchanged; all eleven Rust source groups
+remain uncompiled and unrun.

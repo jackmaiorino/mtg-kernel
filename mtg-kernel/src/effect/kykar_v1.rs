@@ -599,6 +599,17 @@ pub(crate) fn collect(
             .skip(i + 1)
             .find(|(_, e)| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
         {
+            // Native step entry immediately collects its begin event. A missing
+            // one-shot marker cannot be repaired by a later equal-valued step:
+            // BeginningEndStep values do not carry an occurrence identifier.
+            if state.engine.event_history[end + 1..]
+                .iter()
+                .any(|e| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
+            {
+                return Err("Kykar unconsumed first end step is no longer current".into());
+            }
+            // This retains the native event-input value check; by itself it is
+            // not proof of an event's history position.
             if !events.contains(&state.engine.event_history[end]) {
                 return Err("Kykar unconsumed end-step occurrence lost actual event input".into());
             }

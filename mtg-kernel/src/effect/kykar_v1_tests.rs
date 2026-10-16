@@ -776,3 +776,84 @@ fn native_copy_of_paid_kykar_retains_effective_source_and_paid_opposite_cast_bot
         );
     }
 }
+
+#[test]
+fn paid_countered_return_missing_marker_cannot_reuse_equal_later_end_steps_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let k = paid(&mut s, p);
+        let elf = cast(&mut s, p, "Llanowar Elves", &[], 1);
+        finish(&mut s);
+        start(&mut s, p, k);
+        choose(&mut s, p, 0, Some(elf));
+        finish(&mut s);
+        let (index, link) = schedule(&s);
+        let delayed = return_row(&mut s, index);
+        engine::counter_stack_item_by_id(&mut s, delayed.v4.stack_item_id).unwrap();
+        finish(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+        assert_eq!(s.objects.get(elf).zone_change_count, link.zone_change_count);
+        let (first_end_index, first_end) = s
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .skip(index as usize + 1)
+            .find(|(_, e)| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
+            .map(|(i, e)| (i, e.clone()))
+            .unwrap();
+        let mut restored = restore(&s);
+        // With no attacks or deaths, each player's end-step value repeats on
+        // the following turn. Keep the genuine consumed schedule through two
+        // later occurrences equal to its first end-step event.
+        for _ in 0..4 {
+            later_end_keeps_consumed(&mut s, index);
+            later_end_keeps_consumed(&mut restored, index);
+            assert_eq!(s, restored);
+            assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+            assert_eq!(s.objects.get(elf).zone_change_count, link.zone_change_count);
+        }
+        let equal_later = s.engine.event_history[first_end_index + 1..]
+            .iter()
+            .filter(|e| **e == first_end)
+            .count();
+        assert_eq!(equal_later, 2);
+        let latest = s
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find(|e| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
+            .unwrap()
+            .clone();
+        assert_eq!(latest, first_end);
+        let intact = s.clone();
+        assert!(collect(&mut s, std::slice::from_ref(&latest))
+            .unwrap()
+            .is_empty());
+        assert_eq!(s, intact);
+        let mut bad = restore(&intact);
+        let before_len = bad.engine.event_history.len();
+        bad.engine.event_history.retain(|e| {
+            !matches!(e,
+            event::CommittedEvent::KykarDelayedCollectedV1 { schedule_history_index, .. }
+                if *schedule_history_index == index)
+        });
+        assert_eq!(bad.engine.event_history.len() + 1, before_len);
+        // Explicit single-marker corruption primitive, using the latest actual
+        // native event as collector input. No valid engine path deletes this
+        // receipt, and event value equality is not cryptographic provenance.
+        let before = bad.clone();
+        assert!(collect(&mut bad, std::slice::from_ref(&latest)).is_err());
+        assert_eq!(bad, before);
+        assert_eq!(bad.objects.get(elf).zone, Zone::Exile);
+        assert_eq!(
+            bad.objects.get(elf).zone_change_count,
+            link.zone_change_count
+        );
+        assert!(!bad.stack.iter().any(|r| r.inline_effect
+            == Some(EffectOp::KykarReturnV1 {
+                schedule_history_index: index
+            })));
+    }
+}
