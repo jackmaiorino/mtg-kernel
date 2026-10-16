@@ -69,6 +69,9 @@ pub fn producer_sha256_v1() -> String {
         SCHEMA,
         include_str!("sower_public_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
+        include_str!("effect/frenzied_goblin_resolution_v1.rs"),
+        include_str!("rules_meaning_frenzied_goblin_v1.rs"),
+        include_str!("frenzied_goblin_v1.rs"),
         include_str!("sower_of_chaos_v1.rs"),
         include_str!("rules_meaning_sower_v1.rs"),
         include_str!("rl.rs"),
@@ -208,7 +211,7 @@ pub(crate) fn parts_for_common_scope(
 ) -> Result<SowerObservationV1, RlContractError> {
     let (substep_index, substep_count) = substep;
 
-    let captures = crate::sower_restriction_capture_v1::active(state)?;
+    let captures = crate::sower_restriction_capture_v1::complete_family(state)?.sower;
     let mut restrictions: Vec<_> = captures
         .into_iter()
         .map(|capture| {
