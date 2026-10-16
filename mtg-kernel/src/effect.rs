@@ -4316,6 +4316,12 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
             error
         })?;
     }
+    validate_generic_resume_driver(state)?;
+    drive_resumable(state)
+}
+
+// These gates retain their public resume order after full choice validation.
+fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state
         .engine
         .pending_effect
@@ -4336,6 +4342,66 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
     if state.engine.pending_effect.is_none() {
         return Err("no effect continuation is pending".to_string());
     }
+    Ok(())
+}
+
+/// Single-use native authority acquired with the actual public row still live.
+/// Private fields and no serialization/Clone prevent restored or reusable proof.
+pub(crate) struct PrintedOptionalResumeOwnerV1 {
+    pending: EffectContinuation,
+    position: usize,
+    remaining_stack: Vec<StackItem>,
+}
+
+pub(crate) fn acquire_printed_optional_resume_owner(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<PrintedOptionalResumeOwnerV1>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !requires_ferocious_payment_stage(pending)
+        && !requires_printed_optional_trigger_stage(state, pending)
+    {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    validate_generic_resume_driver(state)?;
+    if pending.resolving_item != *item || pending.choice.is_some() {
+        return Err("printed optional resume lost its exact ready continuation".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("printed optional resume lost its exact public row")?;
+    let mut remaining_stack = state.stack.clone();
+    if remaining_stack.remove(position) != *item
+        || remaining_stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("printed optional resume changed or duplicated its public row".into());
+    }
+    Ok(Some(PrintedOptionalResumeOwnerV1 {
+        pending: pending.clone(),
+        position,
+        remaining_stack,
+    }))
+}
+
+pub(crate) fn resume_owned_printed_optional(
+    state: &mut GameState,
+    owner: PrintedOptionalResumeOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref() != Some(&owner.pending)
+        || state.stack != owner.remaining_stack
+        || owner.position > state.stack.len()
+    {
+        return Err("printed optional private removed-row ownership changed".into());
+    }
+    // The engine acquires this owner last, then removes only its exact row and
+    // consumes it in the same frame. No action, snapshot or foreign mutation
+    // intervenes. Full public validation and the driver gates ran before pop;
+    // effects still execute with the genuine row removed, including new entry
+    // ownership opened by an accepted Phoenix return.
     drive_resumable(state)
 }
 
