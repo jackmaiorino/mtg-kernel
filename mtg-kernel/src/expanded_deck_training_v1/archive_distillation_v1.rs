@@ -323,6 +323,23 @@ struct RecipeV1 {
     anchor_coefficient: f64,
     checkpoint_steps: Option<Vec<u64>>,
     cell: Option<ArchiveDistillationCellV1>,
+    /// The batch-order seed the cell's label names ([`order_seed_v1`]); 0
+    /// without a cell.
+    order_seed: u64,
+}
+
+/// The batch-order seed a cell label names: k when the whole label is
+/// exactly `SD1-T-s{k}` with k from 0 to 7, otherwise 0. Every other label
+/// reads as before, so no recorded cell changes meaning (CU1's `U-s32` and
+/// `U-s256`, where s means support, included). The seed enters the
+/// per-epoch archive order and the per-pass anchor order, appended only for
+/// k from 1 to 7 ([`archive_order_key_v1`], [`anchor_order_key_v1`]); seed
+/// 0 keeps the unseeded hash inputs byte for byte.
+fn order_seed_v1(cell: &str) -> u64 {
+    match cell.strip_prefix("SD1-T-s").map(str::as_bytes) {
+        Some(&[digit @ b'0'..=b'7']) => u64::from(digit - b'0'),
+        _ => 0,
+    }
 }
 
 fn recipe_v1(
@@ -335,6 +352,7 @@ fn recipe_v1(
             anchor_coefficient: ANCHOR_COEFFICIENT,
             checkpoint_steps: None,
             cell: None,
+            order_seed: 0,
         });
     };
     ensure(
@@ -396,6 +414,7 @@ fn recipe_v1(
             checkpoint_steps: options.checkpoint_steps.clone().unwrap_or_default(),
             keep_sets: options.keep_sets.clone(),
         }),
+        order_seed: order_seed_v1(&options.cell),
     })
 }
 
@@ -1370,26 +1389,63 @@ struct PlanV1 {
     epoch_steps: u64,
 }
 
+/// One archive row's hash input in an epoch's order; a seed from 1 to 7 is
+/// appended ([`order_seed_v1`]).
+fn archive_order_key_v1(
+    lineage: &str,
+    arm: ArchiveDistillationArmV1,
+    epoch: u64,
+    game: &str,
+    step: u64,
+    seed: u64,
+) -> Value {
+    let mut key = json!([
+        ARCHIVE_DISTILLATION_NAMESPACE_V1,
+        "archive-order",
+        lineage,
+        arm.label(),
+        epoch,
+        game,
+        step
+    ]);
+    if seed > 0 {
+        key.as_array_mut().expect("a key array").push(json!(seed));
+    }
+    key
+}
+
+/// One anchor row's hash input in a pass's order; a seed from 1 to 7 is
+/// appended ([`order_seed_v1`]).
+fn anchor_order_key_v1(lineage: &str, pass: u64, episode: &str, step: u64, seed: u64) -> Value {
+    let mut key = json!([
+        ARCHIVE_DISTILLATION_NAMESPACE_V1,
+        "anchor-order",
+        lineage,
+        pass,
+        episode,
+        step
+    ]);
+    if seed > 0 {
+        key.as_array_mut().expect("a key array").push(json!(seed));
+    }
+    key
+}
+
 fn archive_order_v1(
     rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
     selected: &[usize],
     lineage: &str,
     arm: ArchiveDistillationArmV1,
     epoch: u64,
+    seed: u64,
 ) -> Vec<usize> {
     let mut order = selected.to_vec();
     order.sort_by_cached_key(|&i| {
         let row = &rows[i].0;
         (
-            key_hash(json!([
-                ARCHIVE_DISTILLATION_NAMESPACE_V1,
-                "archive-order",
-                lineage,
-                arm.label(),
-                epoch,
-                row.game,
-                row.step
-            ])),
+            key_hash(archive_order_key_v1(
+                lineage, arm, epoch, &row.game, row.step, seed,
+            )),
             i,
         )
     });
@@ -1404,7 +1460,8 @@ fn archive_order_v1(
 /// step's archive term is the mean over its own batch, so it keeps
 /// coefficient 1 at every step and no row's weight depends on where an epoch
 /// ends. The anchor takes the next 256 training rows of a per-pass hash order
-/// every step, shared by both arms.
+/// every step, shared by both arms. A cell's order seed ([`order_seed_v1`])
+/// enters both hash orders; seed 0 is the unseeded plan.
 fn plan_v1(
     rows: &[(ArchiveRowV1, NativeFlatDecisionTensorV2)],
     selected: &[usize],
@@ -1412,6 +1469,7 @@ fn plan_v1(
     lineage: &str,
     arm: ArchiveDistillationArmV1,
     checkpoint_steps: Option<&[u64]>,
+    order_seed: u64,
 ) -> Result<PlanV1, String> {
     let n = selected.len();
     ensure(n > 0, "the arm has no archive rows")?;
@@ -1446,7 +1504,7 @@ fn plan_v1(
             archive.push((selected.to_vec(), n));
             continue;
         }
-        let order = archive_order_v1(rows, selected, lineage, arm, epoch);
+        let order = archive_order_v1(rows, selected, lineage, arm, epoch, order_seed);
         let batches = n.div_ceil(ARCHIVE_BATCH);
         for b in 0..batches {
             if archive.len() as u64 == total {
@@ -1470,14 +1528,13 @@ fn plan_v1(
                 order.sort_by_cached_key(|&i| {
                     let row = &anchor[i];
                     (
-                        key_hash(json!([
-                            ARCHIVE_DISTILLATION_NAMESPACE_V1,
-                            "anchor-order",
+                        key_hash(anchor_order_key_v1(
                             lineage,
                             pass,
-                            row.episode,
-                            row.step
-                        ])),
+                            &row.episode,
+                            row.step,
+                            order_seed,
+                        )),
                         i,
                     )
                 });
@@ -1696,6 +1753,7 @@ pub(super) fn phase1_v1(
         &lineage,
         arm,
         recipe_values.checkpoint_steps.as_deref(),
+        recipe_values.order_seed,
     )?;
     let archive_targets = rows
         .iter()

@@ -483,6 +483,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert_eq!(plan.epoch_steps, 3);
@@ -518,6 +519,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert!(plan
@@ -532,6 +534,7 @@ fn uniform_plan_draws_every_row_once_per_epoch_and_cycles_the_anchor() {
         "r2",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     assert_ne!(plan.steps[0].archive, other.steps[0].archive);
@@ -585,6 +588,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         "r1",
         ArchiveDistillationArmV1::LineDecisions,
         None,
+        0,
     )
     .unwrap();
     assert_eq!(plan.checkpoints, LINE_STEPS.to_vec());
@@ -605,6 +609,7 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
             "r1",
             ArchiveDistillationArmV1::LineDecisions,
             None,
+            0,
         )
         .unwrap();
         assert_eq!(plan.epoch_steps, 2);
@@ -625,7 +630,8 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        None
+        None,
+        0
     )
     .is_err());
     assert!(plan_v1(
@@ -634,7 +640,8 @@ fn line_plan_uses_every_row_each_step_up_to_one_batch() {
         &anchor_rows(255),
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        None
+        None,
+        0
     )
     .is_err());
 }
@@ -1006,6 +1013,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         None,
+        0,
     )
     .unwrap();
     // Own checkpoint steps, past the frozen schedule's end: the same
@@ -1018,6 +1026,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         Some(&steps),
+        0,
     )
     .unwrap();
     assert_eq!(cell_plan.checkpoints, steps.to_vec());
@@ -1039,6 +1048,7 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         "r1",
         ArchiveDistillationArmV1::Uniform,
         Some(&steps),
+        0,
     )
     .unwrap();
     assert_eq!(sub.epoch_steps, (subset.len() as u64).div_ceil(32));
@@ -1068,7 +1078,8 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::LineDecisions,
-        Some(&steps)
+        Some(&steps),
+        0
     )
     .is_err());
     assert!(plan_v1(
@@ -1077,9 +1088,193 @@ fn cell_plans_keep_the_screens_batches_and_order_at_their_own_checkpoints() {
         &anchor,
         "r1",
         ArchiveDistillationArmV1::Uniform,
-        Some(&[32, 16])
+        Some(&[32, 16]),
+        0
     )
     .is_err());
+}
+
+/// Every recorded cell label (and the frozen recipe, and `SD1-T-s0`) reads
+/// order seed 0, so its archive-order and anchor-order hash inputs are the
+/// unseeded ones byte for byte, and so is its plan.
+#[test]
+fn recorded_cell_labels_keep_byte_identical_order_hash_inputs() {
+    let unseeded_archive =
+        br#"["spy-archive-distillation-v1","archive-order","r1","uniform",3,"game-1",7]"#;
+    let unseeded_anchor = br#"["spy-archive-distillation-v1","anchor-order","r1",2,"anchor-4",9]"#;
+    let rows = bank_rows(70);
+    let all: Vec<usize> = (0..70).collect();
+    let anchor = anchor_rows(300);
+    let unseeded = |arm| plan_v1(&rows, &all, &anchor, "r1", arm, None, 0).unwrap();
+    let recorded = [
+        "U0", "U-lr", "U-a4", "U-a16", "U-s32", "U-s256", "U-c32", "U-c256", "BT1-T", "BT1-P",
+        "SD1-T-s0",
+    ];
+    let mut seeds = vec![("frozen", frozen_recipe().order_seed)];
+    for label in recorded {
+        assert_eq!(order_seed_v1(label), 0, "{label}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label))).unwrap();
+        seeds.push((label, recipe.order_seed));
+    }
+    for (label, seed) in seeds {
+        assert_eq!(seed, 0, "{label}");
+        for arm in [
+            ArchiveDistillationArmV1::Uniform,
+            ArchiveDistillationArmV1::LineDecisions,
+        ] {
+            let key = serde_json::to_vec(&archive_order_key_v1("r1", arm, 3, "game-1", 7, seed));
+            let literal = serde_json::to_vec(&json!([
+                ARCHIVE_DISTILLATION_NAMESPACE_V1,
+                "archive-order",
+                "r1",
+                arm.label(),
+                3,
+                "game-1",
+                7
+            ]));
+            assert_eq!(key.unwrap(), literal.unwrap(), "{label}");
+        }
+        assert_eq!(
+            serde_json::to_vec(&archive_order_key_v1(
+                "r1",
+                ArchiveDistillationArmV1::Uniform,
+                3,
+                "game-1",
+                7,
+                seed
+            ))
+            .unwrap(),
+            unseeded_archive.to_vec(),
+            "{label}"
+        );
+        assert_eq!(
+            serde_json::to_vec(&anchor_order_key_v1("r1", 2, "anchor-4", 9, seed)).unwrap(),
+            unseeded_anchor.to_vec(),
+            "{label}"
+        );
+        let base = unseeded(ArchiveDistillationArmV1::Uniform);
+        let plan = plan_v1(
+            &rows,
+            &all,
+            &anchor,
+            "r1",
+            ArchiveDistillationArmV1::Uniform,
+            None,
+            seed,
+        )
+        .unwrap();
+        assert!(plan
+            .steps
+            .iter()
+            .zip(&base.steps)
+            .all(|(a, b)| a.archive == b.archive && a.anchor == b.anchor));
+    }
+}
+
+/// `SD1-T-s{k}` with k from 1 to 7 appends k to both hash inputs: each seed
+/// has its own epoch and anchor orders over the same rows, batch sizes and
+/// checkpoints. Any other form reads seed 0, and the cell records no new
+/// field.
+#[test]
+fn sd1_seed_labels_reorder_both_orders_over_the_same_rows() {
+    for (label, seed) in [
+        ("SD1-T-s0", 0),
+        ("SD1-T-s1", 1),
+        ("SD1-T-s4", 4),
+        ("SD1-T-s7", 7),
+        ("SD1-T-s8", 0),
+        ("SD1-T-s07", 0),
+        ("SD1-T-s", 0),
+        ("SD1-T-s1-x", 0),
+        ("SD1-T-S1", 0),
+        ("sd1-T-s1", 0),
+        ("SD1-P-s1", 0),
+        ("xSD1-T-s1", 0),
+        ("SD1-T-s1x", 0),
+    ] {
+        assert_eq!(order_seed_v1(label), seed, "{label}");
+        let recipe = recipe_v1(ArchiveDistillationArmV1::Uniform, Some(&cell(label))).unwrap();
+        assert_eq!(recipe.order_seed, seed, "{label}");
+        let fields: Vec<String> = serde_json::to_value(recipe.cell.as_ref().unwrap())
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            fields,
+            ["anchor_coefficient_bits", "cell", "checkpoint_steps"],
+            "{label}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_vec(&archive_order_key_v1(
+            "r1",
+            ArchiveDistillationArmV1::Uniform,
+            3,
+            "game-1",
+            7,
+            5
+        ))
+        .unwrap(),
+        br#"["spy-archive-distillation-v1","archive-order","r1","uniform",3,"game-1",7,5]"#
+            .to_vec()
+    );
+    assert_eq!(
+        serde_json::to_vec(&anchor_order_key_v1("r1", 2, "anchor-4", 9, 5)).unwrap(),
+        br#"["spy-archive-distillation-v1","anchor-order","r1",2,"anchor-4",9,5]"#.to_vec()
+    );
+    let rows = bank_rows(70);
+    let all: Vec<usize> = (0..70).collect();
+    let anchor = anchor_rows(300);
+    let steps = [8, 16, 32];
+    let plans: Vec<PlanV1> = (0..8)
+        .map(|seed| {
+            plan_v1(
+                &rows,
+                &all,
+                &anchor,
+                "r1",
+                ArchiveDistillationArmV1::Uniform,
+                Some(&steps),
+                seed,
+            )
+            .unwrap()
+        })
+        .collect();
+    let mut first_epochs = BTreeSet::new();
+    let mut first_anchors = BTreeSet::new();
+    for plan in &plans {
+        assert_eq!(plan.checkpoints, steps.to_vec());
+        assert_eq!(plan.epoch_steps, plans[0].epoch_steps);
+        assert_eq!(plan.steps.len(), plans[0].steps.len());
+        let per = plan.epoch_steps as usize;
+        for epoch in plan.steps.chunks(per).filter(|e| e.len() == per) {
+            assert_eq!(
+                epoch.iter().map(|s| s.archive.len()).collect::<Vec<_>>(),
+                vec![23, 23, 24]
+            );
+            let order: Vec<usize> = epoch.iter().flat_map(|s| s.archive.clone()).collect();
+            assert_eq!(sorted(order), all);
+        }
+        let draws: Vec<usize> = plan.steps.iter().flat_map(|s| s.anchor.clone()).collect();
+        for pass in draws
+            .chunks(anchor.len())
+            .filter(|pass| pass.len() == anchor.len())
+        {
+            assert_eq!(sorted(pass.to_vec()), (0..anchor.len()).collect::<Vec<_>>());
+        }
+        first_epochs.insert(
+            plan.steps[..per]
+                .iter()
+                .flat_map(|s| s.archive.clone())
+                .collect::<Vec<_>>(),
+        );
+        first_anchors.insert(draws[..anchor.len()].to_vec());
+    }
+    assert_eq!(first_epochs.len(), 8, "each seed has its own archive order");
+    assert_eq!(first_anchors.len(), 8, "each seed has its own anchor order");
 }
 
 #[test]
