@@ -80,20 +80,12 @@ impl OwnRegistrationPlayPolicyV1 {
         self.auxiliary = None;
         self.base.reset_for_game_v1(seeds)
     }
+    #[cfg(test)]
     pub(crate) fn enable_unclamped_collection_sampler_v1(&mut self) {
         self.base.enable_unclamped_collection_sampler_v1();
     }
     pub(crate) fn collection_sampler_identity_v1(&self) -> Option<&'static str> {
         self.base.collection_sampler_identity_v1()
-    }
-    pub(crate) fn runtime_sampler_identity_v1(&self) -> &'static str {
-        self.base.runtime_sampler_identity_v1()
-    }
-    pub(crate) fn runtime_sampler_max_actions_v1(&self) -> usize {
-        self.base.runtime_sampler_max_actions_v1()
-    }
-    pub(crate) fn set_training_math_v1(&mut self, math: TrainingMathV1) {
-        self.base.set_training_math_v1(math);
     }
     pub(crate) fn training_math_v1(&self) -> TrainingMathV1 {
         self.base.training_math_v1()
@@ -101,9 +93,7 @@ impl OwnRegistrationPlayPolicyV1 {
     pub(crate) fn feature_identity_v1(&self) -> FreshFeatureIdentityV1 {
         self.base.feature_identity_v1()
     }
-    pub(crate) fn training_model_v3(&self) -> NativePolicyValueNetV1 {
-        self.base.training_model_v3()
-    }
+    #[cfg(test)]
     pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
         self.base.training_parameters_v3()
     }

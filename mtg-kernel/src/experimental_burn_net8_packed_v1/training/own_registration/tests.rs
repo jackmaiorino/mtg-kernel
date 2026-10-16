@@ -265,10 +265,65 @@ fn close_named(
     }
 }
 
+/// CPU references bind the exact inherited parameters, registration weights,
+/// mode and independently supplied expected episode/actor/selected deck.
+fn cpu_packet_outputs(
+    legacy: &NativePolicyValueTrainSnapshotV1,
+    projection: &ProjectionSnapshot,
+    views: &[NativeEncodedDecisionViewV1<'_>],
+    rows: &[RegistrationFeatureRowsV1],
+    expected: &[crate::own_registration_v1::RegistrationExpectationV1<'_>],
+) -> Vec<(Vec<u32>, u32)> {
+    use crate::native_policy_value_net_v1::own_registration::NativeRegistrationNetV1;
+    let mut base =
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .unwrap();
+    base.replace_parameter_snapshot_v1(&legacy.parameters)
+        .unwrap();
+    let model = if projection.projection_enabled {
+        NativeRegistrationNetV1::new(base, projection.input_weights().unwrap(), projection.mode)
+    } else {
+        NativeRegistrationNetV1::new_legacy(base)
+    }
+    .unwrap();
+    views
+        .iter()
+        .zip(rows)
+        .zip(expected)
+        .map(|((view, rows), expected)| {
+            let output = model.forward_rows(*view, rows, *expected).unwrap();
+            (
+                output.logits.iter().map(|v| v.to_bits()).collect(),
+                output.value.to_bits(),
+            )
+        })
+        .collect()
+}
+
+fn packet_groups<'a>(
+    steps: &'a [RegistrationTrainingStep<'a>],
+    first_substeps: &[usize],
+) -> Vec<RegistrationTrainingGroup<'a>> {
+    first_substeps
+        .iter()
+        .enumerate()
+        .map(|(index, &start)| {
+            let end = first_substeps
+                .get(index + 1)
+                .copied()
+                .unwrap_or(steps.len());
+            RegistrationTrainingGroup {
+                substeps: &steps[start..end],
+            }
+        })
+        .collect()
+}
+
 /// Future guarded qualification input: manifest pins one exact V4 parent and a
 /// saved batch containing native V4 rows, own registration rows, selected
 /// indices, group indices/first substeps, targets and advantages. This test
 /// never manufactures games or targets and is never run by ordinary tests.
+/// Packet schema v2 also pins independent contexts and exact parent CPU outputs.
 #[test]
 #[ignore = "requires parent-approved saved V4 batch and idle GPU 1; no training authorization"]
 fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
@@ -284,7 +339,47 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
         manifest["batch"].as_str().unwrap(),
         manifest["batch_sha256"].as_str().unwrap(),
     );
+    assert_eq!(packet["schema"], "own-registration-cuda-saved-batch/v2");
     let samples = packet["samples"].as_array().unwrap();
+    assert!(!samples.is_empty() && samples.len() <= 512);
+    // Never derive an expectation from the auxiliary row being checked.
+    let contexts: Vec<_> = samples
+        .iter()
+        .map(|sample| {
+            let expected = &sample["expected"];
+            let episode = expected["external_episode_id"].as_str().unwrap().to_owned();
+            assert!(!episode.trim().is_empty());
+            let actor = match expected["actor"].as_u64().unwrap() {
+                0 => crate::rl::PlayerSeatV1::P0,
+                1 => crate::rl::PlayerSeatV1::P1,
+                other => panic!("invalid expected physical actor {other}"),
+            };
+            let selected = crate::sideboard::DeckConfigurationV1::new_exact_v1(
+                serde_json::from_value(expected["selected_mainboard"].clone()).unwrap(),
+                serde_json::from_value(expected["selected_sideboard"].clone()).unwrap(),
+            )
+            .unwrap();
+            (episode, actor, selected.mainboard_sha256_v1())
+        })
+        .collect();
+    let expected: Vec<_> = contexts
+        .iter()
+        .map(
+            |(episode, actor, digest)| crate::own_registration_v1::RegistrationExpectationV1 {
+                external_episode_id: episode,
+                actor: *actor,
+                selected_mainboard_sha256: *digest,
+            },
+        )
+        .collect();
+    let zero_cpu_logits: Vec<Vec<u32>> = samples
+        .iter()
+        .map(|sample| serde_json::from_value(sample["cpu_logits_bits"].clone()).unwrap())
+        .collect();
+    let zero_cpu_values: Vec<u32> = samples
+        .iter()
+        .map(|sample| serde_json::from_value(sample["cpu_value_bits"].clone()).unwrap())
+        .collect();
     let tensors: Vec<_> = samples.iter().map(|s| tensor(&s["native"])).collect();
     let views: Vec<_> = tensors.iter().map(encoded_decision_view_v4).collect();
     let own_rows: Vec<RegistrationFeatureRowsV1> = samples
@@ -301,6 +396,31 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
         serde_json::from_value(packet["first_substeps"].clone()).unwrap();
     let targets: Vec<f32> = serde_json::from_value(packet["targets"].clone()).unwrap();
     let advantages: Vec<f32> = serde_json::from_value(packet["advantages"].clone()).unwrap();
+    assert_eq!(selected.len(), samples.len());
+    assert_eq!(group_indices.len(), samples.len());
+    assert_eq!(targets.len(), advantages.len());
+    assert_eq!(targets.len(), first_substeps.len());
+    assert!(!first_substeps.is_empty());
+    assert_eq!(first_substeps[0], 0);
+    let max_chunk_substeps = packet["max_chunk_substeps"].as_u64().unwrap() as usize;
+    assert!((1..=512).contains(&max_chunk_substeps));
+    for (index, &start) in first_substeps.iter().enumerate() {
+        let end = first_substeps
+            .get(index + 1)
+            .copied()
+            .unwrap_or(samples.len());
+        assert!(start < end && end <= samples.len() && end - start <= max_chunk_substeps);
+        assert!(group_indices[start..end]
+            .iter()
+            .all(|group| *group == index));
+        assert!(contexts[start..end]
+            .iter()
+            .all(|context| context == &contexts[start]));
+    }
+    for (rows, expected) in own_rows.iter().zip(&expected) {
+        rows.validate_expected(RegistrationModeV1::Own, *expected)
+            .unwrap();
+    }
     let mut host = HostPackingWorkspace::default();
     host.pack_views(&views).unwrap();
     let device = burn_cuda::CudaDevice::new(1);
@@ -371,6 +491,17 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
                 row.features = fixed_mean_features_v1().unwrap();
             }
         }
+        let zero_cpu = cpu_packet_outputs(&legacy, &initial, &views, &rows, &expected);
+        for (index, (logits, value)) in zero_cpu.iter().enumerate() {
+            assert_eq!(
+                *logits, zero_cpu_logits[index],
+                "packet parent CPU logits differ"
+            );
+            assert_eq!(
+                *value, zero_cpu_values[index],
+                "packet parent CPU value differs"
+            );
+        }
         let mut accumulated = RegistrationGradientAccumulator::default();
         let outputs = state
             .chunk_backward_gae(
@@ -413,10 +544,32 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
         let inherited =
             export_named_state_v1(&state.legacy.model, &gradients, &legacy.parameters).unwrap();
         close_named(&inherited, &expected_gradients, 5e-3, 5e-3);
-        let mut base = burn::optim::GradientsAccumulator::default();
-        base.accumulate(&state.legacy.model, gradients);
-        accumulated.base = base;
-        state.apply(accumulated, 0.0001).unwrap();
+        // Gradient inspection above stays at the internals; functional updates
+        // enter through the production bridge, including bound contexts and
+        // the stored CPU-output transport check. One first chunk preserves
+        // direct inherited-update comparison; the next step tests chunking.
+        let zero_steps: Vec<_> = (0..samples.len())
+            .map(|index| RegistrationTrainingStep {
+                view: views[index],
+                auxiliary: &rows[index],
+                expected: expected[index],
+                selected: selected[index],
+                expected_logits: &zero_cpu_logits[index],
+                expected_value: zero_cpu_values[index],
+            })
+            .collect();
+        let zero_groups = packet_groups(&zero_steps, &first_substeps);
+        state
+            .update_groups(
+                &zero_groups,
+                &targets,
+                &advantages,
+                0.0001,
+                0.5,
+                0.0,
+                samples.len(),
+            )
+            .unwrap();
         let after = state.snapshot().unwrap();
         close_named(
             &after.0.parameters,
@@ -451,6 +604,39 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
             assert_eq!(after.1.adam_step, 1);
             assert!(after.1.weights.iter().any(|v| *v != 0));
         }
+        // Learned nonzero W is checked against the CPU successor before its
+        // next update. Baseline takes this same path with the projection off.
+        let learned_cpu = cpu_packet_outputs(&after.0, &after.1, &views, &rows, &expected);
+        let uploaded = RegistrationBatch::upload(&rows, &batch, state.mode).unwrap();
+        let model = RegistrationModel {
+            base: state.legacy.model.clone(),
+            projection: state.projection.clone(),
+            enabled: state.enabled,
+        };
+        let (learned_logits, learned_values) = model.forward(&batch, &uploaded);
+        let learned_logits = learned_logits.inner().into_data().to_vec::<f32>().unwrap();
+        let learned_values = learned_values.inner().into_data().to_vec::<f32>().unwrap();
+        let cpu_logits: Vec<_> = learned_cpu
+            .iter()
+            .flat_map(|(logits, _)| logits.iter().map(|bits| f32::from_bits(*bits)))
+            .collect();
+        let cpu_values: Vec<_> = learned_cpu
+            .iter()
+            .map(|(_, value)| f32::from_bits(*value))
+            .collect();
+        close(&learned_logits, &cpu_logits, 1e-3, 1e-3);
+        close(&learned_values, &cpu_values, 1e-3, 1e-3);
+        let learned_steps: Vec<_> = (0..samples.len())
+            .map(|index| RegistrationTrainingStep {
+                view: views[index],
+                auxiliary: &rows[index],
+                expected: expected[index],
+                selected: selected[index],
+                expected_logits: &learned_cpu[index].0,
+                expected_value: learned_cpu[index].1,
+            })
+            .collect();
+        let learned_groups = packet_groups(&learned_steps, &first_substeps);
         let bytes = snapshot::encode(&after.0, &after.1).unwrap();
         let decoded = snapshot::decode(&bytes).unwrap();
         let resumed = RegistrationDeviceTrainState::import(&decoded.0, &decoded.1, &device)
@@ -461,11 +647,17 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
         let mut resumed_state =
             RegistrationDeviceTrainState::import(&decoded.0, &decoded.1, &device).unwrap();
         for candidate in [&mut state, &mut resumed_state] {
-            let mut gradients = RegistrationGradientAccumulator::default();
             candidate
-                .chunk_backward_gae(&mut gradients, &batch, &rows, &plan, 0.5, denominator, 0.0)
+                .update_groups(
+                    &learned_groups,
+                    &targets,
+                    &advantages,
+                    0.0001,
+                    0.5,
+                    0.0,
+                    max_chunk_substeps,
+                )
                 .unwrap();
-            candidate.apply(gradients, 0.0001).unwrap();
         }
         let uninterrupted = state.snapshot().unwrap();
         let resumed = resumed_state.snapshot().unwrap();

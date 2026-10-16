@@ -231,12 +231,6 @@ impl RegistrationDeviceTrainState {
             enabled: projection.projection_enabled,
         })
     }
-    pub(crate) fn import_legacy(
-        legacy: &NativePolicyValueTrainSnapshotV1,
-        device: &burn_cuda::CudaDevice,
-    ) -> Result<Self, Box<dyn Error>> {
-        Self::import(legacy, &ProjectionSnapshot::baseline()?, device)
-    }
     pub(crate) fn snapshot(
         &self,
     ) -> Result<(NativePolicyValueTrainSnapshotV1, ProjectionSnapshot), Box<dyn Error>> {

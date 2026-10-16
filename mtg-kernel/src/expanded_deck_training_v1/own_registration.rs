@@ -575,9 +575,8 @@ mod tests {
     fn context_uses_selected_postboard_and_rebinds_external_episode_and_actor() {
         let mut first = episode("postboard-a", 0);
         first.postboard = true;
-        let replacement = first.selected[0].sideboard[0];
-        first.selected[0].sideboard[0] = first.selected[0].mainboard[0];
-        first.selected[0].mainboard[0] = replacement;
+        let selected = &mut first.selected[0];
+        std::mem::swap(&mut selected.sideboard[0], &mut selected.mainboard[0]);
         let selected = first.configurations().unwrap();
         let registered = first.registered[0].validated().unwrap();
         assert_ne!(
@@ -720,3 +719,5 @@ mod tests {
         }
     }
 }
+#[cfg(test)]
+mod saved_packet_preparation;
