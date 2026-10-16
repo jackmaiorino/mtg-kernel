@@ -1154,6 +1154,23 @@ fn celestial_armor_effect() -> EffectOp {
     ])
 }
 
+fn embercleave_effect() -> EffectOp {
+    EffectOp::AttachSourceToTarget {
+        object: ObjectRef::Target(0),
+    }
+}
+
+// No definition is registered by this source appendix. Dispatch can only
+// select this recipe after a real catalog definition has been appended.
+const EMBERCLEAVE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: embercleave_effect,
+}];
+
 const CELESTIAL_ARMOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -3601,6 +3618,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Tersa Lightshatter" => &TERSA_LIGHTSHATTER_TRIGGERS,
         "Zoetic Glyph" => &ZOETIC_GLYPH_TRIGGERS,
         "Collector's Cage" => &COLLECTORS_CAGE_TRIGGERS,
+        "Embercleave" => &EMBERCLEAVE_TRIGGERS,
         "Celestial Armor" => &CELESTIAL_ARMOR_TRIGGERS,
         "Exemplar of Light" => &EXEMPLAR_OF_LIGHT_TRIGGERS,
         "Vanguard Seraph" => &VANGUARD_SERAPH_TRIGGERS,
@@ -3910,7 +3928,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         "Restless Reef" => TargetSpec::AnyPlayer,
         "Restless Vinestalk" => TargetSpec::UpToOneOtherCreature,
         "Restless Ridgeline" => TargetSpec::AnotherAttackingCreature,
-        "Celestial Armor" | "Needletooth Pack" => TargetSpec::ControlledCreature,
+        "Celestial Armor" | "Embercleave" | "Needletooth Pack" => TargetSpec::ControlledCreature,
         "Sun-Blessed Healer" => TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(2),
         "Elvish Regrower" => TargetSpec::PermanentCardInOwnGraveyard,
         "Mischievous Pup" => TargetSpec::UpToOneOtherControlledPermanent,

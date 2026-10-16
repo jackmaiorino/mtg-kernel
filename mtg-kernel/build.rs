@@ -3493,6 +3493,8 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        // Unregistered source recipe. No catalog slot is allocated here.
+        "Embercleave" => program("None", "MoveObject(ThisSource,Battlefield);etb:attachExactSourceToTargetControlledCreature;equipped:+1/+1,doubleStrike,trample;equip:3;flash;genericReduction:currentControlledAttackingCreatures", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Temporal Manipulation" => program(
             "None",
             "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
@@ -4353,7 +4355,7 @@ fn keywords_for(card: &CardJson) -> String {
     }
     if matches!(
         card.name.as_str(),
-        "Cathar Commando" | "Spectral Sailor" | "Celestial Armor"
+        "Cathar Commando" | "Spectral Sailor" | "Celestial Armor" | "Embercleave"
     ) {
         keywords.push("Keywords::FLASH");
     }
@@ -5690,7 +5692,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
-        "Black Mage's Rod" => &[ActivatedAbilityRecipe {
+        "Black Mage's Rod" | "Embercleave" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
                 generic: 3,
@@ -6976,6 +6978,7 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
+        "Embercleave" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerAttackingCreatures })",
         "Witchstalker Frenzy" => "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::CreaturesAttackedThisTurn })",
         "Ghalta, Primal Hunger" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerCreatureTotalPower })"
@@ -7049,6 +7052,7 @@ fn equipment_src(profile: &str) -> String {
 
 fn equipment_for(name: &str) -> &'static str {
     match name {
+        "Embercleave" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), other_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Celestial Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
         "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
@@ -7141,6 +7145,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Armasaur Guide" => "controller_declares_at_least_three_attackers:one_trigger:target_controlled_creature:one_plus_one_counter",
         "Arbiter of Woe" => "etb:discard_opponent:1:lose_life_opponent:2:draw_controller:1:gain_life_controller:2:ordered_sequence",
         "Apothecary Stomper" => "etb:mode_before_targets:controlled_creature_plus_one_counters:2|gain_controller_life:4",
+        "Embercleave" => "etb:mandatory_target_controlled_creature:attach_exact_source_incarnation:full_target_recheck",
         "Celestial Armor" => "etb:target_controlled_creature:attach_exact_source:then_grant_hexproof_indestructible_until_end_of_turn",
         "Wildwood Scourge" => "xg_zero_zero_hydra:enters_with_paid_x_plus_one_counters:counter_event_time:another_controlled_creature:exclude_effective_hydra:one_or_more_counters_one_trigger:regardless_counter_placing_player:one_counter_exact_bound_source_incarnation",
         "Mossborn Hydra" => "controlled_land_enters:double_plus_one_counters_on_bound_source",

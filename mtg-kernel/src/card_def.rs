@@ -2241,6 +2241,10 @@ pub enum DynamicCountDef {
     /// Negative powers contribute before the aggregate is floored at zero.
     ControllerCreatureTotalPower,
     CreaturesAttackedThisTurn,
+    /// Count live, effectively creature permanents the caster currently
+    /// controls that remain in the native combat attacker's roster. This is
+    /// not the declaration/event count and becomes zero after combat ends.
+    ControllerAttackingCreatures,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
