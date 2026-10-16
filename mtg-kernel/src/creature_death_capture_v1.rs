@@ -25,6 +25,7 @@ pub(crate) fn enabled() -> bool {
                                     | TriggerCondition::OtherNontokenCreatureDies
                                     | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                                     | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                                    | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                             )
                         })
         })
@@ -86,7 +87,12 @@ pub(crate) fn capture(
                             && object.controller == dead.controller
                             && !dead.v4.is_token
                             && !CARD_DEFS[usize::from(dead.card_def)].is_token
-                            && source != change.object))
+                            && source != change.object)
+                        || (matches!(ability.condition, TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(subtype)
+                            if !crate::engine::has_effective_subtype(state, change.object, subtype))
+                            && object.controller == dead.controller
+                            && !dead.v4.is_token
+                            && !CARD_DEFS[usize::from(dead.card_def)].is_token))
                         && ability.home_zone == Zone::Battlefield
                         && ability.face_index == object.v4.face_index
                 })
@@ -181,6 +187,7 @@ pub(crate) fn pending(
                 | TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                 | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
         )
         || (matches!(ability.condition, TriggerCondition::DiesUnlessSubtype(_))
             && (source.source != died.object || source.controller != *controller_before))
@@ -218,6 +225,14 @@ pub(crate) fn pending(
             || state.objects.try_get(died.object).is_none_or(|object| {
                 object.v4.is_token || CARD_DEFS[usize::from(object.card_def)].is_token
             })))
+        || (matches!(
+            ability.condition,
+            TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+        ) && (definition.name != "Valkyrie's Call"
+            || source.controller != *controller_before
+            || state.objects.try_get(died.object).is_none_or(|object| {
+                object.v4.is_token || CARD_DEFS[usize::from(object.card_def)].is_token
+            })))
         || !matches!(death, Some(CommittedEvent::ZoneChange {
             object, from: Zone::Battlefield, to: Zone::Graveyard, controller_before: actual,
         }) if *object == died.object && actual == controller_before)
@@ -235,6 +250,7 @@ pub(crate) fn pending(
             TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                 | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                 | TriggerCondition::DiesUnlessSubtype(_)
                 | TriggerCondition::DiesWithRevivalCounterV1
         ) && crate::engine::validate_historical_ability_source_contract(state, *source)
@@ -253,10 +269,12 @@ pub(crate) fn pending(
     }
     let effect = if matches!(
         ability.condition,
-        TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+        TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
     ) {
         let object = state.objects.try_get(died.object).ok_or_else(invalid)?;
         crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 {
+            source: *source,
+            capture_history_index: u64::try_from(history_index).map_err(|_| invalid())?,
             graveyard: crate::state::ObjectLinkV4 {
                 object: died.object,
                 zone_change_count: died.zone_change_count.checked_add(1).ok_or_else(invalid)?,
@@ -324,10 +342,18 @@ pub(crate) fn owns_program(
                         | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                        | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                 ) && ability.home_zone == Zone::Battlefield
-                    && crate::trigger::source_bound_trigger_program_matches(
-                        &(ability.effect)(),
-                        effect,
-                    )
+                    && if matches!(
+                        ability.condition,
+                        TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                    ) {
+                        crate::trigger::source_bound_trigger_program_matches(
+                            &(ability.effect)(),
+                            effect,
+                        )
+                    } else {
+                        (ability.effect)() == *effect
+                    }
             })
 }

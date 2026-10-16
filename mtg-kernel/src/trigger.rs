@@ -278,9 +278,9 @@ pub enum TriggerCondition {
     /// Nine-Lives Familiar dies with positive counters in its exact departure LKI.
     /// Appended to preserve the serialized discriminants of existing conditions.
     DiesWithRevivalCounterV1,
-    /// A controlled nontoken creature other than the source dies without the
-    /// named effective subtype, captured before the death batch.
-    OtherControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
+    /// A controlled nontoken creature dies without the named effective
+    /// subtype, captured before the death batch. The source may itself die.
+    ControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -5461,6 +5461,7 @@ fn triggers_from_events(
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                         | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
+                        | TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {

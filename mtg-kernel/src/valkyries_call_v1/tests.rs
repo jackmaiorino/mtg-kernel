@@ -124,6 +124,53 @@ fn cast_until_call_trigger(
     panic!("Valkyrie's Call trigger was not placed on the stack");
 }
 
+fn assert_effect_only_call_tampering_is_rejected(state: &GameState, call: ObjectId) {
+    let tamper = |mut state: GameState, edit: &dyn Fn(&mut crate::effect::EffectOp)| {
+        let item_index = state
+            .stack
+            .iter()
+            .position(|item| {
+                item.source == call
+                    && matches!(
+                        item.inline_effect.as_ref(),
+                        Some(crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { .. })
+                    )
+            })
+            .expect("the genuine Call trigger remains on the stack");
+        {
+            let item = &mut state.stack[item_index];
+            edit(item.inline_effect.as_mut().unwrap());
+        }
+        assert!(
+            engine::validated_stack_item_target_spec(&state, &state.stack[item_index]).is_err()
+        );
+    };
+    tamper(state.clone(), &|effect| {
+        if let crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { graveyard, .. } = effect {
+            graveyard.object = call;
+        }
+    });
+    tamper(state.clone(), &|effect| {
+        if let crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { owner, .. } = effect {
+            *owner = (*owner).opponent();
+        }
+    });
+    tamper(state.clone(), &|effect| {
+        if let crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 {
+            capture_history_index,
+            ..
+        } = effect
+        {
+            *capture_history_index += 1;
+        }
+    });
+    tamper(state.clone(), &|effect| {
+        if let crate::effect::EffectOp::ReturnValkyriesCallCreatureV1 { source, .. } = effect {
+            source.controller = source.controller.opponent();
+        }
+    });
+}
+
 #[test]
 fn paid_controlled_death_returns_physical_owner_with_entry_replacements_and_characteristics_both_seats(
 ) {
@@ -138,24 +185,32 @@ fn paid_controlled_death_returns_physical_owner_with_entry_replacements_and_char
     for actor in [PlayerId::P0, PlayerId::P1] {
         let opponent = actor.opponent();
         let mut state = ready(actor);
+        // A creature spell must be cast during its owner's own main phase.
+        // Keep the permanent under that opponent's control before the Call
+        // controller takes their next turn.
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, opponent);
+        let season = put(&mut state, opponent, "Doubling Season", Zone::Battlefield);
+        let creature = put(&mut state, opponent, "Llanowar Elves", Zone::Hand);
+        paid_cast(&mut state, opponent, creature, None);
+
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor);
         let call = put(&mut state, actor, "Valkyrie's Call", Zone::Hand);
         paid_cast(&mut state, actor, call, None);
         assert_eq!(state.objects.get(call).zone, Zone::Battlefield);
 
         // The replacement belongs to the physical owner, who controls the
         // returned permanent even though the creature dies under the Call
-        // controller's temporary control.
-        let season = put(&mut state, opponent, "Doubling Season", Zone::Battlefield);
-        let creature = put(&mut state, opponent, "Llanowar Elves", Zone::Hand);
-        paid_cast(&mut state, opponent, creature, None);
+        // controller's temporary control. Employment resolves on the Call
+        // controller's own main phase, then the opponent uses Murder as an
+        // instant before that turn ends, while the effect still controls it.
         let employment = put(&mut state, actor, "Involuntary Employment", Zone::Hand);
         paid_cast(&mut state, actor, employment, Some(creature));
         assert_eq!(state.objects.get(creature).owner, opponent);
         assert_eq!(state.objects.get(creature).controller, actor);
 
-        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, opponent);
         let murder = put(&mut state, opponent, "Murder", Zone::Hand);
         cast_until_call_trigger(&mut state, opponent, murder, creature, call);
+        assert_effect_only_call_tampering_is_rejected(&state, call);
         assert_eq!(state.objects.get(creature).zone, Zone::Graveyard);
         let expected_graveyard_generation = state.objects.get(creature).zone_change_count;
         assert_eq!(state.objects.get(creature).owner, opponent);
@@ -165,6 +220,7 @@ fn paid_controlled_death_returns_physical_owner_with_entry_replacements_and_char
         let bytes = serde_json::to_vec(&state).unwrap();
         let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(restored.state_hash(), state.state_hash());
+        assert_effect_only_call_tampering_is_rejected(&restored, call);
         settle(&mut state);
         settle(&mut restored);
         assert_eq!(state.state_hash(), restored.state_hash());

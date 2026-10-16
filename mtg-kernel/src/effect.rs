@@ -1784,6 +1784,8 @@ pub enum EffectOp {
     /// Return the exact creature incarnation selected by Valkyrie's Call.
     /// Entry applies its +1/+1 counter, Angel subtype, and flying together.
     ReturnValkyriesCallCreatureV1 {
+        source: AbilitySourceContractV4,
+        capture_history_index: u64,
         graveyard: crate::state::ObjectLinkV4,
         owner: crate::ids::PlayerId,
     },
@@ -17527,11 +17529,17 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindValkyriesCallDeathV1 => {
             panic!("unmaterialized Valkyrie's Call death return");
         }
-        EffectOp::ReturnValkyriesCallCreatureV1 { graveyard, owner } => {
+        EffectOp::ReturnValkyriesCallCreatureV1 {
+            source: captured_source,
+            capture_history_index: _,
+            graveyard,
+            owner,
+        } => {
             let Some(source) = ctx.ability_source_contract else {
                 return;
             };
-            if source.source != ctx.source
+            if source != *captured_source
+                || source.source != ctx.source
                 || ctx.controller != source.controller
                 || source.zone != Zone::Battlefield
                 || crate::card_def::CARD_DEFS[usize::from(source.card_def)].name

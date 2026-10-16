@@ -14214,23 +14214,94 @@ fn validate_bound_trigger_source_objects(
         EffectOp::BindValkyriesCallDeathV1 => {
             return Err("unmaterialized Valkyrie's Call death trigger".into());
         }
-        EffectOp::ReturnValkyriesCallCreatureV1 { graveyard, owner } => {
+        EffectOp::ReturnValkyriesCallCreatureV1 {
+            source: captured_source,
+            capture_history_index,
+            graveyard,
+            owner,
+        } => {
             let Some(contract) = source_contract else {
                 return Err("Valkyrie's Call return lost its source contract".into());
             };
+            let capture_index = usize::try_from(*capture_history_index)
+                .map_err(|_| "Valkyrie's Call capture index is out of range")?;
+            let Some(crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 {
+                source: history_source,
+                ability_index,
+                died,
+                controller_before,
+            }) = state.engine.event_history.get(capture_index)
+            else {
+                return Err("Valkyrie's Call return lost its exact death capture".into());
+            };
+            let history_death = state.engine.event_history[..capture_index]
+                .iter()
+                .rev()
+                .find(|event| {
+                    !matches!(
+                        event,
+                        crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
+                    )
+                });
+            let expected_capture = crate::trigger::triggers_for(contract.card_def)
+                .get(usize::from(*ability_index))
+                .is_some_and(|ability| {
+                    ability.condition
+                        == crate::trigger::TriggerCondition::ControlledNontokenCreatureDiesWithoutSubtypeV1(
+                            crate::card_def::Subtype::Angel,
+                        )
+                });
+            let collected_once = state.engine.event_history.iter().filter(|event| {
+                matches!(event,
+                    crate::event::CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index: index }
+                    if index == capture_history_index)
+            }).count() == 1;
+            let unique_capture = state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| {
+                    matches!(event,
+                    crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 {
+                        source: candidate,
+                        ability_index: candidate_ability,
+                        died: candidate_died,
+                        controller_before: candidate_controller,
+                    }
+                    if candidate == history_source
+                        && candidate_ability == ability_index
+                        && candidate_died == died
+                        && candidate_controller == controller_before)
+                })
+                .count()
+                == 1;
+            let target_owner_and_generation_match =
+                state.objects.try_get(died.object).is_some_and(|object| {
+                    object.owner == *owner
+                        && object.zone_change_count >= graveyard.zone_change_count
+                });
             if contract.source != source
+                || contract != *captured_source
                 || contract.zone != Zone::Battlefield
                 || !card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
                     .is_some_and(|definition| definition.name == "Valkyrie's Call")
+                || history_source != captured_source
+                || !expected_capture
+                || !collected_once
+                || !unique_capture
+                || !matches!(history_death,
+                    Some(crate::event::CommittedEvent::ZoneChange {
+                        object,
+                        from: Zone::Battlefield,
+                        to: Zone::Graveyard,
+                        controller_before: actual_controller,
+                    }) if *object == died.object && actual_controller == controller_before)
+                || graveyard.object != died.object
+                || graveyard.zone_change_count != died.zone_change_count.checked_add(1).unwrap_or(0)
+                || !target_owner_and_generation_match
                 || graveyard.zone_change_count == 0
-                || state
-                    .objects
-                    .try_get(graveyard.object)
-                    .is_none_or(|object| {
-                        object.owner != *owner
-                            || object.zone_change_count < graveyard.zone_change_count
-                    })
             {
                 return Err("Valkyrie's Call return changed its captured source or owner".into());
             }
@@ -18506,7 +18577,16 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     });
     if object.zone == Zone::Battlefield {
         if let Some((subtype, timestamp)) = object.v4.added_subtype_v1 {
-            if replacement_timestamp.is_none_or(|replacement| timestamp > replacement) {
+            // A creature subtype grant remains stored on the incarnation, but
+            // CR 205.3d does not let it create a creature subtype while the
+            // object's current card types are noncreature. This matters for
+            // effects such as Valkyrie's Call returning an animated land: the
+            // grant becomes visible again if a later animation makes it a
+            // creature. Noncreature subtypes remain unaffected.
+            if (!subtype.is_native_creature_type()
+                || object_has_type(state, id, CardType::Creature))
+                && replacement_timestamp.is_none_or(|replacement| timestamp > replacement)
+            {
                 subtype_ids.push(subtype.stable_id());
             }
         }
