@@ -505,27 +505,120 @@ fn genuine_paid_soulstone_land_play_colorless_mana_and_persistent_animation_all_
             h.drain(None);
             assert_eq!((h.gameplay(), h.packet()), after);
 
-            // Animation does not bypass summoning sickness for a land played this turn.
+            // Stay in this actual turn: an empty eligible set can be committed
+            // internally by the surface instead of exposing DeclareAttackers.
+            let played_turn = h.state().turn_key_v1();
+            let generation = h.state().objects.get(land).zone_change_count;
+            let quiet = |action: &ActionSemanticV1| match action {
+                ActionSemanticV1::Pass { .. }
+                | ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+                | ActionSemanticV1::ChooseBlockerInclusion { include: false, .. } => true,
+                ActionSemanticV1::DeclareAttackers { attackers, .. } => attackers.is_empty(),
+                ActionSemanticV1::DeclareBlockersForAttacker { blockers, .. } => {
+                    blockers.is_empty()
+                }
+                _ => false,
+            };
             let mut saw_combat = false;
-            for _ in 0..48 {
+            let mut reached_second_main = false;
+            for _ in 0..64 {
+                assert_eq!(h.state().turn_key_v1(), played_turn);
+                assert_eq!(h.state().active_player, actor);
+                assert!(h.state().objects.get(land).summoning_sick);
+                saw_combat |= matches!(
+                    h.state().step,
+                    crate::state::Step::DeclareAttackers
+                        | crate::state::Step::DeclareBlockers
+                        | crate::state::Step::CombatDamage
+                        | crate::state::Step::EndCombat
+                );
                 let actions = h.input().1;
-                if let Some(attackers) = actions.iter().find_map(|action| match action {
-                    ActionSemanticV1::DeclareAttackers { attackers, .. } => Some(attackers),
-                    _ => None,
-                }) {
-                    assert!(!attackers.iter().any(|attacker| attacker.arena_id == land.0));
-                    h.act(|action| {
-                        matches!(action,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())
-                    });
-                    saw_combat = true;
+                assert!(!actions.iter().any(|action| match action {
+                    ActionSemanticV1::ChooseAttackerInclusion {
+                        attacker,
+                        include: true,
+                        ..
+                    } => attacker.arena_id == land.0,
+                    ActionSemanticV1::DeclareAttackers { attackers, .. } =>
+                        attackers.iter().any(|attacker| attacker.arena_id == land.0),
+                    _ => false,
+                }));
+                assert!(!h.state().engine.combat.attackers.contains(&land));
+                if h.state().step == crate::state::Step::Main2 {
+                    reached_second_main = true;
                     break;
                 }
-                h.act(|action| {
-                    matches!(action,ActionSemanticV1::Pass{..})
-                        || matches!(action,ActionSemanticV1::DeclareBlockersForAttacker{blockers,..}if blockers.is_empty())
-                });
+                h.act(|action| quiet(action));
             }
-            assert!(saw_combat);
+            assert!(saw_combat && reached_second_main);
+
+            // Advance the real turns, then select this exact persistent animated
+            // incarnation through the actual decomposed next-turn combat menu.
+            let mut attacked = false;
+            for _ in 0..128 {
+                let actions = h.input().1;
+                let attack = actions
+                    .iter()
+                    .find(|action| match action {
+                        ActionSemanticV1::ChooseAttackerInclusion {
+                            attacker,
+                            include: true,
+                            ..
+                        } => attacker.arena_id == land.0,
+                        ActionSemanticV1::DeclareAttackers { attackers, .. } => {
+                            attackers.len() == 1 && attackers[0].arena_id == land.0
+                        }
+                        _ => false,
+                    })
+                    .cloned();
+                if let Some(attack) = attack {
+                    assert_ne!(h.state().turn_key_v1(), played_turn);
+                    assert_eq!(h.state().active_player, actor);
+                    let object = h.state().objects.get(land);
+                    assert_eq!(
+                        (object.zone, object.controller, object.zone_change_count),
+                        (Zone::Battlefield, actor, generation)
+                    );
+                    assert!(!object.summoning_sick && !object.tapped);
+                    h.act(|action| action == &attack);
+                    for _ in 0..=h.state().objects.len() {
+                        if !h.input().1.iter().any(|action| {
+                            matches!(action, ActionSemanticV1::ChooseAttackerInclusion { .. })
+                        }) {
+                            break;
+                        }
+                        h.act(|action| {
+                            matches!(
+                                action,
+                                ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+                            )
+                        });
+                    }
+                    assert!(h.state().engine.combat.attackers_declared);
+                    assert_eq!(h.state().engine.combat.attackers.as_slice(), &[land]);
+                    assert_eq!(h.state().objects.get(land).zone_change_count, generation);
+                    assert!(!h.state().objects.get(land).tapped); // Genuine vigilance.
+                    attacked = true;
+                    break;
+                }
+                h.act(|action| quiet(action));
+            }
+            assert!(attacked);
+            // The original land's mana ability is usable next turn after that
+            // vigilance attack, with exact physical-state/counter replay.
+            let before_mana = h.save();
+            let colorless =
+                h.state().players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()];
+            h.mana(land);
+            assert!(h.state().objects.get(land).tapped);
+            assert_eq!(
+                h.state().players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()],
+                colorless.checked_add(1).unwrap()
+            );
+            let next_turn_mana = (h.gameplay(), h.packet());
+            h.restore(&before_mana);
+            h.mana(land);
+            assert_eq!((h.gameplay(), h.packet()), next_turn_mana);
         }
     }
 }

@@ -30,3 +30,25 @@ Pinned 1.94.1 formatting, diff and lightweight static name/count checks passed.
 All Rust remains unexecuted locally. No runtime repair/pass or native admission
 is claimed. Quandary/Spinner continuation and Phoenix origin failures remain
 unresolved, separate from these source-proved fixture repairs.
+
+Elenda now initializes a persistent independent native session from the same
+pre-advance input as its model owner. Each accepted original action index steps
+both streams; rejected decisions compare unchanged streams. Whole GameState,
+response, counters and exact candidate vectors are compared without clock
+rebasing. Snapshots save each stream separately; model snapshot authentication
+precedes native restoration. No current model world or surface cursor is used
+to reconstruct the reference. All existing paid bodies/acceptance assertions
+remain, with the paired test adapter substituted where necessary.
+
+Soulstone now handles native V5 inclusion menus and observes the real same-turn
+combat while asserting sickness, turn/actor and no legal/committed attack by the
+new land. After actual turn advancement it selects the exact original animated
+incarnation, verifies committed attack and vigilance, then genuinely activates
+its mana ability with full state/counter/packet replay after restore. The
+original land-play, colorless payment, animation, type/subtype, privacy and
+restore assertions remain. Both seats and all four owners remain selected.
+
+Fixed public test-phase labels identify Quandary decline/discard, Spinner
+reveal and the closed five-family Prepared/Human casting loops. These test-only
+labels print no state, object references or hidden operands and change no guard.
+They do not resolve the continuation or generic origin failure.

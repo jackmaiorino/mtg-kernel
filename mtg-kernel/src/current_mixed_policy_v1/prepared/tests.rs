@@ -311,6 +311,8 @@ fn paid_prepared_casts_original_index_finite_logits_full_binding_and_restore_bot
             "Painful Quandary",
             "Flamewake Phoenix",
         ] {
+            // Each name is from this fixed public printing list, never a hand scan.
+            eprintln!("prepared_fixture::paid_cast_family::{name}");
             let mut raw = ready(actor);
             let spell = put(&mut raw, actor, name, Zone::Hand);
             let mut s = own(raw);
@@ -364,6 +366,14 @@ fn paid_prepared_casts_original_index_finite_logits_full_binding_and_restore_bot
 fn paid_quandary_discard_or_life_and_spinner_reveal_choices_keep_exact_packets_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for discard in [false, true] {
+            eprintln!(
+                "{}",
+                if discard {
+                    "prepared_fixture::quandary_discard"
+                } else {
+                    "prepared_fixture::quandary_decline"
+                }
+            );
             let mut raw = ready(actor);
             let quandary = put(&mut raw, actor, "Painful Quandary", Zone::Hand);
             let think = put(&mut raw, actor.opponent(), "Think Twice", Zone::Hand);
@@ -414,6 +424,7 @@ fn paid_quandary_discard_or_life_and_spinner_reveal_choices_keep_exact_packets_b
             drain(&mut s);
             assert_eq!(gameplay(&s), result);
         }
+        eprintln!("prepared_fixture::spinner_reveal");
         let mut raw = ready(actor);
         let spinner = put(&mut raw, actor, "Spinner of Souls", Zone::Hand);
         let elf = put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield);

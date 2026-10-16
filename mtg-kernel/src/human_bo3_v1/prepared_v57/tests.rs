@@ -868,9 +868,12 @@ fn genuine_human_paid_all_prepared_current_families_share_complete_handles_both_
         for name in names {
             put(&mut state, actor, name, Zone::Hand);
         }
+        eprintln!("human_prepared_fixture::construct_all_families");
         let mut session = own(state, actor);
         let mut projector = HumanPreparedProjectorV57::new(actor.into());
         for name in names {
+            // The fixture's fixed public list supplies every label.
+            eprintln!("human_prepared_fixture::paid_cast_family::{name}");
             cast(&mut session, &mut projector, name, None);
             drain_to(&mut session, &mut projector, 0);
         }
