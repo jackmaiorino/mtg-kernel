@@ -23,6 +23,10 @@ fn ready(actor: PlayerId) -> GameState {
 fn quiet(state: &mut GameState, decision: Decision) {
     let action = match decision {
         Decision::CastSpellOrPass { .. } => Action::Pass,
+        Decision::ChooseEffectBoolean {
+            purpose: crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+            ..
+        } => Action::ChooseEffectBoolean(true),
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
         Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
         Decision::OrderTriggers { pending, .. } => {
@@ -392,5 +396,311 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
         settle(&mut state);
         // The waiting Raid's MV-5 target is illegal at LKI power 3.
         assert_eq!(state.objects.get(trainer).zone, Zone::Graveyard);
+    }
+}
+
+fn announced_raid(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let (mut state, source, target) = crate::graveyard_return_public_v61::tests::raid_ready(actor);
+    assert!(
+        matches!(engine::advance_until_decision(&mut state),Decision::ChooseTargets { player, legal_targets, .. } if player==actor && legal_targets.contains(&Target::Object(target)))
+    );
+    let mandatory = serde_json::to_vec(&state).unwrap();
+    assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+    assert_eq!(serde_json::to_vec(&state).unwrap(), mandatory);
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass { player, .. } if player==actor)
+    );
+    let response_window = serde_json::to_vec(&state).unwrap();
+    assert!(engine::step(&mut state, Action::ChooseEffectBoolean(false)).is_err());
+    assert_eq!(serde_json::to_vec(&state).unwrap(), response_window);
+    assert!(state
+        .stack
+        .iter()
+        .any(|i| i.source == source && i.targets == vec![Target::Object(target)]));
+    (state, source, target)
+}
+fn reach_optional(state: &mut GameState, actor: PlayerId, source: ObjectId) {
+    for _ in 0..64 {
+        let d = engine::advance_until_decision(state);
+        if let Decision::ChooseEffectBoolean {
+            player,
+            source: host,
+            default,
+            purpose: crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+        } = d
+        {
+            assert_eq!((player, host, default), (actor, source, Some(false)));
+            crate::effect::validate_pending_effect_choice(state).unwrap();
+            return;
+        }
+        quiet(state, d);
+    }
+    panic!("genuine costless Alesha choice absent");
+}
+fn optional_public(
+    state: &GameState,
+    actor: PlayerId,
+) -> crate::graveyard_return_public_v61::AleshaChoiceV61 {
+    use crate::graveyard_return_public_v61::{capture, ProgramV61};
+    let facts = capture(state, actor).unwrap();
+    assert_eq!(
+        facts
+            .triggers
+            .iter()
+            .filter(|r| matches!(r.program, ProgramV61::AleshaRaid { .. }))
+            .count(),
+        1,
+        "resolving root is represented once at its actual stage"
+    );
+    assert!(facts
+        .battlefield_counters
+        .iter()
+        .flatten()
+        .all(|r| r.counters.revival >= 0));
+    facts
+        .triggers
+        .iter()
+        .find_map(|r| match &r.program {
+            ProgramV61::AleshaRaid {
+                may_return_at_resolution: true,
+                optional_choice,
+                ..
+            } if r.stage == crate::graveyard_return_public_v61::StageV61::Resolving => {
+                Some(*optional_choice)
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+#[test]
+fn paid_raid_costless_accept_decline_pending_and_answered_restore_keep_exact_target_both_seats() {
+    use crate::graveyard_return_public_v61::AleshaChoiceV61 as Choice;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, target) = announced_raid(actor);
+        // Mandatory target is already on a public root, followed by both players' response windows.
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state),Decision::CastSpellOrPass { player, .. } if player==actor.opponent())
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+        reach_optional(&mut state, actor, source);
+        assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+        assert_eq!(
+            optional_public(&state, actor),
+            Choice::AwaitingCostlessReturnChoice
+        );
+        let pending_bytes = serde_json::to_vec(&state).unwrap();
+        let before = state.objects.get(target).zone_change_count;
+        let pools = [state.players[0].mana_pool, state.players[1].mana_pool];
+        for accept in [false, true] {
+            let mut live: GameState = serde_json::from_slice(&pending_bytes).unwrap();
+            engine::step(&mut live, Action::ChooseEffectBoolean(accept)).unwrap();
+            assert_eq!(
+                live.objects.get(target).zone,
+                Zone::Graveyard,
+                "answer records a choice before consequence"
+            );
+            assert_eq!(optional_public(&live, actor), Choice::Answered { accept });
+            let answered = serde_json::to_vec(&live).unwrap();
+            let mut restored: GameState = serde_json::from_slice(&answered).unwrap();
+            for branch in [&mut live, &mut restored] {
+                settle(branch);
+                assert_eq!(
+                    branch.objects.get(target).zone,
+                    if accept {
+                        Zone::Battlefield
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+                assert_eq!(
+                    branch.objects.get(target).zone_change_count,
+                    before + u32::from(accept)
+                );
+                assert_eq!(branch.objects.get(target).owner, actor);
+                assert_eq!(branch.objects.get(target).controller, actor);
+                assert_eq!(
+                    [branch.players[0].mana_pool, branch.players[1].mana_pool],
+                    pools,
+                    "costless choice does not consume mana"
+                );
+                assert!(branch.engine.pending_effect.is_none());
+            }
+            assert_eq!(live, restored);
+        }
+    }
+}
+#[test]
+fn paid_raid_forged_boolean_context_stage_and_public_clone_paths_refuse_readonly_both_seats() {
+    use crate::effect::{
+        self, EffectBooleanChoicePurpose as Purpose, EffectFrame, PendingEffectChoice,
+    };
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, _) = announced_raid(actor);
+        reach_optional(&mut state, actor, source);
+        let genuine = serde_json::to_vec(&state).unwrap();
+        for n in 0..7 {
+            let mut bad: GameState = serde_json::from_slice(&genuine).unwrap();
+            let p = bad.engine.pending_effect.as_mut().unwrap();
+            match n {
+                0 => p.ctx.controller = actor.opponent(),
+                1 => p.ctx.x_value = 1,
+                2 => p.ctx.target_contracts.clear(),
+                3 => {
+                    if let Some(PendingEffectChoice::ChooseBoolean { path, .. }) = &mut p.choice {
+                        path.push(0);
+                    }
+                }
+                4 => {
+                    if let Some(PendingEffectChoice::ChooseBoolean { purpose, .. }) = &mut p.choice
+                    {
+                        *purpose = Purpose::ShuffleLibrary { player: actor };
+                    }
+                }
+                5 => {
+                    p.choice = None;
+                    p.frames.clear();
+                }
+                _ => p.frames.push(EffectFrame::Program {
+                    op: EffectOp::Sequence(vec![]),
+                    path: vec![],
+                }),
+            }
+            let unchanged = serde_json::to_vec(&bad).unwrap();
+            assert!(effect::validate_pending_effect_choice(&bad).is_err());
+            assert!(effect::choose_resumable_boolean(&mut bad, true).is_err());
+            assert_eq!(serde_json::to_vec(&bad).unwrap(), unchanged);
+        }
+        let p = state.engine.pending_effect.as_ref().unwrap().clone();
+        let mut public = state.clone();
+        let before = serde_json::to_vec(&public).unwrap();
+        assert!(effect::begin_resumable_resolution(
+            p.resolving_item.inline_effect.as_ref().unwrap(),
+            &p.ctx,
+            p.resolving_item.clone(),
+            &mut public
+        )
+        .is_err());
+        assert!(effect::resume_resumable_resolution(&mut public).is_err());
+        assert_eq!(serde_json::to_vec(&public).unwrap(), before);
+        engine::step(&mut state, Action::ChooseEffectBoolean(true)).unwrap();
+        let mut bad = state.clone();
+        bad.engine
+            .pending_effect
+            .as_mut()
+            .unwrap()
+            .answered_choice_guard = None;
+        assert!(effect::validate_pending_effect_choice(&bad).is_err());
+        let item = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
+        let owner = effect::alesha_optional_v1::acquire_resume(&state, &item)
+            .unwrap()
+            .unwrap();
+        let index = state.stack.iter().position(|i| i == &item).unwrap();
+        state.stack.remove(index); // Exact native pre-pop boundary, not a fabricated row.
+        let remaining = state.stack.clone();
+        state.engine.pending_effect.as_mut().unwrap().ctx.x_value = 1;
+        assert!(effect::alesha_optional_v1::resume_owned(&mut state, owner).is_err());
+        assert_eq!(
+            state.stack, remaining,
+            "failed private handoff cannot loan or leak a row"
+        );
+        // A genuine pre-pop begin owner still rejects a changed context after
+        // its temporary row loan has been installed, then returns that loan.
+        let (mut begin, _, _) = announced_raid(actor);
+        let item = begin
+            .stack
+            .iter()
+            .find(|i| matches!(i.inline_effect, Some(EffectOp::AleshaRaidReturn { .. })))
+            .unwrap()
+            .clone();
+        let owner = effect::alesha_optional_v1::acquire_begin(&begin, &item)
+            .unwrap()
+            .unwrap();
+        let position = begin.stack.iter().position(|i| i == &item).unwrap();
+        begin.stack.remove(position);
+        let remaining = begin.stack.clone();
+        let mut wrong = p.ctx.clone();
+        wrong.x_value = 1;
+        assert!(effect::alesha_optional_v1::begin_owned(&mut begin, owner, &wrong).is_err());
+        assert_eq!(
+            begin.stack, remaining,
+            "validator error returns the installed stack loan"
+        );
+    }
+}
+#[test]
+fn paid_flash_control_response_keeps_original_alesha_optional_chooser_and_physical_owner_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, target) = announced_raid(actor);
+        for (name, targeted) in [
+            ("High Fae Trickster", None),
+            ("Involuntary Employment", Some(source)),
+        ] {
+            let response = put(&mut state, actor.opponent(), name, Zone::Hand);
+            crate::graveyard_return_public_v61::tests::announce(
+                &mut state,
+                actor.opponent(),
+                response,
+                targeted,
+            );
+            for _ in 0..40 {
+                let d = engine::advance_until_decision(&mut state);
+                if state.objects.get(response).zone != Zone::Stack {
+                    break;
+                }
+                quiet(&mut state, d);
+            }
+            assert_ne!(state.objects.get(response).zone, Zone::Stack);
+            assert!(state.stack.iter().any(|i| i.source == source));
+        }
+        assert_eq!(state.objects.get(source).controller, actor.opponent());
+        reach_optional(&mut state, actor, source);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        for branch in [&mut state, &mut restored] {
+            engine::step(branch, Action::ChooseEffectBoolean(true)).unwrap();
+            settle(branch);
+            assert_eq!(branch.objects.get(target).zone, Zone::Battlefield);
+            assert_eq!(branch.objects.get(target).owner, actor);
+            assert_eq!(branch.objects.get(target).controller, actor);
+            assert_eq!(branch.objects.get(source).controller, actor.opponent());
+        }
+        assert_eq!(state, restored);
+    }
+}
+#[test]
+fn actual_paid_announced_raid_counter_primitive_does_not_offer_optional_return_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, target) = announced_raid(actor);
+        let row = state
+            .stack
+            .iter()
+            .find(|i| i.source == source)
+            .unwrap()
+            .v4
+            .stack_item_id;
+        // Native countering primitive on the authentic paid trigger. This is
+        // not a claim that a nonexistent Limited counter-ability card was cast.
+        assert!(engine::counter_stack_item_by_id(&mut state, row)
+            .unwrap()
+            .is_some());
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&snapshot).unwrap();
+        for branch in [&mut state, &mut restored] {
+            let d = engine::advance_until_decision(branch);
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+            assert!(branch.stack.iter().all(|i| i.v4.stack_item_id != row));
+            assert!(branch.engine.pending_effect.is_none());
+            assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+        }
+        assert_eq!(state, restored);
     }
 }
