@@ -109,8 +109,14 @@ pub fn producer_sha256_v2() -> String {
         ("effect.rs", include_str!("effect.rs")),
         ("build.rs", include_str!("../build.rs")),
         ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
+        (
+            "bloodthirsty_conqueror_v49/custody.rs",
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        ),
+        (
+            "linked_aura_operation_v1.rs",
+            include_str!("linked_aura_operation_v1.rs"),
+        ),
         ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
         ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
         ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
