@@ -1,5 +1,6 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
 mod kellan_public_operands;
@@ -79,6 +80,8 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1.rs"),
             include_str!("current_mixed_policy_v1/numeric.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
+            include_str!("current_mixed_policy_v1/canonical_semantic_booleans.rs"),
+            include_str!("current_mixed_policy_v1/divine_printing.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
             include_str!("current_mixed_policy_v1/eaten_printing.rs"),
             include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
@@ -163,6 +166,10 @@ pub fn feature_identity() -> String {
             include_str!("rules_meaning_crystal_barricade_v1.rs"),
             include_str!("rules_meaning_crystal_ordering_v1.rs"),
             include_str!("rules_meaning_divine_v44.rs"),
+            include_str!("divine_public_v44.rs"),
+            include_str!("policy_observation_variable_cast_v1.rs"),
+            include_str!("rl_variable_cast_v1.rs"),
+            include_str!("rl_session/variable_cast_v1.rs"),
             include_str!("rules_meaning_doubling_season_v48.rs"),
             include_str!("doubling_season_v48.rs"),
             include_str!("rules_meaning_eaten_alive_v1.rs"),

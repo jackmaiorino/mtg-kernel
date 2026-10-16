@@ -1197,3 +1197,8 @@ fn kellan_paid_upgrades_combat_impulse_restore_privacy_elendasession_both_seats(
 fn fiery_paid_optional_equipment_death_replacement_restore_privacy_elenda_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<ElendaSession>();
 }
+
+#[test]
+fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_divine::<ElendaSession>();
+}
