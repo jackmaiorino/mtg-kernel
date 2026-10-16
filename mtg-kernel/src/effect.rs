@@ -4245,6 +4245,7 @@ pub fn begin_resumable_resolution(
         return Err("Tutelage requires its genuine native pre-removal owner".into());
     }
     if ((aberration_family_item_v1(&resolving_item)
+        || aberration_public_family_v1(state, resolving_item.v4.stack_item_id)
         || ctx
             .stack_item_id
             .is_some_and(|id| aberration_public_family_v1(state, id)))
@@ -9561,6 +9562,7 @@ fn aberration_public_family_v1(state: &GameState, id: StackItemId) -> bool {
 }
 fn aberration_resolving_family_v1(state: &GameState, pending: &EffectContinuation) -> bool {
     aberration_family_item_v1(&pending.resolving_item)
+        || aberration_public_family_v1(state, pending.resolving_item.v4.stack_item_id)
         || pending
             .ctx
             .stack_item_id
@@ -18426,8 +18428,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
         || aberration_reveal_context_v1(state, op, ctx)
         || state.engine.pending_effect.as_ref().is_some_and(|p| {
-            aberration_family_item_v1(&p.resolving_item)
-                && p.ctx.stack_item_id == ctx.stack_item_id
+            ((aberration_family_item_v1(&p.resolving_item)
+                && p.ctx.stack_item_id == ctx.stack_item_id)
+                || (aberration_resolving_family_v1(state, p)
+                    && p.ctx.source == ctx.source
+                    && p.ctx.ability_source_contract == ctx.ability_source_contract))
                 && !(validate_aberration_ward_continuation_v1(state, p).is_ok()
                     && p.resolving_item.inline_effect.as_ref() == Some(op)
                     && aberration_context_matches_v1(state, &p.resolving_item, ctx))
