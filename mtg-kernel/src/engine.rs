@@ -41,6 +41,7 @@
 
 pub mod greatwurm_cast_v1;
 pub mod mandatory_cast_cost_v1;
+pub mod omniscience_cast_v1;
 pub mod sphinx_lore_cast_v1;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
@@ -834,6 +835,8 @@ pub enum ChosenCreatureCostZoneV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omniscience_v1: Option<omniscience_cast_v1::ChoiceV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sphinx_lore_v1: Option<sphinx_lore_cast_v1::ChoiceV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greatwurm_v1: Option<greatwurm_cast_v1::ChoiceV1>,
@@ -963,6 +966,10 @@ impl std::hash::Hash for PendingCast {
         std::hash::Hash::hash(&self.chosen_creature_cost, state);
         if let Some(choice) = self.mandatory_additional_cost {
             std::hash::Hash::hash(&"mandatory_additional_cost/v1", state);
+            std::hash::Hash::hash(&choice, state);
+        }
+        if let Some(choice) = self.omniscience_v1 {
+            std::hash::Hash::hash(&"omniscience_cast/v1", state);
             std::hash::Hash::hash(&choice, state);
         }
         if let Some(choice) = self.sphinx_lore_v1 {
@@ -2130,6 +2137,7 @@ fn validate_physical_spell_cast_origin(
     mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
     greatwurm_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     sphinx_lore_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
+    omniscience_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2234,6 +2242,19 @@ fn validate_physical_spell_cast_origin(
                 && graveyard_generation == origin.origin_zone_change_count
                 && cast_method == CastMethodV4::Normal
                 && crate::effect::greatwurm_v1::definition(source.card_def)
+        }
+        SpellCastRouteV4::OmniscienceHandV1 {
+            options_history_index: _,
+            holder,
+            hand_generation,
+        } => {
+            origin.origin_zone == Zone::Hand
+                && holder == item.controller
+                && source.owner == holder
+                && hand_generation == origin.origin_zone_change_count
+                && item.v4.x_value == 0
+                && omniscience_cast_v1::free_cast_for(state, item.source, holder)
+                && resolution_cast_v1::form_allowed(state, item.source, cast_method)
         }
         SpellCastRouteV4::SphinxLoreFlashbackV1 {
             installation,
@@ -2740,6 +2761,16 @@ fn storm_source_contract_is_structurally_valid(
             origin.origin_zone == Zone::Exile
                 && holder == contract.controller
                 && permission_zone_change_count == origin.origin_zone_change_count
+        }
+        SpellCastRouteV4::OmniscienceHandV1 {
+            holder,
+            hand_generation,
+            ..
+        } => {
+            origin.origin_zone == Zone::Hand
+                && holder == contract.controller
+                && hand_generation == origin.origin_zone_change_count
+                && omniscience_cast_v1::paid_contract(state, contract).is_ok()
         }
         SpellCastRouteV4::GraveyardFlashback
         | SpellCastRouteV4::Plotted { .. }
@@ -8604,7 +8635,9 @@ fn is_castable_now(
 fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     let mut out = Vec::new();
     for &id in &state.players[player.index()].hand {
-        if is_castable_now(player, id, CastMethodV4::Normal, state) {
+        if is_castable_now(player, id, CastMethodV4::Normal, state)
+            || omniscience_cast_v1::offered_free(state, id, player)
+        {
             out.push(id);
         }
     }
@@ -11473,6 +11506,7 @@ pub(crate) fn validate_pending_cast(
     mandatory_cast_cost_v1::validate_pending(state, pending)?;
     greatwurm_cast_v1::validate_pending(state, pending)?;
     sphinx_lore_cast_v1::validate(state, pending)?;
+    omniscience_cast_v1::validate(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -12249,6 +12283,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         .and_then(|item| item.v4.cast_method)
         .expect("validated pending cast retains its placeholder method");
 
+    if omniscience_cast_v1::waiting(&pending) {
+        return Some(Decision::ChooseEffectOption {
+            player: pending.controller,
+            source: pending.spell,
+            option_count: 2,
+        });
+    }
     if sphinx_lore_cast_v1::waiting(&pending) {
         match sphinx_lore_cast_v1::count(state, &pending) {
             Ok(option_count) if option_count > 0 => {
@@ -19929,6 +19970,7 @@ enum PendingCastActionStage {
     ChooseMandatoryAdditionalCost,
     ChooseGreatwurmCost,
     ChooseSphinxLoreRoute,
+    ChooseOmniscienceRoute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19956,6 +19998,9 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::Discard);
     }
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if omniscience_cast_v1::waiting(pending) {
+        return Ok(PendingCastActionStage::ChooseOmniscienceRoute);
+    }
     if sphinx_lore_cast_v1::waiting(pending) {
         return Ok(PendingCastActionStage::ChooseSphinxLoreRoute);
     }
@@ -20086,7 +20131,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             PendingCastActionStage::ChooseAdditionalCostZone
                 | PendingCastActionStage::ChooseMandatoryAdditionalCost
                 | PendingCastActionStage::ChooseGreatwurmCost
-                | PendingCastActionStage::ChooseSphinxLoreRoute,
+                | PendingCastActionStage::ChooseSphinxLoreRoute
+                | PendingCastActionStage::ChooseOmniscienceRoute,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseXValue,
@@ -22681,6 +22727,9 @@ fn apply_pending_cast_effect_option(
     let stage = pending_cast_action_stage(state, &pending)?;
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     match stage {
+        PendingCastActionStage::ChooseOmniscienceRoute => {
+            omniscience_cast_v1::answer(state, &pending, option_index)
+        }
         PendingCastActionStage::ChooseSphinxLoreRoute => {
             sphinx_lore_cast_v1::answer(state, &pending, option_index)
         }
@@ -22863,6 +22912,23 @@ fn materialize_begin_cast_v1(
     spell_id: ObjectId,
     forced_cast_method: Option<CastMethodV4>,
 ) {
+    materialize_begin_cast_with_quote_v1(state, player, spell_id, forced_cast_method, None);
+}
+fn materialize_begin_cast_with_omniscience_quote_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    spell_id: ObjectId,
+    quote: omniscience_cast_v1::QuoteV1,
+) {
+    materialize_begin_cast_with_quote_v1(state, player, spell_id, None, Some(quote));
+}
+fn materialize_begin_cast_with_quote_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    spell_id: ObjectId,
+    forced_cast_method: Option<CastMethodV4>,
+    quote: Option<omniscience_cast_v1::QuoteV1>,
+) {
     let origin_zone = state.objects.get(spell_id).zone;
     let origin_zone_change_count = state.objects.get(spell_id).zone_change_count;
     let def = &card_def::CARD_DEFS[state.objects.get(spell_id).card_def as usize];
@@ -22902,6 +22968,13 @@ fn materialize_begin_cast_v1(
             .expect("permitted adventure")
     });
     let target_spec = def.target_spec;
+    let omniscience_choice = if let Some(quote) = quote {
+        Some(omniscience_cast_v1::seed_quote(state, quote))
+    } else if forced_cast_method.is_none() {
+        omniscience_cast_v1::seed(state, spell_id, player)
+    } else {
+        None
+    };
     let sphinx_lore_choice = if forced_cast_method.is_none() {
         sphinx_lore_cast_v1::seed(state, spell_id, player)
     } else {
@@ -22937,7 +23010,9 @@ fn materialize_begin_cast_v1(
     });
     let is_flashback = cast_method == CastMethodV4::Flashback;
     let resolution_permission = resolution_cast_v1::permit(state, spell_id).filter(|p| !p.land);
-    let cast_route = if let Some((_, route)) = sphinx_lore_choice {
+    let cast_route = if let Some(choice) = omniscience_choice {
+        omniscience_cast_v1::origin(choice, player, origin_zone_change_count)
+    } else if let Some((_, route)) = sphinx_lore_choice {
         sphinx_lore_cast_v1::selected_origin(route, player, origin_zone_change_count)
     } else {
         match cast_method {
@@ -23003,7 +23078,8 @@ fn materialize_begin_cast_v1(
         route: cast_route,
         finalized_method: None,
     };
-    let without_mana_cost = resolution_permission.is_some()
+    let without_mana_cost = omniscience_cast_v1::free_choice(omniscience_choice)
+        || resolution_permission.is_some()
         || resolution_cast_v1::free_cast_for(state, spell_id, player);
     let free_room_door_choice = without_mana_cost
         && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
@@ -23105,6 +23181,7 @@ fn materialize_begin_cast_v1(
     });
 
     state.engine.pending_cast = Some(PendingCast {
+        omniscience_v1: omniscience_choice,
         sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
         greatwurm_v1: greatwurm_choice,
         spell: spell_id,
@@ -23241,6 +23318,7 @@ fn finalize_owned_cast(
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
     let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
+    let omniscience_cast_v1 = omniscience_cast_v1::record_finalized(state, &pending)?;
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -23326,6 +23404,7 @@ fn finalize_owned_cast(
     cast_origin.finalized_method = Some(cast_method);
     debug_assert!(source_v4.finalized_cast_binding.is_none());
     source_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
+        omniscience_cast_v1,
         sphinx_lore_cast_v1,
         greatwurm_payment_v1,
         x_value: u16::from(x_value),

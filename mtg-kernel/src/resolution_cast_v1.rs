@@ -57,6 +57,9 @@ pub(crate) fn free_cast(state: &GameState, source: ObjectId) -> bool {
     )
 }
 pub(super) fn free_cast_for(state: &GameState, source: ObjectId, controller: PlayerId) -> bool {
+    if super::omniscience_cast_v1::free_cast_for(state, source, controller) {
+        return true;
+    }
     let Some(object) = state.objects.try_get(source) else {
         return false;
     };
