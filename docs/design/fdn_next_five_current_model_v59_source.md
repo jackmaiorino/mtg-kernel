@@ -5,9 +5,10 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 `41aea9c56747df05377d42810f93833cdd8d3f93` at `891af8e91`.
 Seven earlier Full registrations remain Full. The five appendices retain Partial
 IDs 452-456. Native Alesha, Nine-Lives Familiar, Valkyrie's Call and Perforating
-Artist appendices retain Partial IDs 457-460. Source inventory is 461 definitions and 269 FDN rows;
+Artist appendices retain Partial IDs 457-460. Niv-Mizzet, Visionary retains
+Partial ID 461. Source inventory is 462 definitions and 270 FDN rows;
 frozen booster membership remains 286 names and 24 token dependencies (245 Full,
-9 Partial, 32 Missing). Full-only production deck reset still refuses each appendix.
+10 Partial, 31 Missing). Full-only production deck reset still refuses each appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -211,3 +212,20 @@ Candidate annotations and owning, model, Human and transport extensions remain
 separate work. Both source additions preserve the existing 151 model cases,
 NextFive owner, Human and transport files and all Python files. Pinned formatting
 and diff checks pass; no Rust compilation or execution is claimed.
+
+Reviewed Niv source through `22d997b0c6babfe7fc08521d64ea1c0f0371c750`
+is composed at `89623154f059c280080b71ef1c831d754bece620`. Exact pre-removal
+stack-row binding survives native damage and replacement continuations. A
+catalog-gated departure receipt preserves the source's original incarnation and
+immediately previous controller, including departure before Niv enters. Current
+source control is sampled when that original incarnation remains live. Crystal
+initial, saved and resumed contexts retain the same authenticated origin. Old
+absent-field serialization and hash writes remain unchanged. Three paid both-seat
+source groups include Murder before Archer damage and source control before
+departure. Integration fixtures use the public context constructor, keeping the
+new origin private. Root and scoped source review are clear; all Rust remains
+uncompiled/unrun and no consumer permission is added.
+
+All 176 affected Python cases passed at exact composed `89623154f059c280080b71ef1c831d754bece620`
+in 20.972 seconds. Their complete log and digest are retained in both evidence
+stores. Existing model and owning source remains unchanged in this prepared lane.

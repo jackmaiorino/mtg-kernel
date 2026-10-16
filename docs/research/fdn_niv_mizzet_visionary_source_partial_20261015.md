@@ -1,6 +1,6 @@
 # Niv-Mizzet, Visionary source preparation
 
-This is an unregistered source-only preparation for the later Niv-Mizzet, Visionary printing, reserved kernel ID 461 after the separate Artist ID 460 work. It does not add a `CardDef`, printing registration, deck entry, model route, or qualification claim. The source code remains in the existing hashed `event.rs`, `trigger.rs`, and `engine.rs` files so a future identity closure cannot omit a new child module.
+This document preserves the initial unregistered source preparation. Later reviewed source registers Niv-Mizzet, Visionary as Partial ID 461 after Artist ID 460 and adds genuine paid fixtures; the current receipt is [the source registration record](../design/fdn_niv_mizzet_visionary_source_v1.md). Registration and source review do not establish Rust runtime qualification or a model route.
 
 ## Pinned source and semantics
 
@@ -14,6 +14,6 @@ For the no-maximum-hand-size ability, cleanup snapshots the active player's curr
 
 The receipts follow the engine's existing mutable `GameState` and event-history trust boundary. Structural checks bind observer/source contracts, committed damage, and the consuming stack item; coordinated edits to the raw state and event history are outside native validation. A future sealed owner must preserve the state/snapshot privacy boundary before exposing this recipe. The legacy rules-vector meaning slice keeps the new leaf opaque because it cannot express this receipt binding; this source work does not grant a model route.
 
-## Remaining source work
+## Remaining qualification and coverage
 
-The current canonical card registry does not yet contain Niv-Mizzet, Visionary, and the Artist ID 460 prerequisite is still in progress. Therefore this checkpoint intentionally has no Niv card registration or genuine Niv paid fixture. The implementation is inline in existing hashed `event.rs`, `trigger.rs`, `engine.rs`, `effect.rs`, `effect_refs.rs`, and rules-vector meaning files. After the real Artist prerequisite lands, register the exact printing and add both-seat fixtures for doubled, prevented/zero, combat, self-damage, source and controller departure, countered trigger, full-width draw/exhaustion, suppression/control at cleanup, restoration, and receipt/effect tampering. The written source has not been compiled or run.
+The Artist prerequisite, genuine Partial registration and three paid both-seat source groups are now composed. They cover queued control changes, Murder before Archer damage, control before source departure, native snapshot restoration and the cleanup hand-limit predicate. They do not establish the complete doubled, prevented/zero, combat, self-damage, countered-trigger, full-width/exhaustion, suppression or receipt-tampering coverage listed in this initial plan. Native qualification and complete owning, model, Human and transport admission remain required. The written Rust source has not been compiled or run.
