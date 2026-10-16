@@ -11120,6 +11120,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Kraken" => "Subtype::Kraken",
         "Djinn" => "Subtype::Djinn",
         "Drake" => "Subtype::Drake",
+        "Sphinx" => "Subtype::Sphinx",
         "Mouse" => "Subtype::Mouse",
         "Werewolf" => "Subtype::Werewolf",
         "Rabbit" => "Subtype::Rabbit",

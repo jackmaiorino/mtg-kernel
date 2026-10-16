@@ -348,6 +348,8 @@ pub enum Subtype {
     Phoenix,
     /// Appended for the genuine Drake Hatcher dependency; stable ids persist.
     Drake,
+    /// Appended for Curator of Destinies without changing legacy choice lists.
+    Sphinx,
 }
 
 impl Subtype {
@@ -832,6 +834,7 @@ impl Subtype {
             151 => Subtype::Bear,
             152 => Subtype::Phoenix,
             153 => Subtype::Drake,
+            154 => Subtype::Sphinx,
             _ => return None,
         })
     }
@@ -995,6 +998,7 @@ impl Subtype {
             Subtype::Bear => true,
             Subtype::Phoenix => true,
             Subtype::Drake => true,
+            Subtype::Sphinx => true,
         }
     }
 
