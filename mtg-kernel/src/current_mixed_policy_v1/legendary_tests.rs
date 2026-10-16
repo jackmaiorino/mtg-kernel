@@ -321,7 +321,10 @@ impl Harness {
             {
                 return;
             }
-            self.act(|a|matches!(a,ActionSemanticV1::Pass{..})||matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())||matches!(a,ActionSemanticV1::DeclareBlockersForAttacker{blockers,..}if blockers.is_empty()));
+            self.act(|a|matches!(a,ActionSemanticV1::Pass{..})
+                || matches!(a,ActionSemanticV1::ChooseAttackerInclusion{include:false,..}|ActionSemanticV1::ChooseBlockerInclusion{include:false,..})
+                || matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())
+                || matches!(a,ActionSemanticV1::DeclareBlockersForAttacker{blockers,..}if blockers.is_empty()));
         }
         panic!("actual next main absent")
     }

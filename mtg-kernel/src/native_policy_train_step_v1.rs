@@ -72,6 +72,7 @@ use std::thread;
 mod archive_distillation_v1;
 mod carryover_probe_v1;
 mod e_supported_policy_v1;
+mod exact_parallel_backward_v1;
 pub(crate) mod exploration_v1;
 mod gae_v1;
 mod head_only_mask_v1;
@@ -3677,10 +3678,97 @@ fn forward_with_tape(
     })
 }
 
+/// Receives each layer of `reverse_decision_into_v1`. `linear_v1` must leave
+/// `d_input` exactly as `linear_backward_into` does; the parameter-gradient
+/// terms are either added at once or kept for an exact later replay
+/// (`exact_parallel_backward_v1`).
+trait ReverseGradientSinkV1<'t> {
+    #[allow(clippy::too_many_arguments)]
+    fn linear_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+        weight_index: usize,
+        bias_index: usize,
+        input: &'t [f32],
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        d_output: &[f32],
+        d_input: &mut Vec<f32>,
+    ) -> Result<(), NativePolicyTrainErrorV1>;
+
+    /// Each object's card-embedding row receives the embedding part of that
+    /// object's `d_object_input` row; padding token 0 receives nothing.
+    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]);
+}
+
+/// The sequential backward: each term is added to `gradients` when computed.
+struct AccumulateGradientsV1<'g>(&'g mut [Vec<f32>]);
+
+impl<'t> ReverseGradientSinkV1<'t> for AccumulateGradientsV1<'_> {
+    fn linear_v1(
+        &mut self,
+        parameters: &[NativeNamedParameterV1],
+        weight_index: usize,
+        bias_index: usize,
+        input: &'t [f32],
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        d_output: &[f32],
+        d_input: &mut Vec<f32>,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        linear_backward_into(
+            parameters,
+            self.0,
+            weight_index,
+            bias_index,
+            input,
+            rows,
+            input_dim,
+            output_dim,
+            d_output,
+            d_input,
+        )
+    }
+
+    fn card_embedding_v1(&mut self, object_card_ids: &'t [usize], d_object_input: &[f32]) {
+        for (object, token) in object_card_ids.iter().copied().enumerate() {
+            if token == 0 {
+                continue;
+            }
+            let source = object * OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
+            let destination = token * CARD_EMBEDDING_DIM_V1;
+            for embedding in 0..CARD_EMBEDDING_DIM_V1 {
+                self.0[CARD_EMBEDDING][destination + embedding] +=
+                    d_object_input[source + embedding];
+            }
+        }
+    }
+}
+
 fn reverse_decision(
     parameters: &[NativeNamedParameterV1],
     gradients: &mut [Vec<f32>],
     tape: &DecisionTapeV1,
+    d_logits: &[f32],
+    d_value: f32,
+    workspace: &mut ReverseDecisionWorkspaceV1,
+) -> Result<(), NativePolicyTrainErrorV1> {
+    reverse_decision_into_v1(
+        parameters,
+        &mut AccumulateGradientsV1(gradients),
+        tape,
+        d_logits,
+        d_value,
+        workspace,
+    )
+}
+
+fn reverse_decision_into_v1<'t>(
+    parameters: &[NativeNamedParameterV1],
+    sink: &mut impl ReverseGradientSinkV1<'t>,
+    tape: &'t DecisionTapeV1,
     d_logits: &[f32],
     d_value: f32,
     workspace: &mut ReverseDecisionWorkspaceV1,
@@ -3720,9 +3808,8 @@ fn reverse_decision(
         two_layer_first_output,
     } = workspace;
 
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         SCORER_SECOND_WEIGHT,
         SCORER_SECOND_BIAS,
         tape.f32_values_v1(tape.scorer_hidden),
@@ -3733,9 +3820,8 @@ fn reverse_decision(
         d_scorer_hidden,
     )?;
     apply_tanh_gradient(tape.f32_values_v1(tape.scorer_hidden), d_scorer_hidden)?;
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         SCORER_FIRST_WEIGHT,
         SCORER_FIRST_BIAS,
         tape.f32_values_v1(tape.scorer_input),
@@ -3757,9 +3843,8 @@ fn reverse_decision(
     }
 
     let d_value_output = [d_value];
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         VALUE_SECOND_WEIGHT,
         VALUE_SECOND_BIAS,
         tape.f32_values_v1(tape.value_hidden),
@@ -3770,9 +3855,8 @@ fn reverse_decision(
         d_value_hidden,
     )?;
     apply_tanh_gradient(tape.f32_values_v1(tape.value_hidden), d_value_hidden)?;
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         VALUE_FIRST_WEIGHT,
         VALUE_FIRST_BIAS,
         tape.f32_values_v1(tape.state_encoder.second_output),
@@ -3786,7 +3870,7 @@ fn reverse_decision(
 
     two_layer_backward_into(
         parameters,
-        gradients,
+        sink,
         ACTION_SPEC,
         &tape.f32_arena,
         &tape.action_encoder,
@@ -3815,7 +3899,7 @@ fn reverse_decision(
         }
         two_layer_backward_into(
             parameters,
-            gradients,
+            sink,
             ACTION_REF_SPEC,
             &tape.f32_arena,
             action_ref_tape,
@@ -3835,7 +3919,7 @@ fn reverse_decision(
 
     two_layer_backward_into(
         parameters,
-        gradients,
+        sink,
         STATE_SPEC,
         &tape.f32_arena,
         &tape.state_encoder,
@@ -3854,7 +3938,7 @@ fn reverse_decision(
 
     two_layer_backward_into(
         parameters,
-        gradients,
+        sink,
         NODE_SPEC,
         &tape.f32_arena,
         &tape.node_update,
@@ -3888,7 +3972,7 @@ fn reverse_decision(
         }
         two_layer_backward_into(
             parameters,
-            gradients,
+            sink,
             EDGE_SPEC,
             &tape.f32_arena,
             edge_tape,
@@ -3911,7 +3995,7 @@ fn reverse_decision(
 
     two_layer_backward_into(
         parameters,
-        gradients,
+        sink,
         OBJECT_SPEC,
         &tape.f32_arena,
         &tape.object_encoder,
@@ -3920,17 +4004,7 @@ fn reverse_decision(
         two_layer_first_output,
         d_object_input,
     )?;
-    for (object, token) in object_card_ids.iter().copied().enumerate() {
-        if token == 0 {
-            continue;
-        }
-        let source = object * OBJECT_ENCODER_INPUT + OBJECT_FEATURE_DIM_V1;
-        let destination = token * CARD_EMBEDDING_DIM_V1;
-        for embedding in 0..CARD_EMBEDDING_DIM_V1 {
-            gradients[CARD_EMBEDDING][destination + embedding] +=
-                d_object_input[source + embedding];
-        }
-    }
+    sink.card_embedding_v1(object_card_ids, d_object_input);
     Ok(())
 }
 
@@ -3988,11 +4062,11 @@ fn two_layer_forward_into_arena_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn two_layer_backward_into(
+fn two_layer_backward_into<'t>(
     parameters: &[NativeNamedParameterV1],
-    gradients: &mut [Vec<f32>],
+    sink: &mut impl ReverseGradientSinkV1<'t>,
     spec: TwoLayerSpecV1,
-    arena: &[f32],
+    arena: &'t [f32],
     tape: &TwoLayerTapeV1,
     d_output: &[f32],
     d_second_pre: &mut Vec<f32>,
@@ -4002,9 +4076,8 @@ fn two_layer_backward_into(
     d_second_pre.clear();
     d_second_pre.extend_from_slice(d_output);
     apply_tanh_gradient(tape.second_output.values_v1(arena), d_second_pre)?;
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         spec.second_weight,
         spec.second_bias,
         tape.first_output.values_v1(arena),
@@ -4015,9 +4088,8 @@ fn two_layer_backward_into(
         d_first_output,
     )?;
     apply_tanh_gradient(tape.first_output.values_v1(arena), d_first_output)?;
-    linear_backward_into(
+    sink.linear_v1(
         parameters,
-        gradients,
         spec.first_weight,
         spec.first_bias,
         tape.input.values_v1(arena),
@@ -4473,9 +4545,7 @@ fn hash_train_state_tensor_v1(
         &(values.len() as u64).to_be_bytes(),
     );
     train_state_hash_atom_prefix_v1(hasher, b"tensor_f32le", values.len() * 4);
-    for value in values {
-        hasher.update(value.to_bits().to_le_bytes());
-    }
+    crate::native_policy_value_net_v1::sha256_update_f32_le_v1(hasher, values);
 }
 
 fn finish_train_state_hash_v1(hasher: Sha256) -> [u8; 32] {

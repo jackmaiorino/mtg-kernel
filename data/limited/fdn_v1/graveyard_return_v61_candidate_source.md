@@ -39,16 +39,22 @@ is stripped, and no caller flag or new source/owner capability substitutes for
 the missing read-only issued-origin API. Drake activation projection is therefore
 unqualified at this checkpoint.
 
-Alesha's current native root is `BindAleshaRaidReturn`, materialized as the bare
-`AleshaRaidReturn` leaf. Its target is mandatory and its legal return executes
-directly. The printed resolution-time optional return is absent in the inherited
-engine. This checkpoint explicitly emits
-`alesha_optional_resolution_supported: false` and invents no optional decision.
-No existing costless optional-child operation can repair that root directly.
-A truthful repair requires a typed Boolean purpose, definition-owned root and
-continuation validation, target/source preservation, and genuine paid accept
-and decline/restore fixtures. Reusing an unrelated payment or search purpose
-would change its meaning. That shared optional-protocol work remains pending.
+The composed native Alesha source now materializes `BindAleshaRaidReturn` as
+`AleshaRaidReturn` with a distinct costless optional Boolean at resolution after
+mandatory target selection and the response window. Native commit
+`48b4b5e306b2970e8b93652fb5a6893f9b9366cc` adds closed root/context/stage
+validation, a consumed pre-pop native row owner and genuine paid accept/decline
+and restore source fixtures. Its Niv integration retains an exact absent damage
+origin. Those native fixtures remain uncompiled and unrun.
+
+This candidate checkpoint still emits
+`alesha_optional_resolution_supported: false`. Native availability does not
+qualify this candidate's optional-stage annotation or executable authority.
+Candidate-specific waiting/answered Boolean mapping, exact native execution and
+restore coverage remain unsupported and untested here; no candidate owner,
+model, Human or transport permission is inferred from the native repair. The
+flag describes that remaining candidate boundary, rather than absence of the
+native printed ability.
 
 Eight unrun source fixtures cover paid both-seat ordinary/Familiar candidate
 mapping and genuine Drake refusal, Raid exact targets and original

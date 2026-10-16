@@ -61,7 +61,12 @@ fn cast(session: &mut ElendaSession, spell: ObjectId) {
 }
 fn drain(session: &mut ElendaSession) -> crate::elenda_observation_v52::ElendaObservationV52 {
     for _ in 0..64 {
-        let value = session.inner.decision_v52().unwrap();
+        let value = session.inner.decision_v52().unwrap_or_else(|error| {
+            panic!(
+                "genuine V52 stack drain lost its decision: {error:?}; response:{:?}",
+                session.current_response()
+            )
+        });
         let state = session.inner.fixture_state_v52();
         if state.stack.is_empty()
             && state.engine.pending_cast.is_none()

@@ -221,7 +221,10 @@ mod fdn {
             .iter()
             .enumerate()
             .filter(|(_, def)| {
-                def.token_counter_replacement_v48.is_some()
+                !def.starting_life_self_bonuses_v1.is_empty()
+                    || def.source_type_hexproof_v1.is_some()
+                    || def.other_controlled_nontoken_death_v1.is_some()
+                    || def.token_counter_replacement_v48.is_some()
                     || def.damage_replacement_v1.is_some()
                     || def.game_outcome_protection_v1.is_some()
                     || def.as_enters_color_choice_v1.is_some()
@@ -230,8 +233,14 @@ mod fdn {
             })
             .map(|(id, _)| id as u16)
             .collect::<Vec<_>>();
-        // These definitions have no V1 record to preserve. Keep its explicit
-        // refusal, while comparing every remaining supported record below.
+        // These exact native fields have typed successors and no V1 record.
+        // In particular Elenda and Spinner must never enter the supported
+        // snapshot below; both record/vector calls still have to refuse them.
+        for name in ["Elenda, Saint of Dusk", "Spinner of Souls"] {
+            assert!(precise_successors.contains(&card_id_by_name(name).unwrap()));
+        }
+        // Keep V1's explicit refusal, while comparing every remaining
+        // supported record and vector byte-for-byte below.
         for &id in &precise_successors {
             assert!(
                 std::panic::catch_unwind(|| crate::rules_vector_v1::sources::card_rules(id))

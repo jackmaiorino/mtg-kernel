@@ -359,6 +359,7 @@ impl NativePolicyValueTrainStateV1 {
         value_coefficient: f32,
         learning_rate: f32,
         backward_worker_limit: Option<usize>,
+        forward_workers: usize,
         recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         let config = match generation {
@@ -384,6 +385,7 @@ impl NativePolicyValueTrainStateV1 {
             false,
             None,
             None,
+            forward_workers,
             recorder,
         )
         .map(|(result, _, _)| result)
@@ -421,6 +423,7 @@ impl NativePolicyValueTrainStateV1 {
             imitation,
             line_b,
             exploration,
+            1,
             &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
         )
     }
@@ -438,6 +441,7 @@ impl NativePolicyValueTrainStateV1 {
         imitation: bool,
         line_b: Option<&LineBAuxiliaryInputV1>,
         exploration: Option<(f32, u64, bool)>,
+        forward_workers: usize,
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
     ) -> Result<
         (
@@ -468,6 +472,8 @@ impl NativePolicyValueTrainStateV1 {
         )?;
         phase_recorder.finish_v1(setup_timer);
         let forward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::ForwardLoss);
+        let mut precomputed_tapes =
+            precompute_encoded_forward_tapes_v1(&parameters, input_config, groups, forward_workers);
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -481,7 +487,12 @@ impl NativePolicyValueTrainStateV1 {
                 let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
                     unreachable!("canonical input checked before forward");
                 };
-                let recomputed = Box::new(forward_with_tape(&parameters, input_config, **encoded)?);
+                let recomputed = match precomputed_tapes.as_mut() {
+                    Some(tapes) => tapes
+                        .next()
+                        .expect("one precomputed forward tape per substep")?,
+                    None => Box::new(forward_with_tape(&parameters, input_config, **encoded)?),
+                };
                 validate_forward_output_bits_v1(
                     &recomputed,
                     substep,
@@ -578,8 +589,27 @@ impl NativePolicyValueTrainStateV1 {
 
         phase_recorder.finish_v1(forward_timer);
         let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
-        let (mut gradients, mut gauge_accumulator) = match backward_execution {
-            BackwardExecutionV1::Sequential => {
+        // Without the exploration regularizer the sequential backward has an
+        // exact parallel form; it runs on the update's forward workers.
+        let parallel = match backward_execution {
+            BackwardExecutionV1::Sequential if beta == 0.0 => {
+                exact_parallel_backward_v1::exact_parallel_backward_v1(
+                    &parameters,
+                    &group_tapes,
+                    group_count,
+                    value_coefficient,
+                    forward_workers,
+                )
+            }
+            _ => None,
+        };
+        let (mut gradients, mut gauge_accumulator) = match (parallel, backward_execution) {
+            (Some(result), _) => {
+                let backward = result?;
+                drop(group_tapes);
+                backward
+            }
+            (None, BackwardExecutionV1::Sequential) => {
                 let mut gradients = parameters
                     .iter()
                     .map(|parameter| vec![0.0; parameter.values.len()])
@@ -650,7 +680,7 @@ impl NativePolicyValueTrainStateV1 {
                 }
                 (gradients, gauge_accumulator)
             }
-            BackwardExecutionV1::FixedPartitions { worker_limit } => {
+            (None, BackwardExecutionV1::FixedPartitions { worker_limit }) => {
                 let coefficients: Vec<(f32, f32)> = group_tapes
                     .iter()
                     .map(|group| {
@@ -748,6 +778,99 @@ impl NativePolicyValueTrainStateV1 {
             exploration_result,
         ))
     }
+}
+
+/// Fewest substeps a forward worker is given before another thread is worth
+/// spawning; one forward pass costs tens of microseconds.
+const GAE_FORWARD_MIN_SUBSTEPS_PER_WORKER_V1: usize = 32;
+
+enum GaeForwardOutcomeV1 {
+    Completed(Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>),
+    Panicked(Box<dyn std::any::Any + Send + 'static>),
+}
+
+/// Every substep's independent forward tape, in group/substep order, computed
+/// on up to `forward_workers` scoped threads. `None` (one worker, or too few
+/// substeps to share) keeps the inline forward in the caller's loop. A tape is
+/// a pure function of the parameter snapshot and its encoded input, so the
+/// thread that computes it changes no bit. The caller consumes the outcomes
+/// strictly in order and a worker's error or panic surfaces only when the loop
+/// reaches that substep, so the first failure reported is the one the inline
+/// loop would have hit.
+fn precompute_encoded_forward_tapes_v1(
+    parameters: &[NativeNamedParameterV1],
+    config: NativePolicyValueModelConfigV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    forward_workers: usize,
+) -> Option<impl Iterator<Item = Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>>> {
+    let mut tasks = Vec::new();
+    for group in groups {
+        for substep in group.substeps.iter() {
+            let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
+                unreachable!("canonical input checked before forward");
+            };
+            tasks.push(**encoded);
+        }
+    }
+    let worker_count = forward_workers.min(tasks.len() / GAE_FORWARD_MIN_SUBSTEPS_PER_WORKER_V1);
+    if worker_count < 2 {
+        return None;
+    }
+    let chunk_size = tasks.len().div_ceil(worker_count);
+    let outcomes = thread::scope(|scope| {
+        let jobs = tasks
+            .chunks(chunk_size)
+            .enumerate()
+            .map(|(worker_index, chunk)| {
+                let spawned = thread::Builder::new()
+                    .name(format!("native-gae-forward-{worker_index}"))
+                    .spawn_scoped(scope, move || {
+                        forward_encoded_chunk_v1(parameters, config, chunk)
+                    });
+                (spawned, chunk)
+            })
+            .collect::<Vec<_>>();
+        let mut outcomes = Vec::with_capacity(tasks.len());
+        for (spawned, chunk) in jobs {
+            match spawned {
+                Ok(worker) => match worker.join() {
+                    Ok(mut worker_outcomes) => {
+                        // The test-only forward counter is per thread; credit
+                        // the caller with the calls made on its behalf.
+                        #[cfg(test)]
+                        FORWARD_WITH_TAPE_CALL_COUNT_V1
+                            .with(|count| count.set(count.get() + chunk.len() as u64));
+                        outcomes.append(&mut worker_outcomes);
+                    }
+                    Err(payload) => resume_unwind(payload),
+                },
+                Err(_) => outcomes.extend(forward_encoded_chunk_v1(parameters, config, chunk)),
+            }
+        }
+        outcomes
+    });
+    Some(outcomes.into_iter().map(|outcome| match outcome {
+        GaeForwardOutcomeV1::Completed(result) => result,
+        GaeForwardOutcomeV1::Panicked(payload) => resume_unwind(payload),
+    }))
+}
+
+fn forward_encoded_chunk_v1(
+    parameters: &[NativeNamedParameterV1],
+    config: NativePolicyValueModelConfigV1,
+    chunk: &[NativeEncodedDecisionViewV1<'_>],
+) -> Vec<GaeForwardOutcomeV1> {
+    chunk
+        .iter()
+        .map(|encoded| {
+            match catch_unwind(AssertUnwindSafe(|| {
+                forward_with_tape(parameters, config, *encoded).map(Box::new)
+            })) {
+                Ok(result) => GaeForwardOutcomeV1::Completed(result),
+                Err(payload) => GaeForwardOutcomeV1::Panicked(payload),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

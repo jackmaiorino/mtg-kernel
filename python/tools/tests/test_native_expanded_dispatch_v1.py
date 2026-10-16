@@ -231,6 +231,62 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
         self.assertEqual(len(projected), 1)
         self.assertEqual(projected[0][0]["source"]["sha256"], actual["iterations"][0]["trajectories"][0])
 
+    def production(self, updates, trajectories=3):
+        """A complete run of ``updates`` updates, each with its own trajectories and checkpoint."""
+        config = copy.deepcopy(self.config)
+        native = self.root / "production"
+        config["output_directory"] = str(native)
+        config["iterations"] = [{"episodes": [{"episode": {"id": f"u{index}-{t}", "seed": 17 + t,
+                                                          "learner_seat": t % 2, "registered": ["deck-a", "deck-b"]},
+                                              "opponent": "t1"} for t in range(trajectories)]}
+                                for index in range(updates)]
+        self.save({"git_commit": self.runtime["engine_commit"],
+                   "tracked_tree_sha256": self.runtime["tracked_tree_sha256"]}, native/"run.json")
+        receipts = []
+        for index in range(updates):
+            folder = native/f"{index:06d}"
+            pins = [self.save({"terminal": {"terminal_classification": "natural"}, "tensors": [index, t]},
+                              folder/f"episode-{t}.json") for t in range(trajectories)]
+            collection = self.save({"complete": True, "trajectories": pins}, folder/"collection.json")
+            checkpoint = self.save({"trajectories": pins, "parameters": [index, 2.5], "first_moments": [index],
+                                    "second_moments": [1e-30], "adam_step": index + 1}, folder/"checkpoint.json")
+            update = self.save({"complete": True, "checkpoint": checkpoint}, folder/"update.json")
+            receipts.append(self.save({"iteration": index, "collection": collection, "update": update},
+                                      folder/"complete.json"))
+        return config, {"complete": True, "completed_iterations": updates, "planned_iterations": updates,
+                        "iterations": receipts}
+
+    def test_fingerprint_workers_match_serial_and_raise_the_first_failure_in_order(self):
+        config, result = self.production(5)
+        outputs = {}
+        for workers in (1, 3, 8):
+            validated, timing, projected = {}, {}, []
+            fingerprint = dispatch.output_fingerprint(config, "training", result, self.runtime, False,
+                                                      validated_files=validated, timing=timing,
+                                                      exposure_inputs=projected, workers=workers)
+            outputs[workers] = (fingerprint, validated, projected, sorted(timing))
+        self.assertEqual(outputs[3], outputs[1])
+        self.assertEqual(outputs[8], outputs[1])
+        self.assertEqual(len(outputs[1][0]["iterations"]), 5)
+        # Receipt, collection, three trajectories, update and checkpoint per update.
+        self.assertEqual(len(outputs[1][1]), 5 * 7)
+        # Changed bytes in updates 3 and 1: every worker count reports update 1's file.
+        for index in (3, 1):
+            receipt = dispatch.read(result["iterations"][index]["path"])
+            collection = dispatch.read(receipt["collection"]["path"])
+            Path(collection["trajectories"][0]["path"]).write_text("{}", encoding="utf-8")
+        errors = []
+        for workers in (1, 3):
+            with self.assertRaisesRegex(ValueError, "changed pinned input") as caught:
+                dispatch.output_fingerprint(config, "training", result, self.runtime, False, workers=workers)
+            errors.append(str(caught.exception))
+        self.assertEqual(errors[1], errors[0])
+        self.assertIn("000001", errors[0])
+        # One process per placed CPU, within the placement's memory limit.
+        for cpus, memory, expected in ((16, 16 * 1024**3, 16), (16, 4 * 1024**3, 4), (2, 512 * 1024**2, 1)):
+            self.assertEqual(dispatch.fingerprint_workers({"cpu_affinity": list(range(cpus)),
+                                                           "memory_bytes": memory}), expected)
+
     def test_incomplete_non_natural_and_wrong_runtime_are_refused(self):
         report = dispatch.read(self.trial(1, 10)["path"])
         config = dispatch.read(report["executed_config"]["path"])

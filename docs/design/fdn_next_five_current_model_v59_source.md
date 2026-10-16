@@ -6,9 +6,9 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 Seven earlier Full registrations remain Full. The five appendices retain Partial
 IDs 452-456. Native Alesha, Nine-Lives Familiar, Valkyrie's Call and Perforating
 Artist appendices retain Partial IDs 457-460. Niv-Mizzet, Visionary retains
-Partial ID 461. Source inventory is 462 definitions and 270 FDN rows;
+Partial ID 461 and Embercleave retains Partial ID 462. Source inventory is 463 definitions and 271 FDN rows;
 frozen booster membership remains 286 names and 24 token dependencies (245 Full,
-10 Partial, 31 Missing). Full-only production deck reset still refuses each appendix.
+11 Partial, 30 Missing). Full-only production deck reset still refuses each appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -35,7 +35,7 @@ The complete composed model subtree has 151 source cases: the original 112,
 five Fiery cases, eleven NextFive cases below, fourteen fifth-owner
 inherited-family wrappers, and nine canonical repair cases (four ordinary Divine
 owner wrappers, the complete Divine printing case, and the canonical semantic
-boolean case, and three typed public projection cases). All 141 earlier test names and bodies remain unchanged. The
+boolean case, and three typed public projection cases). All 141 earlier test names remain; canonical runtime repairs below necessarily update affected fixture bodies while retaining their acceptance assertions. The
 legendary shared harness also exercises the fifth owner. The new fifth-owner
 Divine wrapper uses the same genuine W and W+2W paid paths, ordinary one-target
 and kicked zero-/two-target paths, original action bindings, countered stack
@@ -184,21 +184,25 @@ All 175 affected Python cases passed at exact composed `1a099ef8f615e412e83b592f
 in 21.018 seconds. Pinned 1.94.1 formatting and diff checks also passed.
 The current 151 model Rust source cases, binary and checker remain
 uncompiled/unrun; source counts are not runtime passes. Actual
-export/catalog/profile and runtime qualification remain root-owned. Active
-Native177 is checking the separate seven-printing source at
+export/catalog/profile and runtime qualification remain root-owned.
+Native177 used the separate seven-printing source at
 `de373adff4e7d87835b5a7e428eb9da9c47b93f3`, excluding these Partial appendices.
-Its running lib process has already reported model failures, so it cannot
-qualify that source. Terminal diagnostics and output custody remain pending.
+It reported failures, so it cannot qualify that source. Root requested the
+owned test process stop; terminal output custody and resource release remain
+root-supervised work and no release is inferred here.
 No hash guess, profile waiver, Full promotion, trained
 policy or strength claim is made here.
 
-Reviewed unregistered Embercleave primitives `f0d138ad66659a29921d184c0f9e5f9e82f818c5`
-are composed at `e62819d5cf3b6e6e1ba54de897f0129005a51189`. A distinct native
+Reviewed Embercleave primitives `f0d138ad66659a29921d184c0f9e5f9e82f818c5`
+are composed at `e62819d5cf3b6e6e1ba54de897f0129005a51189`, followed by genuine
+Partial462 registration `5c8e42cb1a521cb91ff4322f17d2b2f102d32ea3`. A distinct native
 count uses current attacking creatures, retaining both red mana requirements.
-The dormant recipe reuses native Flash, Equipment grants, Equip and exact-source
-ETB attachment. One current-attacker source case is selected. Two future paid
-fixture functions require genuine registration and are deliberately not tests
-before that prerequisite. No printing identity, registration or admission is added.
+The registered recipe reuses native Flash, Equipment grants, Equip and exact-source
+ETB attachment. The unchanged current-attacker source case and both genuine paid
+fixture functions are selected tests. Their source covers both seats, 0/1/4/6
+attackers, RR retention, exact-source/target attachment and paid Equip3, with
+waiting/published restores and incarnation changes. All three Rust cases remain
+unexecuted. Registration grants no model, Human, transport or Full-deck permission.
 
 Reviewed complete Graveyard Return V61 observation source through
 `c6ff90a88fca0a51ac43997bd1670fc0febde7b3` is composed at
@@ -229,3 +233,33 @@ uncompiled/unrun and no consumer permission is added.
 All 176 affected Python cases passed at exact composed `89623154f059c280080b71ef1c831d754bece620`
 in 20.972 seconds. Their complete log and digest are retained in both evidence
 stores. Existing model and owning source remains unchanged in this prepared lane.
+
+The prepared source at `46c8d4fd50361754e89ebc23dee761096c218f51` includes the
+isolated V61 candidate checkpoint `bc54e4b6673cffe22056b74d28951dc699546d4f` and authentic native Alesha optional
+resolution `48b4b5e306b2970e8b93652fb5a6893f9b9366cc`, including its exact
+absent Niv-origin context field on integration. Native Alesha now offers a
+costless return choice after mandatory target selection and the response window.
+The V61 candidate's optional-resolution support flag remains false: its new
+stage authority has no candidate-specific qualification or owning admission.
+
+This integration normally merges published canonical
+`04eab37f10a10b367c46aacd85546c6dbd58a04b`. It retains the complete 151 model
+source names and all native Partial/candidate code. Canonical repairs add the
+exact tagged Fishing public relation conversion, actual V5 combat inclusion
+answers in shared paid fixtures, the corrected owner-authorized face-down privacy
+pair, and independent genuine Full-deck V3 resets. Prepared fixture streams now
+start from the identical pre-advance input and persist their separate native
+state, response and both counters across actions and paired restores, without
+rebasing counters or deleting receipts. All fourteen Prepared shared wrappers
+use that paired fixture type; the fifth NextFive wrappers remain intact. CI keeps
+the V6 process group and all sixteen canonical model/Human shards.
+
+The native Store inventory fixture retains the exact seven Full printing IDs
+and Full Drake-token creation capability, while its unchanged Full-only preflight
+rejects the token. It now also checks the exact eleven Partial suffix entries
+and the complete actual registry: every non-token Full printing admits, every
+token and Partial printing refuses with its exact native error. No historical
+export/profile hash is replaced or waived. Pinned formatting, diff and static
+source checks are the available local verification; this merged Rust source
+remains uncompiled and unexecuted. Root owns affected Python and later runtime
+qualification of the exact composed head.

@@ -528,12 +528,54 @@ fn actual_v3_paid_conqueror_season_tokens_damage_gain_and_owning_restore_both_se
     fn cast_named(wire: &mut Wire, name: &str, mana: u32) {
         let actor = wire.menu()["actor"].clone();
         let seat = if actor == "p0" { 0 } else { 1 };
+        let spell = *wire.state().players[seat]
+            .hand
+            .iter()
+            .find(|&&id| {
+                crate::card_def::CARD_DEFS[usize::from(wire.state().objects.get(id).card_def)].name
+                    == name
+            })
+            .unwrap();
         let before: u32 = wire.state().players[seat]
             .mana_pool
             .iter()
             .map(|&v| u32::from(v))
             .sum();
-        wire.step(|label| label.starts_with(&format!("Begin casting {name} [")));
+        // Conqueror has a printed-mechanics label; other cards retain the
+        // generic label. Both route the original CastSpell candidate index.
+        let prefix = if name == "Bloodthirsty Conqueror" {
+            "Cast"
+        } else {
+            "Begin casting"
+        };
+        let request = wire.request(|label| label.starts_with(&format!("{prefix} {name} [")));
+        let displayed_index = usize::try_from(request["action_index"].as_u64().unwrap()).unwrap();
+        let index = wire.server.pending.as_ref().unwrap().indexes[displayed_index];
+        let mut native = wire.server.active.as_ref().unwrap().core.clone();
+        let FastActorResponseV1::Decision(expected) = native.current_response() else {
+            panic!("native paid cast decision absent")
+        };
+        let (_, actions, _) = native
+            .ravenous_current_decision_input_v51(expected, expected.acting_player)
+            .unwrap();
+        assert!(matches!(
+            &actions[index as usize],
+            crate::rl::ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0
+        ));
+        let response = native
+            .step(expected.episode_id, expected.step, index)
+            .unwrap();
+        let reply = wire.send(request);
+        assert_eq!(reply["response_type"], "state", "{reply}");
+        assert!(reply["receipt"].is_object());
+        let core = &wire.server.active.as_ref().unwrap().core;
+        assert_eq!(core.current_response(), response);
+        assert_eq!(wire.state(), native.ravenous_fixture_state());
+        assert_eq!(core.policy_step_count(), native.policy_step_count());
+        assert_eq!(
+            core.physical_decision_count(),
+            native.physical_decision_count()
+        );
         let after: u32 = wire.state().players[seat]
             .mana_pool
             .iter()
@@ -603,11 +645,29 @@ fn actual_v3_paid_conqueror_season_tokens_damage_gain_and_owning_restore_both_se
         assert_eq!(wire.menu()["actions"], actions);
         assert_eq!(wire.bytes(), bytes);
         for name in ["Bloodthirsty Conqueror", "Doubling Season"] {
-            let reply=wire.send(json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
+            // Both printings are now Full. Exercise the unchanged public
+            // Full-only reset with an independent real forty-card deck.
+            let mut admitted = Wire::new();
+            let reply=admitted.send(json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
                 "episode_id":7,"env_seed":123,"starting_player":crate::rl::PlayerSeatV1::from(actor),
                 "decks":[{"cards":[{"name":"Forest","count":39},{"name":name,"count":1}]},
                          {"cards":[{"name":"Island","count":40}]}],"max_physical_decisions":1000,"max_policy_steps":1000}));
-            assert_eq!(reply["code"], "unsupported_deck");
+            assert_eq!(reply["response_type"], "state", "{reply}");
+            assert!(!admitted.menu()["actions"].as_array().unwrap().is_empty());
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert_eq!(
+                crate::card_def::CARD_DEFS[usize::from(id)].capability,
+                crate::card_def::CardCapability::Full
+            );
+            assert_eq!(
+                admitted
+                    .state()
+                    .objects
+                    .iter()
+                    .filter(|(_, card)| card.owner == PlayerId::P0 && card.card_def == id)
+                    .count(),
+                1
+            );
             assert_eq!(wire.bytes(), bytes);
         }
     }

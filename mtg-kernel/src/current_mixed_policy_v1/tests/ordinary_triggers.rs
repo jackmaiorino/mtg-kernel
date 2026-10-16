@@ -91,8 +91,58 @@ fn step<O: Owner>(s: &mut O, choose: impl Fn(&ActionSemanticV1) -> bool) {
     assert!(logits.iter().all(|v| v.is_finite()));
     s.apply(&d, i as u32).unwrap();
 }
+// V5 decomposes nonempty combat menus into original inclusion choices.
+// Choosing false for every candidate lets the surface commit the empty native
+// declaration only after its final scan answer.
+fn quiet_action(a: &ActionSemanticV1) -> bool {
+    match a {
+        ActionSemanticV1::Pass { .. }
+        | ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+        | ActionSemanticV1::ChooseBlockerInclusion { include: false, .. } => true,
+        ActionSemanticV1::DeclareAttackers { attackers, .. } => attackers.is_empty(),
+        ActionSemanticV1::DeclareBlockersForAttacker { blockers, .. } => blockers.is_empty(),
+        _ => false,
+    }
+}
+fn attack_choice(a: &ActionSemanticV1, wanted: ObjectId) -> bool {
+    match a {
+        ActionSemanticV1::ChooseAttackerInclusion {
+            attacker,
+            include: true,
+            ..
+        } => attacker.arena_id == wanted.0,
+        ActionSemanticV1::DeclareAttackers { attackers, .. } => {
+            attackers.len() == 1 && attackers[0].arena_id == wanted.0
+        }
+        _ => false,
+    }
+}
+fn finish_attack_declaration<O: Owner>(s: &mut O, wanted: ObjectId) {
+    // The chosen source may occur before other candidates. Answer those actual
+    // rows negatively before asserting that native declaration really committed.
+    for _ in 0..=s.world().objects.len() {
+        if !s
+            .actions()
+            .iter()
+            .any(|a| matches!(a, ActionSemanticV1::ChooseAttackerInclusion { .. }))
+        {
+            let original = s.world().objects.get(wanted);
+            assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
+                crate::event::CommittedEvent::DeclaredAttacker { source, source_zone_change_count, controller }
+                if *source == wanted && *source_zone_change_count == original.zone_change_count && *controller == original.controller)));
+            return;
+        }
+        step(s, |a| {
+            matches!(
+                a,
+                ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+            )
+        });
+    }
+    panic!("real attacker inclusion scan did not commit");
+}
 fn pass<O: Owner>(s: &mut O) {
-    step(s, |a| matches!(a, ActionSemanticV1::Pass { .. }));
+    step(s, quiet_action);
 }
 fn drain<O: Owner>(s: &mut O) {
     for _ in 0..64 {
@@ -223,10 +273,13 @@ pub(in crate::current_mixed_policy_v1) fn paid<O: Owner>() {
                 if actions.iter().any(|a| target(a, recipient)) {
                     break;
                 }
-                let next=actions.iter().find(|a|ash && matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.len()==1 && attackers[0].arena_id==source.0))
-                .or_else(||actions.iter().find(|a|matches!(a,ActionSemanticV1::Pass{..})))
-                .or_else(||actions.iter().find(|a|matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())))
-                .or_else(||(actions.len()==1).then(||&actions[0])).unwrap_or_else(||panic!("unexpected actual choice:{actions:?}")).clone();
+                let next = actions
+                    .iter()
+                    .find(|a| ash && attack_choice(a, source))
+                    .or_else(|| actions.iter().find(|a| quiet_action(a)))
+                    .or_else(|| (actions.len() == 1).then(|| &actions[0]))
+                    .unwrap_or_else(|| panic!("unexpected actual choice:{actions:?}"))
+                    .clone();
                 step(&mut s, |a| a == &next);
             }
             let actions = s.actions();

@@ -70,6 +70,37 @@ fn run<O: Owner>(actor: PlayerId, optional: bool, survives: bool) {
         s.world().objects.get(pole).v4.attached_to.unwrap().object,
         creature
     );
+    // The genuine paid equip publishes a Fishing family host incarnation.
+    // Its distinct wire spelling must share the ordinary ordinal binding;
+    // unrelated or extended raw-reference shapes still refuse conversion.
+    let fishing = crate::fishing_pole_public_v39::facts_v39(s.world()).unwrap();
+    let family = crate::akroma_family_public_v40::FamilyFactsV40::Fishing(Box::new(
+        crate::akroma_family_public_v40::FishingFactsV40 {
+            poles: fishing.poles,
+            operations: fishing.operations,
+            roots: Vec::new(),
+        },
+    ));
+    let original = serde_json::to_value(family).unwrap();
+    let mut converted = original.clone();
+    crate::current_mixed_policy_v1::fishing_public_operands::prepare(&mut converted).unwrap();
+    let host = &converted["facts"]["poles"][0]["attached_host"];
+    assert_eq!(host["object"], creature.0);
+    assert_eq!(
+        host["generation"],
+        s.world().objects.get(creature).zone_change_count
+    );
+    assert_eq!(
+        converted["facts"]["poles"][0]["source"],
+        original["facts"]["poles"][0]["source"]
+    );
+    for key in ["private_operand", "unknown_generation"] {
+        let mut forged = original.clone();
+        forged["facts"]["poles"][0]["attached_host"][key] = serde_json::json!(9);
+        assert!(
+            crate::current_mixed_policy_v1::fishing_public_operands::prepare(&mut forged).is_err()
+        );
+    }
     for land in &mountains[..3] {
         tap(&mut s, *land);
     }

@@ -354,6 +354,18 @@ fn validate_source(source: &ExpandedFreshInitializationSourceV1) -> Result<(), S
     actual_pin(&source.parameters)
 }
 
+/// The file reads of `load_policy_v1`, in its order and with its errors, for a
+/// descriptor whose loaded policy is already cached (`loaded_source_cache_v1`).
+/// Every other step of that loader is a pure function of these bytes.
+pub(super) fn reverify_input_files_v1(
+    source: &ExpandedFreshInitializationSourceV1,
+) -> Result<(), String> {
+    validate_source(source)?;
+    read_actual(&source.initialization, JSON_CAP)?;
+    read_actual(&source.parameters, PAYLOAD_BYTES)?;
+    Ok(())
+}
+
 fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {
     actual_pin(pin)?;
     let file = File::open(&pin.path).map_err(|e| e.to_string())?;

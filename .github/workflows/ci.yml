@@ -217,6 +217,21 @@ jobs:
           - limited-v5
           - limited-v6
           - limited-model
+          - limited-model-1
+          - limited-model-2
+          - limited-model-3
+          - limited-model-4
+          - limited-model-5
+          - limited-model-6
+          - limited-model-7
+          - limited-model-8
+          - limited-model-9
+          - limited-model-10
+          - limited-model-11
+          - limited-model-12
+          - limited-model-13
+          - limited-model-14
+          - limited-model-15
           - standard
           - workspace
           - cuda
@@ -229,7 +244,7 @@ jobs:
         # The other Windows groups never failed without Linux failing too
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
+        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"windows-2025","group":"limited"},{"os":"windows-2025","group":"limited-v1"},{"os":"windows-2025","group":"limited-v2"},{"os":"windows-2025","group":"limited-v3"},{"os":"windows-2025","group":"limited-v4"},{"os":"windows-2025","group":"limited-v5"},{"os":"windows-2025","group":"limited-v6"},{"os":"windows-2025","group":"limited-model"},{"os":"windows-2025","group":"limited-model-1"},{"os":"windows-2025","group":"limited-model-2"},{"os":"windows-2025","group":"limited-model-3"},{"os":"windows-2025","group":"limited-model-4"},{"os":"windows-2025","group":"limited-model-5"},{"os":"windows-2025","group":"limited-model-6"},{"os":"windows-2025","group":"limited-model-7"},{"os":"windows-2025","group":"limited-model-8"},{"os":"windows-2025","group":"limited-model-9"},{"os":"windows-2025","group":"limited-model-10"},{"os":"windows-2025","group":"limited-model-11"},{"os":"windows-2025","group":"limited-model-12"},{"os":"windows-2025","group":"limited-model-13"},{"os":"windows-2025","group":"limited-model-14"},{"os":"windows-2025","group":"limited-model-15"},{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || '[]') }}
         include:
           # Linux groups use GitHub's hosted runners, which are free for
           # this public repository: the WSL runners can't be pinned to
@@ -406,7 +421,7 @@ jobs:
         if: matrix.group == 'limited'
         run: |
           python python/tools/run_rust_integration_tests.py fdn_integration --features limited-fdn-fixtures
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl::genuine_paid_conqueror_projection_proof_keeps_original_state_rows_and_full_projection_both_seats rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: human_bo3_v1:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: high_society_hunter_ hunter_observation_v45:: rl_session::hunter_v45:: eaten_alive_v1:: eaten_observation_v46:: eaten_public_v46:: rl_session::eaten_v46:: engine::fiendish_panda_targeting_tests:: fiendish_panda_v1:: panda_public_v47:: rl_session::panda_v47::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_session_v1::tests rl::genuine_paid_conqueror_projection_proof_keeps_original_state_rows_and_full_projection_both_seats rl_session::tests card_def:: koma_spell_protection threshold_counts_graveyard native_training_store_run_v2:: policy_observation_v8:: policy_observation_v9:: engine::raid_history_tests:: trigger::tests::raid_ effect::condemn_tests:: effect::run_away_together_tests:: bloodwitch_ engine::anytarget_planeswalker_tests:: rules_meaning_v2:: flat_policy_v4:: native_flat_tensorizer_v4:: native_flat_tensorizer_v5:: native_flat_tensorizer_v6:: rl_session::human_v8:: effect::divine_variable_targets_tests:: engine::divine_variable_targeting_tests:: effect::scavenging_ooze_v1:: ooze_public_v1:: rules_meaning_ooze_v1:: soul_shackled_zombie_v1:: soul_shackled_zombie_public_v1:: rules_meaning_soul_shackled_zombie_v1:: source_power_activation_v1:: heartfire_history_v1:: heartfire_public_v1:: rules_meaning_heartfire_v1:: rl_session::heartfire_v12:: rl_session::heartfire_history_v1:: rl_session::soul_shackled_zombie_v13:: searslicer_goblin_tests:: rules_meaning_searslicer_v1:: effect::squad_rallier_resolution_v1:: rules_meaning_squad_rallier_v1:: self_reflection_v1:: sower_public_v1:: sower_restriction_capture_v1:: rules_meaning_sower_v1:: rl_session::sower_v14:: effect::temporary_control_v1:: authority_of_the_consuls_v1:: rules_meaning_authority_v1:: rules_meaning_employment_v1:: rules_meaning_cerberus_v1:: frenzied_goblin_v1:: wildwood_scourge_v1:: rules_meaning_wildwood_v1:: frenzied_public_v1:: rl_session::frenzied_v15:: rl_session::wildwood_v16:: event::authority_visibility_tests:: rl_session::authority_v17:: employment_public_v1:: rl_session::employment_v18:: cerberus_capture_v1:: cerberus_public_v1:: rl_session::cerberus_v19:: high_society_hunter_ hunter_observation_v45:: rl_session::hunter_v45:: eaten_alive_v1:: eaten_observation_v46:: eaten_public_v46:: rl_session::eaten_v46:: engine::fiendish_panda_targeting_tests:: fiendish_panda_v1:: panda_public_v47:: rl_session::panda_v47::
 
       - name: Validate FDN profiles under the native Store feature
         if: matrix.group == 'limited-store'
@@ -495,10 +510,27 @@ jobs:
           # Partial-family correctness is covered by the genuine Rust fixtures.
           MTG_LIMITED_NEXT_FIVE_TIMING_V6=1 python python/tools/check_limited_next_five_client_v6.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_next_five_env_v6$binary_suffix"
 
+      # Enumerate the compiled subtree in each job and partition exact names.
+      # Preserve the 30-minute bound while retaining immediate panic details.
       - name: Validate complete current mixed model subtree
-        if: ${{ !cancelled() && matrix.group == 'limited-model' }}
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
         run: |
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures current_mixed_policy_v1::
+          shard=0
+          if [ '${{ matrix.group }}' != limited-model ]; then
+            shard='${{ matrix.group }}'
+            shard="${shard##*-}"
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --nocapture current_mixed_policy_v1::
+
+      - name: Validate complete Human subtree in the same compiled shards
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
+        run: |
+          shard=0
+          if [ '${{ matrix.group }}' != limited-model ]; then
+            shard='${{ matrix.group }}'
+            shard="${shard##*-}"
+          fi
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 16 --skip-ignored --nocapture human_bo3_v1::
 
       - name: Test host-safe experimental CUDA feature surface
         if: matrix.group == 'cuda'

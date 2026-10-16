@@ -566,10 +566,20 @@ fn human_paid_neutral_face_copy_hides_independent_underlying_printings_and_handl
             let mut state = raw(actor, 21);
             // Pool has no admitted printed face-down producer: this initial
             // neutral face is a primitive operand, never a fabricated printing.
-            let hidden = put(&mut state, actor.opponent(), printing, Zone::Battlefield);
+            // The caster may inspect its own face-down creature. Keep that
+            // authorized printing constant and vary only the opponent's
+            // independently concealed printing between the two worlds.
+            let hidden = put(&mut state, actor, ELENDA, Zone::Battlefield);
+            let opposing = put(&mut state, actor.opponent(), printing, Zone::Battlefield);
+            state.objects.get_mut(opposing).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
             state.objects.get_mut(hidden).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
                 disguised: true,
-                lookers: 1 << actor.opponent().index(),
+                lookers: 0,
                 hidden_by: None,
                 hidden_by_source: None,
             });
@@ -585,11 +595,31 @@ fn human_paid_neutral_face_copy_hides_independent_underlying_printings_and_handl
                 "Self-Reflection",
                 Some("Face-down creature"),
             );
+            let paid_state = session.inner.fixture_state_v52();
+            assert_eq!(paid_state.objects.get(hidden).controller, actor);
+            let spell = paid_state
+                .stack
+                .iter()
+                .find(|item| {
+                    crate::card_def::CARD_DEFS
+                        [usize::from(paid_state.objects.get(item.source).card_def)]
+                    .name
+                        == "Self-Reflection"
+                })
+                .unwrap();
+            assert_eq!(spell.controller, actor);
+            assert_eq!(spell.targets, [crate::state::Target::Object(hidden)]);
+            assert_eq!(spell.v4.target_contracts.len(), 1);
+            let paid = session.snapshot_v52();
             let public = drain_to(&mut session, &mut projector, 0);
             assert_eq!(public.state.elenda.current.len(), 1);
             stats(&public, 5, true);
             safe(&public);
-            assert!(public.state.predecessor.known_face_down_cards.is_empty());
+            assert_eq!(public.state.predecessor.known_face_down_cards.len(), 1);
+            assert_eq!(
+                public.state.predecessor.known_face_down_cards[0].name,
+                ELENDA
+            );
             assert!(public
                 .state
                 .predecessor
@@ -598,6 +628,12 @@ fn human_paid_neutral_face_copy_hides_independent_underlying_printings_and_handl
                 .iter()
                 .flatten()
                 .any(|row| row.card.is_token && row.card.stable.name.is_empty()));
+            let completed = gameplay(&session);
+            session.restore_v52(&paid).unwrap();
+            let replayed = drain_to(&mut session, &mut projector, 0);
+            assert_eq!(replayed.state, public.state);
+            assert_eq!(replayed.actions, public.actions);
+            assert_eq!(gameplay(&session), completed);
             public
         };
         assert_eq!(build(ELENDA), build("Llanowar Elves"));

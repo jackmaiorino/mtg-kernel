@@ -9011,8 +9011,24 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
-        assert!(partials.is_empty());
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 463);
+        assert_eq!(
+            partials,
+            [
+                (452, "Midnight Snack"),
+                (453, "Extravagant Replication"),
+                (454, "Infernal Vessel"),
+                (455, "Giada, Font of Hope"),
+                (456, "Goblin Negotiation"),
+                (457, "Alesha, Who Laughs at Fate"),
+                (458, "Nine-Lives Familiar"),
+                (459, "Valkyrie's Call"),
+                (460, "Perforating Artist"),
+                (461, "Niv-Mizzet, Visionary"),
+                (462, "Embercleave"),
+            ]
+        );
+        let mut playable = Vec::new();
         for (id, name) in [
             (442, "Fake Your Own Death"),
             (443, "Ravenous Amulet"),
@@ -9030,8 +9046,54 @@ mod tests {
                 crate::card_def::CARD_DEFS[usize::from(id)].capability,
                 crate::card_def::CardCapability::Full
             );
-            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
+            let definition = &crate::card_def::CARD_DEFS[usize::from(id)];
+            if id == 449 {
+                // Full token implementation permits actual token creation,
+                // while the unchanged deck preflight must reject token cards.
+                assert!(definition.is_token);
+                assert!(matches!(
+                    crate::card_def::preflight_fully_supported_deck(&[id]),
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0,
+                        card_def: 449,
+                        name: "Drake Token",
+                    })
+                ));
+            } else {
+                assert!(!definition.is_token, "{name}");
+                crate::card_def::preflight_fully_supported_deck(&[id]).unwrap();
+                playable.push(id);
+            }
         }
+        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
+        // The appended native source recipes grant no Full-deck permission.
+        // Check the complete actual registry, including every Full token.
+        let mut all_playable = Vec::new();
+        for (index, definition) in crate::card_def::CARD_DEFS.iter().enumerate() {
+            let id = u16::try_from(index).unwrap();
+            let result = crate::card_def::preflight_fully_supported_deck(&[id]);
+            if definition.is_token {
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0, card_def, name,
+                    }) if card_def == id && name == definition.name));
+            } else if definition.capability == crate::card_def::CardCapability::Full {
+                result.unwrap();
+                all_playable.push(id);
+            } else {
+                assert_eq!(
+                    definition.capability,
+                    crate::card_def::CardCapability::Partial
+                );
+                assert!(matches!(result,
+                    Err(crate::card_def::DeckPreflightError::NotFullySupported {
+                        index: 0, card_def, name, capability: crate::card_def::CardCapability::Partial,
+                    }) if card_def == id && name == definition.name));
+            }
+        }
+        assert!(playable.iter().all(|id| all_playable.contains(id)));
+        crate::card_def::preflight_fully_supported_deck(&all_playable).unwrap();
     }
 
     #[test]

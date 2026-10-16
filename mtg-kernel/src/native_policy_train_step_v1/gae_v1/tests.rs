@@ -762,6 +762,7 @@ fn gae_profile_preserves_complete_update_and_records_actual_phases() {
             VC,
             LR,
             None,
+            1,
             &mut NativeTrainingPhaseRecorderV1::enabled_v1(&mut profile),
         )
         .unwrap();
@@ -781,6 +782,237 @@ fn gae_profile_preserves_complete_update_and_records_actual_phases() {
             NativeTrainingPhaseV1::FinalizationCloning,
         ]
     );
+}
+
+/// Groups of one to three substeps over the fixture's two tensors, each with
+/// its own selected action, so any reordering of forward tapes would change
+/// the update.
+fn many_substeps(fixture: &Fixture, group_count: usize) -> Vec<Vec<NativePolicySubstepV1<'_>>> {
+    (0..group_count)
+        .map(|group| {
+            (0..1 + group % 3)
+                .map(|substep| {
+                    let tensor = (group + substep) % 2;
+                    NativePolicySubstepV1 {
+                        forward: NativePolicyForwardInputV1::Encoded(Box::new(
+                            encoded_decision_view_v3(&fixture.tensors[tensor]),
+                        )),
+                        selected_action_index: (group * 7 + substep) % fixture.logits[tensor].len(),
+                        expected_raw_action_logit_bits: fixture.logits[tensor].as_slice(),
+                        expected_value_bits: fixture.values[tensor],
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn physical_groups<'a>(
+    steps: &'a [Vec<NativePolicySubstepV1<'a>>],
+) -> Vec<NativePolicyPhysicalDecisionV1<'a>> {
+    steps
+        .iter()
+        .enumerate()
+        .map(|(group, substeps)| NativePolicyPhysicalDecisionV1 {
+            substeps,
+            terminal_return: [1, -1, 0][group % 3],
+            baseline_bits: 0,
+        })
+        .collect()
+}
+
+fn profiled_step(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    forward_workers: usize,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    let targets = (0..groups.len())
+        .map(|g| 0.25 - 0.01 * g as f32)
+        .collect::<Vec<_>>();
+    let advantages = (0..groups.len())
+        .map(|g| if g % 2 == 0 { 0.5 } else { -0.375 } / (1.0 + g as f32))
+        .collect::<Vec<_>>();
+    state.train_step_gae_feature_transfer_profiled_v1(
+        crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+        groups,
+        &targets,
+        &advantages,
+        VC,
+        LR,
+        None,
+        forward_workers,
+        &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+    )
+}
+
+#[test]
+fn parallel_forward_tapes_preserve_the_complete_update() {
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    // 99 substeps: three forward workers of 33.
+    let steps = many_substeps(&fixture, 50);
+    let groups = physical_groups(&steps);
+    let substeps = steps.iter().map(Vec::len).sum::<usize>() as u64;
+    let mut inline = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    let mut parallel = inline.clone();
+    let calls = forward_with_tape_call_count_for_test_v1();
+    let expected = profiled_step(&mut inline, &groups, 1).unwrap();
+    assert_eq!(forward_with_tape_call_count_for_test_v1() - calls, substeps);
+    let calls = forward_with_tape_call_count_for_test_v1();
+    let actual = profiled_step(&mut parallel, &groups, 4).unwrap();
+    assert_eq!(forward_with_tape_call_count_for_test_v1() - calls, substeps);
+    assert_eq!(actual, expected);
+    assert_eq!(state_bits(&parallel), state_bits(&inline));
+    // A second step from the updated states, with outputs recorded by the
+    // updated model, stays identical too.
+    let fixture = Fixture::capture(&inline.model);
+    let steps = many_substeps(&fixture, 50);
+    let groups = physical_groups(&steps);
+    assert_eq!(
+        profiled_step(&mut parallel, &groups, 3).unwrap(),
+        profiled_step(&mut inline, &groups, 1).unwrap()
+    );
+    assert_eq!(state_bits(&parallel), state_bits(&inline));
+}
+
+#[test]
+fn parallel_forward_tapes_report_the_first_failure_in_order() {
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let mut wrong = fixture.logits[0].clone();
+    wrong[0] ^= 1;
+    let mut steps = many_substeps(&fixture, 50);
+    // Both are recomputed before the loop reaches either; the earlier one wins.
+    for (group, substep) in [(44, 1), (41, 0)] {
+        steps[group][substep].expected_raw_action_logit_bits = &wrong;
+        steps[group][substep].forward = NativePolicyForwardInputV1::Encoded(Box::new(
+            encoded_decision_view_v3(&fixture.tensors[0]),
+        ));
+    }
+    let groups = physical_groups(&steps);
+    let mut inline = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    let mut parallel = inline.clone();
+    let expected = profiled_step(&mut inline, &groups, 1).unwrap_err();
+    let actual = profiled_step(&mut parallel, &groups, 4).unwrap_err();
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    assert!(format!("{expected:?}").contains("41"), "{expected:?}");
+    assert_eq!(state_bits(&parallel), state_bits(&inline));
+}
+
+fn gradient_bits(result: &NativePolicyTrainStepResultV1) -> Vec<u32> {
+    result
+        .gradients
+        .iter()
+        .flat_map(|gradient| gradient.values.iter().map(|value| value.to_bits()))
+        .collect()
+}
+
+#[test]
+fn exact_parallel_backward_preserves_every_bit() {
+    use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
+        with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
+    };
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    // 399 substeps: up to twelve backward workers of 32.
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    let mut sequential = start.clone();
+    let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
+        profiled_step(&mut sequential, &batch, 1).unwrap()
+    });
+    assert_eq!(runs, 0);
+    let touched = expected
+        .gradients
+        .iter()
+        .filter(|gradient| gradient.values.iter().any(|value| *value != 0.0))
+        .map(|gradient| gradient.name)
+        .collect::<Vec<_>>();
+    for name in [
+        "card_embedding.weight",
+        "edge_encoder.0.weight",
+        "action_ref_encoder.0.weight",
+        "scorer.2.weight",
+        "value_head.2.bias",
+    ] {
+        assert!(touched.contains(&name), "{name} untouched: {touched:?}");
+    }
+    // Uneven blocks of 37 substeps, one block of all 399, and more workers
+    // than this machine has cores.
+    for (block_substeps, workers) in [(Some(37), 2), (Some(37), 3), (None, 4), (Some(64), 8)] {
+        let hooks = ExactBackwardHooksForTestV1 {
+            block_substeps,
+            ..ExactBackwardHooksForTestV1::NONE
+        };
+        let mut parallel = start.clone();
+        let (actual, runs) = with_hooks(hooks, || {
+            profiled_step(&mut parallel, &batch, workers).unwrap()
+        });
+        assert_eq!(runs, 1, "{block_substeps:?} {workers}");
+        assert_eq!(gradient_bits(&actual), gradient_bits(&expected));
+        // Debug prints every float, the gauge's f64 sums included, in
+        // shortest round-trip form, so equal text is equal bits.
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        assert_eq!(state_bits(&parallel), state_bits(&sequential));
+    }
+    // Too few substeps to share keeps the sequential loop.
+    let few = fixture.substeps();
+    let few = groups(&few);
+    let (_, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
+        profiled_step(&mut start.clone(), &few, 4).unwrap()
+    });
+    assert_eq!(runs, 0);
+}
+
+#[test]
+fn exact_parallel_backward_reports_the_first_failure_in_visiting_order() {
+    use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
+        with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
+    };
+    let base = model();
+    let fixture = Fixture::capture(&base);
+    let steps = many_substeps(&fixture, 200);
+    let groups = physical_groups(&steps);
+    let start = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    let failure = |gauge_error_at, backward_error_at, backward_panic_at| {
+        let hooks = ExactBackwardHooksForTestV1 {
+            block_substeps: Some(37),
+            gauge_error_at,
+            backward_error_at,
+            backward_panic_at,
+        };
+        let mut state = start.clone();
+        let (result, runs) = with_hooks(hooks, || profiled_step(&mut state, &groups, 4));
+        assert_eq!(runs, 1);
+        assert_eq!(state_bits(&state), state_bits(&start));
+        format!("{:?}", result.unwrap_err())
+    };
+    let backward = |index: usize| {
+        format!(
+            "{:?}",
+            NativePolicyTrainErrorV1::NonFinite {
+                stage: "injected_exact_backward",
+                index,
+            }
+        )
+    };
+    let gauge = format!("{:?}", NativePolicyTrainErrorV1::GaugeBoundOverflow);
+    // The earlier substep wins, in its own block or an earlier one.
+    assert_eq!(failure(None, Some(300), None), backward(300));
+    assert_eq!(failure(Some(301), Some(300), None), backward(300));
+    assert_eq!(failure(Some(299), Some(300), None), gauge);
+    assert_eq!(failure(Some(40), None, None), gauge);
+    // A substep's gauge observation comes before its backward.
+    assert_eq!(failure(Some(300), Some(300), None), gauge);
+    // A panic resumes on the caller when it comes first, and not otherwise.
+    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| failure(None, Some(300), Some(100))))
+        .unwrap_err();
+    assert_eq!(
+        panic.downcast_ref::<String>().map(String::as_str),
+        Some("injected exact backward panic at substep 100")
+    );
+    assert_eq!(failure(None, Some(100), Some(300)), backward(100));
 }
 
 #[test]

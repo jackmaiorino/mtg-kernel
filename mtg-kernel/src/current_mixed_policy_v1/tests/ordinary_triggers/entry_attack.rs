@@ -6,11 +6,12 @@ use crate::state::Step;
 
 fn quiet<O: Owner>(s: &mut O) {
     let actions = s.actions();
-    let next = actions.iter().find(|a| matches!(a, ActionSemanticV1::Pass { .. }))
-        .or_else(|| actions.iter().find(|a| matches!(a, ActionSemanticV1::DeclareAttackers { attackers, .. } if attackers.is_empty())))
-        .or_else(|| actions.iter().find(|a| matches!(a, ActionSemanticV1::DeclareBlockersForAttacker { blockers, .. } if blockers.is_empty())))
+    let next = actions
+        .iter()
+        .find(|a| quiet_action(a))
         .or_else(|| (actions.len() == 1).then(|| &actions[0]))
-        .unwrap_or_else(|| panic!("unexpected real turn choice: {actions:?}")).clone();
+        .unwrap_or_else(|| panic!("unexpected real turn choice:{actions:?}"))
+        .clone();
     step(s, |a| a == &next);
 }
 
@@ -108,18 +109,12 @@ fn raid<O: Owner>(actor: PlayerId) {
         {
             break;
         }
-        let attack = s
-            .actions()
-            .iter()
-            .find(|a| {
-                matches!(a, ActionSemanticV1::DeclareAttackers { attackers, .. }
-            if attackers.len() == 1 && attackers[0].arena_id == elf.0)
-            })
-            .cloned();
+        let attack = s.actions().iter().find(|a| attack_choice(a, elf)).cloned();
         if !attacked {
             if let Some(attack) = attack {
                 assert!(!s.world().objects.get(elf).summoning_sick);
                 step(&mut s, |a| a == &attack);
+                finish_attack_declaration(&mut s, elf);
                 attacked = true;
                 continue;
             }
@@ -245,14 +240,12 @@ fn sacrifice<O: Owner>(actor: PlayerId) {
         let attack = s
             .actions()
             .iter()
-            .find(|a| {
-                matches!(a, ActionSemanticV1::DeclareAttackers { attackers, .. }
-            if attackers.len() == 1 && attackers[0].arena_id == source.0)
-            })
+            .find(|a| attack_choice(a, source))
             .cloned();
         if let Some(attack) = attack {
             assert!(!s.world().objects.get(source).summoning_sick);
             step(&mut s, |a| a == &attack);
+            finish_attack_declaration(&mut s, source);
             attacked = true;
         } else {
             quiet(&mut s);
