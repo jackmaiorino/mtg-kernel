@@ -76,6 +76,19 @@ stack on both success and error. Its new paid both-seat/RNG-mode regression
 preserves all ten previous Spinner bodies. The Human Conqueror projector reuses
 its already authenticated observation instead of recomputing it. Both changes
 remain unqualified; no performance improvement is claimed.
+Canonical `de373adff4e7d87835b5a7e428eb9da9c47b93f3` also composes a scoped
+Conqueror projection optimization and selects its paid regression in Limited CI.
+Each common-storage construction borrows one fully validated original state;
+all public and `None` paths retain full validation, and rows still require exact
+membership and the original root lookup. Restored/cloned states require their
+own proof. NextFive retains its existing scope arguments and passes `None`.
+The resolved composition received scoped source review. In the eight-pending
+example, explicit direct validations on the original state fall from 314 to 28
+per complete observation; nested native probe checks remain. These are source
+call counts, with no measured speedup or Rust execution. The new genuine paid
+two-occurrence case checks held/published full projection and byte parity,
+restore, foreign states and forged rows. The canonical source selection has
+478 cases (448 lib and 30 integration); the current model subtree remains 151.
 Both the complete Divine printing and semantic-boolean conversion are in the
 feature source identity; `rl_variable_cast_v1.rs` occurs exactly once alongside
 the public variable-cast observation and owning session implementation.
