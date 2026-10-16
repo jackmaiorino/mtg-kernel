@@ -1907,6 +1907,7 @@ pub fn observe_v1(
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2227,6 +2228,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2693,6 +2695,7 @@ fn public_restricted_mana_v1(
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -5175,6 +5178,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         proof.require_state(state)?;
     }
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::engine::time_stop_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::thousand_year_storm_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;

@@ -720,93 +720,119 @@ fn empty_mana(state: &mut GameState) {
 }
 
 pub(crate) fn definition(id: u16) -> bool {
-    card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
-        d.name == "Time Stop"
-            && d.capability == card_def::CardCapability::Partial
-            && d.cost
-                == crate::mana::Cost {
-                    generic: 4,
-                    pips: &[
-                        crate::mana::Pip::Colored(crate::mana::ManaColor::U),
-                        crate::mana::Pip::Colored(crate::mana::ManaColor::U),
-                    ],
-                    x_count: 0,
-                }
-            && d.generic_cost_reduction.is_none()
-            && d.ward_cost.is_none()
-            && !d.spell_cannot_be_countered
-            && !d.records_mana_spent
-            && d.equipment.is_none()
-            && d.types == [CardType::Instant]
-            && d.subtypes.is_empty()
-            && d.supertypes.is_empty()
-            && d.power.is_none()
-            && d.toughness.is_none()
-            && d.starting_loyalty.is_none()
-            && d.enters_with_plus_one_counters.is_none()
-            && d.controlled_counter_keyword.is_none()
-            && d.game_outcome_protection_v1.is_none()
-            && d.controlled_creature_grant.is_none()
-            && !d.is_land
-            && d.produces_mana.is_empty()
-            && d.colors == [crate::mana::ManaColor::U]
-            && d.target_spec == TargetSpec::None
-            && d.keywords == card_def::Keywords::NONE
-            && (d.spell_effect)()
-                == Some(effect::EffectOp::StandardV1(
-                    crate::standard_cards_v1::StandardOpV1::EndTurnV1,
-                ))
-            && (d.mana_ability)().is_none()
-            && d.alt_cost.is_none()
-            && d.kicker_cost.is_none()
-            && d.additional_cost.is_none()
-            && d.flashback.is_none()
-            && d.activated_abilities.is_empty()
-            && d.plot_cost.is_none()
-            && d.madness_cost.is_none()
-            && d.mode2.is_none()
-            && d.mode3.is_none()
-            && d.additional_modes.is_empty()
-            && d.kicked_target_spec.is_none()
-            && !d.is_token
-            && d.escape.is_none()
-            && d.mana_ability_choices.is_empty()
-            && !d.enters_battlefield_tapped
-            && d.mana_ability_def.is_none()
-            && d.minimum_blockers == 1
-            && d.omen.is_none()
-            && d.mana_value == 6
-            && !d.mana_ability_includes_chosen_color
-            && d.as_enters_choose_color_other_than.is_none()
-            && d.additional_mana_abilities.is_empty()
-            && d.object_name == d.name
-            && d.enters_battlefield_tapped_unless.is_none()
-            && d.attachment.is_none()
-            && d.transform_face.is_none()
-            && d.saga.is_none()
-            && d.optional_additional_cost.is_none()
-            && !d.changeling
-            && d.bestow.is_none()
-            && !d.delve
-            && d.adventure.is_none()
-            && !d.cant_be_blocked_by_monarchs_creatures
-            && d.conditional_tap_yield.is_none()
-            && d.enters_tapped_unless_controller.is_none()
-            && d.additional_mana_ability_conditions.is_empty()
-            && d.restricted_mana_abilities.is_empty()
-            && d.animation.is_none()
-            && d.activated_ability_generic_reductions.is_empty()
-            && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
-            && d.as_enters_color_choice_v1.is_none()
-            && d.chosen_color_creature_boost_v1.is_none()
-            && d.damage_replacement_v1.is_none()
-            && d.token_counter_replacement_v48.is_none()
-            && d.starting_life_self_bonuses_v1.is_empty()
-            && d.source_type_hexproof_v1.is_none()
-            && d.other_controlled_nontoken_death_v1.is_none()
-            && d.creature_type_entry_v1.is_none()
-            && trigger::triggers_for(id).is_empty()
-    })
+    cfg!(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    )) && id == 486
+        && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            d.name == "Time Stop"
+                && d.capability == card_def::CardCapability::Partial
+                && d.cost
+                    == crate::mana::Cost {
+                        generic: 4,
+                        pips: &[
+                            crate::mana::Pip::Colored(crate::mana::ManaColor::U),
+                            crate::mana::Pip::Colored(crate::mana::ManaColor::U),
+                        ],
+                        x_count: 0,
+                    }
+                && d.generic_cost_reduction.is_none()
+                && d.ward_cost.is_none()
+                && !d.spell_cannot_be_countered
+                && !d.records_mana_spent
+                && d.equipment.is_none()
+                && d.types == [CardType::Instant]
+                && d.subtypes.is_empty()
+                && d.supertypes.is_empty()
+                && d.power.is_none()
+                && d.toughness.is_none()
+                && d.starting_loyalty.is_none()
+                && d.enters_with_plus_one_counters.is_none()
+                && d.controlled_counter_keyword.is_none()
+                && d.game_outcome_protection_v1.is_none()
+                && d.controlled_creature_grant.is_none()
+                && !d.is_land
+                && d.produces_mana.is_empty()
+                && d.colors == [crate::mana::ManaColor::U]
+                && d.target_spec == TargetSpec::None
+                && d.keywords == card_def::Keywords::NONE
+                && (d.spell_effect)()
+                    == Some(effect::EffectOp::StandardV1(
+                        crate::standard_cards_v1::StandardOpV1::EndTurnV1,
+                    ))
+                && (d.mana_ability)().is_none()
+                && d.alt_cost.is_none()
+                && d.kicker_cost.is_none()
+                && d.additional_cost.is_none()
+                && d.flashback.is_none()
+                && d.activated_abilities.is_empty()
+                && d.plot_cost.is_none()
+                && d.madness_cost.is_none()
+                && d.mode2.is_none()
+                && d.mode3.is_none()
+                && d.additional_modes.is_empty()
+                && d.kicked_target_spec.is_none()
+                && !d.is_token
+                && d.escape.is_none()
+                && d.mana_ability_choices.is_empty()
+                && !d.enters_battlefield_tapped
+                && d.mana_ability_def.is_none()
+                && d.minimum_blockers == 1
+                && d.omen.is_none()
+                && d.mana_value == 6
+                && !d.mana_ability_includes_chosen_color
+                && d.as_enters_choose_color_other_than.is_none()
+                && d.additional_mana_abilities.is_empty()
+                && d.object_name == d.name
+                && d.enters_battlefield_tapped_unless.is_none()
+                && d.attachment.is_none()
+                && d.transform_face.is_none()
+                && d.saga.is_none()
+                && d.optional_additional_cost.is_none()
+                && !d.changeling
+                && d.bestow.is_none()
+                && !d.delve
+                && d.adventure.is_none()
+                && !d.cant_be_blocked_by_monarchs_creatures
+                && d.conditional_tap_yield.is_none()
+                && d.enters_tapped_unless_controller.is_none()
+                && d.additional_mana_ability_conditions.is_empty()
+                && d.restricted_mana_abilities.is_empty()
+                && d.animation.is_none()
+                && d.activated_ability_generic_reductions.is_empty()
+                && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
+                && d.as_enters_color_choice_v1.is_none()
+                && d.chosen_color_creature_boost_v1.is_none()
+                && d.damage_replacement_v1.is_none()
+                && d.token_counter_replacement_v48.is_none()
+                && d.starting_life_self_bonuses_v1.is_empty()
+                && d.source_type_hexproof_v1.is_none()
+                && d.other_controlled_nontoken_death_v1.is_none()
+                && d.creature_type_entry_v1.is_none()
+                && trigger::triggers_for(id).is_empty()
+        })
+}
+
+/// Frozen consumers cannot omit an actual public end-turn outcome. Hidden
+/// hands/libraries and face-down identities do not participate in selection.
+pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
+    if !state.engine.time_stop_v1.is_empty()
+        || state
+            .engine
+            .event_history
+            .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        || state.objects.iter().any(|(_, object)| {
+            matches!(
+                object.zone,
+                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
+            ) && object.v4.face_down_v1.is_none()
+                && definition(object.card_def)
+        })
+    {
+        Err("Time Stop requires a complete end-turn consumer".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// Explicit source identity for the changed end-turn execution and closure
@@ -974,3 +1000,11 @@ pub(crate) fn source_sha256_v1() -> &'static str {
         })
         .as_str()
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "time_stop_v1_tests.rs"]
+mod tests;
