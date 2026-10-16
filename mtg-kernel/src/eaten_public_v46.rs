@@ -1,4 +1,5 @@
 //! Eaten Alive mandatory additional-cost facts. Original executable receipts stay private.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{GameState, StackSourceContractV4, Zone};
@@ -97,7 +98,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         crate::eaten_alive_v1::exact_recipe(p.source_contract.card_def)?;
         crate::engine::validate_pending_cast(state, p)?;
     }
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1])
+    {
         if let crate::event::CommittedEvent::MandatoryCastPaymentV1 { source, .. } = event {
             crate::eaten_alive_v1::exact_recipe(source.card_def)?;
         }
@@ -155,6 +160,10 @@ pub fn producer_sha256() -> String {
             include_str!("rl.rs"),
             include_str!("standard_cast_convoke.rs"),
             include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());
@@ -247,7 +256,11 @@ pub(crate) fn capture(state: &GameState, actor: PlayerId) -> Result<FactsV46, Rl
         })
         .transpose()?;
     let mut payments = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1])
+    {
         if let crate::event::CommittedEvent::MandatoryCastPaymentV1 {
             source,
             choice,

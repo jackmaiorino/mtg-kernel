@@ -111,6 +111,19 @@ pub fn producer_sha256() -> String {
                 "rules_meaning_next_five_v59.rs",
                 include_str!("rules_meaning_next_five_v59.rs"),
             ),
+            (
+                "effect/thousand_year_storm_v1.rs",
+                include_str!("effect/thousand_year_storm_v1.rs"),
+            ),
+            (
+                "effect/standard_copy.rs",
+                include_str!("effect/standard_copy.rs"),
+            ),
+            (
+                "standard_spell_copy.rs",
+                include_str!("standard_spell_copy.rs"),
+            ),
+            ("event_history_v1.rs", include_str!("event_history_v1.rs")),
         ] {
             h.update(path.as_bytes());
             h.update([0]);

@@ -452,6 +452,22 @@ impl NativePolicyValueTrainStateV1 {
         NativePolicyTrainErrorV1,
     > {
         let setup_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::SetupValidation);
+        let math = self.training_math;
+        if !math.is_platform_libm() {
+            if line_b.is_some() {
+                return Err(NativePolicyTrainErrorV1::PortableMathUnsupported { path: "line (b)" });
+            }
+            if exploration.is_some() {
+                return Err(NativePolicyTrainErrorV1::PortableMathUnsupported {
+                    path: "recovery loss",
+                });
+            }
+            if imitation {
+                return Err(NativePolicyTrainErrorV1::PortableMathUnsupported {
+                    path: "imitation",
+                });
+            }
+        }
         validate_gae_inputs_v1(groups, value_targets, advantages)?;
         if !value_coefficient.is_finite()
             || (value_coefficient <= 0.0 && !(imitation && value_coefficient == 0.0))
@@ -479,6 +495,7 @@ impl NativePolicyValueTrainStateV1 {
             input_config,
             groups,
             forward_workers,
+            math,
         );
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
@@ -502,6 +519,7 @@ impl NativePolicyValueTrainStateV1 {
                         Some(&input_major),
                         input_config,
                         **encoded,
+                        math,
                     )?),
                 };
                 validate_forward_output_bits_v1(
@@ -520,8 +538,11 @@ impl NativePolicyValueTrainStateV1 {
                         action_count: tape.logits_v1().len(),
                     });
                 }
-                let (selected_log_probability, log_probabilities) =
-                    selected_log_softmax(tape.logits_v1(), substep.selected_action_index)?;
+                let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
+                    tape.logits_v1(),
+                    substep.selected_action_index,
+                    math,
+                )?;
                 joint_log_probability = Some(match joint_log_probability {
                     None => selected_log_probability,
                     Some(active) => active + selected_log_probability,
@@ -610,6 +631,7 @@ impl NativePolicyValueTrainStateV1 {
                     group_count,
                     value_coefficient,
                     forward_workers,
+                    math,
                 )
             }
             _ => None,
@@ -625,7 +647,7 @@ impl NativePolicyValueTrainStateV1 {
                     .iter()
                     .map(|parameter| vec![0.0; parameter.values.len()])
                     .collect::<Vec<_>>();
-                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
                 let mut reverse_workspace = ReverseWorkspaceV1::default();
                 // Same reverse group/substep/action order as
                 // `train_step_with_input_config_v1`'s Sequential arm.
@@ -653,9 +675,9 @@ impl NativePolicyValueTrainStateV1 {
                             .iter()
                             .zip(&selected.log_probabilities)
                         {
-                            reverse_workspace
-                                .d_logits
-                                .push(*gradient - log_probability.exp() * grad_output_sum);
+                            reverse_workspace.d_logits.push(
+                                *gradient - math.exp_f32_v1(*log_probability) * grad_output_sum,
+                            );
                         }
                         if beta != 0.0 {
                             let actor = reverse_workspace.d_logits.clone();
@@ -701,7 +723,8 @@ impl NativePolicyValueTrainStateV1 {
                         )
                     })
                     .collect();
-                let gauge_accumulator = observe_scorer_bias_gauge_v1(&group_tapes, &coefficients)?;
+                let gauge_accumulator =
+                    observe_scorer_bias_gauge_v1(&group_tapes, &coefficients, math)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
                 let gradients = fixed_partition_backward_gradients_v1(
                     &parameters,
@@ -713,6 +736,7 @@ impl NativePolicyValueTrainStateV1 {
                         .map(|parameter| vec![0.0; parameter.values.len()])
                         .collect::<Vec<_>>(),
                     &execution_context,
+                    math,
                 )?;
                 drop(group_tapes);
                 (gradients, gauge_accumulator)
@@ -742,6 +766,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             next_step,
             learning_rate,
+            math,
         )?;
         next_parameters[SCORER_SECOND_BIAS].values[0] =
             f32::from_bits(self.scorer_bias_anchor_bits);
@@ -814,6 +839,7 @@ fn precompute_encoded_forward_tapes_v1(
     config: NativePolicyValueModelConfigV1,
     groups: &[NativePolicyPhysicalDecisionV1<'_>],
     forward_workers: usize,
+    math: TrainingMathV1,
 ) -> Option<impl Iterator<Item = Result<Box<DecisionTapeV1>, NativePolicyTrainErrorV1>>> {
     let mut tasks = Vec::new();
     for group in groups {
@@ -837,7 +863,7 @@ fn precompute_encoded_forward_tapes_v1(
                 let spawned = thread::Builder::new()
                     .name(format!("native-gae-forward-{worker_index}"))
                     .spawn_scoped(scope, move || {
-                        forward_encoded_chunk_v1(parameters, input_major, config, chunk)
+                        forward_encoded_chunk_v1(parameters, input_major, config, chunk, math)
                     });
                 (spawned, chunk)
             })
@@ -861,6 +887,7 @@ fn precompute_encoded_forward_tapes_v1(
                     input_major,
                     config,
                     chunk,
+                    math,
                 )),
             }
         }
@@ -877,13 +904,20 @@ fn forward_encoded_chunk_v1(
     input_major: &InputMajorWeightsV1,
     config: NativePolicyValueModelConfigV1,
     chunk: &[NativeEncodedDecisionViewV1<'_>],
+    math: TrainingMathV1,
 ) -> Vec<GaeForwardOutcomeV1> {
     chunk
         .iter()
         .map(|encoded| {
             match catch_unwind(AssertUnwindSafe(|| {
-                forward_with_tape_input_major_v1(parameters, Some(input_major), config, *encoded)
-                    .map(Box::new)
+                forward_with_tape_input_major_v1(
+                    parameters,
+                    Some(input_major),
+                    config,
+                    *encoded,
+                    math,
+                )
+                .map(Box::new)
             })) {
                 Ok(result) => GaeForwardOutcomeV1::Completed(result),
                 Err(payload) => GaeForwardOutcomeV1::Panicked(payload),

@@ -7,7 +7,7 @@ use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     ESupportedTeacherOptionsV1,
 };
 use crate::expanded_deck_training_v1::{
-    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_v1,
+    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_bound_v1,
     load_expanded_update_inference_v1, take_collection_fields_v1, CollectionSamplerV1,
     CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
     ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
@@ -16,6 +16,7 @@ use crate::expanded_deck_training_v1::{
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
+use crate::training_math_v1::TrainingMathV1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -148,6 +149,12 @@ pub struct NativeExpandedTrainingRunV1 {
     /// omitted, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
     pub collection_sampler: CollectionSamplerV1,
+    /// The math of every forward, loss and gradient of the run
+    /// (`training_math_v1`): the platform's libm by default, omitted so
+    /// every existing config and run identity is unchanged, or
+    /// `portable-math-v1`, which trains the same bits on every x86-64 system.
+    #[serde(default, skip_serializing_if = "TrainingMathV1::is_platform_libm")]
+    pub training_math: TrainingMathV1,
     /// G115 line (b) update options (head-only optimizer mask); omitted
     /// when absent, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,6 +219,18 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
+        if !self.training_math.is_platform_libm() {
+            check(
+                self.update_backend.is_cpu()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && !matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { .. }
+                    ),
+                "portable training math requires the CPU update without the recovery loss, line (b) or E",
+            )?;
+        }
         crate::expanded_deck_training_v1::validate_collection_workers_v1(self.collection_workers)?;
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(
             self.preparation_workers,
@@ -569,6 +588,7 @@ fn validate_collection(
     episodes: &[ExpandedEpisodeV1],
     before: &ExpandedInferenceIdentityV1,
     collection_sampler: CollectionSamplerV1,
+    training_math: TrainingMathV1,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let document = read_pin(collection)?;
     check(
@@ -582,10 +602,15 @@ fn validate_collection(
             == collection_sampler.identity_v1(),
         "collection sampler differs from the run config",
     )?;
+    check(
+        document.get("training_math").and_then(Value::as_str) == training_math.identity_v1(),
+        "collection training math differs from the run config",
+    )?;
     validate_collection_episodes_with_sampler_v1(
         &document,
         episodes,
         collection_sampler.identity_v1(),
+        training_math,
     )
 }
 
@@ -602,15 +627,22 @@ fn validate_collection_episodes(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<PinnedFileV1>, String> {
-    validate_collection_episodes_with_sampler_v1(document, episodes, None)
+    validate_collection_episodes_with_sampler_v1(
+        document,
+        episodes,
+        None,
+        TrainingMathV1::PlatformLibm,
+    )
 }
 
 /// Also binds every trajectory's `learner_sampler` to the configured
-/// collection sampler (absent for the legacy samplers).
+/// collection sampler (absent for the legacy samplers), and its
+/// `training_math` to the run's.
 fn validate_collection_episodes_with_sampler_v1(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
     learner_sampler: Option<&str>,
+    training_math: TrainingMathV1,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
@@ -674,6 +706,10 @@ fn validate_collection_episodes_with_sampler_v1(
             saved.learner_sampler.as_deref() == learner_sampler,
             "collection learner sampler differs from the run config",
         )?;
+        check(
+            saved.training_math.as_deref() == training_math.identity_v1(),
+            "collection trajectory training math differs from the run config",
+        )?;
     }
     eprintln!(
         "collection validation: {} of {} trajectories parsed ahead",
@@ -735,9 +771,14 @@ fn validate_update(
     max_prepared_tensor_mebibytes: usize,
     line_b_frozen_sha256: Option<&str>,
     e_supported: Option<&ESupportedTeacherOptionsV1>,
+    training_math: TrainingMathV1,
 ) -> Result<(ExpandedModelSourceV1, ExpandedInferenceIdentityV1), String> {
     let document = read_pin(update)?;
     validate_e_supported_update(&document, e_supported)?;
+    check(
+        document.get("training_math").and_then(Value::as_str) == training_math.identity_v1(),
+        "update training math differs from the run config",
+    )?;
     // A masked run's every update repeats the initial source's frozen digest.
     check(
         document
@@ -820,6 +861,7 @@ fn collection_command(
             episodes: episodes.to_vec(),
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             collection_sampler: config.collection_sampler,
+            training_math: config.training_math,
             output_directory,
         }
     } else {
@@ -829,6 +871,7 @@ fn collection_command(
             workers: config.collection_workers,
             max_non_natural_episode_fraction: config.max_non_natural_episode_fraction,
             collection_sampler: config.collection_sampler,
+            training_math: config.training_math,
             output_directory,
         }
     }
@@ -847,6 +890,7 @@ fn record_loss_selection_execution(config: &NativeExpandedTrainingRunV1, documen
 
 fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &mut Value) {
     config.collection_sampler.record_v1(document);
+    config.training_math.record_v1(document);
     if let Some(line_b) = &config.line_b {
         document["line_b"] = json!(line_b);
     }
@@ -890,6 +934,7 @@ fn update_command(
             update_backend: config.update_backend,
             update_backward_execution: config.update_backward_execution,
             loss_selection: config.loss_selection,
+            training_math: config.training_math,
             output_directory,
         }
     } else {
@@ -904,6 +949,7 @@ fn update_command(
             loss_selection: config.loss_selection,
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+            training_math: config.training_math,
             output_directory,
         }
     }
@@ -964,10 +1010,11 @@ pub fn run_native_expanded_training_v1(
     }
     let iterations_root = root.join("iterations");
     fs::create_dir_all(&iterations_root).map_err(err)?;
-    let (_, mut current_identity) = load_expanded_inference_v1(&config.initial_source)?;
+    let (_, mut current_identity) =
+        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
     // Validate the complete fixed roster before spending episode compute.
     for opponent in &config.opponents {
-        load_expanded_inference_v1(&opponent.source)?;
+        load_expanded_inference_bound_v1(&opponent.source, config.training_math)?;
     }
     let mut current = config.initial_source.clone();
     let mut history = Vec::new();
@@ -1013,6 +1060,7 @@ pub fn run_native_expanded_training_v1(
                 &episodes,
                 &current_identity,
                 config.collection_sampler,
+                config.training_math,
             )?;
             let update = parse_pin(&receipt, "update")?;
             let (next, after) = validate_update(
@@ -1027,6 +1075,7 @@ pub fn run_native_expanded_training_v1(
                 config.max_prepared_tensor_mebibytes,
                 line_b_frozen_sha256.as_deref(),
                 e_options.as_ref(),
+                config.training_math,
             )?;
             check(
                 receipt["output_identity"] == value(&after)?,
@@ -1094,6 +1143,7 @@ pub fn run_native_expanded_training_v1(
                     &episodes,
                     &current_identity,
                     config.collection_sampler,
+                    config.training_math,
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
@@ -1113,6 +1163,7 @@ pub fn run_native_expanded_training_v1(
                     &episodes,
                     &current_identity,
                     config.collection_sampler,
+                    config.training_math,
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 let started = Instant::now();
@@ -1128,6 +1179,7 @@ pub fn run_native_expanded_training_v1(
                     config.max_prepared_tensor_mebibytes,
                     line_b_frozen_sha256.as_deref(),
                     e_options.as_ref(),
+                    config.training_math,
                 )?;
                 update_validation_seconds += started.elapsed().as_secs_f64();
                 check(document["complete"] == true, "incomplete update receipt")?;
@@ -1168,6 +1220,7 @@ pub fn run_native_expanded_training_v1(
                 &episodes,
                 &current_identity,
                 config.collection_sampler,
+                config.training_math,
             )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             validated_trajectories = Some(trajectories.clone());
@@ -1204,6 +1257,7 @@ pub fn run_native_expanded_training_v1(
                 &episodes,
                 &current_identity,
                 config.collection_sampler,
+                config.training_math,
             )?
         };
         collection_validation_seconds += started.elapsed().as_secs_f64();
@@ -1220,6 +1274,7 @@ pub fn run_native_expanded_training_v1(
             config.max_prepared_tensor_mebibytes,
             line_b_frozen_sha256.as_deref(),
             e_options.as_ref(),
+            config.training_math,
         )?;
         update_validation_seconds += started.elapsed().as_secs_f64();
         let mut receipt = json!({"schema":"mtg-kernel-native-expanded-iteration/v1", "iteration":index,
@@ -1284,6 +1339,10 @@ pub fn run_native_expanded_training_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
+    /// the same on every system.
+    const PORTABLE_PARALLEL_RUN_STATE_SHA256_V1: &str =
+        "211d70c71aa594df0d138e7a037e8d6b8328dd075527c6a57479b21c33286400";
 
     fn temporary_directory(label: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -1424,6 +1483,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             line_b: None,
             e_supported: None,
             output_directory: std::env::temp_dir().join("native-expanded-validation-only"),
@@ -1784,12 +1844,18 @@ mod tests {
         let collection =
             |trajectory: &PinnedFileV1| json!({"trajectories": [value(trajectory).unwrap()]});
         let episodes = vec![episode];
-        validate_collection_episodes_with_sampler_v1(&collection(&legacy), &episodes, None)
-            .unwrap();
+        validate_collection_episodes_with_sampler_v1(
+            &collection(&legacy),
+            &episodes,
+            None,
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
         validate_collection_episodes_with_sampler_v1(
             &collection(&unclamped),
             &episodes,
             Some(identity),
+            TrainingMathV1::PlatformLibm,
         )
         .unwrap();
         for (trajectory, expected) in [(&legacy, Some(identity)), (&unclamped, None)] {
@@ -1797,7 +1863,8 @@ mod tests {
                 validate_collection_episodes_with_sampler_v1(
                     &collection(trajectory),
                     &episodes,
-                    expected
+                    expected,
+                    TrainingMathV1::PlatformLibm,
                 )
                 .unwrap_err(),
                 "collection learner sampler differs from the run config"
@@ -2127,6 +2194,7 @@ mod tests {
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             line_b: None,
             e_supported: None,
             output_directory: root.join("run"),
@@ -2302,6 +2370,102 @@ mod tests {
         config.collection_workers = 2;
         config.preparation_workers = 2;
         config
+    }
+
+    /// B5 through the run driver: a run under `portable-math-v1` with
+    /// parallel collection and preparation trains the same bits on two
+    /// workers as on one, and the same bits on every system (one pin, which
+    /// CI checks on Windows and Linux). Its plan and each iteration's
+    /// collection, trajectories, update and checkpoint name the math; the
+    /// same run under the default math names none and trains other bits.
+    #[test]
+    fn portable_math_run_trains_one_state_on_every_system_and_worker_count() {
+        let mut config = parallel_two_iteration_config_v1("portable-math");
+        config.training_math = TrainingMathV1::PortableV1;
+        config.validate_v1().unwrap();
+        let result = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(result["complete"], true);
+        assert_eq!(result["actual_identity"]["adam_step"], 2);
+        let manifest: Value =
+            read_json(&config.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(manifest["training_math"], "portable-math-v1");
+        assert_eq!(manifest["config"]["training_math"], "portable-math-v1");
+        for index in 0..2 {
+            let receipt = iteration_receipt_v1(&result, index);
+            let collection = read_pin(&parse_pin(&receipt, "collection").unwrap()).unwrap();
+            assert_eq!(collection["training_math"], "portable-math-v1");
+            let trajectories: Vec<PinnedFileV1> =
+                serde_json::from_value(collection["trajectories"].clone()).unwrap();
+            assert_eq!(trajectories.len(), 2);
+            for trajectory in &trajectories {
+                let document = read_pin_bounded(trajectory, ARTIFACT_CAP).unwrap();
+                assert_eq!(document["training_math"], "portable-math-v1");
+            }
+            let update = read_pin(&parse_pin(&receipt, "update").unwrap()).unwrap();
+            assert_eq!(update["training_math"], "portable-math-v1");
+            let checkpoint = parse_pin(&update, "checkpoint").unwrap();
+            let checkpoint = read_pin_bounded(&checkpoint, ARTIFACT_CAP).unwrap();
+            assert_eq!(checkpoint["training_math"], "portable-math-v1");
+        }
+        let mut serial = config.clone();
+        serial.collection_workers = 1;
+        serial.preparation_workers = 1;
+        serial.output_directory = config.output_directory.with_file_name("run-serial");
+        let serial = run_native_expanded_training_v1(&serial, None).unwrap();
+        assert_eq!(
+            serial["actual_identity"]["state_sha256"],
+            result["actual_identity"]["state_sha256"]
+        );
+        let mut platform = config.clone();
+        platform.training_math = TrainingMathV1::PlatformLibm;
+        platform.output_directory = config.output_directory.with_file_name("run-platform");
+        let platform_result = run_native_expanded_training_v1(&platform, None).unwrap();
+        assert_ne!(
+            platform_result["actual_identity"]["state_sha256"],
+            result["actual_identity"]["state_sha256"]
+        );
+        let manifest = fs::read_to_string(platform.output_directory.join("run.json")).unwrap();
+        assert!(!manifest.contains("training_math"), "{manifest}");
+        assert_eq!(
+            result["actual_identity"]["state_sha256"],
+            PORTABLE_PARALLEL_RUN_STATE_SHA256_V1
+        );
+    }
+
+    /// The portable math covers the CPU update without the recovery loss,
+    /// line (b) or E; a config that asks for more is refused before any work.
+    #[test]
+    fn portable_math_run_refuses_paths_it_does_not_cover() {
+        let mut base = real_two_iteration_config_v1(
+            "portable-math-refusals",
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        base.training_math = TrainingMathV1::PortableV1;
+        base.validate_v1().unwrap();
+        let refused = |config: NativeExpandedTrainingRunV1| {
+            let error = config.validate_v1().unwrap_err();
+            assert!(error.contains("portable training math"), "{error}");
+        };
+        let mut cuda = base.clone();
+        cuda.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 };
+        refused(cuda);
+        let mut recovery = base.clone();
+        recovery.loss_selection = ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            initial_adam_step: 32400,
+            recovery: true,
+            diagnostics: false,
+        };
+        refused(recovery);
+        let mut e_supported = e_supported_run_config_v1("portable-math-refusals-e");
+        e_supported.training_math = TrainingMathV1::PortableV1;
+        refused(e_supported);
     }
 
     /// Every regular file under `directory`, by its path relative to it.

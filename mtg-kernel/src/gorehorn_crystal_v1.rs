@@ -1,5 +1,6 @@
 //! Scoped cooperation between original Raid ownership and the Crystal driver.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BeginV1 {
     pub index: u32,
@@ -20,6 +21,7 @@ fn beginnings(state: &GameState, id: StackItemId) -> Vec<&BeginV1> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornCrystalBeginV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::GorehornCrystalBeginV1 { begin }
@@ -144,17 +146,23 @@ pub(crate) fn prepare_owned(
     if !met(begin, ctx.controller) {
         return Err("Gorehorn Crystal prepared a false Raid branch".into());
     }
-    if state.engine.event_history.iter().any(|e| {
-        matches!(e, CommittedEvent::GorehornPreparedV1 { prepared }
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GorehornPreparedV1])
+        .iter()
+        .any(|e| {
+            matches!(e, CommittedEvent::GorehornPreparedV1 { prepared }
         if prepared.publication == owner.publication)
-    }) {
+        })
+    {
         return Err("Gorehorn Crystal preparation replayed".into());
     }
     record_preparation(state, owner, ctx)?;
     Ok(())
 }
 pub(crate) fn completed_count(state: &GameState, id: StackItemId) -> usize {
-    state.engine.event_history.iter().filter(|e| matches!(e,
+    state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornCrystalCompletionV1]).iter().filter(|e| matches!(e,
         CommittedEvent::GorehornCrystalCompletionV1 { completion } if completion.item.v4.stack_item_id == id)).count()
 }
 pub(crate) fn prepared_is_owned(state: &GameState, r: &PreparedV1) -> bool {
@@ -205,6 +213,7 @@ pub(crate) fn finish_owned(
     let boundary = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
         .iter()
         .rev()
         .find_map(|e| match e {
@@ -241,7 +250,16 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }) {
         return Err("Gorehorn Crystal private authority entered transient log".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::GorehornCrystalBeginV1,
+            EventKindV1::GorehornCrystalCompletionV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::GorehornCrystalBeginV1 { begin } => {
                 let begin = begin_at(state, begin.index)?;
@@ -256,6 +274,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let executions = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::CrystalExecutionV1 { execution }
@@ -286,7 +305,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                             .into(),
                     );
                 }
-                let prepared_count = state.engine.event_history.iter().filter(|e| matches!(e,
+                let prepared_count = state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornPreparedV1]).iter().filter(|e| matches!(e,
                     CommittedEvent::GorehornPreparedV1 { prepared } if prepared.publication == begin.publication)).count();
                 if prepared_count != usize::from(met(begin, p.item.controller)) {
                     return Err(
@@ -321,7 +340,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     || e.history_index + 1 != b.history_index || b.answer.is_some()
                     || !publication_matches(state,&c.item,&p.item)
                     || state.stack.iter().any(|i|i.v4.stack_item_id == c.item.v4.stack_item_id)
-                    || state.engine.event_history.iter().any(|e| matches!(e,
+                    || state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornOperationV1]).iter().any(|e| matches!(e,
                         CommittedEvent::GorehornOperationV1 { operation } if operation.publication == p.index))
                 { return Err("Gorehorn Crystal closed owner changed or was reintroduced".into()); }
             }

@@ -2,6 +2,7 @@
 use crate::card_def::{Subtype, TargetSpec};
 use crate::effect::ExecCtx;
 use crate::event::{self, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
     AbilitySourceContractV4, GameState, ObjectLinkV4, StackTargetContractV4, Target, Zone,
@@ -42,14 +43,23 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
             )
         })
-        || state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { .. }
-                    | crate::event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { .. }
-                    | crate::event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::ExileIfDiesReplacementCleanupV1,
+                EventKindV1::ExileIfDiesReplacementExpiredV1,
+                EventKindV1::ExileIfDiesReplacementInstalledV1,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { .. }
+                        | crate::event::CommittedEvent::ExileIfDiesReplacementExpiredV1 { .. }
+                        | crate::event::CommittedEvent::ExileIfDiesReplacementCleanupV1 { .. }
+                )
+            })
 }
 
 pub(crate) fn original_battlefield_target(

@@ -67,7 +67,7 @@ impl WorldV59 {
         if !original.engine.event_history.is_empty() {
             return Err("Conqueror recursive input history".into());
         }
-        original.engine.event_history = prefix.to_vec();
+        original.engine.event_history = prefix.to_vec().into();
         Ok(original)
     }
 }

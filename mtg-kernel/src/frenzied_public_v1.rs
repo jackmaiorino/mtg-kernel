@@ -1,4 +1,5 @@
 //! Separate public Frenzied transport. This is not V8/V9 or tensor/model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -126,6 +127,10 @@ pub fn producer_sha256_v1() -> String {
         include_str!("standard_cast_convoke.rs"),
         include_str!("engine/mandatory_cast_cost_v1.rs"),
         include_str!("rules_meaning_next_five_v59.rs"),
+        include_str!("effect/thousand_year_storm_v1.rs"),
+        include_str!("effect/standard_copy.rs"),
+        include_str!("standard_spell_copy.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -450,7 +455,11 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
 fn resolutions(state: &GameState) -> Result<Vec<ResolutionV1>, RlContractError> {
     use crate::event::CommittedEvent;
     let mut rows = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FrenziedGoblinPublishedV1])
+    {
         let CommittedEvent::FrenziedGoblinPublishedV1 { publication } = event else {
             continue;
         };
@@ -462,6 +471,7 @@ fn resolutions(state: &GameState) -> Result<Vec<ResolutionV1>, RlContractError> 
         let outcome = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinCompletedV1])
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::FrenziedGoblinCompletedV1 {
@@ -470,11 +480,16 @@ fn resolutions(state: &GameState) -> Result<Vec<ResolutionV1>, RlContractError> 
                 } if *publication_history_index == publication.history_index => Some(*outcome),
                 _ => None,
             });
-        let paid = state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        let paid = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::FrenziedGoblinPaymentV1 {publication_history_index}
                 if *publication_history_index==publication.history_index)
-        });
+            });
         let pending = state.engine.pending_effect.as_ref().filter(|pending| {
             pending.resolving_item.v4.stack_item_id == publication.item.v4.stack_item_id
         });

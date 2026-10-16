@@ -1,5 +1,6 @@
 //! Paid activation and operation ownership for the Partial Ravenous candidate.
 //! Registration enables real printing checks; Full admission remains unqualified.
+use crate::event_history_v1::EventKindV1;
 use crate::{
     card_def::{
         ActivationTargetFilter, CardType, CostComponent, PermanentFilter, TargetSpec, CARD_DEFS,
@@ -384,6 +385,7 @@ fn paid_for(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
     let mut rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RavenousPaymentV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::RavenousPaymentV1 { paid } if paid.item.v4.stack_item_id == id => {
@@ -406,14 +408,14 @@ fn tracked(state: &GameState, item: &StackItem) -> bool {
         return false;
     }
     printed_item(item) || item.inline_effect == Some(draw_program()) || item.inline_effect == Some(loss_program())
-        || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { paid } if paid.item.v4.stack_item_id == item.v4.stack_item_id))
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::RavenousPaymentV1]).iter().any(|event| matches!(event, CommittedEvent::RavenousPaymentV1 { paid } if paid.item.v4.stack_item_id == item.v4.stack_item_id))
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
         return Ok(());
     }
     let paid = paid_for(state, item.v4.stack_item_id)?;
-    if paid.item.as_ref() != item || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index)) {
+    if paid.item.as_ref() != item || state.engine.event_history.scan_for_v1(&[EventKindV1::RavenousRemovedV1]).iter().any(|event| matches!(event, CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index)) {
         return Err("Amulet current row changed or replayed completion".into());
     }
     Ok(())
@@ -740,7 +742,8 @@ fn validate_operation_world(
         .event_history
         .get(..start)
         .ok_or("Amulet original operation prefix absent")?
-        .to_vec();
+        .to_vec()
+        .into();
     if removed.kind == RemovalKindV1::Resolving {
         let borrow = removed
             .replay_borrow

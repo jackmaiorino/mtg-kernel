@@ -3,6 +3,7 @@ use crate::card_def::{
     AsEntersColorChoiceDefV1, CardType, ChosenColorCreatureBoostDefV1, CARD_DEFS,
 };
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::state::{AbilitySourceContractV4, GameObject, GameState, Zone};
@@ -43,16 +44,27 @@ pub(crate) fn owns_definition(id: u16) -> bool {
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     potentially_enters(state)
         || crate::linked_aura_operation_v1::has_banner_pending(state)
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                CommittedEvent::BannerEntryOperationStartedV1 { .. }
-                    | CommittedEvent::BannerEntryColorCapturedV1 { .. }
-                    | CommittedEvent::BannerEntryColorChosenV1 { .. }
-                    | CommittedEvent::BannerEntryColorCommittedV1 { .. }
-                    | CommittedEvent::BannerEntryOperationCompletedV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::BannerEntryColorCapturedV1,
+                EventKindV1::BannerEntryColorChosenV1,
+                EventKindV1::BannerEntryColorCommittedV1,
+                EventKindV1::BannerEntryOperationCompletedV1,
+                EventKindV1::BannerEntryOperationStartedV1,
+            ])
+            .iter()
+            .any(|e| {
+                matches!(
+                    e,
+                    CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                        | CommittedEvent::BannerEntryColorCapturedV1 { .. }
+                        | CommittedEvent::BannerEntryColorChosenV1 { .. }
+                        | CommittedEvent::BannerEntryColorCommittedV1 { .. }
+                        | CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+                )
+            })
 }
 pub(crate) fn potentially_enters(state: &GameState) -> bool {
     state
@@ -145,10 +157,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }) {
         return Err("private Banner authority moved into public event log".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::BannerEntryColorCapturedV1,
+            EventKindV1::BannerEntryColorChosenV1,
+            EventKindV1::BannerEntryColorCommittedV1,
+            EventKindV1::BannerEntryOperationCompletedV1,
+            EventKindV1::BannerEntryOperationStartedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::BannerEntryOperationStartedV1 { .. } => {
-                let closed = state.engine.event_history.iter().enumerate().filter(|(_, event)| matches!(event,
+                let closed = state.engine.event_history.scan_for_v1(&[EventKindV1::BannerEntryOperationCompletedV1]).iter().enumerate().filter(|(_, event)| matches!(event,
                     CommittedEvent::BannerEntryOperationCompletedV1 { operation, .. } if *operation as usize == index)).collect::<Vec<_>>();
                 if closed.len() != 1 || closed[0].0 <= index {
                     return Err(
@@ -166,11 +190,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Banner capture lost its genuine operation/definition".into());
                 }
-                let answers = state.engine.event_history.iter().enumerate().filter(|(_, e)| matches!(e, CommittedEvent::BannerEntryColorChosenV1 { capture, color, .. } if *capture as usize == index && COLORS.contains(color))).collect::<Vec<_>>();
+                let answers = state.engine.event_history.scan_for_v1(&[EventKindV1::BannerEntryColorChosenV1]).iter().enumerate().filter(|(_, e)| matches!(e, CommittedEvent::BannerEntryColorChosenV1 { capture, color, .. } if *capture as usize == index && COLORS.contains(color))).collect::<Vec<_>>();
                 if answers.len() != 1 || answers[0].0 <= index {
                     return Err("Banner capture lost its unique actual color answer".into());
                 }
-                let entries = state.engine.event_history.iter().enumerate().filter(|(_, e)| matches!(e, CommittedEvent::BannerEntryColorCommittedV1 { entered } if entered.capture as usize == index && entered.answer as usize == answers[0].0 && entered.operation == *operation)).collect::<Vec<_>>();
+                let entries = state.engine.event_history.scan_for_v1(&[EventKindV1::BannerEntryColorCommittedV1]).iter().enumerate().filter(|(_, e)| matches!(e, CommittedEvent::BannerEntryColorCommittedV1 { entered } if entered.capture as usize == index && entered.answer as usize == answers[0].0 && entered.operation == *operation)).collect::<Vec<_>>();
                 if entries.len() != 1 || entries[0].0 <= answers[0].0 {
                     return Err("Banner answer lost its exact committed entry".into());
                 }
@@ -198,6 +222,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let expected = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::BannerEntryColorCommittedV1])
                     .iter()
                     .enumerate()
                     .filter_map(|(at, e)| match e {
@@ -341,6 +366,7 @@ pub(crate) fn authenticated_color(
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::BannerEntryColorCommittedV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::BannerEntryColorCommittedV1 { entered }

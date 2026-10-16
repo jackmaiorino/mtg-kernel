@@ -2,6 +2,7 @@
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectOp, ExecCtx, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Zone,
@@ -181,6 +182,7 @@ fn publication(state: &GameState, id: StackItemId) -> Result<&PublicationV4, Str
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamagePublishedV4])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -216,10 +218,15 @@ pub(crate) fn published_root(state: &GameState, id: StackItemId) -> Result<Effec
     printed_root(&publication(state, id)?.item)
 }
 pub(crate) fn has_publication(state: &GameState, id: StackItemId) -> bool {
-    state.engine.event_history.iter().any(|e| {
-        matches!(e,CommittedEvent::EquipmentDamagePublishedV4 {publication}
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamagePublishedV4])
+        .iter()
+        .any(|e| {
+            matches!(e,CommittedEvent::EquipmentDamagePublishedV4 {publication}
         if publication.item.v4.stack_item_id==id)
-    })
+        })
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item)
@@ -228,10 +235,15 @@ pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
 }
 pub(crate) fn publication_matches(state: &GameState, item: &StackItem, saved: &StackItem) -> bool {
     if item.v4.crystal_prevention_started_v1.is_empty()
-        && state.engine.event_history.iter().any(|e| {
-            matches!(e,CommittedEvent::CrystalPreventionBoundaryV1 {boundary}
+        && state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
+            .iter()
+            .any(|e| {
+                matches!(e,CommittedEvent::CrystalPreventionBoundaryV1 {boundary}
             if boundary.item.v4.stack_item_id==item.v4.stack_item_id)
-        })
+            })
     {
         return false;
     }
@@ -251,6 +263,7 @@ fn closed_count(state: &GameState, id: StackItemId) -> usize {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamageClosedV4])
         .iter()
         .filter(|e| {
             matches!(e,CommittedEvent::EquipmentDamageClosedV4 {closed}
@@ -264,10 +277,16 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     }
     validate_published_metadata(state, item)?;
     let p = publication(state, item.v4.stack_item_id)?;
-    if state.engine.event_history.iter().any(|event| {
-        matches!(event,
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamagePreparedV4])
+        .iter()
+        .any(|event| {
+            matches!(event,
         CommittedEvent::EquipmentDamagePreparedV4 {prepared} if prepared.publication==p.index)
-    }) {
+        })
+    {
         prepared(state, item.v4.stack_item_id)?;
     } else {
         facts(state, p.item.v4.ability_source_contract.unwrap())?;
@@ -373,7 +392,7 @@ fn before_departure_with_waiting(
     if !owned {
         return;
     }
-    if state.engine.event_history.iter().enumerate().any(|(index,event)|matches!(event,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::EquipmentDamageDepartureV4]).iter().enumerate().any(|(index,event)|matches!(event,
         CommittedEvent::EquipmentDamageDepartureV4 {departure} if departure.facts.source.source==id
             && departure.snapshot.zone_change_count==live.zone_change_count
             && !state.engine.event_history[index+1..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange {object,..} if *object==id))))
@@ -457,6 +476,7 @@ fn facts(
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamageDepartureV4])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::EquipmentDamageDepartureV4 { departure: d }
@@ -487,10 +507,15 @@ pub(crate) fn prepare_owned(
             .stack
             .iter()
             .any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
-        || state.engine.event_history.iter().any(|e| {
-            matches!(e,CommittedEvent::EquipmentDamagePreparedV4 {prepared}
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::EquipmentDamagePreparedV4])
+            .iter()
+            .any(|e| {
+                matches!(e,CommittedEvent::EquipmentDamagePreparedV4 {prepared}
             if prepared.publication==owner.publication)
-        })
+            })
     {
         return Err("equipment source preparation changed or replayed".into());
     }
@@ -518,6 +543,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparationV4, String
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::EquipmentDamagePreparedV4])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -618,6 +644,7 @@ pub(crate) fn finish_owned(
     let boundary = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
         .iter()
         .rev()
         .find_map(|e| match e {
@@ -693,7 +720,19 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         validate_item(state, item)?;
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::EquipmentDamageClosedV4,
+            EventKindV1::EquipmentDamageCounterRemovalV4,
+            EventKindV1::EquipmentDamageDepartureV4,
+            EventKindV1::EquipmentDamagePreparedV4,
+            EventKindV1::EquipmentDamagePublishedV4,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::EquipmentDamageDepartureV4 { departure: d } => {
                 if d.index as usize != index {
@@ -730,7 +769,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let p = publication(state, r.item.v4.stack_item_id)?;
                 if r.index as usize!=index || r.index<=p.index || r.publication!=p.index || r.item!=p.item
                     || state.stack.iter().any(|item|item.v4.stack_item_id==r.item.v4.stack_item_id)
-                    || state.engine.event_history.iter().filter(|event|matches!(event,
+                    || state.engine.event_history.scan_for_v1(&[EventKindV1::EquipmentDamageClosedV4]).iter().filter(|event|matches!(event,
                         CommittedEvent::EquipmentDamageClosedV4 {closed} if closed.counter==Some(r.index)
                             && closed.outcome==OutcomeV4::Countered && closed.item==r.item && closed.publication==p.index)).count()!=1 {
                     return Err("equipment counter operation lost exact unique closed removal".into());
@@ -759,7 +798,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                             );
                         };
                         if r.index!=at || at.checked_add(1)!=Some(c.index) || r.publication!=p.index || r.item!=p.item
-                            || c.item!=p.item || state.engine.event_history.iter().any(|e|matches!(e,
+                            || c.item!=p.item || state.engine.event_history.scan_for_v1(&[EventKindV1::EquipmentDamagePreparedV4]).iter().any(|e|matches!(e,
                             CommittedEvent::EquipmentDamagePreparedV4 {prepared} if prepared.publication==p.index)) {
                             return Err("equipment counter changed actual removal or hides execution".into());
                         }
@@ -815,15 +854,25 @@ pub(crate) fn owns_context(state: &GameState, ctx: &ExecCtx) -> bool {
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     state.stack.iter().any(|i| tracked(state, i))
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                CommittedEvent::EquipmentDamagePublishedV4 { .. }
-                    | CommittedEvent::EquipmentDamagePreparedV4 { .. }
-                    | CommittedEvent::EquipmentDamageClosedV4 { .. }
-                    | CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::EquipmentDamageClosedV4,
+                EventKindV1::EquipmentDamageCounterRemovalV4,
+                EventKindV1::EquipmentDamagePreparedV4,
+                EventKindV1::EquipmentDamagePublishedV4,
+            ])
+            .iter()
+            .any(|e| {
+                matches!(
+                    e,
+                    CommittedEvent::EquipmentDamagePublishedV4 { .. }
+                        | CommittedEvent::EquipmentDamagePreparedV4 { .. }
+                        | CommittedEvent::EquipmentDamageClosedV4 { .. }
+                        | CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                )
+            })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -850,10 +899,15 @@ pub(crate) fn public_sources(state: &GameState) -> Result<Vec<PublicSourceV4>, S
             let p = publication(state, item.v4.stack_item_id)?;
             let source = p.item.v4.ability_source_contract.unwrap();
             let grant = p.item.v4.granted_by.unwrap();
-            let (facts, departure, snapshot) = if state.engine.event_history.iter().any(|e| {
-                matches!(e,
+            let (facts, departure, snapshot) = if state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::EquipmentDamagePreparedV4])
+                .iter()
+                .any(|e| {
+                    matches!(e,
             CommittedEvent::EquipmentDamagePreparedV4 {prepared} if prepared.publication==p.index)
-            }) {
+                }) {
                 let r = prepared(state, item.v4.stack_item_id)?;
                 (r.facts, r.departure, r.snapshot.clone())
             } else {

@@ -178,6 +178,7 @@ fn default_and_explicit_full_scope_match_historical_adam_bits() {
         &reference.second_moments,
         reference.adam_step + 1,
         LR,
+        reference.training_math,
     )
     .unwrap();
     next[SCORER_SECOND_BIAS].values[0] = f32::from_bits(reference.scorer_bias_anchor_bits);
@@ -307,8 +308,13 @@ fn off_batch_rows_reproduce_in_batch_line_b_roots_bit_for_bit() {
         .map(|tensor| GroupTapeV1 {
             tapes: vec![SelectedDecisionTapeV1 {
                 tape: DecisionTapeSourceV1::Owned(Box::new(
-                    forward_with_tape(&parameters, config, encoded_decision_view_v3(tensor))
-                        .unwrap(),
+                    forward_with_tape(
+                        &parameters,
+                        config,
+                        encoded_decision_view_v3(tensor),
+                        TrainingMathV1::PlatformLibm,
+                    )
+                    .unwrap(),
                 )),
                 selected_action_index: 0,
                 log_probabilities: Vec::new(),

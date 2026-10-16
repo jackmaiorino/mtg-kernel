@@ -1,6 +1,7 @@
 //! Mandatory creature-sacrifice versus additional-mana cast choice.
 //! No optional payment or alternative printed-cost semantics are introduced.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 use serde::{Deserialize, Serialize};
 
 pub(super) const SACRIFICE: &[CostComponent] = &[CostComponent::SacrificeControlled {
@@ -222,7 +223,7 @@ pub(super) fn validate_paid_creature(
     {
         return Err("mandatory sacrifice did not actually leave battlefield".into());
     }
-    if !state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object: id, from: Zone::Battlefield, controller_before, .. } if *id == original.object && *controller_before == pending.controller)) {
+    if !state.engine.event_history.scan_for_v1(&[EventKindV1::ZoneChange]).iter().any(|event| matches!(event, CommittedEvent::ZoneChange { object: id, from: Zone::Battlefield, controller_before, .. } if *id == original.object && *controller_before == pending.controller)) {
         return Err("mandatory sacrifice lost actual departure".into());
     }
     Ok(())
@@ -352,10 +353,10 @@ pub(super) fn validate_finalized(
         return Err("mandatory paid choice differs from original input".into());
     }
 
-    if state.engine.event_history.iter().filter(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid, .. } if *original == source && *paid == choice)).count() != 1 {
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1]).iter().filter(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid, .. } if *original == source && *paid == choice)).count() != 1 {
         return Err("mandatory payment original receipt erased or duplicated".into());
     }
-    let publication_index = state.engine.event_history.iter().position(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid, .. } if *original == source && *paid == choice)).ok_or("mandatory receipt missing")?;
+    let publication_index = state.engine.event_history.scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1]).iter().position(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { source: original, choice: paid, .. } if *original == source && *paid == choice)).ok_or("mandatory receipt missing")?;
     if choice.input_index >= publication_index {
         return Err("mandatory payment input order changed".into());
     }
@@ -473,7 +474,7 @@ pub(crate) fn linked_payment_input(state: &GameState) -> Result<Option<&PendingC
     if !matches!(pending.mandatory_additional_cost, Some(ChoiceV1 { pay_mana: Some(false), creature: Some(_) }))
         || original.stack.iter().filter(|row| *row == *item).count() != 1
         || state.stack.iter().filter(|row| *row == *item).count() != 1
-        || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { choice, .. } if choice.input_index == *index)) {
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1]).iter().any(|event| matches!(event, CommittedEvent::MandatoryCastPaymentV1 { choice, .. } if choice.input_index == *index)) {
         return Err("linked mandatory cost lost its exact pre-payment placeholder/input".into());
     }
     // The original has no linked owner. Its ordinary guard remains mandatory.
@@ -510,7 +511,16 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     // Public boundaries have a genuine live row until the actual physical
     // source departs. Private resolver/counter loans run between these
     // boundaries; linked-Aura suspension restores its pre-operation row.
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::MandatoryCastPaymentInputV1,
+            EventKindV1::MandatoryCastPaymentV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::MandatoryCastPaymentInputV1 {
                 pending,
@@ -519,7 +529,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let publications =
                     state
                         .engine
-                        .event_history
+                        .event_history.scan_for_v1(&[EventKindV1::MandatoryCastPaymentV1])
                         .iter()
                         .enumerate()
                         .filter(|(_, event)| {

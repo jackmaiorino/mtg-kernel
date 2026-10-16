@@ -1012,6 +1012,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Crackling Cyclops",
     "Kykar, Zephyr Awakener",
     "Quilled Greatwurm",
+    "Thousand-Year Storm",
     "Sphinx of Forgotten Lore",
     "Cryogen Relic",
     "Crypt Feaster",
@@ -1172,6 +1173,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
     ("engine/omniscience_cast_v1.rs", "Omniscience", "native optional Hand-only free base cost with exact source/choice; no old cost/permission meaning"),
+    ("effect/thousand_year_storm_v1.rs", "Thousand-Year Storm", "captured finalized cast snapshots, own prior cast count and optional per-copy retargeting remain Opaque"),
     ("effect/sphinx_lore_v1.rs", "Sphinx of Forgotten Lore", "captured attack/target and installed flashback with separate native cost route remain Opaque"),
     ("effect/greatwurm_v1.rs", "Quilled Greatwurm", "final native combat wave counter capture remains opaque; no old permission"),
     ("effect/kykar_v1.rs", "Kykar, Zephyr Awakener", "cast noncreature mode at announcement; exact exile and one-shot owner return remain Opaque"),
@@ -1524,6 +1526,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
         include_str!("../combat_damage_v1.rs"),
     ),
     ("legend_rule_v1.rs", include_str!("../legend_rule_v1.rs")),
+    (
+        "event_history_v1.rs",
+        include_str!("../event_history_v1.rs"),
+    ),
 ];
 
 /// Lines of non-test code: drops comment lines and the item following each

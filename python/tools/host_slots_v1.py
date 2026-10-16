@@ -9,8 +9,10 @@ never changes what it means. It keeps its own records beside it, under
   not need. `timed --cores 0-7 -- CMD`, run inside the v1 supervisor (so
   MTG_HOST_RESERVATION_TOKEN names the held lock), pins CMD and all its
   descendants to those cores. While CMD runs, it declares them in
-  share-<token hash>.json. Without that declaration, a held v1 lock still
-  reserves the whole host, exactly as before.
+  share-<token hash>.json. A reservation acquired with `--cores SPEC`
+  records its cores in the lock itself, and those count from the moment
+  the lock exists (before `timed` starts and after it ends). Without either,
+  a held v1 lock still reserves the whole host, exactly as before.
 - Untimed work runs as `run --cores N [--wait] -- CMD`. It claims N cores
   that no declaration and no other claim holds. It pins CMD and all its
   descendants to those cores at the configured priority (below normal by
@@ -516,10 +518,20 @@ class Mutex:
             shutil.rmtree(self.path, ignore_errors=True)
 
 
+def _lock_cores(record: dict) -> list[int] | None:
+    """Cores the reservation recorded when it was acquired (acquire --cores), or None."""
+    cores = record.get("cores")
+    if (isinstance(cores, list) and cores and len(set(cores)) == len(cores)
+            and all(isinstance(c, int) and not isinstance(c, bool) and c >= 0 for c in cores)):
+        return sorted(cores)
+    return None
+
+
 def timed_state() -> dict:
     """The v1 reservation as slots see it. held=False: free. cores=None: the whole host.
-    An unreadable lock, a missing declaration or one whose declarer is not alive all mean
-    the whole host."""
+    A live declaration by `timed` names the cores; without one, cores recorded in the lock at
+    acquire do. An unreadable lock, or no live declaration and no recorded cores, means the
+    whole host."""
     try:
         body = read_shared(lock_path())
     except FileNotFoundError:
@@ -536,11 +548,16 @@ def timed_state() -> dict:
     out = {"held": True, "cores": None, "token_sha256": digest,
            "lane": record.get("lane"), "work_id": record.get("work_id"), "acquired_at": record.get("acquired_at")}
     share = read_json(slots_dir() / f"share-{digest[:16]}.json")
+    live = (share is not None and share.get("token_sha256") == digest
+            and process_state(share.get("pid"), share.get("creation_time")) == "alive")
+    if live:
+        return {**out, "cores": sorted(share["cores"]), "why": "timed work declared its cores"}
+    recorded = _lock_cores(record)
+    if recorded is not None:
+        return {**out, "cores": recorded, "why": "the reservation recorded its cores when it was acquired"}
     if share is None:
         return {**out, "why": "no core declaration: the whole host is reserved"}
-    if share.get("token_sha256") != digest or process_state(share.get("pid"), share.get("creation_time")) != "alive":
-        return {**out, "why": "core declaration is not live: the whole host is reserved"}
-    return {**out, "cores": sorted(share["cores"]), "why": "timed work declared its cores"}
+    return {**out, "why": "core declaration is not live: the whole host is reserved"}
 
 
 def _live(pattern: str) -> list[dict]:

@@ -2,6 +2,7 @@
 //! No journal row or stack field is materialized on predecessor paths.
 use super::*;
 use crate::event::{ActiveReplacement, CommittedEvent, DamageProposed, ReplacementEffectKind};
+use crate::event_history_v1::EventKindV1;
 use crate::state::CrystalPreventionStartedV1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -315,7 +316,17 @@ pub(crate) fn shield_operation(
 }
 fn validate_shields(state: &GameState) -> Result<(), String> {
     let mut expected = std::collections::BTreeMap::<u32, Option<ActiveReplacement>>::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::CrystalPreventionBoundaryV1,
+            EventKindV1::CrystalShieldOperationV1,
+            EventKindV1::TwinflameCombatPublishedV38,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::CrystalPreventionBoundaryV1 { boundary } => {
                 let Some(PendingEffectChoice::ChooseOption {
@@ -876,17 +887,22 @@ fn original_damage(
                 .stack_item_id
                 .ok_or("Crystal historical damage lost stack identity")?;
             crate::source_power_activation_v1::damage_source(state, ctx.source, id)?;
-            let mut matches = state.engine.event_history.iter().filter_map(|e| match e {
-                CommittedEvent::SourcePowerActivationCommittedV1 { item, power, .. }
-                    if item.v4.stack_item_id == id
-                        && item.source == ctx.source
-                        && item.controller == ctx.controller
-                        && item.v4.ability_source_contract == ctx.ability_source_contract =>
-                {
-                    Some(*power)
-                }
-                _ => None,
-            });
+            let mut matches = state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
+                .iter()
+                .filter_map(|e| match e {
+                    CommittedEvent::SourcePowerActivationCommittedV1 { item, power, .. }
+                        if item.v4.stack_item_id == id
+                            && item.source == ctx.source
+                            && item.controller == ctx.controller
+                            && item.v4.ability_source_contract == ctx.ability_source_contract =>
+                    {
+                        Some(*power)
+                    }
+                    _ => None,
+                });
             let power = matches
                 .next()
                 .ok_or("Crystal historical damage lost committed power")?;
@@ -1169,16 +1185,27 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || crate::equipment_damage_source_v4::requires_successor(state)
         || crate::fixed_source_damage_v3::requires_successor(state)
         || boundaries(state).next().is_some()
-        || state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                CommittedEvent::CrystalShieldOperationV1 { .. }
-                    | CommittedEvent::CrystalExecutionV1 { .. }
-                    | CommittedEvent::CrystalDamageOperationV3 { .. }
-                    | CommittedEvent::CrystalBatchPreparedV3 { .. }
-                    | CommittedEvent::CrystalProgramChoiceV3 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::CrystalBatchPreparedV3,
+                EventKindV1::CrystalDamageOperationV3,
+                EventKindV1::CrystalExecutionV1,
+                EventKindV1::CrystalProgramChoiceV3,
+                EventKindV1::CrystalShieldOperationV1,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::CrystalShieldOperationV1 { .. }
+                        | CommittedEvent::CrystalExecutionV1 { .. }
+                        | CommittedEvent::CrystalDamageOperationV3 { .. }
+                        | CommittedEvent::CrystalBatchPreparedV3 { .. }
+                        | CommittedEvent::CrystalProgramChoiceV3 { .. }
+                )
+            })
         || state
             .stack
             .iter()
@@ -1286,10 +1313,15 @@ pub(crate) fn acquire_owner(
     }))
 }
 fn boundaries(state: &GameState) -> impl Iterator<Item = &BoundaryV1> {
-    state.engine.event_history.iter().filter_map(|e| match e {
-        CommittedEvent::CrystalPreventionBoundaryV1 { boundary } => Some(boundary.as_ref()),
-        _ => None,
-    })
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::CrystalPreventionBoundaryV1 { boundary } => Some(boundary.as_ref()),
+            _ => None,
+        })
 }
 fn last<'a>(state: &'a GameState, item: &StackItem) -> Option<&'a BoundaryV1> {
     boundaries(state)
@@ -1360,7 +1392,13 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
     validate_batch_preparations(state)?;
     validate_program_operations(state)?;
     validate_executions(state)?;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CrystalPreventionBoundaryV1 { boundary: b } = event else {
             continue;
         };
@@ -2071,7 +2109,13 @@ fn validate_damage_operation_ref(
     Ok(at)
 }
 fn validate_damage_operations(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalDamageOperationV3])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CrystalDamageOperationV3 { operation } = event else {
             continue;
         };
@@ -2084,6 +2128,7 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
         let mut owners = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
             .iter()
             .filter_map(|e| match e {
                 CommittedEvent::CrystalExecutionV1 { execution } => Some(execution.as_ref()),
@@ -2184,7 +2229,13 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
 }
 
 fn validate_executions(state: &GameState) -> Result<(), String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CrystalExecutionV1 { execution } = event else {
             continue;
         };
@@ -3785,7 +3836,13 @@ fn capture_batch(
     Ok(capture)
 }
 fn validate_batch_preparations(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalBatchPreparedV3])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CrystalBatchPreparedV3 { capture } = event else {
             continue;
         };
@@ -3795,6 +3852,7 @@ fn validate_batch_preparations(state: &GameState) -> Result<(), String> {
         let mut owners = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
             .iter()
             .filter_map(|event| match event {
                 CommittedEvent::CrystalExecutionV1 { execution } => Some(execution.as_ref()),
@@ -5119,18 +5177,29 @@ pub(crate) fn answer_program_choice(state: &mut GameState, option: u16) -> Resul
     Ok(())
 }
 fn validate_program_operations(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CrystalProgramChoiceV3])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CrystalProgramChoiceV3 { operation } = event else {
             continue;
         };
-        let mut owners = state.engine.event_history.iter().filter_map(|e| match e {
-            CommittedEvent::CrystalExecutionV1 { execution }
-                if execution.program_commit == Some(operation.history_index) =>
-            {
-                Some(execution.as_ref())
-            }
-            _ => None,
-        });
+        let mut owners = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
+            .iter()
+            .filter_map(|e| match e {
+                CommittedEvent::CrystalExecutionV1 { execution }
+                    if execution.program_commit == Some(operation.history_index) =>
+                {
+                    Some(execution.as_ref())
+                }
+                _ => None,
+            });
         let execution = owners
             .next()
             .ok_or("Crystal actual program answer lost execution")?;

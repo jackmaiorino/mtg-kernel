@@ -1,6 +1,7 @@
 use super::*;
 use crate::native_flat_tensorizer_v3::{encoded_decision_view_v3, NativeFlatDecisionTensorV3};
 use crate::native_policy_train_step_v1::tests::{perturbed_model, real_map_training_tensor_v3};
+use crate::native_policy_value_net_v1::ForwardActivationModeV1;
 
 const VC: f32 = 0.75;
 const LR: f32 = 0.00003;
@@ -13,13 +14,19 @@ struct Fixture {
 
 impl Fixture {
     fn capture(model: &NativePolicyValueNetV1) -> Self {
+        Self::capture_mode(model, ForwardActivationModeV1::LibmTanh)
+    }
+
+    /// Outputs recorded by the forward under `mode`; an update replays them
+    /// under its own math.
+    fn capture_mode(model: &NativePolicyValueNetV1, mode: ForwardActivationModeV1) -> Self {
         let first = real_map_training_tensor_v3();
         let mut second = first.clone();
         second.common.state[0] += 0.125;
         let tensors = [first, second];
         let outputs = tensors.each_ref().map(|tensor| {
             model
-                .forward_feature_transfer_v3(encoded_decision_view_v3(tensor))
+                .forward_feature_transfer_v3_mode(encoded_decision_view_v3(tensor), mode)
                 .unwrap()
         });
         assert!(outputs.iter().all(|output| output.logits.len() >= 2));
@@ -965,6 +972,69 @@ fn exact_parallel_backward_preserves_every_bit() {
     assert_eq!(runs, 0);
 }
 
+/// Under the portable math (B5) the update replays outputs recorded by the
+/// portable forward, keeps every bit across forward and backward workers,
+/// and trains other bits than the platform math. The recovery loss, which it
+/// does not cover, refuses before any change.
+#[test]
+fn portable_math_replays_its_own_forward_and_keeps_worker_parity() {
+    use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
+        with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
+    };
+    let base = model();
+    let fixture = Fixture::capture_mode(&base, ForwardActivationModeV1::KernelDeterministicTanh);
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let mut start = NativePolicyValueTrainStateV1::new_v1(base.clone()).unwrap();
+    start.set_training_math_v1(TrainingMathV1::PortableV1);
+    let mut sequential = start.clone();
+    let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
+        profiled_step(&mut sequential, &batch, 1).unwrap()
+    });
+    assert_eq!(runs, 0);
+    for (block_substeps, workers) in [(None, 4), (Some(37), 3)] {
+        let hooks = ExactBackwardHooksForTestV1 {
+            block_substeps,
+            ..ExactBackwardHooksForTestV1::NONE
+        };
+        let mut parallel = start.clone();
+        let (actual, runs) = with_hooks(hooks, || {
+            profiled_step(&mut parallel, &batch, workers).unwrap()
+        });
+        assert_eq!(runs, 1, "{block_substeps:?} {workers}");
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        assert_eq!(state_bits(&parallel), state_bits(&sequential));
+    }
+    let platform = Fixture::capture(&base);
+    let platform_steps = many_substeps(&platform, 200);
+    let mut libm = NativePolicyValueTrainStateV1::new_v1(base).unwrap();
+    profiled_step(&mut libm, &physical_groups(&platform_steps), 1).unwrap();
+    assert_ne!(state_bits(&libm), state_bits(&sequential));
+    let mut recovery = start.clone();
+    let targets = vec![0.25; batch.len()];
+    let advantages = vec![0.5; batch.len()];
+    let error = recovery
+        .train_step_gae_recovery_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &batch,
+            &targets,
+            &advantages,
+            VC,
+            LR,
+            0.01,
+            1,
+            false,
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        NativePolicyTrainErrorV1::PortableMathUnsupported {
+            path: "recovery loss"
+        }
+    );
+    assert_eq!(state_bits(&recovery), state_bits(&start));
+}
+
 #[test]
 fn exact_parallel_backward_reports_the_first_failure_in_visiting_order() {
     use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
@@ -1115,6 +1185,7 @@ fn e_supported_ce_is_policy_only_combines_once_and_replays() {
             &base.second_moments,
             2,
             LR,
+            base.training_math,
         )
         .unwrap();
         parameters[SCORER_SECOND_BIAS].values[0] = f32::from_bits(before.scorer_bias_anchor_bits);
@@ -1180,10 +1251,16 @@ fn input_major_forward_preserves_every_tape_bit() {
     };
     for tensor in [&first, &second, &third] {
         let encoded = encoded_decision_view_v3(tensor);
-        let expected = forward_with_tape(&parameters, config, encoded).unwrap();
-        let actual =
-            forward_with_tape_input_major_v1(&parameters, Some(&input_major), config, encoded)
-                .unwrap();
+        let expected =
+            forward_with_tape(&parameters, config, encoded, TrainingMathV1::PlatformLibm).unwrap();
+        let actual = forward_with_tape_input_major_v1(
+            &parameters,
+            Some(&input_major),
+            config,
+            encoded,
+            TrainingMathV1::PlatformLibm,
+        )
+        .unwrap();
         assert_eq!(bits(&actual), bits(&expected));
         assert_eq!(actual.usize_arena, expected.usize_arena);
     }

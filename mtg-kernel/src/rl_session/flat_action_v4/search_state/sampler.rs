@@ -1,5 +1,6 @@
 //! Whole-object determinization. This is a sampling convention, not a posterior.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, SplitMix64, StackItem};
 
 fn conflicts(
@@ -172,19 +173,23 @@ fn conflicts(
     // New committed authority must not be relabeled by hidden pool resampling,
     // including after Cleanup removed the active shield. Predecessor histories
     // contain no such event and retain their original sampling behavior.
-    if e.event_history.iter().any(|event| match event {
-        crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } => {
-            pool.contains(&replacement.source)
-                || match replacement.kind {
-                    crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
-                        target: crate::state::StackTargetContractV4::Object { object, .. },
-                        ..
-                    } => pool.contains(&object),
-                    _ => false,
-                }
-        }
-        _ => false,
-    }) {
+    if e.event_history
+        .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1])
+        .iter()
+        .any(|event| match event {
+            crate::event::CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } => {
+                pool.contains(&replacement.source)
+                    || match replacement.kind {
+                        crate::event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 {
+                            target: crate::state::StackTargetContractV4::Object { object, .. },
+                            ..
+                        } => pool.contains(&object),
+                        _ => false,
+                    }
+            }
+            _ => false,
+        })
+    {
         return true;
     }
     // Conservative exclusions for unversioned references. Do not pin or redraw.
@@ -292,17 +297,29 @@ fn redeterminize_with_library_plan_inner(
         });
     }
     if state.extra_turn_v1.is_some()
-        || state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                crate::event::CommittedEvent::ExtraTurnOwnerPublishedV1 { .. }
-                    | crate::event::CommittedEvent::ExtraTurnOwnerRemovedV1 { .. }
-                    | crate::event::CommittedEvent::ExtraTurnVirtualCeasedV1 { .. }
-                    | crate::event::CommittedEvent::ExtraTurnScheduledV1 { .. }
-                    | crate::event::CommittedEvent::ExtraTurnStartedV1 { .. }
-                    | crate::event::CommittedEvent::ExtraTurnBeganV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::ExtraTurnBeganV1,
+                EventKindV1::ExtraTurnOwnerPublishedV1,
+                EventKindV1::ExtraTurnOwnerRemovedV1,
+                EventKindV1::ExtraTurnScheduledV1,
+                EventKindV1::ExtraTurnStartedV1,
+                EventKindV1::ExtraTurnVirtualCeasedV1,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    crate::event::CommittedEvent::ExtraTurnOwnerPublishedV1 { .. }
+                        | crate::event::CommittedEvent::ExtraTurnOwnerRemovedV1 { .. }
+                        | crate::event::CommittedEvent::ExtraTurnVirtualCeasedV1 { .. }
+                        | crate::event::CommittedEvent::ExtraTurnScheduledV1 { .. }
+                        | crate::event::CommittedEvent::ExtraTurnStartedV1 { .. }
+                        | crate::event::CommittedEvent::ExtraTurnBeganV1 { .. }
+                )
+            })
     {
         return Err(Error::UnsupportedActionContract);
     }

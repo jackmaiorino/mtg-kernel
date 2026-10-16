@@ -2939,10 +2939,12 @@ dependencies = [
  "burn",
  "burn-cuda",
  "cudarc",
+ "libm",
  "semver",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.118",
  "toml 0.8.23",
 ]
 

@@ -2,6 +2,7 @@
 //! Private input worlds are never actor observations or trigger-log events.
 use crate::card_def::{CardCapability, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
@@ -347,8 +348,8 @@ impl ObserverInputV49 {
         if !original.engine.event_history.is_empty() || !observed.engine.event_history.is_empty() {
             return Err("Conqueror recursive original input history".into());
         }
-        original.engine.event_history = state.engine.event_history[..start].to_vec();
-        observed.engine.event_history = state.engine.event_history[..end].to_vec();
+        original.engine.event_history = state.engine.event_history[..start].to_vec().into();
+        observed.engine.event_history = state.engine.event_history[..end].to_vec().into();
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player
             || original.step != observed.step
@@ -392,7 +393,16 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }) {
         return Err("Conqueror private loss world entered public trigger log".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ConquerorLossBatchV49,
+            EventKindV1::ConquerorObserverInputV49,
+        ])
+        .iter()
+        .enumerate()
+    {
         if let CommittedEvent::ConquerorObserverInputV49 { input } = event {
             input.validate(state, index)?;
             if !matches!(state.engine.event_history.get(index + 1), Some(CommittedEvent::ConquerorLossBatchV49 { batch }) if batch.input_history_index == index as u64)
@@ -409,6 +419,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let batches = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ConquerorLossBatchV49])
         .iter()
         .filter_map(|event| {
             if let CommittedEvent::ConquerorLossBatchV49 { batch } = event {
@@ -440,7 +451,17 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             );
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ConquerorCapturedV49,
+            EventKindV1::ConquerorCollectedV49,
+            EventKindV1::ConquerorLossBatchV49,
+        ])
+        .iter()
+        .enumerate()
+    {
         if let CommittedEvent::ConquerorLossBatchV49 { batch } = event {
             let expected = batch
                 .observers
@@ -548,7 +569,7 @@ pub(crate) fn collect(
             return Err(crate::ids::ObjectId(0));
         };
         let (source, _) = root_at(state, *capture).map_err(|_| crate::ids::ObjectId(0))?;
-        if state.engine.event_history.iter().any(|original| matches!(original, CommittedEvent::ConquerorCollectedV49 { capture_history_index } if capture_history_index == capture)) { return Err(source.source); }
+        if state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorCollectedV49]).iter().any(|original| matches!(original, CommittedEvent::ConquerorCollectedV49 { capture_history_index } if capture_history_index == capture)) { return Err(source.source); }
         pending.push(PendingTrigger {
             controller: source.controller,
             source: source.source,
@@ -590,16 +611,27 @@ pub(crate) fn validate_source(
 }
 /// Every retained private Conqueror record requires a separate qualified sampler.
 pub(crate) fn has_history(state: &GameState) -> bool {
-    state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::ConquerorObserverInputV49 { .. }
-                | CommittedEvent::ConquerorLossBatchV49 { .. }
-                | CommittedEvent::ConquerorCapturedV49 { .. }
-                | CommittedEvent::ConquerorCollectedV49 { .. }
-                | CommittedEvent::ConquerorJournalV49 { .. }
-        )
-    })
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ConquerorCapturedV49,
+            EventKindV1::ConquerorCollectedV49,
+            EventKindV1::ConquerorJournalV49,
+            EventKindV1::ConquerorLossBatchV49,
+            EventKindV1::ConquerorObserverInputV49,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::ConquerorObserverInputV49 { .. }
+                    | CommittedEvent::ConquerorLossBatchV49 { .. }
+                    | CommittedEvent::ConquerorCapturedV49 { .. }
+                    | CommittedEvent::ConquerorCollectedV49 { .. }
+                    | CommittedEvent::ConquerorJournalV49 { .. }
+            )
+        })
 }
 pub(crate) fn require_legacy_consumer(state: &GameState) -> Result<(), String> {
     if state.objects.iter().any(|(_, object)| {

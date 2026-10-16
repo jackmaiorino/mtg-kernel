@@ -10,6 +10,7 @@ use crate::expanded_deck_training_v1::{
     GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
 };
 use crate::sideboard_play_policy_v1::{FrozenPlayObservationTransferV3, FRESH_FEATURE_IDENTITY_V3};
+use crate::training_math_v1::TrainingMathV1;
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -116,6 +117,7 @@ fn write_checkpoint(
         value_coefficient_bits: VALUE_COEFFICIENT.to_bits(),
         registry_transfer: None,
         archive_distillation: None,
+        training_math: TrainingMathV1::PlatformLibm,
     };
     let directory = root.join("update-0000");
     fs::create_dir_all(&directory).unwrap();

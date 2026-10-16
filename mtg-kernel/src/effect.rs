@@ -23,6 +23,8 @@ pub(crate) mod loot_v1;
 pub(crate) mod source_token_copy_v1;
 pub(crate) mod sphinx_lore_v1;
 mod standard_ward;
+pub(crate) mod thousand_year_storm_v1;
+use crate::event_history_v1::EventKindV1;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
 use standard_look::ConvokeLookChoice;
@@ -967,7 +969,7 @@ pub(crate) use squad_rallier_resolution_v1::{
     begin_owned as begin_owned_squad_rallier_resolution,
     resume_owned as resume_owned_squad_rallier_resolution, SquadRallierResolutionOwnerV1,
 };
-mod inspiration_resolution_v1;
+pub(crate) mod inspiration_resolution_v1;
 pub(crate) use inspiration_resolution_v1::{
     acquire_owner as acquire_inspiration_resolution_owner,
     begin_owned as begin_owned_inspiration_resolution,
@@ -2752,6 +2754,11 @@ pub enum EffectOp {
     ConquerorGainFromWideCaptureV59 {
         capture_history_index: u64,
     },
+    BindThousandYearStormV1,
+    /// First marker of the exact captured copy sequence, never caller authority.
+    ThousandYearStormCaptureV1 {
+        cast: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4239,7 +4246,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
-        EffectOp::SphinxsTutelageMillV1 { .. } => true,
+        EffectOp::ThousandYearStormCaptureV1 { .. } | EffectOp::SphinxsTutelageMillV1 { .. } => {
+            true
+        }
         EffectOp::BindCuratorDestiniesV1
         | EffectOp::CuratorDestiniesV1 { .. }
         | EffectOp::LookAtLibraryTopAndReorder { .. }
@@ -4417,6 +4426,11 @@ pub fn begin_resumable_resolution(
     {
         return Err("nonland sacrifice root requires its distinct native pre-removal owner".into());
     }
+    if thousand_year_storm_v1::selected(state, &resolving_item)
+        || thousand_year_storm_v1::recipe(op)
+    {
+        return Err("Storm has no public begin authority".into());
+    }
     begin_resumable_resolution_with_inspiration_owner(op, ctx, resolving_item, state, None)
 }
 
@@ -4591,6 +4605,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| thousand_year_storm_v1::pending_selected(state, p))
+    {
+        return Err("Storm has no public resume authority".into());
+    }
     if state
         .engine
         .pending_effect
@@ -7611,6 +7633,16 @@ fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
+    if thousand_year_storm_v1::selected(state, &pending.resolving_item) {
+        thousand_year_storm_v1::validate_published(state, &pending.resolving_item)?;
+        return Ok(Box::new(
+            pending
+                .resolving_item
+                .inline_effect
+                .clone()
+                .ok_or("Storm root absent")?,
+        ));
+    }
     let root = if let Some(inline) = pending.resolving_item.inline_effect.as_ref() {
         Box::new(
             crate::high_society_hunter_custody_v45::normalize_root(
@@ -10188,6 +10220,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
+    thousand_year_storm_v1::validate_state(state)?;
     crate::banner_of_kinship_v1::entry::validate_state(state)?;
     crate::drake_hatcher_v1::custody::validate(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
@@ -10268,6 +10301,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     if curator_v1::pending_selected(state, pending) {
         return curator_v1::validate(state, pending);
@@ -10667,7 +10701,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         || *chooser != pending.ctx.controller
                         || *path != choice.path
                         || *ordered
-                        || *min_targets != 0
+                        || *min_targets
+                            != u16::from(!standard_copy::can_keep(state, pending, choice)?)
                         || *max_targets != 1
                     {
                         return Err("copy target candidates changed".into());
@@ -14787,6 +14822,10 @@ fn drive_resumable_inner_with_native_row_v1(
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+            }
+            EffectOp::ThousandYearStormCaptureV1 { .. } => {
+                if native_row.is_none() { return Err("Storm requires its genuine native owner".into()); }
+                thousand_year_storm_v1::validate_published(state, &continuation.resolving_item)?;
             }
             EffectOp::CopySpellSnapshot { spell } => {
                 let choice = CopyTargetChoice {
@@ -19197,6 +19236,11 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if native_proof.is_none() && (thousand_year_storm_v1::recipe(op)
+        || state.engine.pending_effect.as_ref().is_some_and(|p|thousand_year_storm_v1::pending_selected(state,p)&&p.ctx.source==ctx.source)
+        || state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::ThousandYearStormV1{journal:thousand_year_storm_v1::JournalV1::Published{item,..}}if Some(item.v4.stack_item_id)==ctx.stack_item_id))) {
+        state.engine.halted=Some((crate::engine::UnsupportedMechanic::InvalidEffectContinuation,ctx.source));return;
+    }
     let native_copied_ability = native_proof.is_some_and(|proof| {
         proof.ctx == ctx
             && event::copied_token_item_selected_v1(state, &proof.owner.item)
@@ -19710,7 +19754,9 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
-        EffectOp::MaterializeStormCopies => {
+        EffectOp::BindThousandYearStormV1
+        | EffectOp::ThousandYearStormCaptureV1 { .. }
+        | EffectOp::MaterializeStormCopies => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -21683,6 +21729,7 @@ fn execute_with_native_row_v1(
                 let input = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
                     .iter()
                     .enumerate()
                     .rev()
@@ -26147,7 +26194,9 @@ pub(crate) fn acquire_tutelage_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
-    if standard_exile::top_batch_pending(pending) {
+    if standard_exile::top_batch_pending(pending)
+        || thousand_year_storm_v1::pending_selected(state, pending)
+    {
         return Ok(None);
     }
     if !tutelage_item_v1(state, &pending.resolving_item)
@@ -26338,6 +26387,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if thousand_year_storm_v1::waiting(state, ctx) {
+        return true;
+    }
     if fiend_artisan_v1::waiting(state, ctx) {
         return true;
     }
@@ -26566,7 +26618,9 @@ pub(crate) fn acquire_top_batch_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
-    if !standard_exile::top_batch_pending(pending) {
+    if !standard_exile::top_batch_pending(pending)
+        && !thousand_year_storm_v1::pending_selected(state, pending)
+    {
         return Ok(None);
     }
     validate_pending_effect_choice(state)?;
@@ -28420,3 +28474,11 @@ pub(crate) mod fiend_artisan_v1 {
         Ok(result)
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/thousand_year_storm_v1_tests.rs"]
+mod thousand_year_storm_v1_tests;

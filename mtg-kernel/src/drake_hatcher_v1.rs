@@ -432,7 +432,7 @@ mod tests {
         let id = card_id_by_name("Drake Hatcher").unwrap();
         assert_eq!(id, 448);
         assert_eq!(card_id_by_name("Drake Token"), Some(449));
-        assert_eq!(CARD_DEFS.len(), 485);
+        assert_eq!(CARD_DEFS.len(), 486);
         assert_eq!(CARD_DEFS[usize::from(id)].capability, CardCapability::Full);
         assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
         assert!(

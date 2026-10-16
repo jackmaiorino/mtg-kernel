@@ -73,10 +73,10 @@ New exact source FQNs (all unrun):
 - `human_bo3_v1::next_five_v59::production_tests::production_five_full_candidate_real_decks_human_opponent_paid_restore_both_seats`
 - `limited_next_five_session_v6::tests::v6_production_five_full_candidate_real_decks_paid_reset_and_restore_both_seats`
 
-Exact descriptive source inventory at this checkpoint is118 native/public/owner/
+The historical9e37 descriptive source inventory was118 native/public/owner/
 Human/V6 cases excluding numeric, plus162 complete current numeric cases (27 of
 those are NextFive). The union is280 unique FQNs. The new production groups add
-four source cases. The consumer breakdown is native Snack10, Replication9,
+four source cases. The historical consumer breakdown was native Snack10, Replication9,
 Infernal9, Giada10, Goblin20, wide-native5, Snack-public9, Snack-meaning1,
 NextFive-public9, wide-public2, owner9, Human-label8, Human-wide1,
 Human-production1, V6wire15. These are source counts, not compiled `--list`
@@ -128,3 +128,30 @@ rejects forged wide selections. Its faithful successor remains separate issue110
 work. This Goblin repair does not claim every X printing has complete semantics,
 and it does not qualify the five-card Full candidate or supply its pending
 compiled catalog/profile tuple. All new Rust remains uncompiled and unrun.
+
+
+The final owned normal composition merges wide-X15050 with EventHistory/Storm
+bridge0ef770. Its source catalog has486 definitions and294 FDN rows:250 candidate
+Full,28 Partial and8 Missing frozen printings, plus the distinct Partial Spirit
+token (29 registry Partial definitions). It preserves all five candidate flags,
+four genuine production groups, six wide-X groups and14 Storm groups. The
+refreshed descriptive roster is123 native/public/owner/Human/V6 cases,163 current
+numeric cases (28 NextFive), and14 separate native Storm cases:300 unique FQNs.
+The original280-row roster remains the ordered prefix. These are source
+counts, with no new compiled-presence or execution claim.
+
+EventHistory retains the current counting/guard semantics and the original237
+kind/sample prefix. The future enum has300 kinds with u16 internal indices;
+63 appended kinds still have no sample rows. Both complete-kind assertions are
+unchanged. Their sample/guard differential qualification remains pending rather
+than waived. The event/history representation preserves prior serialization and
+Hash by its existing transparent Vec contract. Current native206 custody/release,
+fresh candidate compile/export, actual profile/header tuple and complete consumer
+qualification remain separate pending work. No V88 tuple is changed.
+
+
+Affected Python on this final composition:99 deck metadata/preflight cases,
+21 V6,11 V7 and4 V8 cases passed (135 total). These Python checks and pinned
+format/static checks do not execute the Rust groups or prove native transport
+gameplay. Prior compiled presence from other heads is not carried forward as
+this candidate's compiled inventory or an execution pass.

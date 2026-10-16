@@ -1,5 +1,6 @@
 //! Scoped scalar and simultaneous ordering proof, shared with the genuine Crystal removed owner.
 use crate::effect::crystal_prevention_v1::{ChoiceV1, PreventionV1};
+use crate::event_history_v1::EventKindV1;
 use crate::state::AbilitySourceContractV4;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +122,7 @@ pub(crate) fn record_input(
     let previous = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
         .iter()
         .rev()
         .find_map(|e| match e {
@@ -169,7 +171,13 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
     }) {
         return Err("multiplier private operation entered mutable public log".into());
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameReplacementInputV38])
+        .iter()
+        .enumerate()
+    {
         let E::TwinflameReplacementInputV38 { input } = event else {
             continue;
         };
@@ -195,6 +203,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         let mut operations = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::TwinflameReplacementOperationV38])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -268,7 +277,13 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameDamagePreparationV38])
+        .iter()
+        .enumerate()
+    {
         let E::TwinflameDamagePreparationV38 { preparation: p } = event else {
             continue;
         };
@@ -294,6 +309,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         let mut outputs = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CrystalDamageOperationV3])
             .iter()
             .enumerate()
             .filter_map(|(index, e)| match e {
@@ -332,7 +348,11 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
             return Err("multiplier preparation lost mandatory actual lifelink result".into());
         }
     }
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameReplacementOperationV38])
+    {
         if let E::TwinflameReplacementOperationV38 { operation } = event {
             if !matches!(state.engine.event_history.get(operation.input as usize),Some(E::TwinflameReplacementInputV38{input}) if input.index==operation.input)
             {

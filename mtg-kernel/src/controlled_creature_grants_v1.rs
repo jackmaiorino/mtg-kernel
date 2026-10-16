@@ -1,6 +1,7 @@
 //! Immutable definition-owned continuous controlled-creature grants.
 //! No serialized state, delayed expiry or printed-card name executor.
 use crate::card_def::{CardType, ControlledCreatureGrantDef, Keywords, CARD_DEFS};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
@@ -96,7 +97,11 @@ pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(),
         return Ok(());
     }
     let mut retained_grant_source = false;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+    {
         let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
         else {
             continue;
@@ -254,6 +259,7 @@ pub(crate) fn validate_color_history(state: &GameState) -> Result<(), String> {
         if state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
             .iter()
             .any(|e| matches!(e, CommittedEvent::ProtectionSourceColorDepartureV1 { .. }))
         {
@@ -370,17 +376,23 @@ pub(crate) fn targeting_source_colors(
         ));
     }
     validate_color_history(state)?;
-    let mut snapshots = state.engine.event_history.iter().filter_map(|event| {
-        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
-        else {
-            return None;
-        };
-        (snapshot.source.source == object
-            && snapshot.source.zone_change_count == generation
-            && (snapshot.source.card_def == card_def
-                || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
-        .then_some(snapshot.color_mask)
-    });
+    let mut snapshots = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+        .iter()
+        .filter_map(|event| {
+            let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } =
+                event
+            else {
+                return None;
+            };
+            (snapshot.source.source == object
+                && snapshot.source.zone_change_count == generation
+                && (snapshot.source.card_def == card_def
+                    || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
+            .then_some(snapshot.color_mask)
+        });
     let colors = snapshots
         .next()
         .ok_or("departed targeting source lost exact color LKI")?;

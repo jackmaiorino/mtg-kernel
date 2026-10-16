@@ -1607,6 +1607,7 @@ fn collect_pins(
         episodes,
         max_non_natural_episode_fraction: 0.0,
         collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
         output_directory: out,
     })
     .unwrap();
@@ -1647,6 +1648,7 @@ fn world_v1(label: &str) -> WorldV1 {
             entropy_coefficient: 0.0,
         },
         line_b: None,
+        training_math: TrainingMathV1::PlatformLibm,
         output_directory: root.join("parent-update"),
     })
     .unwrap();
@@ -2301,6 +2303,7 @@ fn retention_run_config_v1(
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
+        training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
         e_supported: None,
         output_directory: root.join("run"),

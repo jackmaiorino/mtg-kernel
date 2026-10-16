@@ -22,6 +22,7 @@
 
 use crate::card_def::{CardType, Keywords, CARD_DEFS};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{Cost, PaymentPlan, Pip};
 use crate::state::{
@@ -192,15 +193,21 @@ pub(crate) fn was_creature_before_leaving(
     object: ObjectId,
     zone_change_count: u32,
 ) -> bool {
-    state.engine.event_history.iter().rev().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::WasCreatureBeforeLeavingBattlefield {
-                object: logged,
-                zone_change_count: logged_count,
-            } if *logged == object && *logged_count == zone_change_count
-        )
-    })
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::WasCreatureBeforeLeavingBattlefield])
+        .iter()
+        .rev()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::WasCreatureBeforeLeavingBattlefield {
+                    object: logged,
+                    zone_change_count: logged_count,
+                } if *logged == object && *logged_count == zone_change_count
+            )
+        })
 }
 
 pub(crate) fn cant_block(state: &GameState, id: ObjectId) -> bool {
@@ -471,6 +478,7 @@ pub(crate) fn power_before_leaving(state: &GameState, object: ObjectId) -> Optio
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::PowerBeforeLeavingBattlefield])
         .iter()
         .rev()
         .find_map(|event| match event {

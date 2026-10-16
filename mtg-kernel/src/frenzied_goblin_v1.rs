@@ -4,6 +4,7 @@ use crate::effect::{
     EffectOp, PendingEffectChoice,
 };
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::mana::ManaColor;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 
@@ -27,6 +28,7 @@ pub(crate) fn validate_source(
         || state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::DeclaredAttacker])
             .iter()
             .rev()
             .find_map(|event| match event {

@@ -17,14 +17,14 @@
     "Goblin Negotiation"
   ],
   "source_catalog_counts": {
-    "definitions": 485,
-    "fdn_rows": 293,
+    "definitions": 486,
+    "fdn_rows": 294,
     "frozen_printings": 286,
     "frozen_token_dependencies": 24,
     "pool_full_candidate": 250,
-    "pool_partial": 27,
-    "pool_missing": 9,
-    "registry_partial_including_token": 28
+    "pool_partial": 28,
+    "pool_missing": 8,
+    "registry_partial_including_token": 29
   },
   "production_reference_decks": [
     "FDN_reference_midnight_snack_full_candidate.dck",
@@ -58,23 +58,34 @@
   ],
   "composition_notes": [
     "Includes actual Moon484 and ordinary V49 lost-Runner repair99422 plus concrete3131 enum/source closure repairs via normal merge of d748.",
-    "Original V88 catalog/profile canaries remain frozen and cannot certify this changed catalog."
+    "Original V88 catalog/profile canaries remain frozen and cannot certify this changed catalog.",
+    "Normal composition of wide-X15050 and future EventHistory/Storm bridge0ef770; all prior candidate flags and production groups retained.",
+    "EventKindV1 has300 kinds;237 current sample rows are preserved and63 future rows remain missing. Complete-kind assertions remain unchanged and unqualified."
   ],
   "source_test_counts": {
-    "next_five_native_public_owner_human_v6_excluding_numeric": 118,
-    "complete_current_mixed_policy_v1": 162,
-    "next_five_numeric_subset": 27,
-    "unique_combined": 280,
-    "new_production_groups": 4
+    "next_five_native_public_owner_human_v6_excluding_numeric": 123,
+    "complete_current_mixed_policy_v1": 163,
+    "next_five_numeric_subset": 28,
+    "unique_combined": 286,
+    "new_production_groups": 4,
+    "supplemental_storm_groups": 14,
+    "unique_including_supplemental_storm": 300,
+    "new_wide_x_groups": 6
   },
   "observed_checks": {
     "pinned_formatter": "Rust1.94.1 parser/format only",
-    "python_limited_decks": 98,
-    "python_v6": 20,
+    "python_limited_decks": 99,
+    "python_v6": 21,
     "python_v7": 11,
     "python_v8": 4,
     "rust_compiled": false,
-    "rust_executed": false
+    "rust_executed": false,
+    "scope": "composed candidate affected Python135 PASS; Rust formatter/static only"
   },
-  "composition_base": "d748777d6db9659df7bc001d702ac0fd594fbfd0"
+  "composition_base": "d748777d6db9659df7bc001d702ac0fd594fbfd0",
+  "composition_parents": [
+    "15050c3beef7dbe9e98e515ff953559bc6e7bfe3",
+    "0ef77028338d362762b27f1cfac8b5d9c0bf8ed8"
+  ],
+  "event_kind_samples_pending": 63
 }

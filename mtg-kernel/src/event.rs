@@ -11,6 +11,7 @@
 pub use crate::authority_of_the_consuls_v1::{
     AuthorityEntryCaptureV1, AuthorityEntryOperationKindV1,
 };
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use crate::state::{GameState, PaidCostRefV4, StackItemKind, Target, Zone};
@@ -2020,6 +2021,9 @@ pub enum CommittedEvent {
         gain_history_index: u64,
         amount: u32,
     },
+    ThousandYearStormV1 {
+        journal: crate::effect::thousand_year_storm_v1::JournalV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2849,7 +2853,7 @@ pub(crate) fn replacement_applies(
             *turn == state.turn_key_v1() && *active_player == state.active_player
                 && change.to_zone == Zone::Graveyard
                 && crate::fiery_annihilation_v1::original_battlefield_target(state, Target::Object(change.object), *target)
-                && state.engine.event_history.iter().any(|event| matches!(event,
+                && state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1]).iter().any(|event| matches!(event,
                     CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } if replacement == repl))
         }
         (
@@ -3052,7 +3056,13 @@ pub(crate) fn install_exile_if_dies(
 }
 
 pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(), ObjectId> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementCleanupV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::ExileIfDiesReplacementCleanupV1 {
             index,
             installations,
@@ -3095,7 +3105,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         for replacement in installations {
             let install = state.engine.event_history[..at].iter().filter(|e| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement)).count();
-            let expiry = state.engine.event_history.iter().enumerate().filter(|(position, e)| matches!(e,
+            let expiry = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1]).iter().enumerate().filter(|(position, e)| matches!(e,
                 CommittedEvent::ExileIfDiesReplacementExpiredV1 {
                     replacement: r, cleanup_index, turn: t, active_player: p,
                 } if r == replacement && cleanup_index == index && t == turn && p == active_player && *position > at)).count();
@@ -3115,7 +3125,13 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::ExileIfDiesReplacementExpiredV1 {
             replacement,
             turn,
@@ -3134,7 +3150,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
         else {
             return Err(replacement.source);
         };
-        let installed = state.engine.event_history.iter().position(|e| matches!(e,
+        let installed = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1]).iter().position(|e| matches!(e,
             CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: r } if r == replacement));
         if *index != *cleanup_index
             || installed.is_none_or(|i| i >= *cleanup_index as usize)
@@ -3146,7 +3162,11 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
             return Err(replacement.source);
         }
     }
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1])
+    {
         let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = event else {
             continue;
         };
@@ -3156,7 +3176,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
             .iter()
             .filter(|r| *r == replacement)
             .count();
-        let expired = state.engine.event_history.iter().filter(|e| matches!(e,
+        let expired = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1]).iter().filter(|e| matches!(e,
             CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: r, turn, active_player, .. }
             if r == replacement && matches!(r.kind,
                 ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { turn: original, active_player: actor, .. }
@@ -3196,7 +3216,7 @@ pub(crate) fn validate_exile_if_dies_replacements(state: &GameState) -> Result<(
                     && live.owner == source.owner
                     && live.zone_change_count >= source.zone_change_count
             });
-        let receipt = state.engine.event_history.iter().filter(|event| matches!(event,
+        let receipt = state.engine.event_history.scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1]).iter().filter(|event| matches!(event,
             CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement: captured } if captured == replacement)).count();
         if !target_valid
             || !source_valid
@@ -6527,6 +6547,12 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     let committed = CommittedEvent::SpellCast { spell, controller };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            spell,
+        ));
+    }
 }
 
 /// Logs a crime committed by one completed targeting action.

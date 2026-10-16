@@ -33,23 +33,29 @@ const PARSE_AHEAD_HELPERS_V1: usize = 64;
 /// the decision records.
 const PARSE_AHEAD_STACK_BYTES_V1: usize = 8 * 1024 * 1024;
 
-/// The two fields collection validation reads from a trajectory document.
+/// The fields collection validation reads from a trajectory document.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CollectionTrajectoryFieldsV1 {
     pub(crate) episode: Value,
     pub(crate) learner_sampler: Option<String>,
+    pub(crate) training_math: Option<String>,
 }
 
 impl CollectionTrajectoryFieldsV1 {
-    /// Validation's reads of a parsed document: a missing episode is `null`
-    /// and a learner sampler that is not a string counts as absent.
+    /// Validation's reads of a parsed document: a missing episode is `null`,
+    /// and a learner sampler or training math that is not a string counts as
+    /// absent.
     pub(crate) fn of_document_v1(document: &Value) -> Self {
+        let string = |field| {
+            document
+                .get(field)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
         Self {
             episode: document["episode"].clone(),
-            learner_sampler: document
-                .get("learner_sampler")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            learner_sampler: string("learner_sampler"),
+            training_math: string("training_math"),
         }
     }
 }

@@ -1,4 +1,5 @@
 //! Separate public Banner transport. This is not V8/V9 or tensor/model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -132,6 +133,10 @@ pub fn producer_sha256_v1() -> String {
             include_str!("standard_cast_convoke.rs"),
             include_str!("engine/mandatory_cast_cost_v1.rs"),
             include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/standard_copy.rs"),
+            include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());
@@ -293,6 +298,7 @@ fn prior_entry_colors(state: &GameState) -> Result<Vec<PriorEntryColorV36>, RlCo
             let captures = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::BannerEntryColorCapturedV1])
                 .iter()
                 .enumerate()
                 .filter_map(|(index, event)| match event {

@@ -207,6 +207,30 @@ class HostReservationTests(unittest.TestCase):
         self.assertIn("boot id changed", new["reclaimed"]["evidence"])
         hr.release(new["token"], "cancelled")
 
+    def test_acquire_records_cores_and_rejects_bad_ones(self):
+        r = hr.acquire("test", "cores", "released by the test", cores=[3, 1, 2])
+        self.assertEqual(r["cores"], [1, 2, 3])
+        self.assertEqual(hr.status()["record"]["cores"], [1, 2, 3])
+        hr.release(r["token"], "cancelled")
+        plain = hr.acquire("test", "whole-host", "released by the test")
+        self.assertNotIn("cores", plain)
+        hr.release(plain["token"], "cancelled")
+        for bad in ([], [-1], [0, 0], [True]):
+            with self.subTest(cores=bad), self.assertRaises(ValueError):
+                hr.acquire("test", "bad", "never acquired", cores=bad)
+        self.assertEqual(hr.status()["state"], "free")
+        self.assertEqual(hr.parse_cores("0-3,8,2"), [0, 1, 2, 3, 8])
+        self.assertEqual(hr.parse_cores("5-4"), [4, 5])
+        for spec in ("", "a", "1-", "-1", "1,,2"):
+            with self.subTest(spec=spec), self.assertRaises(ValueError):
+                hr.parse_cores(spec)
+        lock = hr.lock_path()
+        lock.write_bytes(json.dumps(self.record(cores=[0, 0])).encode())
+        self.assertEqual(hr.status()["state"], "unknown")
+        lock.write_bytes(json.dumps(self.record(cores=[0, 1])).encode())
+        self.assertEqual(hr.status()["state"], "held")
+        lock.unlink()
+
     def test_nested_wrappers_share_the_token(self):
         r = hr.acquire("test", "outer", "released by the test")
         inner = PRELUDE + "r = hr.acquire('test', 'inner', 'nested')\nprint(json.dumps({'token': r['token'], 'shared': r.get('shared')}))\n"
@@ -432,6 +456,25 @@ class HostReservationTests(unittest.TestCase):
         with self.assertRaises(hr.Refused):
             hr.reclaim("test", "recovery", "must be refused")
         hr.release(result["token"], "cancelled", "no process was created")
+
+    def test_busy_refusal_exempts_this_reservations_work_started_during_the_scan(self):
+        # The scan finds a process that became this reservation's work after the
+        # exemptions were read (a sibling job's child): not busy. Other work refuses.
+        found = [{"ProcessId": 4242, "Name": "trainer.exe"}]
+        def nothing(line, cwd):
+            raise TimeoutError("no response")
+        reads = iter([[], [4242]])
+        with patch.object(hr, "exempt_pids", side_effect=lambda token: next(reads)), \
+                patch.object(hr, "busy_processes", return_value=found):
+            result = hr.dispatch("test", "busy-sibling", "cancelled by the test", [sys.executable, "-c", "pass"],
+                                 cwd=self.root, busy_pattern="trainer", create=nothing)
+        self.assertEqual(result["state"], "spawn-unconfirmed")
+        hr.release(result["token"], "cancelled", "no process was created")
+        with patch.object(hr, "exempt_pids", return_value=[]), patch.object(hr, "busy_processes", return_value=found):
+            with self.assertRaisesRegex(hr.Held, "busy refusal"):
+                hr.dispatch("test", "busy-other", "refused", [sys.executable, "-c", "pass"], cwd=self.root,
+                            busy_pattern="trainer", create=nothing)
+        self.assertEqual(hr.status()["state"], "free")
 
     def test_two_competing_reclaimers_one_wins(self):
         owner = self.spawn(SLEEP.format(30))
