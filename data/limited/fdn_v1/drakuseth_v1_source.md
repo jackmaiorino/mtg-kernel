@@ -26,6 +26,8 @@ The appended damage leaf tests every original target slot and incarnation
 before forming one native damage batch. An illegal first target does not give
 four damage to a later slot; remaining legal targets still receive three.
 If every target is illegal, ordinary native resolution fizzles the ability.
+The damage leaf also binds the captured ability source and controller to its
+execution context before producing any events, including for serialized contexts.
 
 The typed source retains cardinality, positional amounts and complete program
 payload. Frozen rules-vector facets explicitly remain opaque where they cannot
@@ -41,11 +43,12 @@ Other existing native numerical and recipient-type limits remain. The current
 kernel has no Battle card type. This is not full replacement, consumer, sampling,
 search, training or playing-strength qualification.
 
-Four native source groups cover both seats: actual seven-land mana payment,
+Five native source groups cover both seats: actual seven-land mana payment,
 cast, same-turn sickness and real later attack; zero/one/two optional targets;
 mandatory-first and duplicate refusal; every selection checkpoint and published
 restore; positional individual-target illegality and all-target fizzle; original
-controller/source departure and reentry; and the explicit Crystal refusal.
+controller/source departure and reentry; the explicit Crystal refusal; and
+serialized context source/controller forgery with exact whole-state refusal.
 Initial lands, recipient creatures and the Crystal shield are labelled support
 operands. Control and zone responses use real native primitives and are not
 claims of paid response spells. Full-only preflight still refuses the actual

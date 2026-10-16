@@ -1069,24 +1069,27 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
             first_amount,
             other_amount,
         } => {
+            let Some(source) = ctx.ability_source_contract.filter(|source| {
+                source.source == ctx.source && source.controller == ctx.controller
+            }) else {
+                return;
+            };
             let events = ctx
                 .targets
                 .iter()
                 .enumerate()
                 .filter_map(|(index, target)| {
                     if ctx.target_incarnation_matches(index, state)
-                        && ctx.ability_source_contract.is_some_and(|source| {
-                            crate::engine::effect_target_is_legal_from_ability_source(
-                                state,
-                                source,
-                                ctx.controller,
-                                crate::card_def::TargetSpec::StandardV1(
-                                    StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
-                                ),
-                                &ctx.targets,
-                                index,
-                            )
-                        })
+                        && crate::engine::effect_target_is_legal_from_ability_source(
+                            state,
+                            source,
+                            ctx.controller,
+                            crate::card_def::TargetSpec::StandardV1(
+                                StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
+                            ),
+                            &ctx.targets,
+                            index,
+                        )
                     {
                         Some(event::damage_from_exec_ctx_v1(
                             ctx,

@@ -384,3 +384,57 @@ fn paid_attack_crystal_replacement_requires_successor_before_damage_or_trigger_r
         assert_eq!(state.players[actor.index()].life, 20);
     }
 }
+
+#[test]
+fn paid_attack_serialized_context_source_and_controller_forgery_refuse_without_events_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        let foreign = put(&mut state, actor, "Forest", Zone::Battlefield);
+        attack(&mut state, source, actor);
+        choose(&mut state, source, &[Target::Player(actor.opponent())]);
+        let row = state.stack.last().unwrap();
+        let captured = row.v4.ability_source_contract.unwrap();
+        assert_eq!((captured.source, captured.controller), (source, actor));
+        // Copy only the published row's public execution fields. No private
+        // damage origin is invented; genuine execution below uses the engine.
+        let mut ctx = ExecCtx::no_targets(row.source, row.controller);
+        ctx.stack_item_id = Some(row.v4.stack_item_id);
+        ctx.targets = row.targets.clone();
+        ctx.target_contracts = row.v4.target_contracts.clone();
+        ctx.discarded = row.discarded.clone();
+        ctx.paid_cost_refs = row.v4.paid_cost_refs.clone();
+        ctx.hidden_ability_source = row.v4.hidden_ability_source;
+        ctx.ability_source_contract = row.v4.ability_source_contract;
+        ctx.cauldron_grant = row.v4.cauldron_grant;
+        ctx.kicked = row.kicked;
+        ctx.optional_additional_cost_paid = row.v4.optional_additional_cost_paid;
+        ctx.x_value = row.v4.x_value;
+        for change_source in [true, false] {
+            let mut forged = ctx.clone();
+            if change_source {
+                forged.source = foreign;
+            } else {
+                forged.controller = actor.opponent();
+            }
+            let forged: ExecCtx =
+                serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+            assert_eq!(forged.ability_source_contract, Some(captured));
+            let mut branch = restored(&state);
+            let before = branch.clone();
+            crate::effect::execute(&drakuseth_attack_v1(), &forged, &mut branch);
+            assert_eq!(branch, before);
+            assert!(damage_since(&branch, before.engine.event_history.len(), source).is_empty());
+        }
+        let mut replay = restored(&state);
+        let start = state.engine.event_history.len();
+        for branch in [&mut state, &mut replay] {
+            settle(branch);
+            assert_eq!(
+                damage_since(branch, start, source),
+                vec![(Target::Player(actor.opponent()), 4)]
+            );
+            assert_eq!(branch.players[actor.opponent().index()].life, 16);
+        }
+        assert_eq!(state, replay);
+    }
+}
