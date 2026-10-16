@@ -355,8 +355,12 @@ impl LimitedGraveyardReturnJsonlServerV7 {
                     .checked_add(1)
                     .ok_or("authority_exhausted")?;
                 let boards = [
-                    decks[0].resolve().map_err(|_| "unsupported_deck")?,
-                    decks[1].resolve().map_err(|_| "unsupported_deck")?,
+                    decks[0]
+                        .resolve_graveyard_return_v61()
+                        .map_err(|_| "unsupported_deck")?,
+                    decks[1]
+                        .resolve_graveyard_return_v61()
+                        .map_err(|_| "unsupported_deck")?,
                 ];
                 let identities = boards.each_ref().map(|deck| {
                     let mut hash = Sha256::new();

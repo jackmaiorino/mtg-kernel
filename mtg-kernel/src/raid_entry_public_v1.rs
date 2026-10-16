@@ -69,6 +69,8 @@ pub fn producer_sha256_v1() -> String {
         h.update([0]);
         h.update(s.as_bytes());
     }
+    h.update(b"legacy-graveyard-return-guard/v61\0");
+    h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 pub(crate) fn roots() -> Result<Vec<crate::rules_meaning_raid_entry_v1::MeaningV1>, String> {

@@ -108,6 +108,8 @@ pub(crate) fn producer(schema: &str) -> String {
         h.update((s.len() as u64).to_le_bytes());
         h.update(s.as_bytes());
     }
+    h.update(b"legacy-graveyard-return-guard/v61\0");
+    h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 pub(crate) fn printing(id: u16, kind: Kind) -> Result<&'static CardDef, String> {

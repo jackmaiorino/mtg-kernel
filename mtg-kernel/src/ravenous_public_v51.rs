@@ -109,6 +109,8 @@ pub fn producer_sha256() -> String {
             hash.update(source.as_bytes());
         }
         hash.update(meaning::producer_sha256().as_bytes());
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))

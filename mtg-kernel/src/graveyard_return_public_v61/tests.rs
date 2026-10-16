@@ -412,3 +412,172 @@ fn paid_stolen_familiar_keeps_physical_owner_and_captured_controller_season_entr
         assert_eq!(state, restored);
     }
 }
+
+// These boundaries do not use CardCapability as a proxy for representation.
+fn legacy_refuses_readonly(state: &GameState) {
+    let before = serde_json::to_vec(state).unwrap();
+    let restored: GameState = serde_json::from_slice(&before).unwrap();
+    for branch in [state, &restored] {
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            assert!(require_legacy_visible(branch, Some(viewer)).is_err());
+            assert!(crate::rl::observe_v1(branch, viewer, 0).is_err());
+        }
+        assert!(require_legacy_visible(branch, None).is_err());
+        assert!(crate::prepared_observation_v57::validate_state(branch).is_err());
+        assert!(crate::next_five_observation_v59::validate_state(branch).is_err());
+    }
+    assert_eq!(serde_json::to_vec(state).unwrap(), before);
+}
+
+#[test]
+fn paid_alesha_and_zero_uncast_familiar_legacy_boundaries_preserve_complete_v61_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        paid(&mut state, actor, "Alesha, Who Laughs at Fate", None);
+        legacy_refuses_readonly(&state);
+        // The supported complete consumer still uses its inherited builders.
+        let mut surface = crate::policy_surface_v5::PolicySurfaceV5::new_with_engine_priority_v1();
+        let origin = surface.next_decision(&mut state).unwrap();
+        let viewer = origin.actor(&state).unwrap();
+        let before = state.clone();
+        crate::graveyard_return_candidates_v61::project_v61(
+            &state,
+            &surface,
+            (viewer, &origin),
+            0,
+            0,
+            origin.substep(),
+        )
+        .unwrap();
+        assert!(crate::rl::core_policy_action_candidates_next_five_v59(&origin, &state).is_err());
+        assert!(crate::rl::legal_action_candidates_v5(&origin, &state).is_err());
+        assert_eq!(state, before);
+
+        let mut state = ready(actor);
+        // Native object setup only: no cast event or entry replacement is claimed.
+        let familiar = put(&mut state, actor, "Nine-Lives Familiar", Zone::Battlefield);
+        assert_eq!(state.objects.get(familiar).counters.revival, 0);
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|e| matches!(e, E::SpellCast { .. })));
+        legacy_refuses_readonly(&state);
+        assert_restore(&state);
+    }
+}
+
+#[test]
+fn paid_familiar_copy_and_retained_death_schedule_refuse_legacy_readonly_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let familiar = paid(&mut state, actor, "Nine-Lives Familiar", None);
+        paid(&mut state, actor, "Self-Reflection", Some(familiar));
+        let copies: Vec<_> = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&id| {
+                id != familiar
+                    && state.objects.get(id).card_def == state.objects.get(familiar).card_def
+            })
+            .collect();
+        assert_eq!(copies.len(), 1);
+        assert!(state.objects.get(copies[0]).v4.is_token);
+        assert_eq!(state.objects.get(copies[0]).counters.revival, 0);
+        legacy_refuses_readonly(&state);
+        // A second, independently paid world isolates a retained originally-public
+        // source whose new current incarnation is hidden from the opponent.
+        let mut state = ready(actor);
+        let familiar = paid(&mut state, actor, "Nine-Lives Familiar", None);
+        paid(&mut state, actor, "Abrade", Some(familiar));
+        assert!(!capture(&state, actor).unwrap().nine_lives_deaths.is_empty());
+        assert_eq!(
+            capture(&state, actor).unwrap().nine_lives_schedules.len(),
+            1
+        );
+        paid(&mut state, actor, "Zombify", Some(familiar));
+        paid(&mut state, actor, "Snap", Some(familiar));
+        assert_eq!(state.objects.get(familiar).zone, Zone::Hand);
+        assert!(public::reference(&state, familiar, Some(actor.opponent())).is_none());
+        assert!(require_legacy_visible(&state, Some(actor.opponent())).is_err());
+        legacy_refuses_readonly(&state);
+        assert_restore(&state);
+        let mut changed = state.clone();
+        changed.nine_lives_delayed_v1.as_mut().unwrap()[0].revival_counters += 1;
+        let before = changed.clone();
+        assert!(require_legacy_visible(&changed, Some(actor.opponent())).is_err());
+        assert_eq!(changed, before);
+    }
+}
+
+#[test]
+fn independent_hidden_worlds_do_not_select_a_graveyard_return_legacy_refusal_both_seats() {
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        let worlds: Vec<_> = [
+            "Alesha, Who Laughs at Fate",
+            "Nine-Lives Familiar",
+            "Island",
+        ]
+        .into_iter()
+        .map(|secret| {
+            let mut state = ready(viewer);
+            put(&mut state, viewer.opponent(), secret, Zone::Hand);
+            put(&mut state, viewer.opponent(), secret, Zone::Library);
+            let concealed = put(&mut state, viewer.opponent(), secret, Zone::Battlefield);
+            // Explicit anonymous native face-down primitive, no manifest claim.
+            state.objects.get_mut(concealed).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: false,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            paid(&mut state, viewer, "Llanowar Elves", None);
+            state
+        })
+        .collect();
+        let mut projected = vec![];
+        for state in &worlds {
+            let before = state.clone();
+            require_legacy_visible(state, Some(viewer)).unwrap();
+            require_legacy_visible(state, None).unwrap();
+            projected.push(crate::rl::observe_v1(state, viewer, 0).unwrap());
+            assert_eq!(*state, before);
+        }
+        assert_eq!(projected[0], projected[1]);
+        assert_eq!(projected[0], projected[2]);
+        // A viewer's actual private knowledge may select the refusal; the
+        // opponent's concealed identity alone could not do so above.
+        assert!(require_legacy_visible(&worlds[0], Some(viewer.opponent())).is_err());
+        assert!(require_legacy_visible(&worlds[1], Some(viewer.opponent())).is_err());
+    }
+}
+
+#[test]
+fn paid_alesha_departure_lki_refuses_old_viewer_after_source_becomes_hidden_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let source = paid(&mut state, actor, "Alesha, Who Laughs at Fate", None);
+        paid(&mut state, actor, "Snap", Some(source));
+        assert_eq!(state.objects.get(source).zone, Zone::Hand);
+        assert!(public::reference(&state, source, Some(actor.opponent())).is_none());
+        let facts = capture(&state, actor.opponent()).unwrap();
+        assert_eq!(facts.alesha_departures.len(), 1);
+        assert_eq!(facts.alesha_departures[0].power, 2);
+        legacy_refuses_readonly(&state);
+        assert_restore(&state);
+        let mut changed = state.clone();
+        let marker = changed
+            .engine
+            .event_history
+            .iter_mut()
+            .find(|event| matches!(event, E::AleshaPowerLkiV1 { .. }))
+            .unwrap();
+        if let E::AleshaPowerLkiV1 { power, .. } = marker {
+            *power += 1;
+        }
+        let before = changed.clone();
+        assert!(require_legacy_visible(&changed, Some(actor.opponent())).is_err());
+        assert_eq!(changed, before);
+    }
+}

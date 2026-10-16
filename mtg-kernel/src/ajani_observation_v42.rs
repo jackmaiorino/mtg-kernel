@@ -63,6 +63,8 @@ pub fn producer_sha256() -> String {
         h.update([1]);
         h.update(s.as_bytes());
     }
+    h.update(b"legacy-graveyard-return-guard/v61\0");
+    h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 pub fn commitment(value: &AjaniObservationV42) -> Result<String, RlContractError> {

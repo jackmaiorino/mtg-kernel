@@ -211,6 +211,77 @@ fn exact_graveyard(
         })
         .and_then(|_| public::reference(state, link.object, Some(viewer)))
 }
+/// Older consumers select only authorized identities or originally public
+/// native provenance. A concealed current printing never selects this guard.
+pub(crate) fn require_legacy_visible(
+    state: &GameState,
+    viewer: Option<PlayerId>,
+) -> Result<(), String> {
+    let ids = FamilyV61::ALL
+        .into_iter()
+        .filter_map(|family| card_def::card_id_by_name(family.name()))
+        .collect::<BTreeSet<_>>();
+    let selected = |id: u16| ids.contains(&id);
+    let visible = state.objects.iter().any(|(id, live)| {
+        public::reference(state, id, viewer).is_some_and(
+            |r| matches!(r.identity, public::IdentityV1::Known{card_id} if selected(card_id)),
+        ) || viewer.is_some_and(|viewer| {
+            live.v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << viewer.index()) != 0)
+                && selected(live.card_def)
+        })
+    });
+    if visible {
+        return Err("graveyard return rules require the distinct V61 consumer".into());
+    }
+    let item_selected = |item: &crate::state::StackItem| {
+        item.v4
+            .source_contract
+            .is_some_and(|s| selected(s.card_def))
+            || item
+                .v4
+                .ability_source_contract
+                .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
+    };
+    let marker_selected = |event: &E| match event {
+        E::AleshaPowerLkiV1 { .. } => true,
+        E::ControlledCreatureDeathCaptureV1 { source, .. } => selected(source.card_def),
+        _ => false,
+    };
+    let retained = state.stack.iter().any(item_selected)
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            item_selected(&p.resolving_item)
+                || p.ctx
+                    .ability_source_contract
+                    .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
+        })
+        || public::held(state).iter().any(|p| {
+            p.source_contract
+                .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
+        })
+        || state.engine.raid_waiting_v1.iter().flatten().any(|p| {
+            p.source_contract
+                .is_some_and(|s| s.zone == Zone::Battlefield && selected(s.card_def))
+        })
+        || state
+            .nine_lives_delayed_v1
+            .iter()
+            .flatten()
+            .any(|s| selected(s.source.card_def))
+        || state.engine.event_history.iter().any(marker_selected)
+        || state.engine.event_log.iter().any(marker_selected);
+    if retained {
+        // Authenticate the captured source/departure/death/schedule through the
+        // existing read-only native appendix. No facts or authority are exported.
+        // Malformed provenance also refuses, without consulting hidden identity
+        // as a selector or modifying/collecting the original records.
+        capture(state, viewer.unwrap_or(PlayerId::P0))?;
+        return Err("graveyard return rules require the distinct V61 consumer".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV61, String> {
     let live = state.objects.get(id);
     let Counters {

@@ -146,6 +146,8 @@ pub fn producer_sha256_v6() -> String {
     for source in [
         PROTOCOL,
         include_str!("limited_next_five_session_v6.rs"),
+        include_str!("limited_session_v1.rs"),
+        include_str!("graveyard_return_public_v61.rs"),
         include_str!("rl_session/limited_common_v1.rs"),
         include_str!("human_bo3_v1/limited_next_five_v6.rs"),
         include_str!("human_bo3_v1/limited_common_v1.rs"),
@@ -341,8 +343,12 @@ impl LimitedNextFiveJsonlServerV6 {
                     .checked_add(1)
                     .ok_or("authority_exhausted")?;
                 let boards = [
-                    decks[0].resolve().map_err(|_| "unsupported_deck")?,
-                    decks[1].resolve().map_err(|_| "unsupported_deck")?,
+                    decks[0]
+                        .resolve_next_five_v59()
+                        .map_err(|_| "unsupported_deck")?,
+                    decks[1]
+                        .resolve_next_five_v59()
+                        .map_err(|_| "unsupported_deck")?,
                 ];
                 let identities = boards.each_ref().map(|deck| {
                     let mut hash = Sha256::new();

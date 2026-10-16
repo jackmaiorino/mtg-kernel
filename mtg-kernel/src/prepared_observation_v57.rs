@@ -116,6 +116,8 @@ pub fn producer_sha256() -> String {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
         }
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -136,6 +138,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::ravenous_observation_v51::validate_state_complete_prepared_v57(state)?;
+    crate::graveyard_return_public_v61::require_legacy_visible(state, None)?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
     crate::drake_public_v53::capture(state).map_err(|e| e.0)?;
     crate::spinner_public_v54::capture(state)?;
