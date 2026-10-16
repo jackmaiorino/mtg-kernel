@@ -589,8 +589,27 @@ impl NativePolicyValueTrainStateV1 {
 
         phase_recorder.finish_v1(forward_timer);
         let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
-        let (mut gradients, mut gauge_accumulator) = match backward_execution {
-            BackwardExecutionV1::Sequential => {
+        // Without the exploration regularizer the sequential backward has an
+        // exact parallel form; it runs on the update's forward workers.
+        let parallel = match backward_execution {
+            BackwardExecutionV1::Sequential if beta == 0.0 => {
+                exact_parallel_backward_v1::exact_parallel_backward_v1(
+                    &parameters,
+                    &group_tapes,
+                    group_count,
+                    value_coefficient,
+                    forward_workers,
+                )
+            }
+            _ => None,
+        };
+        let (mut gradients, mut gauge_accumulator) = match (parallel, backward_execution) {
+            (Some(result), _) => {
+                let backward = result?;
+                drop(group_tapes);
+                backward
+            }
+            (None, BackwardExecutionV1::Sequential) => {
                 let mut gradients = parameters
                     .iter()
                     .map(|parameter| vec![0.0; parameter.values.len()])
@@ -661,7 +680,7 @@ impl NativePolicyValueTrainStateV1 {
                 }
                 (gradients, gauge_accumulator)
             }
-            BackwardExecutionV1::FixedPartitions { worker_limit } => {
+            (None, BackwardExecutionV1::FixedPartitions { worker_limit }) => {
                 let coefficients: Vec<(f32, f32)> = group_tapes
                     .iter()
                     .map(|group| {
