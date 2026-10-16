@@ -89,6 +89,11 @@ pub fn producer_sha256() -> String {
                 "effect/harvester_v1.rs",
                 include_str!("effect/harvester_v1.rs"),
             ),
+            ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
+            (
+                "soul_shackled_zombie_v1.rs",
+                include_str!("soul_shackled_zombie_v1.rs"),
+            ),
             (
                 "engine/sphinx_lore_cast_v1.rs",
                 include_str!("engine/sphinx_lore_cast_v1.rs"),

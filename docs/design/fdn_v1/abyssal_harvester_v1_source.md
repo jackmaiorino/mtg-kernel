@@ -1,6 +1,7 @@
 # Abyssal Harvester native source preparation
 
-This checkpoint implements prerequisites, not a registered Harvester printing.
+This checkpoint implements prerequisites and the closed native resolution
+leaf, not a registered Harvester printing.
 ID 479 waits for the actual Omniscience 478 dependency. No Full, owning,
 numeric, Human, wire, training or sampling permission is granted.
 
@@ -25,14 +26,23 @@ old consumers refuse this unrepresented copy component and its public history.
 Existing Partial-token creation guards remain in force.
 
 The closed target facet consumes indexed actual graveyard-entry occurrences,
-with original turn, owner and incarnation. Failed graveyard casts retain the
+with original owner and incarnation. Turn is derived from the existing native
+LifeLossTurnBegan history, not trusted from the new receipt. Generation is
+derived backward through real zone changes and the two native physical cast
+announcement/reversal seams, which otherwise change generation without a
+ZoneChange record. Failed graveyard casts retain the
 original occurrence through a typed rollback relation; they do not invent a
 new put-this-turn event. Entry recording is inactive without the registered
 Harvester catalog. This uses the existing mutable native-world contract.
 
-Two new both-seat source fixtures use explicitly labelled native copy-entry
+Three new both-seat source fixtures use explicitly labelled native copy-entry
 initialization, followed by genuine paid copies/Season, original Horde draw
-triggers, serialized restore and readonly corruption refusals. They do not
+triggers, serialized restore and readonly corruption refusals. The additional Soul-Shackled Zombie group
+uses a genuinely paid original Zombie and Electroduplicate, then a labelled
+Nightmare-entry primitive, selecting a genuinely paid-and-Bolted Elf and
+asserting the actual exile and two life drain across target-stage restore.
+The old Soul receipt now uses the original entry index explicitly, including
+when copy-component receipts intervene. They do not
 claim paid Harvester gameplay. All Rust remains uncompiled and unrun.
 
 Existing Aegis handling of Electroduplicate's separate sacrifice multiplicity

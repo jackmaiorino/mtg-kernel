@@ -1911,6 +1911,16 @@ pub enum CommittedEvent {
     HarvesterGraveyardEntryV1 {
         entry: crate::effect::harvester_v1::GraveyardEntryV1,
     },
+    HarvesterResolvedV1 {
+        resolution: crate::effect::harvester_v1::ResolutionV1,
+    },
+    HarvesterCastAnnouncedV1 {
+        cast: crate::effect::harvester_v1::CastV1,
+    },
+    HarvesterCastReversedV1 {
+        announcement: u64,
+        restored: crate::effect::EffectObjectBinding,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4391,7 +4401,7 @@ fn commit_with_entry_batch_and_source_color(
     crate::effect::harvester_v1::record_entry(state, entry_history_index);
     crate::effect::harvester_v1::record_graveyard_entry(state, entry_history_index);
     if let Some(source) = single_graveyard_entry {
-        crate::soul_shackled_zombie_v1::record_entry(state, source);
+        crate::soul_shackled_zombie_v1::record_entry(state, source, entry_history_index);
     }
     if let Some(capture) = crate::raid_entry_v1::record_entry(state, entry_history_index) {
         if !defer_raid_entry {
@@ -9797,10 +9807,10 @@ pub(crate) fn copiable_token_abilities_v1(
 }
 
 pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
-    crate::effect::harvester_v1::validate_state(state)?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }
+    crate::effect::harvester_v1::validate_state(state)?;
     for (_, object) in state.objects.iter() {
         if object.zone != Zone::Battlefield && object.v4.copied_end_step_sacrifices_v1 != 0 {
             return Err("copied abilities survived an ordinary zone change".into());

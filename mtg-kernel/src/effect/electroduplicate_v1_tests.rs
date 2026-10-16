@@ -1102,3 +1102,99 @@ fn native_nightmare_entry_primitive_departed_horde_lki_and_component_tamper_refu
         assert_eq!(bad, before);
     }
 }
+
+fn finish_zombie_copy(s: &mut GameState, target: Option<ObjectId>) {
+    let mut chosen = false;
+    for _ in 0..96 {
+        let d = engine::advance_until_decision(s);
+        assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+        if s.stack.is_empty()
+            && s.engine.pending_effect.is_none()
+            && s.engine.pending_triggers.is_empty()
+            && !crate::linked_aura_operation_v1::has_pending(s)
+        {
+            return;
+        }
+        if let Decision::ChooseTargets {
+            spell,
+            legal_targets,
+            can_finish,
+            ..
+        } = d
+        {
+            assert_eq!(s.objects.get(spell).card_def, id("Soul-Shackled Zombie"));
+            let action = if let Some(card) = target.filter(|_| !chosen) {
+                assert!(legal_targets.contains(&Target::Object(card)));
+                chosen = true;
+                Action::ChooseTarget(Target::Object(card))
+            } else {
+                assert!(can_finish);
+                Action::FinishTargetSelection
+            };
+            let mut replay = restore(s);
+            engine::step(s, action.clone()).unwrap();
+            engine::step(&mut replay, action).unwrap();
+            assert_eq!(*s, replay);
+        } else {
+            quiet(s, d);
+        }
+    }
+    panic!("Soul copy ETB did not finish")
+}
+
+#[test]
+fn genuine_paid_soul_copy_and_nightmare_entry_primitive_keep_original_etb_creation_index_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        for _ in 0..8 {
+            put(&mut s, actor, "Swamp", Zone::Battlefield);
+        }
+        let original = cast(&mut s, actor, "Soul-Shackled Zombie", &[], 3);
+        finish_zombie_copy(&mut s, None);
+        cast(&mut s, actor, NAME, &[Target::Object(original)], 3);
+        finish_zombie_copy(&mut s, None);
+        let copied = copies(&s, id("Soul-Shackled Zombie"));
+        assert_eq!(copied.len(), 1);
+        let elf = paid(&mut s, actor, "Llanowar Elves", 1);
+        cast(
+            &mut s,
+            actor.opponent(),
+            "Lightning Bolt",
+            &[Target::Object(elf)],
+            1,
+        );
+        finish(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Graveyard);
+        let before = [s.players[0].life, s.players[1].life];
+        let nightmare = nightmare_copy_primitive(&mut s, actor, "Soul-Shackled Zombie");
+        finish_zombie_copy(&mut s, Some(elf));
+        assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+        assert_eq!(s.players[actor.index()].life, before[actor.index()] + 2);
+        assert_eq!(
+            s.players[actor.opponent().index()].life,
+            before[actor.opponent().index()] - 2
+        );
+        let replay = restore(&s);
+        for token in [copied[0], nightmare] {
+            let source = AbilitySourceContractV4::capture(&s, token);
+            crate::soul_shackled_zombie_v1::validate_source(&s, source).unwrap();
+            crate::soul_shackled_zombie_v1::validate_source(&replay, source).unwrap();
+            let entry = s
+                .engine
+                .event_history
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::SingleGraveyardEntryV1 {
+                        source_contract,
+                        entry_event_index,
+                    } if *source_contract == source => Some(*entry_event_index),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(
+                matches!(s.engine.event_history[entry], CommittedEvent::CreateToken { object, .. } if object == token)
+            );
+        }
+    }
+}

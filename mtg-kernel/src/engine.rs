@@ -23104,6 +23104,7 @@ fn materialize_begin_cast_v1(
         },
     });
 
+    crate::effect::harvester_v1::record_cast(state, source_contract);
     state.engine.pending_cast = Some(PendingCast {
         sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
         greatwurm_v1: greatwurm_choice,
