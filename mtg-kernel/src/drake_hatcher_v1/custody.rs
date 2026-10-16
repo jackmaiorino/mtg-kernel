@@ -155,6 +155,26 @@ pub(crate) fn with_observation_replay_keys<T>(
     run(state)
 }
 
+/// A complete read-only validation can reuse keys across its own checks even
+/// when no observation request surrounds it. An existing foreign observation
+/// retains its original unframed fallback; its keys and lifetime are untouched.
+pub(crate) fn with_validation_replay_keys<T>(
+    state: &GameState,
+    run: impl FnOnce(&GameState) -> T,
+) -> T {
+    let has_frame = OBSERVATION_REPLAY_KEYS.with(|frame| {
+        frame.borrow().as_ref().map(|frame| {
+            // An exact match joins the existing immutable borrow. A foreign
+            // match must still miss every original replay_keys cache lookup.
+            frame.matches(&state.engine.event_history)
+        })
+    });
+    match has_frame {
+        None => with_observation_replay_keys(state, run),
+        Some(true) | Some(false) => run(state),
+    }
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
