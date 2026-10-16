@@ -5,7 +5,7 @@ use crate::{
     policy_observation_v6::tests::put,
 };
 
-fn ready(actor: PlayerId) -> GameState {
+pub(crate) fn ready(actor: PlayerId) -> GameState {
     let mut state = crate::extra_turn_v1::tests::ready(actor);
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
     for seat in [PlayerId::P0, PlayerId::P1] {
@@ -17,7 +17,7 @@ fn ready(actor: PlayerId) -> GameState {
     }
     state
 }
-fn quiet(state: &mut GameState, decision: Decision) {
+pub(crate) fn quiet(state: &mut GameState, decision: Decision) {
     let action = match decision {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
@@ -33,7 +33,7 @@ fn quiet(state: &mut GameState, decision: Decision) {
     engine::step(state, action).unwrap();
     assert!(state.engine.halted.is_none());
 }
-fn settle(state: &mut GameState) {
+pub(crate) fn settle(state: &mut GameState) {
     for _ in 0..160 {
         let d = engine::advance_until_decision(state);
         if state.stack.is_empty()
@@ -48,7 +48,12 @@ fn settle(state: &mut GameState) {
     }
     panic!("V61 native fixture did not settle");
 }
-fn announce(state: &mut GameState, actor: PlayerId, spell: ObjectId, target: Option<ObjectId>) {
+pub(crate) fn announce(
+    state: &mut GameState,
+    actor: PlayerId,
+    spell: ObjectId,
+    target: Option<ObjectId>,
+) {
     let decision = (0..12)
         .find_map(|_| {
             let d = engine::advance_until_decision(state);
@@ -89,7 +94,12 @@ fn announce(state: &mut GameState, actor: PlayerId, spell: ObjectId, target: Opt
     );
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
 }
-fn paid(state: &mut GameState, actor: PlayerId, name: &str, target: Option<ObjectId>) -> ObjectId {
+pub(crate) fn paid(
+    state: &mut GameState,
+    actor: PlayerId,
+    name: &str,
+    target: Option<ObjectId>,
+) -> ObjectId {
     let spell = put(state, actor, name, Zone::Hand);
     announce(state, actor, spell, target);
     settle(state);
@@ -219,7 +229,7 @@ fn paid_two_familiars_expose_exact_death_schedule_and_delayed_native_stages_rest
         assert_restore(&state);
     }
 }
-fn raid_ready(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+pub(crate) fn raid_ready(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
     let mut state = ready(actor);
     let alesha = paid(&mut state, actor, "Alesha, Who Laughs at Fate", None);
     let target = paid(&mut state, actor, "Vampire Nighthawk", None);

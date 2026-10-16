@@ -351,6 +351,24 @@ pub(crate) fn observe_parts_complete_next_five_v59(
         crate::rl::CommonProjectionScopeV42::NextFiveV59,
     )
 }
+pub(crate) fn observe_parts_complete_graveyard_return_v61(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::GraveyardReturnV61,
+    )
+}
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -369,6 +387,10 @@ fn observe_parts_complete_current_scope(
             crate::next_five_observation_v59::COMMON_SCHEMA,
             crate::next_five_observation_v59::producer_sha256(),
         ),
+        crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 => (
+            crate::graveyard_return_observation_v61::COMMON_SCHEMA,
+            crate::graveyard_return_observation_v61::producer_sha256(),
+        ),
         _ => return Err(RlContractError("wrong complete compatibility scope".into())),
     };
     let (actor, origin) = actor_and_origin;
@@ -376,7 +398,7 @@ fn observe_parts_complete_current_scope(
         .validate_observation_origin_substeps_v45(state, actor, origin, substep)
         .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
-    let ravenous = crate::ravenous_public_v51::battlefield_prepared_v57(state)?;
+    let ravenous = crate::ravenous_public_v51::battlefield_complete_scope(state, scope)?;
     let roots = crate::akroma_public_v1::roots()?;
     let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
     let base = crate::rl::common_family_observation_storage_scoped(
@@ -509,6 +531,14 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::next_five_observation_v59::COMMON_SCHEMA,
             &crate::next_five_observation_v59::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_graveyard_return_compatibility_v61(
+        &self,
+    ) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::graveyard_return_observation_v61::COMMON_SCHEMA,
+            &crate::graveyard_return_observation_v61::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

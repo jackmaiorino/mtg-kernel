@@ -343,6 +343,22 @@ pub fn battlefield(state: &GameState) -> Result<BattlefieldV51, RlContractError>
 pub(crate) fn battlefield_prepared_v57(
     state: &GameState,
 ) -> Result<BattlefieldV51, RlContractError> {
+    battlefield_complete_scope(state, crate::rl::CommonProjectionScopeV42::PreparedV57)
+}
+pub(crate) fn battlefield_complete_scope(
+    state: &GameState,
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<BattlefieldV51, RlContractError> {
+    if !matches!(
+        scope,
+        crate::rl::CommonProjectionScopeV42::PreparedV57
+            | crate::rl::CommonProjectionScopeV42::NextFiveV59
+            | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
+    ) {
+        return Err(RlContractError(
+            "wrong complete counter compatibility scope".into(),
+        ));
+    }
     let facts = capture(state)?;
     let mut cards: [Vec<CardV51>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
@@ -364,7 +380,11 @@ pub(crate) fn battlefield_prepared_v57(
             }
             seen.push(*id);
             cards[seat].push(CardV51 {
-                card: crate::rl::public_card_prepared_compat_v57(state, *id)?,
+                card: if scope == crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 {
+                    crate::rl::public_card_graveyard_return_compat_v61(state, *id)?
+                } else {
+                    crate::rl::public_card_prepared_compat_v57(state, *id)?
+                },
                 marked_damage: live.damage,
                 plus_one_counters: live.counters.plus1_plus1,
                 soul: live.counters.soul,

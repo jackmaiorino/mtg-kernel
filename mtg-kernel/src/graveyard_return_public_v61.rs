@@ -202,7 +202,7 @@ fn exact_graveyard(
         })
         .and_then(|_| public::reference(state, link.object, Some(viewer)))
 }
-fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV61, String> {
+pub(crate) fn counter_values(state: &GameState, id: ObjectId) -> Result<CountersV61, String> {
     let live = state.objects.get(id);
     let Counters {
         plus1_plus1,
@@ -784,4 +784,4 @@ pub fn validate(state: &GameState, viewer: PlayerId, value: &FactsV61) -> Result
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "graveyard_return_public_v61/tests.rs"]
-mod tests;
+pub(crate) mod tests;

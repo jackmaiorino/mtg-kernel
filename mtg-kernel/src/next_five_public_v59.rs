@@ -363,6 +363,19 @@ fn deaths(state: &GameState, viewer: PlayerId, id: u16) -> Result<Vec<DeathV59>,
     Ok(rows)
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV59, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::Legacy)
+}
+pub(crate) fn capture_complete_v61(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<FactsV59, String> {
+    capture_scoped(state, viewer, public::CounterScopeV61::CompleteV61)
+}
+fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    scope: public::CounterScopeV61,
+) -> Result<FactsV59, String> {
     public::validate_state_checked(state)?;
     if let Some(p) = &state.engine.pending_cast {
         crate::engine::validate_pending_cast(state, p)?;
@@ -390,9 +403,13 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV59, String> 
             }
         }
         current.extend(
-            public::current_checked(state, *id)?
-                .into_iter()
-                .map(|card| CurrentV59 { family: *f, card }),
+            if scope == public::CounterScopeV61::CompleteV61 {
+                public::current_complete_v61(state, *id)?
+            } else {
+                public::current_checked(state, *id)?
+            }
+            .into_iter()
+            .map(|card| CurrentV59 { family: *f, card }),
         );
     }
     let mut casts = vec![];

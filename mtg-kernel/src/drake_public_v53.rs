@@ -243,7 +243,11 @@ fn current_original(state: &GameState, source: AbilitySourceContractV4) -> Optio
             )
         })
 }
-fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractError> {
+fn counters(
+    state: &GameState,
+    id: ObjectId,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<CountersV53, RlContractError> {
     let live = state.objects.get(id);
     // Exhaustive destructuring requires a deliberate V53 decision for any
     // newly added storage family, rather than silently losing its counters.
@@ -261,7 +265,10 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractEr
         incubation,
         revival,
     } = live.counters;
-    if revival != 0 {
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61 {
+        crate::graveyard_return_public_v61::counter_values(state, id).map_err(error)?;
+    }
+    if revival != 0 && scope == crate::optional_trigger_public_v1::CounterScopeV61::Legacy {
         return Err(error("V53 does not expose Nine-Lives revival counters"));
     }
     let lifelink = live.v4.lifelink_keyword_counters;
@@ -411,7 +418,10 @@ fn temporary_boosts(state: &GameState, id: ObjectId) -> Vec<TemporaryBoostV53> {
         })
         .collect()
 }
-fn battlefield(state: &GameState) -> Result<[Vec<CardV53>; 2], RlContractError> {
+fn battlefield(
+    state: &GameState,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<[Vec<CardV53>; 2], RlContractError> {
     let mut result: [Vec<CardV53>; 2] = [Vec::new(), Vec::new()];
     let mut seen = Vec::new();
     for (seat, player) in state.players.iter().enumerate() {
@@ -454,7 +464,7 @@ fn battlefield(state: &GameState) -> Result<[Vec<CardV53>; 2], RlContractError> 
                 tapped: live.tapped,
                 summoning_sick: live.summoning_sick,
                 marked_damage: live.damage,
-                counters: counters(state, *id)?,
+                counters: counters(state, *id, scope)?,
                 form: form(state, *id)?,
                 temporary_boosts: temporary_boosts(state, *id),
                 attachments,
@@ -611,6 +621,21 @@ fn activation_outcome(
 /// Validate the genuine private inputs and complete operation replay first.
 /// Hashes and the current board never stand in for historical authority.
 pub fn capture(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::Legacy,
+    )
+}
+pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61,
+    )
+}
+fn capture_scoped(
+    state: &GameState,
+    scope: crate::optional_trigger_public_v1::CounterScopeV61,
+) -> Result<FactsV53, RlContractError> {
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| error(format!("native PT envelope exceeded for {id:?}")))?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
@@ -718,7 +743,7 @@ pub fn capture(state: &GameState) -> Result<FactsV53, RlContractError> {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
         meanings,
-        battlefield: battlefield(state)?,
+        battlefield: battlefield(state, scope)?,
         combat,
         activations,
     })

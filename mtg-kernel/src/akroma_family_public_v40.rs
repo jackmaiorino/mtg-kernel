@@ -887,6 +887,7 @@ pub(crate) fn build_for_scope(
             | crate::rl::CommonProjectionScopeV42::RavenousV51
             | crate::rl::CommonProjectionScopeV42::PreparedV57
             | crate::rl::CommonProjectionScopeV42::NextFiveV59
+            | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
     ) {
         crate::bloodthirsty_conqueror_v49::validate(state).map_err(RlContractError)?;
     } else {
@@ -912,7 +913,8 @@ pub(crate) fn build_for_scope(
         | crate::rl::CommonProjectionScopeV42::FakeV50
         | crate::rl::CommonProjectionScopeV42::RavenousV51
         | crate::rl::CommonProjectionScopeV42::PreparedV57
-        | crate::rl::CommonProjectionScopeV42::NextFiveV59 => {}
+        | crate::rl::CommonProjectionScopeV42::NextFiveV59
+        | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 => {}
     }
     let base = crate::rl::common_family_observation_storage_scoped(
         (scope, state),

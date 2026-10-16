@@ -31,6 +31,12 @@ pub struct FactsV54 {
     pub stack: Vec<StackV54>,
 }
 pub fn capture(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::Legacy)
+}
+pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV54, String> {
+    capture_scoped(state, public::CounterScopeV61::CompleteV61)
+}
+fn capture_scoped(state: &GameState, scope: public::CounterScopeV61) -> Result<FactsV54, String> {
     let id =
         crate::card_def::card_id_by_name("Spinner of Souls").ok_or("Spinner printing absent")?;
     let meaning = meaning::printed_meaning(id)?;
@@ -91,7 +97,11 @@ pub fn capture(state: &GameState) -> Result<FactsV54, String> {
         schema: SCHEMA.into(),
         producer_sha256: meaning::producer_sha256(),
         meaning,
-        current: public::current(state, id)?,
+        current: if scope == public::CounterScopeV61::CompleteV61 {
+            public::current_complete_v61(state, id)?
+        } else {
+            public::current(state, id)?
+        },
         held,
         stack,
     })
