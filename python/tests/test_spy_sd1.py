@@ -1297,7 +1297,9 @@ class ReferenceCheck(Temp):
         with mock.patch("sys.stdout"):
             self.assertEqual(sd1.main(base + ["--screen-probe-sha256", screen["sha256"]]), 0)
         record = json.loads((self.root / "REFERENCES.json").read_text(encoding="utf-8"))
-        self.assertEqual((record["probe"], record["screen_probe"]), (mine, screen))
+        # The record's pins spell paths with forward slashes, as pin() does.
+        self.assertEqual((record["probe"], record["screen_probe"]),
+                         (common.pin(mine["path"]), common.pin(screen["path"])))
 
 
 # ------------------------------------------------------------- fit table
