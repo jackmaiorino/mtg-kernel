@@ -523,7 +523,8 @@ def summarize(rows: list, measures: dict) -> dict:
             "separated_per_evidence_row": {str(k): v for k, v in
                                            sorted(Counter(len(r["mean"]["separated"]) for r in ev).items())},
             "mean_separated_per_evidence_row": separated / len(ev) if ev else None,
-            "tried_rivals_at_evidence_rows": tried, "tried_rivals_separated_share": separated / tried if tried else None,
+            "tried_rivals_at_evidence_rows": tried,
+            "tried_rivals_separated_share": separated / tried if tried else None,
             "parent_mean_separated_mass": bt1.mean([measures[key(r)]["parent_separated_mass"] for r in ev]),
             "parent_top_differs_from_leader": sum(measures[key(r)]["parent_top_differs"] for r in ev),
             "summed_kl_q_p": sum(measures[key(r)]["kl"] for r in ev),
