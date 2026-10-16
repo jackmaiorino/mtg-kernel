@@ -58,6 +58,8 @@ pub fn producer_sha256() -> String {
             include_str!("engine/mandatory_cast_cost_v1.rs"),
             include_str!("engine.rs"),
             include_str!("spell_costs_v1.rs"),
+            include_str!("effect/sphinx_lore_v1.rs"),
+            include_str!("engine/sphinx_lore_cast_v1.rs"),
             include_str!("mana.rs"),
             include_str!("event.rs"),
             include_str!("effect.rs"),

@@ -41,6 +41,7 @@
 
 pub mod greatwurm_cast_v1;
 pub mod mandatory_cast_cost_v1;
+pub mod sphinx_lore_cast_v1;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
@@ -833,6 +834,8 @@ pub enum ChosenCreatureCostZoneV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphinx_lore_v1: Option<sphinx_lore_cast_v1::ChoiceV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greatwurm_v1: Option<greatwurm_cast_v1::ChoiceV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mandatory_additional_cost: Option<mandatory_cast_cost_v1::ChoiceV1>,
@@ -960,6 +963,10 @@ impl std::hash::Hash for PendingCast {
         std::hash::Hash::hash(&self.chosen_creature_cost, state);
         if let Some(choice) = self.mandatory_additional_cost {
             std::hash::Hash::hash(&"mandatory_additional_cost/v1", state);
+            std::hash::Hash::hash(&choice, state);
+        }
+        if let Some(choice) = self.sphinx_lore_v1 {
+            std::hash::Hash::hash(&"sphinx_lore_cast/v1", state);
             std::hash::Hash::hash(&choice, state);
         }
         if let Some(choice) = &self.greatwurm_v1 {
@@ -2122,6 +2129,7 @@ fn validate_physical_spell_cast_origin(
     }
     mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
     greatwurm_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
+    sphinx_lore_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2226,6 +2234,23 @@ fn validate_physical_spell_cast_origin(
                 && graveyard_generation == origin.origin_zone_change_count
                 && cast_method == CastMethodV4::Normal
                 && crate::effect::greatwurm_v1::definition(source.card_def)
+        }
+        SpellCastRouteV4::SphinxLoreFlashbackV1 {
+            installation,
+            holder,
+            graveyard_generation,
+        } => {
+            origin.origin_zone == Zone::Graveyard
+                && holder == item.controller
+                && source.owner == holder
+                && graveyard_generation == origin.origin_zone_change_count
+                && cast_method == CastMethodV4::Flashback
+                && crate::effect::sphinx_lore_v1::validate_cast_grant(
+                    state,
+                    item.source,
+                    holder,
+                    installation,
+                )
         }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
@@ -2429,7 +2454,11 @@ fn validate_spell_source_contract_fields(
     match cast_method {
         CastMethodV4::Normal => {}
         CastMethodV4::Alternative if def.alt_cost.is_some() => {}
-        CastMethodV4::Flashback if def.flashback.is_some() => {}
+        CastMethodV4::Flashback
+            if def.flashback.is_some()
+                || source.spell_cast_origin.is_some_and(|o| {
+                    matches!(o.route, SpellCastRouteV4::SphinxLoreFlashbackV1 { .. })
+                }) => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}
         CastMethodV4::Escape if def.escape.is_some() => {}
         CastMethodV4::Omen
@@ -2719,7 +2748,8 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
         | SpellCastRouteV4::GraveyardAdventure { .. }
-        | SpellCastRouteV4::GreatwurmGraveyardV1 { .. } => false,
+        | SpellCastRouteV4::GreatwurmGraveyardV1 { .. }
+        | SpellCastRouteV4::SphinxLoreFlashbackV1 { .. } => false,
     };
     has_storm(definition)
         && definition.is_executable()
@@ -6940,7 +6970,7 @@ fn alt_cost_condition_met(
 /// but zero" are not a real ambiguity here -- mirrors `target_count`'s own
 /// shape.
 fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
-    if pending.is_flashback {
+    if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         return def
             .flashback
             .as_ref()
@@ -6968,7 +6998,7 @@ fn cast_tap_permanent_filter_needed(
     pending: &PendingCast,
     def: &card_def::CardDef,
 ) -> Option<PermanentFilterDef> {
-    if pending.is_flashback {
+    if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         if let Some(filter) = def
             .flashback
             .as_ref()
@@ -7255,7 +7285,7 @@ fn controlled_permanent_sacrifice_needed(
     pending: &PendingCast,
     def: &card_def::CardDef,
 ) -> Option<(u8, PermanentFilter)> {
-    if pending.is_flashback {
+    if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         if let Some(sacrifice) = def
             .flashback
             .as_ref()
@@ -8149,6 +8179,11 @@ fn pending_cast_quote_v1(
     x: u8,
     state: &GameState,
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
+    let method = if pending.sphinx_lore_v1.is_some() && method == CastMethodV4::Normal {
+        pending.source_contract.cast_method
+    } else {
+        method
+    };
     let reserved_graveyard = if pending.optional_additional_cost_paid == Some(true)
         && matches!(
             def.optional_additional_cost,
@@ -8573,6 +8608,7 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             out.push(id);
         }
     }
+    let has_sphinx_lore_grant = !state.players[player.index()].graveyard.is_empty() && state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::SphinxLoreV1{journal:crate::effect::sphinx_lore_v1::JournalV1::Installed{controller,..}}if *controller==player));
     for &id in &state.players[player.index()].graveyard {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
         let castable = match unambiguous_graveyard_cast_method(def) {
@@ -8583,7 +8619,9 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
                     && is_castable_now(player, id, CastMethodV4::Normal, state)
             }
         };
-        if castable {
+        if castable
+            || has_sphinx_lore_grant && !sphinx_lore_cast_v1::routes(state, id, player).is_empty()
+        {
             out.push(id);
         }
     }
@@ -10045,7 +10083,8 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             source,
         };
     }
-    if crate::librarian_activation_v1::validate_state(state).is_err()
+    if crate::effect::sphinx_lore_v1::validate_state(state).is_err()
+        || crate::librarian_activation_v1::validate_state(state).is_err()
         || crate::ajani_full_v42::lifecycle::validate_state(state).is_err()
         || crate::krenko_v1::validate_state(state).is_err()
         || crate::fishing_pole_v39::lifecycle::validate_state(state).is_err()
@@ -11433,6 +11472,7 @@ pub(crate) fn validate_pending_cast(
     resolution_cast_v1::validate_pending_child(state, pending)?;
     mandatory_cast_cost_v1::validate_pending(state, pending)?;
     greatwurm_cast_v1::validate_pending(state, pending)?;
+    sphinx_lore_cast_v1::validate(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11611,8 +11651,8 @@ pub(crate) fn validate_pending_cast(
         CastMethodV4::Flashback => {
             if pending.origin_zone != Zone::Graveyard
                 || source.owner != pending.controller
-                || def.flashback.is_none()
-                || def.escape.is_some()
+                || (def.flashback.is_none() && !sphinx_lore_cast_v1::granted(pending))
+                || (def.escape.is_some() && !sphinx_lore_cast_v1::granted(pending))
                 || pending.cast_mode != Some(CastMode::Normal)
             {
                 return Err("flashback cast has a noncanonical origin or definition".to_string());
@@ -12209,6 +12249,24 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         .and_then(|item| item.v4.cast_method)
         .expect("validated pending cast retains its placeholder method");
 
+    if sphinx_lore_cast_v1::waiting(&pending) {
+        match sphinx_lore_cast_v1::count(state, &pending) {
+            Ok(option_count) if option_count > 0 => {
+                return Some(Decision::ChooseEffectOption {
+                    player: pending.controller,
+                    source: pending.spell,
+                    option_count,
+                })
+            }
+            _ => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.spell,
+                ));
+                return None;
+            }
+        }
+    }
     if greatwurm_cast_v1::waiting(&pending) {
         match greatwurm_cast_v1::options(state, &pending) {
             Ok(option_count) if option_count > 0 => {
@@ -14256,6 +14314,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
         .filter(|r| {
             r.inline_effect
                 .as_ref()
+                .is_some_and(crate::effect::sphinx_lore_v1::recipe)
+        })
+        .cloned()
+    {
+        crate::effect::sphinx_lore_v1::publish(state, &item)?;
+    }
+    if let Some(item) = state
+        .stack
+        .last()
+        .filter(|r| {
+            r.inline_effect
+                .as_ref()
                 .is_some_and(crate::effect::greatwurm_v1::recipe)
         })
         .cloned()
@@ -14452,6 +14522,7 @@ fn validate_bound_trigger_source_objects(
     source_contract: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
     crate::effect::source_token_copy_v1::validate_root(state, effect, source_contract)?;
+    crate::effect::sphinx_lore_v1::validate_root(state, effect, source_contract)?;
     crate::effect::greatwurm_v1::validate_root(state, effect, source_contract)?;
     crate::effect::kykar_v1::validate_root(state, effect, source_contract)?;
     match effect {
@@ -14692,6 +14763,17 @@ fn triggered_stack_item_expected_target_spec(
             event::validate_published_copied_token_v1(state, item)?;
         }
         return Ok(None);
+    }
+    if crate::effect::sphinx_lore_v1::selected(state, item) {
+        crate::effect::sphinx_lore_v1::validate_item(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            crate::effect::sphinx_lore_v1::validate_published(state, item)?;
+        }
+        return Ok(Some(crate::effect::sphinx_lore_v1::target_spec()));
     }
     if crate::effect::greatwurm_v1::selected(state, item)
         || crate::effect::greatwurm_v1::definition(source_card_def)
@@ -17939,7 +18021,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     PlayPermissionExpiry::LaterTurn { .. }
                     | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
                 });
-            if crate::zul_ashur_v1::note_cleanup(state).is_err()
+            if crate::effect::sphinx_lore_v1::cleanup(state).is_err()
+                || crate::zul_ashur_v1::note_cleanup(state).is_err()
                 || crate::zul_ashur_v1::expire(state).is_err()
             {
                 state.engine.halted =
@@ -19845,6 +19928,7 @@ enum PendingCastActionStage {
     ChooseConvoke,
     ChooseMandatoryAdditionalCost,
     ChooseGreatwurmCost,
+    ChooseSphinxLoreRoute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19872,6 +19956,9 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::Discard);
     }
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if sphinx_lore_cast_v1::waiting(pending) {
+        return Ok(PendingCastActionStage::ChooseSphinxLoreRoute);
+    }
     if greatwurm_cast_v1::waiting(pending) {
         return Ok(PendingCastActionStage::ChooseGreatwurmCost);
     }
@@ -19998,7 +20085,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
         ) | (
             PendingCastActionStage::ChooseAdditionalCostZone
                 | PendingCastActionStage::ChooseMandatoryAdditionalCost
-                | PendingCastActionStage::ChooseGreatwurmCost,
+                | PendingCastActionStage::ChooseGreatwurmCost
+                | PendingCastActionStage::ChooseSphinxLoreRoute,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseXValue,
@@ -20102,6 +20190,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::bloodthirsty_conqueror_v49::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
+    crate::effect::sphinx_lore_v1::validate_state(state)?;
     mandatory_cast_cost_v1::validate_state(state)?;
     crate::high_society_hunter_custody_v45::validate(state)?;
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
@@ -22315,6 +22404,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             state.engine.event_log.push(event.clone());
             state.engine.event_history.push(event);
             let declaration = state.engine.event_history.len() - 1;
+            crate::effect::sphinx_lore_v1::record_attack(state, source);
             crate::ashroot_dispatch_v2::record_attack(state, source);
             crate::vampire_gourmand_dispatch_v2::capture_declaration(state, declaration);
             crate::high_society_hunter_v1::capture_attack(state, declaration);
@@ -22591,6 +22681,9 @@ fn apply_pending_cast_effect_option(
     let stage = pending_cast_action_stage(state, &pending)?;
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     match stage {
+        PendingCastActionStage::ChooseSphinxLoreRoute => {
+            sphinx_lore_cast_v1::answer(state, &pending, option_index)
+        }
         PendingCastActionStage::ChooseGreatwurmCost => {
             greatwurm_cast_v1::answer(state, &pending, option_index)
         }
@@ -22809,6 +22902,11 @@ fn materialize_begin_cast_v1(
             .expect("permitted adventure")
     });
     let target_spec = def.target_spec;
+    let sphinx_lore_choice = if forced_cast_method.is_none() {
+        sphinx_lore_cast_v1::seed(state, spell_id, player)
+    } else {
+        None
+    };
     let greatwurm_choice = if forced_cast_method.is_none() {
         greatwurm_cast_v1::seed(state, spell_id, player)
     } else {
@@ -22820,7 +22918,9 @@ fn materialize_begin_cast_v1(
     .then(|| graveyard_permission_zone_change_count(player, spell_id, state))
     .flatten();
     let cast_method = forced_cast_method.unwrap_or_else(|| {
-        if graveyard_permission.is_some()
+        if let Some((_, route)) = sphinx_lore_choice {
+            sphinx_lore_cast_v1::selected_method(route)
+        } else if graveyard_permission.is_some()
             || graveyard_adventure.is_some()
             || greatwurm_choice.is_some()
         {
@@ -22837,61 +22937,65 @@ fn materialize_begin_cast_v1(
     });
     let is_flashback = cast_method == CastMethodV4::Flashback;
     let resolution_permission = resolution_cast_v1::permit(state, spell_id).filter(|p| !p.land);
-    let cast_route = match cast_method {
-        CastMethodV4::Normal if resolution_permission.is_some() => {
-            let permission = resolution_permission.unwrap();
-            SpellCastRouteV4::ResolvingEffectV1 {
-                holder: player,
-                maximum_mana_value: permission.maximum_mana_value,
-            }
-        }
-        CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
-        CastMethodV4::Escape => SpellCastRouteV4::GraveyardEscape,
-        CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
-            plotted_turn: plotted_turn
-                .expect("a Plotted cast was derived from an exact Plot marker"),
-        },
-        CastMethodV4::Madness => SpellCastRouteV4::Madness,
-        CastMethodV4::Normal if graveyard_adventure.is_some() => {
-            SpellCastRouteV4::GraveyardAdventure {
-                holder: player,
-                permission_zone_change_count: origin_zone_change_count,
-            }
-        }
-        CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
-        CastMethodV4::Normal if greatwurm_choice.is_some() => {
-            SpellCastRouteV4::GreatwurmGraveyardV1 {
-                holder: player,
-                graveyard_generation: origin_zone_change_count,
-            }
-        }
-        CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
-            SpellCastRouteV4::GraveyardPermissionV1 {
-                holder: player,
-                permission_zone_change_count: graveyard_permission
-                    .expect("an ordinary graveyard cast was offered through an exact grant"),
-            }
-        }
-        CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
-            SpellCastRouteV4::AdventureExile
-        }
-        CastMethodV4::Normal if origin_zone == Zone::Exile => {
-            let permission = active_permission_for(player, spell_id, state)
-                .expect("an ordinary Exile cast was offered through an exact play permission");
-            debug_assert_eq!(permission.play_or_cast, PlayOrCast::Cast);
-            if permission.without_mana_cost.0 {
-                SpellCastRouteV4::ExileFreePermission {
-                    holder: permission.holder,
-                    permission_zone_change_count: permission.zone_change_generation,
-                }
-            } else {
-                SpellCastRouteV4::ExilePermission {
-                    holder: permission.holder,
-                    permission_zone_change_count: permission.zone_change_generation,
+    let cast_route = if let Some((_, route)) = sphinx_lore_choice {
+        sphinx_lore_cast_v1::selected_origin(route, player, origin_zone_change_count)
+    } else {
+        match cast_method {
+            CastMethodV4::Normal if resolution_permission.is_some() => {
+                let permission = resolution_permission.unwrap();
+                SpellCastRouteV4::ResolvingEffectV1 {
+                    holder: player,
+                    maximum_mana_value: permission.maximum_mana_value,
                 }
             }
+            CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
+            CastMethodV4::Escape => SpellCastRouteV4::GraveyardEscape,
+            CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
+                plotted_turn: plotted_turn
+                    .expect("a Plotted cast was derived from an exact Plot marker"),
+            },
+            CastMethodV4::Madness => SpellCastRouteV4::Madness,
+            CastMethodV4::Normal if graveyard_adventure.is_some() => {
+                SpellCastRouteV4::GraveyardAdventure {
+                    holder: player,
+                    permission_zone_change_count: origin_zone_change_count,
+                }
+            }
+            CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+            CastMethodV4::Normal if greatwurm_choice.is_some() => {
+                SpellCastRouteV4::GreatwurmGraveyardV1 {
+                    holder: player,
+                    graveyard_generation: origin_zone_change_count,
+                }
+            }
+            CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
+                SpellCastRouteV4::GraveyardPermissionV1 {
+                    holder: player,
+                    permission_zone_change_count: graveyard_permission
+                        .expect("an ordinary graveyard cast was offered through an exact grant"),
+                }
+            }
+            CastMethodV4::Normal if origin_zone == Zone::Exile && is_adventure_exile => {
+                SpellCastRouteV4::AdventureExile
+            }
+            CastMethodV4::Normal if origin_zone == Zone::Exile => {
+                let permission = active_permission_for(player, spell_id, state)
+                    .expect("an ordinary Exile cast was offered through an exact play permission");
+                debug_assert_eq!(permission.play_or_cast, PlayOrCast::Cast);
+                if permission.without_mana_cost.0 {
+                    SpellCastRouteV4::ExileFreePermission {
+                        holder: permission.holder,
+                        permission_zone_change_count: permission.zone_change_generation,
+                    }
+                } else {
+                    SpellCastRouteV4::ExilePermission {
+                        holder: permission.holder,
+                        permission_zone_change_count: permission.zone_change_generation,
+                    }
+                }
+            }
+            _ => unreachable!("begin_cast_ex only announces supported cast routes"),
         }
-        _ => unreachable!("begin_cast_ex only announces supported cast routes"),
     };
     let cast_origin = SpellCastOriginV4 {
         origin_zone,
@@ -23001,6 +23105,7 @@ fn materialize_begin_cast_v1(
     });
 
     state.engine.pending_cast = Some(PendingCast {
+        sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
         greatwurm_v1: greatwurm_choice,
         spell: spell_id,
         source_contract,
@@ -23135,6 +23240,7 @@ fn finalize_owned_cast(
     let greatwurm_payment_input = greatwurm_cast_v1::record_input(state, &pending);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
+    let sphinx_lore_cast_v1 = sphinx_lore_cast_v1::record_finalized(state, &pending)?;
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -23220,6 +23326,7 @@ fn finalize_owned_cast(
     cast_origin.finalized_method = Some(cast_method);
     debug_assert!(source_v4.finalized_cast_binding.is_none());
     source_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
+        sphinx_lore_cast_v1,
         greatwurm_payment_v1,
         x_value: u16::from(x_value),
         chosen_creature_cost,

@@ -1891,6 +1891,17 @@ pub enum CommittedEvent {
     SourceCopyDepartureV1 {
         departure: Box<crate::effect::source_token_copy_v1::DepartureV1>,
     },
+    SphinxLoreV1 {
+        journal: crate::effect::sphinx_lore_v1::JournalV1,
+    },
+    SphinxLoreCastOptionsV1 {
+        options: crate::engine::sphinx_lore_cast_v1::OptionsV1,
+    },
+    SphinxLoreCastSelectedV1 {
+        choice: crate::engine::sphinx_lore_cast_v1::ChoiceV1,
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

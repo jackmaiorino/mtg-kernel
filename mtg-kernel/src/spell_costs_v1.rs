@@ -144,6 +144,7 @@ pub(super) struct SpellComponentChoicesV1 {
 }
 
 pub(super) struct SelectedSpellManaCostsV1 {
+    granted_flashback_v1: bool,
     pub(super) legendary_spell: bool,
     pub(super) spell_subtypes: Vec<u16>,
     pub(super) all_creature_types_v60: bool,
@@ -169,6 +170,7 @@ impl SelectedSpellManaCostsV1 {
     ) -> Option<SpellComponentChoicesV1> {
         let base = match method {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
+            CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(definition.flashback.as_ref()?.cost),
             CastMethodV4::Escape => Some(definition.escape.as_ref()?.cost),
             _ => None,
@@ -436,6 +438,7 @@ pub(super) fn selected_spell_mana_costs_v1(
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
     let mut selected = SelectedSpellManaCostsV1 {
+        granted_flashback_v1: false,
         legendary_spell: definition
             .supertypes
             .contains(&card_def::Supertype::Legendary)
@@ -563,9 +566,58 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
     player: PlayerId,
     state: &GameState,
 ) -> Option<SelectedSpellManaCostsV1> {
+    selected_spell_mana_costs_for_source_grant_v1(
+        source,
+        definition,
+        form,
+        targets,
+        player,
+        state,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_mana_costs_for_source_grant_v1(
+    source: ObjectId,
+    definition: &card_def::CardDef,
+    form: (CastMethodV4, bool, u8),
+    targets: &[Target],
+    player: PlayerId,
+    state: &GameState,
+    grant: Option<u64>,
+) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
-    let mut selected =
-        selected_spell_mana_costs_v1(definition, method, kicked, mode, targets, player, state)?;
+    let granted = method == CastMethodV4::Flashback && grant.is_some();
+    if let Some(index) = grant {
+        if state
+            .objects
+            .try_get(source)
+            .and_then(|o| card_def::CARD_DEFS.get(o.card_def as usize))
+            .is_none_or(|actual| !std::ptr::eq(actual, definition))
+            || method != CastMethodV4::Flashback
+            || !crate::effect::sphinx_lore_v1::quote_grant(state, source, player, index)
+        {
+            return None;
+        }
+    }
+    let mut selected = selected_spell_mana_costs_v1(
+        definition,
+        if granted {
+            CastMethodV4::Normal
+        } else {
+            method
+        },
+        kicked,
+        mode,
+        targets,
+        player,
+        state,
+    )?;
+    if granted {
+        selected.component_groups.insert(0, &[]);
+        selected.granted_flashback_v1 = true;
+    }
     if super::resolution_cast_v1::free_cast_for(state, source, player) {
         if !super::resolution_cast_v1::form_allowed_for(state, source, method, player) {
             return None;
@@ -594,6 +646,39 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_with_grant_v1(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        x,
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_with_grant_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    grant: Option<u64>,
+) -> Option<SpellManaPaymentV1> {
     if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
         let choice = state
             .engine
@@ -606,7 +691,7 @@ pub(super) fn selected_spell_quote_v1(
             .into_iter()
             .filter(|branch| choice.is_none_or(|selected| selected == *branch))
             .find_map(|branch| {
-                selected_spell_quote_branch_v1(
+                selected_spell_quote_branch_grant_v1(
                     definition,
                     source,
                     origin_zone,
@@ -620,10 +705,11 @@ pub(super) fn selected_spell_quote_v1(
                     state,
                     reserved_graveyard,
                     Some(branch),
+                    grant,
                 )
             });
     }
-    selected_spell_quote_branch_v1(
+    selected_spell_quote_branch_grant_v1(
         definition,
         source,
         origin_zone,
@@ -637,6 +723,7 @@ pub(super) fn selected_spell_quote_v1(
         state,
         reserved_graveyard,
         None,
+        grant,
     )
 }
 
@@ -656,6 +743,41 @@ pub(super) fn selected_spell_quote_branch_v1(
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
 ) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_branch_grant_v1(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        x,
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        forced_branch,
+        crate::effect::sphinx_lore_v1::granted_route(state, source),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selected_spell_quote_branch_grant_v1(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    forced_branch: Option<bool>,
+    grant: Option<u64>,
+) -> Option<SpellManaPaymentV1> {
     if x != 0 && super::resolution_cast_v1::free_cast_for(state, source, player) {
         return None;
     }
@@ -669,13 +791,14 @@ pub(super) fn selected_spell_quote_branch_v1(
     {
         return None;
     }
-    let mut selected = selected_spell_mana_costs_for_source_v1(
+    let mut selected = selected_spell_mana_costs_for_source_grant_v1(
         source,
         definition,
         (method, kicked, mode),
         targets,
         player,
         state,
+        grant,
     )?;
     if let Some(pay_mana) = forced_branch {
         let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
@@ -900,6 +1023,9 @@ pub(super) fn prepare_final_spell_payment_v1(
     method: CastMethodV4,
     discarded: &[ObjectId],
 ) -> Option<PreparedSpellPaymentV1> {
+    if super::sphinx_lore_cast_v1::waiting(pending) {
+        return None;
+    }
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
