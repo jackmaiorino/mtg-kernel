@@ -2700,6 +2700,14 @@ pub enum EffectOp {
     },
     /// Definition-owned APNAP choices, then one simultaneous sacrifice group.
     BlasphemousEdictV1,
+    /// Native FDN85 copy with permanent copiable haste and end-step abilities.
+    ElectroduplicateCopyV1,
+    /// One captured instance of that token's own recurring end-step ability.
+    CopiedTokenEndStepSacrificeV1 {
+        capture_history_index: u64,
+        observer: u32,
+        ability: u32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4326,6 +4334,21 @@ fn begin_resumable_resolution_with_native_row_v1(
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
+    if native_row.is_none()
+        && (matches!(
+            op,
+            EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
+        ) || electroduplicate_item_v1(state, &resolving_item)
+            || state.stack.iter().any(|row| {
+                row.v4.stack_item_id == resolving_item.v4.stack_item_id
+                    && electroduplicate_item_v1(state, row)
+            })
+            || electroduplicate_waiting_context_v1(state, ctx))
+    {
+        return Err(
+            "native copied-ability program requires its genuine pre-pop execution frame".into(),
+        );
+    }
     if crate::high_society_hunter_custody_v45::selected(&resolving_item) {
         return Err("Hunter root requires its genuine private pre-pop owner".into());
     }
@@ -4386,6 +4409,23 @@ fn begin_resumable_resolution_with_native_row_v1(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        electroduplicate_item_v1(state, &p.resolving_item)
+            || matches!(
+                p.resolving_item.inline_effect,
+                Some(
+                    EffectOp::ElectroduplicateCopyV1
+                        | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
+                )
+            )
+            || state.stack.iter().any(|row| {
+                row.v4.stack_item_id == p.resolving_item.v4.stack_item_id
+                    && electroduplicate_item_v1(state, row)
+            })
+            || electroduplicate_waiting_context_v1(state, &p.ctx)
+    }) {
+        return Err("copied-ability program has no public resume authority".into());
+    }
     if state
         .engine
         .pending_effect
@@ -18604,27 +18644,33 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
-    if ctx
-        .stack_item_id
-        .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
-        || aberration_reveal_context_v1(state, op, ctx)
-        || state.engine.pending_effect.as_ref().is_some_and(|p| {
-            ((aberration_family_item_v1(&p.resolving_item)
-                && p.ctx.stack_item_id == ctx.stack_item_id)
-                || (aberration_resolving_family_v1(state, p)
-                    && p.ctx.source == ctx.source
-                    && p.ctx.ability_source_contract == ctx.ability_source_contract))
-                && !(validate_aberration_ward_continuation_v1(state, p).is_ok()
-                    && p.resolving_item.inline_effect.as_ref() == Some(op)
-                    && aberration_context_matches_v1(state, &p.resolving_item, ctx))
-        })
-        || state.stack.iter().any(|item| {
-            aberration_family_item_v1(item)
-                && Some(item.v4.stack_item_id) == ctx.stack_item_id
-                && !(authenticated_aberration_ward_v1(state, item)
-                    && item.inline_effect.as_ref() == Some(op)
-                    && aberration_context_matches_v1(state, item, ctx))
-        })
+    let native_copied_ability = native_proof.is_some_and(|proof| {
+        proof.ctx == ctx
+            && event::copied_token_item_selected_v1(state, &proof.owner.item)
+            && event::validate_published_copied_token_v1(state, &proof.owner.item).is_ok()
+    });
+    if !native_copied_ability
+        && (ctx
+            .stack_item_id
+            .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
+            || aberration_reveal_context_v1(state, op, ctx)
+            || state.engine.pending_effect.as_ref().is_some_and(|p| {
+                ((aberration_family_item_v1(&p.resolving_item)
+                    && p.ctx.stack_item_id == ctx.stack_item_id)
+                    || (aberration_resolving_family_v1(state, p)
+                        && p.ctx.source == ctx.source
+                        && p.ctx.ability_source_contract == ctx.ability_source_contract))
+                    && !(validate_aberration_ward_continuation_v1(state, p).is_ok()
+                        && p.resolving_item.inline_effect.as_ref() == Some(op)
+                        && aberration_context_matches_v1(state, &p.resolving_item, ctx))
+            })
+            || state.stack.iter().any(|item| {
+                aberration_family_item_v1(item)
+                    && Some(item.v4.stack_item_id) == ctx.stack_item_id
+                    && !(authenticated_aberration_ward_v1(state, item)
+                        && item.inline_effect.as_ref() == Some(op)
+                        && aberration_context_matches_v1(state, item, ctx))
+            }))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -18650,7 +18696,44 @@ fn execute_with_native_row_v1(
         return;
     }
     let native_row = native_proof.map(|proof| proof.owner);
+    if matches!(
+        op,
+        EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
+    ) && native_proof.is_none_or(|proof| proof.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     match op {
+        EffectOp::ElectroduplicateCopyV1 => {
+            if let Err(_error) =
+                execute_electroduplicate_v1(state, ctx, native_row.expect("checked native proof"))
+            {
+                #[cfg(test)]
+                eprintln!("Electroduplicate native copy rejected: {_error}");
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::CopiedTokenEndStepSacrificeV1 { .. } => {
+            if let Err(_error) = execute_copied_token_sacrifice_v1(
+                state,
+                ctx,
+                native_row.expect("checked native proof"),
+            ) {
+                #[cfg(test)]
+                eprintln!("copied token sacrifice rejected: {_error}");
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::Sequence(ops) => {
             for inner in ops {
                 execute_native_child_v1(inner, ctx, state, native_row);
@@ -25309,6 +25392,10 @@ pub(crate) fn acquire_tutelage_begin_v1(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<TutelageBeginOwnerV1>, String> {
+    if event::copied_token_item_selected_v1(state, item) {
+        event::validate_published_copied_token_v1(state, item)?;
+        return Ok(None);
+    }
     if !tutelage_item_v1(state, item)
         && !aberration_family_item_v1(item)
         && !aberration_public_family_v1(state, item.v4.stack_item_id)
@@ -25416,7 +25503,12 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
-    lathril_waiting_source_v1(state, ctx)
+    state.stack.iter().any(|item| {
+        electroduplicate_item_v1(state, item)
+            && (item.source == ctx.source
+                || (item.v4.ability_source_contract.is_some()
+                    && item.v4.ability_source_contract == ctx.ability_source_contract))
+    }) || lathril_waiting_source_v1(state, ctx)
         || state.stack.iter().any(|item| {
             (tutelage_item_v1(state, item)
                 || (aberration_family_item_v1(item)
@@ -25431,6 +25523,11 @@ fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // genuine activation or Ward/granted ability above them uses the ordinary
 // lexical owner, after complete native row and root validation.
 fn distinct_published_program_v1(state: &GameState, item: &StackItem) -> bool {
+    if event::copied_token_item_selected_v1(state, item)
+        && event::validate_published_copied_token_v1(state, item).is_ok()
+    {
+        return false;
+    }
     event::lathril_item_selected_v1(state, item)
         || tutelage_item_v1(state, item)
         || (aberration_family_item_v1(item) && !authenticated_aberration_ward_v1(state, item))
@@ -25571,6 +25668,9 @@ pub(crate) fn acquire_native_execution_owner_v1(
         answered_choice_guard: None,
     };
     let root = validated_native_execution_root_v1(state, &pending)?;
+    if *root == EffectOp::ElectroduplicateCopyV1 {
+        electroduplicate_proposal_v1(state, &ctx)?;
+    }
     let mut remaining_stack = state.stack.clone();
     remaining_stack.pop();
     Ok(Some(NativeExecutionOwnerV1 {
@@ -26292,3 +26392,330 @@ mod lathril_v1_tests;
 ))]
 #[path = "effect/blasphemous_edict_v1_tests.rs"]
 mod blasphemous_edict_v1_tests;
+
+// Kept inline so the existing effect-source identities cover the complete
+// native exception/count/target/program validator and reducer.
+fn electroduplicate_definition_v1(id: u16) -> bool {
+    cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures")))
+        && id==471 && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+            let card_def::CardDef {
+                name: _,
+                capability: _,
+                cost: _,
+                generic_cost_reduction: _,
+                ward_cost: _,
+                spell_cannot_be_countered: _,
+                records_mana_spent: _,
+                equipment: _,
+                types: _,
+                subtypes: _,
+                supertypes: _,
+                power: _,
+                toughness: _,
+                starting_loyalty: _,
+                enters_with_plus_one_counters: _,
+                controlled_counter_keyword: _,
+                game_outcome_protection_v1: _,
+                controlled_creature_grant: _,
+                is_land: _,
+                produces_mana: _,
+                colors: _,
+                target_spec: _,
+                keywords: _,
+                spell_effect: _,
+                mana_ability: _,
+                alt_cost: _,
+                kicker_cost: _,
+                additional_cost: _,
+                flashback: _,
+                activated_abilities: _,
+                plot_cost: _,
+                madness_cost: _,
+                mode2: _,
+                mode3: _,
+                additional_modes: _,
+                kicked_target_spec: _,
+                is_token: _,
+                escape: _,
+                mana_ability_choices: _,
+                enters_battlefield_tapped: _,
+                mana_ability_def: _,
+                minimum_blockers: _,
+                omen: _,
+                mana_value: _,
+                mana_ability_includes_chosen_color: _,
+                as_enters_choose_color_other_than: _,
+                additional_mana_abilities: _,
+                object_name: _,
+                enters_battlefield_tapped_unless: _,
+                attachment: _,
+                transform_face: _,
+                saga: _,
+                optional_additional_cost: _,
+                changeling: _,
+                bestow: _,
+                delve: _,
+                adventure: _,
+                cant_be_blocked_by_monarchs_creatures: _,
+                conditional_tap_yield: _,
+                enters_tapped_unless_controller: _,
+                additional_mana_ability_conditions: _,
+                restricted_mana_abilities: _,
+                animation: _,
+                activated_ability_generic_reductions: _,
+                combat_static_rules: _,
+                as_enters_color_choice_v1: _,
+                chosen_color_creature_boost_v1: _,
+                damage_replacement_v1: _,
+                token_counter_replacement_v48: _,
+                starting_life_self_bonuses_v1: _,
+                source_type_hexproof_v1: _,
+                other_controlled_nontoken_death_v1: _,
+                creature_type_entry_v1: _,
+            }=d;
+            d.name == "Electroduplicate"
+                && d.capability == card_def::CardCapability::Partial
+                && d.cost == crate::mana::Cost { pips: &[crate::mana::Pip::Colored(crate::mana::ManaColor::R)], generic: 2, x_count: 0 }
+                && d.generic_cost_reduction.is_none()
+                && d.ward_cost.is_none()
+                && !d.spell_cannot_be_countered
+                && !d.records_mana_spent
+                && d.equipment.is_none()
+                && d.types == [CardType::Sorcery]
+                && d.subtypes.is_empty()
+                && d.supertypes.is_empty()
+                && d.power.is_none()
+                && d.toughness.is_none()
+                && d.starting_loyalty.is_none()
+                && d.enters_with_plus_one_counters.is_none()
+                && d.controlled_counter_keyword.is_none()
+                && d.game_outcome_protection_v1.is_none()
+                && d.controlled_creature_grant.is_none()
+                && !d.is_land
+                && d.produces_mana.is_empty()
+                && d.colors == [crate::mana::ManaColor::R]
+                && d.target_spec == card_def::TargetSpec::ControlledCreature
+                && d.keywords == Keywords::NONE
+                && (d.spell_effect)() == Some(EffectOp::ElectroduplicateCopyV1)
+                && (d.mana_ability)().is_none()
+                && d.alt_cost.is_none()
+                && d.kicker_cost.is_none()
+                && d.additional_cost.is_none()
+                && d.flashback.as_ref().is_some_and(|f| matches!(f.cost,[card_def::CostComponent::Mana(cost)] if *cost == crate::mana::Cost {pips:&[crate::mana::Pip::Colored(crate::mana::ManaColor::R),crate::mana::Pip::Colored(crate::mana::ManaColor::R)],generic:2,x_count:0}))
+                && d.activated_abilities.is_empty()
+                && d.plot_cost.is_none()
+                && d.madness_cost.is_none()
+                && d.mode2.is_none()
+                && d.mode3.is_none()
+                && d.additional_modes.is_empty()
+                && d.kicked_target_spec.is_none()
+                && !d.is_token
+                && d.escape.is_none()
+                && d.mana_ability_choices.is_empty()
+                && !d.enters_battlefield_tapped
+                && d.mana_ability_def.is_none()
+                && d.minimum_blockers == 1
+                && d.omen.is_none()
+                && d.mana_value == 3
+                && !d.mana_ability_includes_chosen_color
+                && d.as_enters_choose_color_other_than.is_none()
+                && d.additional_mana_abilities.is_empty()
+                && d.object_name == d.name
+                && d.enters_battlefield_tapped_unless.is_none()
+                && d.attachment.is_none()
+                && d.transform_face.is_none()
+                && d.saga.is_none()
+                && d.optional_additional_cost.is_none()
+                && !d.changeling
+                && d.bestow.is_none()
+                && !d.delve
+                && d.adventure.is_none()
+                && !d.cant_be_blocked_by_monarchs_creatures
+                && d.conditional_tap_yield.is_none()
+                && d.enters_tapped_unless_controller.is_none()
+                && d.additional_mana_ability_conditions.is_empty()
+                && d.restricted_mana_abilities.is_empty()
+                && d.animation.is_none()
+                && d.activated_ability_generic_reductions.is_empty()
+                && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
+                && d.as_enters_color_choice_v1.is_none()
+                && d.chosen_color_creature_boost_v1.is_none()
+                && d.damage_replacement_v1.is_none()
+                && d.token_counter_replacement_v48.is_none()
+                && d.starting_life_self_bonuses_v1.is_empty()
+                && d.source_type_hexproof_v1.is_none()
+                && d.other_controlled_nontoken_death_v1.is_none()
+                && d.creature_type_entry_v1.is_none()
+                && crate::trigger::triggers_for(id).is_empty()
+        })
+}
+
+fn electroduplicate_item_v1(state: &GameState, item: &StackItem) -> bool {
+    event::copied_token_item_selected_v1(state, item)
+        || item.kind == StackItemKind::Spell
+            && item
+                .v4
+                .source_contract
+                .is_some_and(|c| electroduplicate_definition_v1(c.card_def))
+}
+fn electroduplicate_waiting_context_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    state.stack.iter().any(|item| {
+        electroduplicate_item_v1(state, item)
+            && (item.source == ctx.source
+                || (item.v4.ability_source_contract.is_some()
+                    && item.v4.ability_source_contract == ctx.ability_source_contract))
+    })
+}
+
+fn electroduplicate_proposal_v1(
+    state: &GameState,
+    ctx: &ExecCtx,
+) -> Result<Option<event::ProposedEvent>, String> {
+    if ctx.targets.len() != 1 || ctx.target_contracts.len() != 1 {
+        return Err("Electroduplicate lost original single target".into());
+    }
+    if !ctx.target_incarnation_matches(0, state)
+        || !crate::engine::effect_target_is_legal(
+            state,
+            ctx.source,
+            ctx.controller,
+            card_def::TargetSpec::ControlledCreature,
+            &ctx.targets,
+            0,
+        )
+    {
+        return Ok(None);
+    }
+    let Target::Object(target) = ctx.targets[0] else {
+        return Err("Electroduplicate creature target changed".into());
+    };
+    let live = state.objects.get(target);
+    let (definition, face, previous) = if live.v4.face_down_v1.is_some() {
+        let anonymous = card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)
+            .filter(|id| crate::self_reflection_v1::anonymous_blueprint_is_exact(*id))
+            .ok_or("anonymous copy blueprint absent")?;
+        (anonymous, 0, 0)
+    } else {
+        (
+            live.card_def,
+            live.v4.face_index,
+            event::copiable_token_abilities_v1(state, target)?,
+        )
+    };
+    let d = card_def::CARD_DEFS
+        .get(usize::from(definition))
+        .ok_or("copy blueprint absent")?;
+    if face > 1 || face == 1 && d.transform_face.is_none() {
+        return Err("copy face is unsupported".into());
+    }
+    let count = previous
+        .checked_add(1)
+        .ok_or("copiable ability count overflow")?;
+    let mut proposal = event::ProposedEvent::create_token(definition, ctx.controller);
+    if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+        token.entry_face_index = (face != 0).then_some(face);
+        token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+            copied: true,
+            copied_end_step_sacrifices_v1: count,
+            ..Default::default()
+        });
+    }
+    crate::doubling_season_v48::preflight_token_initialization(
+        state,
+        std::slice::from_ref(&proposal),
+    )?;
+    crate::doubling_season_v48::preflight_entry_roster(state, std::slice::from_ref(&proposal))?;
+    Ok(Some(proposal))
+}
+fn execute_electroduplicate_v1(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    owner: &NativeExecutionOwnerV1,
+) -> Result<(), String> {
+    if owner.ctx != *ctx
+        || *owner.root != EffectOp::ElectroduplicateCopyV1
+        || owner.item.kind != StackItemKind::Spell
+        || owner
+            .item
+            .v4
+            .source_contract
+            .is_none_or(|c| !electroduplicate_definition_v1(c.card_def))
+    {
+        return Err("Electroduplicate changed its original native spell/controller/context".into());
+    }
+    if let Some(proposal) = electroduplicate_proposal_v1(state, ctx)? {
+        event::propose_and_commit_batch(state, vec![proposal]);
+    }
+    Ok(())
+}
+fn execute_copied_token_sacrifice_v1(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    owner: &NativeExecutionOwnerV1,
+) -> Result<(), String> {
+    if owner.ctx != *ctx || owner.item.inline_effect.as_ref() != Some(owner.root.as_ref()) {
+        return Err("copied ability native context/root changed".into());
+    }
+    event::validate_published_copied_token_v1(state, &owner.item)?;
+    let (_, _, _, source) = event::copied_token_trigger_v1(state, &owner.item)?;
+    state
+        .engine
+        .event_history
+        .push(event::CommittedEvent::CopiedTokenSacrificeFinishedV1 {
+            stack_item_id: owner.item.v4.stack_item_id,
+        });
+    if state.objects.try_get(source.source).is_some_and(|o| {
+        o.zone == Zone::Battlefield
+            && o.zone_change_count == source.zone_change_count
+            && o.controller == source.controller
+    }) {
+        event::log_sacrifice(state, source.source);
+        event::propose_and_commit(
+            state,
+            event::ProposedEvent::zone_change(source.source, Zone::Graveyard),
+        );
+    }
+    Ok(())
+}
+
+/// Public copy creation and its added abilities have no predecessor schema.
+/// This does not inspect any hidden hand/library identity.
+pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    if state
+        .objects
+        .iter()
+        .any(|(_, o)| o.zone == Zone::Battlefield && o.v4.copied_end_step_sacrifices_v1 != 0)
+        || state.engine.event_history.iter().any(|e| {
+            matches!(
+                e,
+                event::CommittedEvent::CopiedTokenAbilitiesEnteredV1 { .. }
+                    | event::CommittedEvent::CopiedTokenEndStepV1 { .. }
+                    | event::CommittedEvent::CopiedTokenEndStepCollectedV1 { .. }
+                    | event::CommittedEvent::CopiedTokenSacrificePublishedV1 { .. }
+                    | event::CommittedEvent::CopiedTokenSacrificeFinishedV1 { .. }
+            )
+        })
+    {
+        return Err("copiable native token abilities require a distinct complete consumer".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn needs_electroduplicate_entry_owner_v1(state: &GameState) -> bool {
+    state
+        .stack
+        .iter()
+        .any(|row| electroduplicate_item_v1(state, row))
+        || state
+            .objects
+            .iter()
+            .any(|(_, o)| o.zone == Zone::Battlefield && o.v4.copied_end_step_sacrifices_v1 != 0)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/electroduplicate_v1_tests.rs"]
+mod electroduplicate_v1_tests;

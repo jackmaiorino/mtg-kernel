@@ -1273,6 +1273,12 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                         copied: true,
                         haste_until_end_of_turn: true,
                         sacrifice_at_end_step: Some(source),
+                        copied_end_step_sacrifices_v1: match event::copiable_token_abilities_v1(
+                            state, object,
+                        ) {
+                            Ok(count) => count,
+                            Err(_) => return,
+                        },
                         ..Default::default()
                     });
                 }
@@ -1402,7 +1408,8 @@ pub(crate) fn create_token_copy_without_banner_owner(
 ) -> Option<ObjectId> {
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
-    if crate::doubling_season_v48::requires_successor(state) {
+    let copied_abilities = event::copiable_token_abilities_v1(state, original).ok()?;
+    if crate::doubling_season_v48::requires_successor(state) || copied_abilities != 0 {
         let (card_def, face) = if live.v4.face_down_v1.is_some() {
             let anonymous =
                 crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)?;
@@ -1418,6 +1425,7 @@ pub(crate) fn create_token_copy_without_banner_owner(
             token.entry_face_index = (face != 0).then_some(face);
             token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                 copied: true,
+                copied_end_step_sacrifices_v1: copied_abilities,
                 ..Default::default()
             });
         }

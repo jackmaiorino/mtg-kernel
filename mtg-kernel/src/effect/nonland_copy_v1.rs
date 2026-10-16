@@ -2,11 +2,26 @@
 //! definition/source contracts own the operation; no new historical journal.
 use super::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CopyTemplateV1 {
     pub card_def: u16,
     pub face_index: u8,
+    #[serde(default, skip_serializing_if = "copy_abilities_zero_v1")]
+    pub copied_end_step_sacrifices_v1: u32,
+}
+fn copy_abilities_zero_v1(value: &u32) -> bool {
+    *value == 0
+}
+impl std::hash::Hash for CopyTemplateV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        std::hash::Hash::hash(&self.card_def, h);
+        std::hash::Hash::hash(&self.face_index, h);
+        if self.copied_end_step_sacrifices_v1 != 0 {
+            std::hash::Hash::hash("copied-end-step-sacrifices/v1", h);
+            std::hash::Hash::hash(&self.copied_end_step_sacrifices_v1, h);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +122,7 @@ fn template(state: &GameState, p: &EffectContinuation) -> Result<Option<CopyTemp
         return Ok(Some(CopyTemplateV1 {
             card_def: anonymous,
             face_index: 0,
+            copied_end_step_sacrifices_v1: 0,
         }));
     }
     let d = &crate::card_def::CARD_DEFS[live.card_def as usize];
@@ -116,6 +132,7 @@ fn template(state: &GameState, p: &EffectContinuation) -> Result<Option<CopyTemp
     Ok(Some(CopyTemplateV1 {
         card_def: live.card_def,
         face_index: live.v4.face_index,
+        copied_end_step_sacrifices_v1: event::copiable_token_abilities_v1(state, *id)?,
     }))
 }
 fn hosts(state: &GameState, t: &CopyTemplateV1) -> Result<Vec<EffectObjectBinding>, String> {
@@ -284,6 +301,7 @@ fn proposal(t: &CopyTemplateV1, controller: PlayerId) -> event::ProposedEvent {
         token.entry_face_index = (t.face_index != 0).then_some(t.face_index);
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
+            copied_end_step_sacrifices_v1: t.copied_end_step_sacrifices_v1,
             ..Default::default()
         });
     }

@@ -206,10 +206,28 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx) {
             card_def,
             face_index: 1,
         } => {
-            crate::event::propose_and_commit(
-                state,
-                crate::event::ProposedEvent::create_transformed_copy(card_def, ctx.controller),
-            );
+            let copied_abilities = match crate::event::copiable_token_abilities_v1(state, *object) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
+            let mut proposal =
+                crate::event::ProposedEvent::create_transformed_copy(card_def, ctx.controller);
+            if copied_abilities != 0 {
+                if let crate::event::ProposedEvent::CreateToken(token) = &mut proposal {
+                    token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+                        copied: true,
+                        copied_end_step_sacrifices_v1: copied_abilities,
+                        ..Default::default()
+                    });
+                }
+            }
+            crate::event::propose_and_commit(state, proposal);
         }
         CopyTokenValuesV1::Definition { .. } => {
             crate::standard_cards_v1::create_token_copy(state, *object, ctx.controller);

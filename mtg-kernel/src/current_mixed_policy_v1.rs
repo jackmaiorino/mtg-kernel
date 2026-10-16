@@ -141,6 +141,7 @@ pub fn feature_identity() -> String {
             include_str!("standard_statics_v1.rs"),
             include_str!("standard_legends_v1.rs"),
             include_str!("standard_cards_v1.rs"),
+            include_str!("self_reflection_v1.rs"),
             include_str!("life_loss_turn_v1.rs"),
             include_str!("../build.rs"),
             include_str!("prepared_observation_v57.rs"),

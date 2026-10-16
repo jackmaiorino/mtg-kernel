@@ -594,7 +594,8 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
-    crate::drake_hatcher_v1::custody::relevant(state)
+    crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || crate::drake_hatcher_v1::custody::relevant(state)
         || potentially_returns_aura(state)
         || crate::fake_your_own_death_v50::death_custody::has_unowned_roots(state)
         || state
@@ -1262,6 +1263,7 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::event::validate_copied_token_abilities_v1(state)?;
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
         validate(state)?;
         let answer = answer_equipment_checkpoint_v48(&p.choice, action)?;
@@ -1369,6 +1371,12 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
     Ok(())
 }
 pub(crate) fn advance(state: &mut GameState) -> Decision {
+    if crate::event::validate_copied_token_abilities_v1(state).is_err() {
+        return Decision::Halted {
+            mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source: crate::ids::ObjectId(0),
+        };
+    }
     if has_pending(state) {
         return decision(state).unwrap_or(Decision::Halted {
             mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -1428,6 +1436,9 @@ pub(crate) fn needs_surrounding_operation_owner(state: &GameState) -> bool {
 }
 
 pub(crate) fn event(state: &mut GameState, operation: OperationV1) -> bool {
+    if crate::event::validate_copied_token_abilities_v1(state).is_err() {
+        return true;
+    }
     if locally_owned(state) {
         return false;
     }
