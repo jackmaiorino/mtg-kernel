@@ -316,16 +316,72 @@ fn cast_season(state: &mut GameState, actor: PlayerId) -> ObjectId {
     panic!("actual Season spell did not resolve");
 }
 
-/// Initial physical Stack setup for entry primitives only. This creates no
-/// spell row, cast permission, cost payment, or printed X ability.
+/// A genuine paid announcement supplies the Stack source's selected spell
+/// form. Later entry/X operations are explicit primitives, not printed X spells
+/// or a grant to cast another player's card.
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-fn physical_stack_primitive(state: &mut GameState, owner: PlayerId, name: &str) -> ObjectId {
+fn paid_stack_source_for_entry_primitive(
+    state: &mut GameState,
+    owner: PlayerId,
+    name: &str,
+    target: Option<ObjectId>,
+) -> ObjectId {
+    use crate::engine::{self, Action, Decision};
+    use crate::state::{CastMethodV4, StackItemKind, Target};
+    assert_eq!(state.active_player, owner);
+    assert_eq!(state.priority_player, owner);
+    assert_eq!(state.players[owner.index()].mana_pool, [0; 6]);
     let source = put(state, owner, name, Zone::Hand);
-    assert_eq!(state.players[owner.index()].hand.pop(), Some(source));
-    state.objects.get_mut(source).zone = Zone::Stack;
+    let def = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(source).card_def)];
+    assert_eq!(def.cost.x_count, 0);
+    state.players[owner.index()].mana_pool[ManaColor::C.pool_index()] = def.cost.generic;
+    for pip in &def.cost.pips {
+        let crate::mana::Pip::Colored(color) = pip else {
+            panic!("entry primitive fixture requires an ordinary colored printed cost");
+        };
+        state.players[owner.index()].mana_pool[color.pool_index()] += 1;
+    }
+    engine::step(state, Action::CastSpell(source)).unwrap();
+    let mut decision = engine::advance_until_decision(state);
+    if let Decision::ChooseTargets {
+        player,
+        spell: announced,
+        ref legal_targets,
+        ..
+    } = decision
+    {
+        let target = target.expect("genuine announcement unexpectedly requires a target");
+        assert_eq!(player, owner);
+        assert_eq!(announced, source);
+        assert!(legal_targets.contains(&Target::Object(target)));
+        engine::step(state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        decision = engine::advance_until_decision(state);
+    }
+    assert!(matches!(decision, Decision::CastSpellOrPass { player, .. } if player == owner));
+    assert!(state.engine.pending_cast.is_none());
+    assert_eq!(state.players[owner.index()].mana_pool, [0; 6]);
+    let live = state.objects.get(source);
+    assert_eq!(live.owner, owner);
+    assert_eq!(live.controller, owner);
+    assert_eq!(live.zone, Zone::Stack);
+    let origin = live.v4.spell_cast_origin.unwrap();
+    assert_eq!(origin.route, crate::state::SpellCastRouteV4::Hand);
+    assert_eq!(origin.finalized_method, Some(CastMethodV4::Normal));
+    let row = state.stack.last().unwrap();
+    assert_eq!(row.source, source);
+    assert_eq!(row.kind, StackItemKind::Spell);
+    assert_eq!(row.controller, owner);
+    assert!(!row.is_copy);
+    assert_eq!(row.v4.cast_method, Some(CastMethodV4::Normal));
+    assert_eq!(
+        row.targets,
+        target.map(Target::Object).into_iter().collect::<Vec<_>>()
+    );
+    assert_eq!(row.v4.target_contracts.len(), usize::from(target.is_some()));
+    assert!(crate::source_type_hexproof_v1::current_types(state, source).is_ok());
     source
 }
 
@@ -1103,10 +1159,15 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
                     ProposedEvent::zone_change(season, Zone::Battlefield),
                 );
                 let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-                let source = physical_stack_primitive(
+                let source = paid_stack_source_for_entry_primitive(
                     &mut state,
                     actor,
-                    if attached { "Pacifism" } else { "Forest" },
+                    if attached {
+                        "Pacifism"
+                    } else {
+                        "Llanowar Elves"
+                    },
+                    attached.then_some(host),
                 );
                 let mut ctx = ExecCtx::no_targets(source, actor);
                 ctx.x_value = original;
@@ -1120,8 +1181,9 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
                 } else {
                     EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters
                 };
-                // Real physical objects execute the shared typed primitive. This
-                // does not grant Forest/Pacifism a fictional printed X spell.
+                // Paid ordinary spells supply real source-form authority. X is
+                // assigned only to this shared typed primitive; neither printing
+                // gains a fictional printed X cost or effect.
                 let original_state = restore(&state);
                 for _ in 0..3 {
                     let mut branch = restore(&original_state);
@@ -1328,17 +1390,20 @@ fn genuine_paid_permanent_spell_copy_becomes_one_token_not_a_doubled_creation() 
 fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for owner_controls_season in [false, true] {
-            let mut state = ready_state_for(actor);
             let owner = actor.opponent();
+            let mut state = ready_state_for(owner);
             let season_controller = if owner_controls_season { owner } else { actor };
             let season = put(&mut state, season_controller, "Doubling Season", Zone::Hand);
             event::propose_and_commit(
                 &mut state,
                 ProposedEvent::zone_change(season, Zone::Battlefield),
             );
-            let source = physical_stack_primitive(&mut state, owner, "Mossborn Hydra");
-            // Declared physical Stack-controller boundary. No synthetic cast
-            // permission or paid receipt is claimed for the foreign card.
+            let source =
+                paid_stack_source_for_entry_primitive(&mut state, owner, "Mossborn Hydra", None);
+            // The physical owner genuinely paid its ordinary cast. The following
+            // Stack-controller assignment remains an explicit primitive input;
+            // it claims neither a printed control-changing spell nor permission
+            // for actor to cast the foreign card.
             state.objects.get_mut(source).controller = actor;
             let proposal = ProposedEvent::zone_change(source, Zone::Battlefield);
             let before = bytes(&state);
@@ -1873,13 +1938,15 @@ fn genuine_full_ajani_zero_target_cost_uses_same_quote_as_payment_before_resolut
             Decision::CastSpellOrPass { .. }
         ));
         for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
             if state.objects.get(ajani).zone == Zone::Battlefield && state.stack.is_empty() {
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { player, ref activatable_abilities, .. }
+                    if player == actor && activatable_abilities.contains(&(ajani, 0)))
+                );
                 break;
             }
-            assert!(matches!(
-                engine::advance_until_decision(&mut state),
-                Decision::CastSpellOrPass { .. }
-            ));
             engine::step(&mut state, Action::Pass).unwrap();
         }
         assert_eq!(crate::planeswalker_v1::loyalty(&state, ajani), Some(8));
