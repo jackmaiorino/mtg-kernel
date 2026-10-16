@@ -153,171 +153,220 @@ fn advance_all(
     human_request
 }
 
-#[test]
-fn seven_actual_reference_full_resets_paid_casts_human_wire_and_owning_replays_both_seats() {
-    for (printing, text) in REFERENCES {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let (ids, deck) = cards(text);
-            assert_eq!(ids.iter().filter(|id| **id == printing).count(), 4);
-            let episode = 57000 + u64::from(printing) * 2 + actor.index() as u64;
-            let mut core = reset(episode, actor, &ids);
-            let mut human =
-                HumanPreparedSessionV57::from_session(reset(episode, actor, &ids), actor.into());
-            let mut projector = HumanPreparedProjectorV57::new(actor.into());
-            let mut wire = Wire::new();
-            let reply = wire.send(json!({"request_type":"reset", "episode_id":episode,
-                "env_seed":123, "starting_player":PlayerSeatV1::from(actor),
-                "expected_card_db_hash":KERNEL_CARDDB_HASH, "decks":[deck.clone(),deck],
-                "max_physical_decisions":10000,"max_policy_steps":10000}));
-            assert_eq!(reply["response_type"], "state", "{reply}");
-            assert_eq!(
-                wire.bytes(),
-                serde_json::to_vec(core.fixture_state_v57()).unwrap()
-            );
-            let before = serde_json::to_vec(core.fixture_state_v57()).unwrap();
-            assert!(core
-                .restore_v57(&reset(episode, actor, &ids).snapshot_v57())
-                .is_err());
-            assert_eq!(
-                serde_json::to_vec(core.fixture_state_v57()).unwrap(),
-                before
-            );
-            let foreign =
-                HumanPreparedSessionV57::from_session(reset(episode, actor, &ids), actor.into());
-            assert!(human.restore_v57(&foreign.snapshot_v57()).is_err());
+fn actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(
+    printing: u16,
+    text: &str,
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (ids, deck) = cards(text);
+        assert_eq!(ids.iter().filter(|id| **id == printing).count(), 4);
+        let episode = 57000 + u64::from(printing) * 2 + actor.index() as u64;
+        let mut core = reset(episode, actor, &ids);
+        let mut human =
+            HumanPreparedSessionV57::from_session(reset(episode, actor, &ids), actor.into());
+        let mut projector = HumanPreparedProjectorV57::new(actor.into());
+        let mut wire = Wire::new();
+        let reply = wire.send(json!({"request_type":"reset", "episode_id":episode,
+            "env_seed":123, "starting_player":PlayerSeatV1::from(actor),
+            "expected_card_db_hash":KERNEL_CARDDB_HASH, "decks":[deck.clone(),deck],
+            "max_physical_decisions":10000,"max_policy_steps":10000}));
+        assert_eq!(reply["response_type"], "state", "{reply}");
+        assert_eq!(
+            wire.bytes(),
+            serde_json::to_vec(core.fixture_state_v57()).unwrap()
+        );
+        let before = serde_json::to_vec(core.fixture_state_v57()).unwrap();
+        assert!(core
+            .restore_v57(&reset(episode, actor, &ids).snapshot_v57())
+            .is_err());
+        assert_eq!(
+            serde_json::to_vec(core.fixture_state_v57()).unwrap(),
+            before
+        );
+        let foreign =
+            HumanPreparedSessionV57::from_session(reset(episode, actor, &ids), actor.into());
+        assert!(human.restore_v57(&foreign.snapshot_v57()).is_err());
 
-            let mut checkpoint = None;
-            for _ in 0..2000 {
-                let input = core.decision_v57().unwrap();
-                let index = choose(input.actions(), printing, actor);
-                let casting = matches!(&input.actions()[index as usize], A::CastSpell { source, .. } if source.card_db_id == printing);
-                let human_request = advance_all(
-                    &mut core,
-                    &mut human,
-                    &mut projector,
-                    &mut wire,
-                    actor,
-                    index,
-                );
-                if casting {
-                    assert!(core.fixture_state_v57().engine.pending_cast.is_none());
-                    assert!(core.fixture_state_v57().stack.iter().any(|item| core
-                        .fixture_state_v57()
-                        .objects
-                        .get(item.source)
-                        .card_def
-                        == printing
-                        && item.controller == actor));
-                    checkpoint = Some((
-                        core.snapshot_v57(),
-                        human.snapshot_v57(),
-                        wire.snapshot(),
-                        core.decision_v57().unwrap(),
-                        human_request.unwrap(),
-                    ));
-                    break;
-                }
+        let mut checkpoint = None;
+        for _ in 0..2000 {
+            let input = core.decision_v57().unwrap();
+            let index = choose(input.actions(), printing, actor);
+            let casting = matches!(&input.actions()[index as usize], A::CastSpell { source, .. } if source.card_db_id == printing);
+            let human_request = advance_all(
+                &mut core,
+                &mut human,
+                &mut projector,
+                &mut wire,
+                actor,
+                index,
+            );
+            if casting {
+                assert!(core.fixture_state_v57().engine.pending_cast.is_none());
+                assert!(core.fixture_state_v57().stack.iter().any(|item| core
+                    .fixture_state_v57()
+                    .objects
+                    .get(item.source)
+                    .card_def
+                    == printing
+                    && item.controller == actor));
+                checkpoint = Some((
+                    core.snapshot_v57(),
+                    human.snapshot_v57(),
+                    wire.snapshot(),
+                    core.decision_v57().unwrap(),
+                    human_request.unwrap(),
+                ));
+                break;
             }
-            let (core_saved, human_saved, wire_saved, stale_core, stale_human) =
-                checkpoint.expect("actual reference draw/land/cast path must reach its printing");
-            let mut replay = Vec::new();
-            for _ in 0..32 {
-                let input = core.decision_v57().unwrap();
-                let index = choose(input.actions(), printing, actor);
-                advance_all(
-                    &mut core,
-                    &mut human,
-                    &mut projector,
-                    &mut wire,
-                    actor,
-                    index,
-                );
-                replay.push(index);
-                if core.fixture_state_v57().players[actor.index()]
-                    .battlefield
-                    .iter()
-                    .any(|id| core.fixture_state_v57().objects.get(*id).card_def == printing)
-                {
-                    break;
-                }
-            }
-            assert!(core.fixture_state_v57().players[actor.index()]
+        }
+        let (core_saved, human_saved, wire_saved, stale_core, stale_human) =
+            checkpoint.expect("actual reference draw/land/cast path must reach its printing");
+        let mut replay = Vec::new();
+        for _ in 0..32 {
+            let input = core.decision_v57().unwrap();
+            let index = choose(input.actions(), printing, actor);
+            advance_all(
+                &mut core,
+                &mut human,
+                &mut projector,
+                &mut wire,
+                actor,
+                index,
+            );
+            replay.push(index);
+            if core.fixture_state_v57().players[actor.index()]
                 .battlefield
                 .iter()
-                .any(|id| core.fixture_state_v57().objects.get(*id).card_def == printing));
-            // Continue real gameplay beyond entry, rather than checking reset alone.
-            for _ in 0..4 {
-                let input = core.decision_v57().unwrap();
-                let index = choose(input.actions(), printing, actor);
-                advance_all(
-                    &mut core,
-                    &mut human,
-                    &mut projector,
-                    &mut wire,
-                    actor,
-                    index,
-                );
-                replay.push(index);
+                .any(|id| core.fixture_state_v57().objects.get(*id).card_def == printing)
+            {
+                break;
             }
-            let before = serde_json::to_vec(core.fixture_state_v57()).unwrap();
-            match printing {
-                444 | 448 | 450 | 451 => {
-                    assert!(crate::rl::observe_v1(core.fixture_state_v57(), actor, 0).is_err());
-                }
-                446 => {
-                    assert!(std::panic::catch_unwind(|| {
-                        crate::rules_vector_v1::sources::card_rules(printing)
-                    })
-                    .is_err());
-                }
-                445 => {
-                    assert!(!crate::rules_vector_v1::sources::card_rules(printing)
-                        .opaque_rules
-                        .is_empty());
-                }
-                447 => {
-                    use crate::rules_vector_v1::facets::{Atom, CtxF};
-                    let rules = crate::rules_vector_v1::sources::card_rules(printing);
-                    // Readable trigger/program data carries opaque facets;
-                    // opaque_rules separately lists rules implemented only in code.
-                    assert!(rules.abilities.iter().any(|ability| {
-                        ability.ctx == CtxF::Trigger && ability.atoms.contains(&Atom::Opaque)
-                    }));
-                    let triggers = rules.record["trigger"].as_array().unwrap();
-                    assert_eq!(triggers.len(), 1);
-                    assert_eq!(triggers[0]["condition"], "OpponentCastsSpellV1");
-                }
-                _ => unreachable!(),
-            }
-            assert_eq!(
-                serde_json::to_vec(core.fixture_state_v57()).unwrap(),
-                before
-            );
-            let counts = core.fixture_counts_v57();
-            let observation = core.decision_v57().unwrap().observation().clone();
-            let revision = core.decision_v57().unwrap().expected().environment_revision;
-            core.restore_v57(&core_saved).unwrap();
-            human.restore_v57(&human_saved).unwrap();
-            wire.restore(wire_saved);
-            assert!(core.validate_decision_v57(&stale_core).is_err());
-            assert!(projector.submit(&mut human, stale_human).is_err());
-            assert!(core.decision_v57().unwrap().expected().environment_revision > revision);
-            for index in replay {
-                advance_all(
-                    &mut core,
-                    &mut human,
-                    &mut projector,
-                    &mut wire,
-                    actor,
-                    index,
-                );
-            }
-            assert_eq!(
-                serde_json::to_vec(core.fixture_state_v57()).unwrap(),
-                before
-            );
-            assert_eq!(core.fixture_counts_v57(), counts);
-            assert_eq!(core.decision_v57().unwrap().observation(), &observation);
         }
+        assert!(core.fixture_state_v57().players[actor.index()]
+            .battlefield
+            .iter()
+            .any(|id| core.fixture_state_v57().objects.get(*id).card_def == printing));
+        // Continue real gameplay beyond entry, rather than checking reset alone.
+        for _ in 0..4 {
+            let input = core.decision_v57().unwrap();
+            let index = choose(input.actions(), printing, actor);
+            advance_all(
+                &mut core,
+                &mut human,
+                &mut projector,
+                &mut wire,
+                actor,
+                index,
+            );
+            replay.push(index);
+        }
+        let before = serde_json::to_vec(core.fixture_state_v57()).unwrap();
+        match printing {
+            444 | 448 | 450 | 451 => {
+                assert!(crate::rl::observe_v1(core.fixture_state_v57(), actor, 0).is_err());
+            }
+            446 => {
+                assert!(std::panic::catch_unwind(|| {
+                    crate::rules_vector_v1::sources::card_rules(printing)
+                })
+                .is_err());
+            }
+            445 => {
+                assert!(!crate::rules_vector_v1::sources::card_rules(printing)
+                    .opaque_rules
+                    .is_empty());
+            }
+            447 => {
+                use crate::rules_vector_v1::facets::{Atom, CtxF};
+                let rules = crate::rules_vector_v1::sources::card_rules(printing);
+                // Readable trigger/program data carries opaque facets;
+                // opaque_rules separately lists rules implemented only in code.
+                assert!(rules.abilities.iter().any(|ability| {
+                    ability.ctx == CtxF::Trigger && ability.atoms.contains(&Atom::Opaque)
+                }));
+                let triggers = rules.record["trigger"].as_array().unwrap();
+                assert_eq!(triggers.len(), 1);
+                assert_eq!(triggers[0]["condition"], "OpponentCastsSpellV1");
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            serde_json::to_vec(core.fixture_state_v57()).unwrap(),
+            before
+        );
+        let counts = core.fixture_counts_v57();
+        let observation = core.decision_v57().unwrap().observation().clone();
+        let revision = core.decision_v57().unwrap().expected().environment_revision;
+        core.restore_v57(&core_saved).unwrap();
+        human.restore_v57(&human_saved).unwrap();
+        wire.restore(wire_saved);
+        assert!(core.validate_decision_v57(&stale_core).is_err());
+        assert!(projector.submit(&mut human, stale_human).is_err());
+        assert!(core.decision_v57().unwrap().expected().environment_revision > revision);
+        for index in replay {
+            advance_all(
+                &mut core,
+                &mut human,
+                &mut projector,
+                &mut wire,
+                actor,
+                index,
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(core.fixture_state_v57()).unwrap(),
+            before
+        );
+        assert_eq!(core.fixture_counts_v57(), counts);
+        assert_eq!(core.decision_v57().unwrap().observation(), &observation);
     }
+}
+
+#[test]
+fn actual_reference_elenda_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[0];
+    assert_eq!(printing, 444);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_flamewake_phoenix_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[1];
+    assert_eq!(printing, 445);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_spinner_of_souls_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[2];
+    assert_eq!(printing, 446);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_painful_quandary_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[3];
+    assert_eq!(printing, 447);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_drake_hatcher_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[4];
+    assert_eq!(printing, 448);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_bloodthirsty_conqueror_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[5];
+    assert_eq!(printing, 450);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
+}
+
+#[test]
+fn actual_reference_doubling_season_paid_three_owner_replays_both_seats() {
+    let (printing, text) = REFERENCES[6];
+    assert_eq!(printing, 451);
+    actual_reference_full_reset_paid_cast_human_wire_and_owning_replay_both_seats(printing, text);
 }
