@@ -484,6 +484,26 @@ pub(crate) fn parts_for_common_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<TwinflameObservationV1, RlContractError> {
+    parts_for_common_scope_with_common(
+        (scope, state),
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        None,
+    )
+}
+pub(crate) fn parts_for_common_scope_with_common(
+    request: (crate::rl::CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    common: Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
+) -> Result<TwinflameObservationV1, RlContractError> {
+    let (scope, state) = request;
     let mut parts = observe_inner_scoped(
         state,
         surface,
@@ -511,6 +531,7 @@ pub(crate) fn parts_for_common_scope(
                 ),
             ),
             Some(scope),
+            common,
         ),
     )?;
     if !owns_family_menu(state) {
@@ -559,7 +580,7 @@ fn observe_inner_ajani_v42(
         step_index,
         physical_decision_id,
         substep,
-        (accepted_scope, None),
+        (accepted_scope, None, None),
     )
 }
 fn observe_inner_scoped(
@@ -572,9 +593,10 @@ fn observe_inner_scoped(
     accepted_scope: (
         (bool, bool, bool),
         Option<crate::rl::CommonProjectionScopeV42>,
+        Option<&crate::rl::BorrowedCommonObservationV42<'_>>,
     ),
 ) -> Result<TwinflameObservationV1, RlContractError> {
-    let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope) = accepted_scope;
+    let ((accepted_union, accept_ajani, accept_faebloom), explicit_scope, common) = accepted_scope;
     let accept_fake = matches!(
         explicit_scope,
         Some(
@@ -640,7 +662,7 @@ fn observe_inner_scoped(
         }
     }
     let base = if accepted_union {
-        crate::rl::common_family_observation_storage_scoped(
+        crate::rl::common_family_observation_storage_from_borrowed(
             (
                 explicit_scope.unwrap_or(if accept_faebloom {
                     crate::rl::CommonProjectionScopeV42::FullFaebloomV43
@@ -656,6 +678,7 @@ fn observe_inner_scoped(
             step_index,
             physical_decision_id,
             (substep_index, substep_count),
+            common,
         )?
     } else {
         crate::rl::twinflame_observation_storage_v38(

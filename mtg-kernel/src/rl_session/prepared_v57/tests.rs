@@ -460,3 +460,135 @@ fn simultaneous_identical_spinner_occurrences_keep_real_order_and_captured_sourc
         }
     }
 }
+
+// Both assemblies execute the complete fresh observation and binding guards.
+// Only the 24 later common constructions differ (borrowed versus rebuilt).
+fn assert_borrowed_common_parity(session: &PreparedSessionV57) {
+    let before = gameplay(session);
+    let current = session.inner.current.as_ref().unwrap();
+    let actual = session.decision_v57().unwrap();
+    let (rebuilt, mut families) = crate::prepared_observation_v57::observe_parts_v57_fully_rebuilt(
+        &session.inner.state,
+        &session.inner.surface,
+        (current.actor, &current.origin_decision),
+        session.inner.policy_step_count,
+        current.physical_decision_id,
+        (current.substep_index, current.substep_count),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_vec(actual.observation()).unwrap(),
+        serde_json::to_vec(&rebuilt).unwrap()
+    );
+    let candidates = normalized_origin_parts(&session.inner, current).unwrap().0;
+    let actions = candidates
+        .iter()
+        .map(|candidate| {
+            visible_semantic(
+                &session.inner.state,
+                &rebuilt.common.common.projection,
+                candidate.semantic.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(actual.actions(), actions.as_slice());
+    let classified = actions
+        .iter()
+        .cloned()
+        .map(|semantic| super::super::fishing_pole_v39::classify(&session.inner.state, semantic))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for family in &mut families {
+        if let crate::akroma_family_public_v40::FamilyProjectionV40::Fishing(fishing) = family {
+            fishing.actions = classified.clone();
+        }
+    }
+    let binding = PreparedDecisionBindingV57 {
+        expected: actual.expected(),
+        candidates,
+        observation: rebuilt,
+        families,
+    };
+    assert!(binding == actual.binding);
+    let mut rebuilt_decision = actual.clone();
+    rebuilt_decision.binding = binding;
+    session.validate_decision_v57(&rebuilt_decision).unwrap();
+    let mut forged = rebuilt_decision;
+    forged.binding.families.reverse();
+    assert!(session.validate_decision_v57(&forged).is_err());
+    assert_eq!(before, gameplay(session));
+}
+
+#[test]
+fn borrowed_common_complete_paid_faebloom_and_restored_binding_parity_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut raw = ready(actor);
+        let spell = put(&mut raw, actor, "Faebloom Trick", Zone::Hand);
+        let target = put(
+            &mut raw,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let lands: [_; 3] =
+            std::array::from_fn(|_| put(&mut raw, actor, "Island", Zone::Battlefield));
+        let mut session = own(raw);
+        for land in lands {
+            act(
+                &mut session,
+                |a| matches!(a,ActionSemanticV1::ActivateManaAbility{source,..}if source.arena_id==land.0),
+            );
+        }
+        act(
+            &mut session,
+            |a| matches!(a,ActionSemanticV1::CastSpell{source,..}if source.arena_id==spell.0),
+        );
+        assert!(state(&session).engine.pending_cast.is_none());
+        assert!(lands
+            .iter()
+            .all(|land| state(&session).objects.get(*land).tapped));
+        assert_eq!(state(&session).players[actor.index()].mana_pool, [0; 6]);
+        assert_borrowed_common_parity(&session);
+        let mut reached_targets = false;
+        for _ in 0..16 {
+            let current = session.decision_v57().unwrap();
+            if current
+                .actions()
+                .iter()
+                .any(|a| matches!(a, ActionSemanticV1::ChooseTarget { .. }))
+            {
+                reached_targets = true;
+                break;
+            }
+            act(&mut session, |a| matches!(a, ActionSemanticV1::Pass { .. }));
+        }
+        assert!(reached_targets);
+        assert_eq!(state(&session).objects.get(spell).zone, Zone::Graveyard);
+        assert_eq!(
+            state(&session).players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state(&session).objects.get(**id).card_def
+                    == crate::card_def::card_id_by_name("Faerie Token").unwrap())
+                .count(),
+            2
+        );
+        assert_borrowed_common_parity(&session);
+        let saved = session.snapshot_v57();
+        let stale = session.decision_v57().unwrap();
+        act(&mut session, |a| {
+            matches!(a, ActionSemanticV1::ChooseTarget {
+                target: TargetRefV1::Object { object }, ..
+            } if object.arena_id == target.0)
+        });
+        drain(&mut session);
+        session.restore_v57(&saved).unwrap();
+        assert_borrowed_common_parity(&session);
+        let before = gameplay(&session);
+        assert!(session.step_v57(&stale, 0).is_err());
+        let foreign = own(state(&session).clone());
+        assert!(session.restore_v57(&foreign.snapshot_v57()).is_err());
+        assert_eq!(before, gameplay(&session));
+    }
+}

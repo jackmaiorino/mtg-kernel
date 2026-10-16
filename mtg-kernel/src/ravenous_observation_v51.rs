@@ -110,6 +110,28 @@ pub fn producer_sha256() -> String {
             include_str!("rl_variable_cast_v1.rs"),
             include_str!("policy_observation_variable_cast_v1.rs"),
             include_str!("faebloom_observation_v43.rs"),
+            include_str!("sower_public_v1.rs"),
+            include_str!("frenzied_public_v1.rs"),
+            include_str!("wildwood_public_v1.rs"),
+            include_str!("authority_public_v1.rs"),
+            include_str!("employment_public_v1.rs"),
+            include_str!("cerberus_public_v1.rs"),
+            include_str!("librarian_public_v1.rs"),
+            include_str!("extra_turn_public_v1.rs"),
+            include_str!("juggernaut_public_v1.rs"),
+            include_str!("ashroot_public_v1.rs"),
+            include_str!("banishing_public_v1.rs"),
+            include_str!("stromkirk_public_v1.rs"),
+            include_str!("gourmand_public_v1.rs"),
+            include_str!("garruk_public_v1.rs"),
+            include_str!("arahbo_public_v1.rs"),
+            include_str!("strongbox_public_v1.rs"),
+            include_str!("fiery_observation_v1.rs"),
+            include_str!("krenko_observation_v1.rs"),
+            include_str!("zul_ashur_observation_v1.rs"),
+            include_str!("banner_observation_v1.rs"),
+            include_str!("inspiration_observation_v1.rs"),
+            include_str!("fishing_pole_observation_v39.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());
@@ -238,6 +260,50 @@ pub(crate) fn observe_parts_complete_base_v52(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_base_v52_using_family_builder(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::akroma_family_public_v40::build_for_scope,
+    )
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn observe_parts_complete_base_v52_fully_rebuilt(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_base_v52_using_family_builder(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::akroma_family_public_v40::build_for_scope_fully_rebuilt,
+    )
+}
+
+fn observe_parts_complete_base_v52_using_family_builder(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    build_families: crate::akroma_family_public_v40::FamilyPartsBuilderV40,
+) -> Result<RavenousPublicPartsV51, RlContractError> {
     let (actor, origin) = actor_and_origin;
     surface
         .validate_observation_origin_substeps_v45(state, actor, origin, substep)
@@ -262,7 +328,7 @@ pub(crate) fn observe_parts_complete_base_v52(
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)
         .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
-    let mut parts = crate::akroma_family_public_v40::build_for_scope(
+    let mut parts = build_families(
         state,
         surface,
         actor,
@@ -403,6 +469,57 @@ fn observe_parts_complete_current_scope(
     substep: (u32, u32),
     scope: crate::rl::CommonProjectionScopeV42,
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope_using_family_builder(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        (scope, crate::akroma_family_public_v40::build_for_scope),
+    )
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn observe_parts_complete_prepared_v57_fully_rebuilt(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope_using_family_builder(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        (
+            crate::rl::CommonProjectionScopeV42::PreparedV57,
+            crate::akroma_family_public_v40::build_for_scope_fully_rebuilt,
+        ),
+    )
+}
+
+fn observe_parts_complete_current_scope_using_family_builder(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    construction: (
+        crate::rl::CommonProjectionScopeV42,
+        crate::akroma_family_public_v40::FamilyPartsBuilderV40,
+    ),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    let (scope, build_families) = construction;
     let (schema, producer) = match scope {
         crate::rl::CommonProjectionScopeV42::PreparedV57 => (
             crate::prepared_observation_v57::COMMON_SCHEMA,
@@ -442,10 +559,8 @@ fn observe_parts_complete_current_scope(
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)
         .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
-    let mut parts = crate::akroma_family_public_v40::build_for_scope(
-        state, surface, actor, step, physical, substep, scope,
-    )
-    .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
+    let mut parts = build_families(state, surface, actor, step, physical, substep, scope)
+        .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
     base.projection =
         crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)
             .map_err(|error| diagnose_observation_error("inherited.family_merge", error))?;
