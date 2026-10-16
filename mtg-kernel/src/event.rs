@@ -1492,6 +1492,15 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
+    /// Canonical pre-departure power for one exact Alesha battlefield incarnation.
+    /// The matching ZoneChange is committed immediately before this receipt.
+    AleshaPowerLkiV1 {
+        source: ObjectId,
+        card_def: u16,
+        zone_change_count: u32,
+        departure_history_index: u64,
+        power: i32,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3030,6 +3039,7 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
+    let mut alesha_power_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -3181,6 +3191,20 @@ fn commit_with_entry_batch_and_source_color(
             #[cfg(feature = "limited-fdn-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
+            if from == Zone::Battlefield
+                && z.to_zone != Zone::Battlefield
+                && crate::card_def::CARD_DEFS
+                    .get(usize::from(state.objects.get(z.object).card_def))
+                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+            {
+                let source = state.objects.get(z.object);
+                alesha_power_departure = Some((
+                    z.object,
+                    source.card_def,
+                    source.zone_change_count,
+                    crate::engine::effective_power(state, z.object),
+                ));
             }
             commit_zone_change(
                 state,
@@ -3572,6 +3596,23 @@ fn commit_with_entry_batch_and_source_color(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if let Some((source, card_def, zone_change_count, power)) = alesha_power_departure {
+        if zone_change_count
+            .checked_add(1)
+            .is_some_and(|next| state.objects.get(source).zone_change_count == next)
+            && state.objects.get(source).zone != Zone::Battlefield
+        {
+            let receipt = CommittedEvent::AleshaPowerLkiV1 {
+                source,
+                card_def,
+                zone_change_count,
+                departure_history_index: entry_history_index as u64,
+                power,
+            };
+            state.engine.event_log.push(receipt.clone());
+            state.engine.event_history.push(receipt);
+        }
+    }
     if let Some(object) = entry_counter_object {
         if crate::linked_aura_operation_v1::commit_entry_color(
             state,
@@ -4956,13 +4997,6 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
         if let Some(effect) = item.inline_effect.as_mut() {
             refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
         }
-        refresh_ability_source_power_lki(
-            &mut item.v4.ability_source_contract,
-            id,
-            card_def,
-            generation,
-            power,
-        );
         if let Some(contract) = item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
@@ -4973,20 +5007,6 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
         if let Some(effect) = pending.resolving_item.inline_effect.as_mut() {
             refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
         }
-        refresh_ability_source_power_lki(
-            &mut pending.resolving_item.v4.ability_source_contract,
-            id,
-            card_def,
-            generation,
-            power,
-        );
-        refresh_ability_source_power_lki(
-            &mut pending.ctx.ability_source_contract,
-            id,
-            card_def,
-            generation,
-            power,
-        );
         if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
@@ -4997,13 +5017,6 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
         refresh_alesha_raid_power_lki(
             &mut pending.effect,
             source_contract,
-            id,
-            card_def,
-            generation,
-            power,
-        );
-        refresh_ability_source_power_lki(
-            &mut pending.source_contract,
             id,
             card_def,
             generation,
@@ -5021,37 +5034,10 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
                 generation,
                 power,
             );
-            refresh_ability_source_power_lki(
-                &mut pending.source_contract,
-                id,
-                card_def,
-                generation,
-                power,
-            );
         }
     }
     for (_, object) in state.objects.iter_mut() {
         refresh_binding(&mut object.v4.finalized_cast_binding);
-    }
-}
-
-fn refresh_ability_source_power_lki(
-    contract: &mut Option<crate::state::AbilitySourceContractV4>,
-    object: ObjectId,
-    card_def: u16,
-    generation: u32,
-    power: i32,
-) {
-    let Some(contract) = contract.as_mut() else {
-        return;
-    };
-    if contract.power_lki.is_some()
-        && contract.source == object
-        && contract.card_def == card_def
-        && contract.zone == Zone::Battlefield
-        && contract.zone_change_count == generation
-    {
-        contract.power_lki = Some(power);
     }
 }
 
@@ -5623,7 +5609,6 @@ mod tests {
                 controller: PlayerId::P0,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
-                power_lki: None,
                 attached_to: None,
             },
             exiled,
@@ -5662,7 +5647,6 @@ mod tests {
                 controller: PlayerId::P0,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
-                power_lki: None,
                 attached_to: None,
             },
             exiled: still_exiled,

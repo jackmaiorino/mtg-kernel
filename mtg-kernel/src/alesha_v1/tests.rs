@@ -102,13 +102,13 @@ fn paid_cast(state: &mut GameState, actor: PlayerId, spell: ObjectId, target: Op
     settle(state);
 }
 
-fn resolve_top_spell(state: &mut GameState, active_player: PlayerId) {
+fn resolve_top_spell(state: &mut GameState, first_priority: PlayerId, active_player: PlayerId) {
     let first = engine::advance_until_decision(state);
-    assert!(matches!(first, Decision::CastSpellOrPass { player, .. } if player == active_player));
+    assert!(matches!(first, Decision::CastSpellOrPass { player, .. } if player == first_priority));
     engine::step(state, Action::Pass).unwrap();
     let second = engine::advance_until_decision(state);
     assert!(
-        matches!(second, Decision::CastSpellOrPass { player, .. } if player == active_player.opponent())
+        matches!(second, Decision::CastSpellOrPass { player, .. } if player == first_priority.opponent())
     );
     engine::step(state, Action::Pass).unwrap();
     let next = engine::advance_until_decision(state);
@@ -206,7 +206,7 @@ fn paid_alesha_attack_counter_enables_mv_three_raid_return_after_restore_both_se
         // and return Alesha. Raid remains bound to the departing generation.
         let fake_death = put(&mut reentry_state, actor, "Fake Your Own Death", Zone::Hand);
         announce_paid_cast(&mut reentry_state, actor, fake_death, Some(alesha));
-        resolve_top_spell(&mut reentry_state, actor);
+        resolve_top_spell(&mut reentry_state, actor, actor);
         let reentry_abrade = put(&mut reentry_state, actor.opponent(), "Abrade", Zone::Hand);
         paid_cast(
             &mut reentry_state,
@@ -219,8 +219,8 @@ fn paid_alesha_attack_counter_enables_mv_three_raid_return_after_restore_both_se
             reentry_state.objects.get(alesha).zone_change_count,
             alesha_generation + 2
         );
-        assert_eq!(engine::effective_power(&reentry_state, alesha), 3);
-        assert_eq!(reentry_state.objects.get(alesha).counters.plus1_plus1, 1);
+        assert_eq!(engine::effective_power(&reentry_state, alesha), 2);
+        assert_eq!(reentry_state.objects.get(alesha).counters.plus1_plus1, 0);
         assert_eq!(reentry_state.objects.get(nighthawk).zone, Zone::Battlefield);
 
         // A paid Abrade response removes Alesha without a return effect. The
@@ -300,34 +300,28 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
                 .as_ref()
                 .is_some_and(|effect| matches!(effect, EffectOp::AleshaRaidReturn { .. }))
         }));
-        let raid_index = state.stack.len() - 1;
+        let raid_index = state
+            .stack
+            .iter()
+            .position(|item| {
+                item.inline_effect
+                    .as_ref()
+                    .is_some_and(|effect| matches!(effect, EffectOp::AleshaRaidReturn { .. }))
+            })
+            .unwrap();
         let original_effect = state.stack[raid_index].inline_effect.clone().unwrap();
         let captured_power = match original_effect {
             EffectOp::AleshaRaidReturn { source_power_lki } => source_power_lki,
             _ => unreachable!("the selected trigger is Alesha's Raid"),
         };
-        assert_eq!(
-            state.stack[raid_index]
-                .v4
-                .ability_source_contract
-                .and_then(|source| source.power_lki),
-            Some(captured_power)
-        );
-        state.stack[raid_index].inline_effect = Some(EffectOp::AleshaRaidReturn {
-            source_power_lki: captured_power + 1,
-        });
-        let forged_item = state.stack[raid_index].clone();
-        assert!(engine::validated_stack_item_target_spec(&forged_item, &state).is_err());
-        state.stack[raid_index].inline_effect = Some(EffectOp::AleshaRaidReturn {
-            source_power_lki: captured_power,
-        });
+        assert_eq!(captured_power, 5);
         let original_generation = state.objects.get(alesha).zone_change_count;
 
-        // Grant the real death-return ability, then shrink and regrow the
-        // original incarnation before two paid Abrades make it leave.
+        // Grant the real death-return ability. Its +2/+0 and four genuine
+        // paid Distractions leave the original incarnation at power 3.
         let fake_death = put(&mut state, actor, "Fake Your Own Death", Zone::Hand);
         announce_paid_cast(&mut state, actor, fake_death, Some(alesha));
-        resolve_top_spell(&mut state, actor);
+        resolve_top_spell(&mut state, actor, actor);
         for _ in 0..4 {
             let distraction = put(
                 &mut state,
@@ -336,32 +330,67 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
                 Zone::Hand,
             );
             announce_paid_cast(&mut state, actor.opponent(), distraction, Some(alesha));
-            resolve_top_spell(&mut state, actor);
+            resolve_top_spell(&mut state, actor.opponent(), actor);
         }
-        assert_eq!(engine::effective_power(&state, alesha), 1);
-        let forest = put(&mut state, actor, "Forest", Zone::Battlefield);
-        assert_eq!(state.objects.get(forest).zone, Zone::Battlefield);
-        let growth = put(&mut state, actor, "Giant Growth", Zone::Hand);
-        announce_paid_cast(&mut state, actor, growth, Some(alesha));
-        resolve_top_spell(&mut state, actor);
-        assert_eq!(engine::effective_power(&state, alesha), 4);
-        for _ in 0..2 {
-            let abrade = put(&mut state, actor.opponent(), "Abrade", Zone::Hand);
-            announce_paid_cast(&mut state, actor.opponent(), abrade, Some(alesha));
-            resolve_top_spell(&mut state, actor);
-        }
-        settle(&mut state);
+        assert_eq!(engine::effective_power(&state, alesha), 3);
 
+        // Murder kills independently of Alesha's current toughness. The
+        // committed Alesha departure receipt freezes the actual power 3.
+        let murder = put(&mut state, actor.opponent(), "Murder", Zone::Hand);
+        announce_paid_cast(&mut state, actor.opponent(), murder, Some(alesha));
+        resolve_top_spell(&mut state, actor.opponent(), actor);
+        assert_eq!(state.objects.get(alesha).zone, Zone::Graveyard);
+        assert!(state.engine.event_history.iter().any(|event| {
+            matches!(event, crate::event::CommittedEvent::AleshaPowerLkiV1 {
+                source, card_def, zone_change_count, power, ..
+            } if *source == alesha
+                && *card_def == id
+                && *zone_change_count == original_generation
+                && *power == 3)
+        }));
+
+        // A forged stack payload cannot replace the canonical receipt.
+        let source_contract = state.stack[raid_index].v4.ability_source_contract.unwrap();
+        assert_eq!(
+            engine::alesha_raid_source_power(&state, source_contract),
+            Some(3)
+        );
+        state.stack[raid_index].inline_effect = Some(EffectOp::AleshaRaidReturn {
+            source_power_lki: 4,
+        });
+        let forged_item = state.stack[raid_index].clone();
+        assert!(engine::validated_stack_item_target_spec(&forged_item, &state).is_err());
+        state.stack[raid_index].inline_effect = Some(EffectOp::AleshaRaidReturn {
+            source_power_lki: 3,
+        });
+
+        // Resolve the genuine granted death trigger, which returns Alesha
+        // tapped and creates a Treasure. It does not preserve old counters or
+        // the old incarnation's temporary pump.
+        resolve_top_spell(&mut state, actor, actor);
         assert_eq!(state.objects.get(alesha).zone, Zone::Battlefield);
         assert_eq!(
             state.objects.get(alesha).zone_change_count,
             original_generation + 2
         );
-        assert_eq!(engine::effective_power(&state, alesha), 3);
-        assert_eq!(state.objects.get(alesha).counters.plus1_plus1, 1);
-        // The re-entered incarnation has only Fake Your Own Death's new
-        // counter. The waiting Raid uses old-incarnation power 4, so MV 5
-        // remains illegal and the Dragon Trainer stays in the graveyard.
+        assert!(state.objects.get(alesha).tapped);
+        assert_eq!(state.objects.get(alesha).counters.plus1_plus1, 0);
+        assert_eq!(engine::effective_power(&state, alesha), 2);
+        let treasure = card_def::card_id_by_name("Treasure Token").unwrap();
+        assert!(state.players[actor.index()]
+            .battlefield
+            .iter()
+            .any(|&object| { state.objects.get(object).card_def == treasure }));
+
+        // A real post-return Giant Growth makes the new incarnation power 5,
+        // but the waiting Raid still uses the departed source's power 3.
+        put(&mut state, actor, "Forest", Zone::Battlefield);
+        let growth = put(&mut state, actor, "Giant Growth", Zone::Hand);
+        announce_paid_cast(&mut state, actor, growth, Some(alesha));
+        resolve_top_spell(&mut state, actor, actor);
+        assert_eq!(engine::effective_power(&state, alesha), 5);
+        settle(&mut state);
+        // The waiting Raid's MV-5 target is illegal at LKI power 3.
         assert_eq!(state.objects.get(trainer).zone, Zone::Graveyard);
     }
 }

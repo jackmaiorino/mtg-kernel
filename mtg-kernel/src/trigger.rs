@@ -5304,7 +5304,6 @@ fn triggers_from_events(
                             controller: *controller,
                             zone: Zone::Battlefield,
                             zone_change_count: *source_zone_change_count,
-                            power_lki: None,
                             attached_to: None,
                         }),
                         granted_by: None,
@@ -5591,7 +5590,6 @@ fn triggers_from_events(
                                     controller: *controller_before,
                                     zone: *from,
                                     zone_change_count,
-                                    power_lki: None,
                                     attached_to: None,
                                 }))
                             }
@@ -5599,12 +5597,6 @@ fn triggers_from_events(
                             _ => {
                                 let mut contract = AbilitySourceContractV4::capture(state, id);
                                 contract.controller = event_controller;
-                                if card.name == "Alesha, Who Laughs at Fate"
-                                    && contract.zone == Zone::Battlefield
-                                {
-                                    contract.power_lki =
-                                        Some(crate::engine::effective_power(state, id));
-                                }
                                 Some(contract)
                             }
                         };

@@ -3214,6 +3214,7 @@ fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
 /// source could fail, like protection from colorless, needs an explicit
 /// dungeon source instead.
 fn triggered_ability_targeting_source(
+    state: &GameState,
     source: ObjectId,
     source_contract: Option<AbilitySourceContractV4>,
     effect: &EffectOp,
@@ -3247,7 +3248,7 @@ fn triggered_ability_targeting_source(
         zone: contract.zone,
         zone_change_count: contract.zone_change_count,
         power_lki: match effect {
-            EffectOp::AleshaRaidReturn { source_power_lki } => Some(*source_power_lki),
+            EffectOp::AleshaRaidReturn { .. } => alesha_raid_source_power(state, contract),
             _ => None,
         },
         other_than,
@@ -3258,6 +3259,86 @@ fn triggered_ability_targeting_source(
                 | EffectOp::CreateAnotherControlledNonlandTargetCopyV1
         ),
     })
+}
+
+/// Resolve Alesha's exact source incarnation to current power or a canonical
+/// departure receipt. The mutable effect payload is never the authority for
+/// a departed source; it is checked against this committed event-history row.
+pub(crate) fn alesha_raid_source_power(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+) -> Option<i32> {
+    if source.zone != Zone::Battlefield
+        || !card_def::CARD_DEFS
+            .get(usize::from(source.card_def))
+            .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+    {
+        return None;
+    }
+    let live = state.objects.try_get(source.source)?;
+    if live.card_def != source.card_def || live.owner != source.owner {
+        return None;
+    }
+    if live.zone == Zone::Battlefield && live.zone_change_count == source.zone_change_count {
+        return Some(effective_power(state, source.source));
+    }
+    if live.zone_change_count <= source.zone_change_count {
+        return None;
+    }
+    let mut receipts = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|event| match event {
+            crate::event::CommittedEvent::AleshaPowerLkiV1 {
+                source: object,
+                card_def,
+                zone_change_count,
+                departure_history_index,
+                power,
+            } if *object == source.source
+                && *card_def == source.card_def
+                && *zone_change_count == source.zone_change_count =>
+            {
+                Some((*departure_history_index, *power))
+            }
+            _ => None,
+        });
+    let (departure_index, power) = receipts.next()?;
+    if receipts.next().is_some() {
+        return None;
+    }
+    let departure_index = usize::try_from(departure_index).ok()?;
+    let Some(crate::event::CommittedEvent::ZoneChange {
+        object,
+        from: Zone::Battlefield,
+        to,
+        ..
+    }) = state.engine.event_history.get(departure_index)
+    else {
+        return None;
+    };
+    let Some(receipt_index) = departure_index.checked_add(1) else {
+        return None;
+    };
+    let Some(crate::event::CommittedEvent::AleshaPowerLkiV1 {
+        source: receipt_source,
+        card_def: receipt_card_def,
+        zone_change_count: receipt_generation,
+        departure_history_index: receipt_departure_index,
+        power: receipt_power,
+    }) = state.engine.event_history.get(receipt_index)
+    else {
+        return None;
+    };
+    (*object == source.source
+        && *to != Zone::Battlefield
+        && *receipt_source == source.source
+        && *receipt_card_def == source.card_def
+        && *receipt_generation == source.zone_change_count
+        && *receipt_departure_index == departure_index as u64
+        && *receipt_power == power)
+        .then_some(power)
 }
 
 pub(crate) fn legal_targets_for_controller(
@@ -4332,8 +4413,16 @@ fn target_prefix_can_complete_for_controller(
 /// incarnation's definition (or no source for an Initiative/Undercity
 /// trigger), exactly as `Decision::ChooseTargets` and `Action::ChooseTarget`
 /// see it.
-fn pending_trigger_targeting_source(pending: &PendingTrigger) -> Option<TargetingSource> {
-    triggered_ability_targeting_source(pending.source, pending.source_contract, &pending.effect)
+fn pending_trigger_targeting_source(
+    pending: &PendingTrigger,
+    state: &GameState,
+) -> Option<TargetingSource> {
+    triggered_ability_targeting_source(
+        state,
+        pending.source,
+        pending.source_contract,
+        &pending.effect,
+    )
 }
 
 /// 603.3d: whether a pending triggered ability's chosen target prefix can
@@ -4351,7 +4440,7 @@ pub(crate) fn pending_trigger_targets_can_complete(
             pending.target_spec,
             &pending.targets,
             pending.controller,
-            pending_trigger_targeting_source(pending),
+            pending_trigger_targeting_source(pending, state),
             state,
         )
 }
@@ -13337,7 +13426,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
         }
         let need = target_count(pending.target_spec);
         if pending.targets.len() < usize::from(need) {
-            let trigger_source = pending_trigger_targeting_source(&pending);
+            let trigger_source = pending_trigger_targeting_source(&pending, state);
             if !target_prefix_can_complete_for_controller_and_source(
                 pending.target_spec,
                 &pending.targets,
@@ -13380,7 +13469,7 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                     pending.target_spec,
                     &pending.targets,
                     pending.controller,
-                    pending_trigger_targeting_source(&pending),
+                    pending_trigger_targeting_source(&pending, state),
                     state,
                 ),
                 can_finish: pending.targets.len()
@@ -13530,7 +13619,7 @@ pub(crate) fn validate_pending_trigger(
                 expected,
                 &prefix,
                 pending.controller,
-                pending_trigger_targeting_source(pending),
+                pending_trigger_targeting_source(pending, state),
                 state,
             )
         } else {
@@ -14012,6 +14101,7 @@ fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Res
 }
 
 fn validate_bound_trigger_source_objects(
+    state: &GameState,
     effect: &EffectOp,
     source: ObjectId,
     source_contract: Option<AbilitySourceContractV4>,
@@ -14019,12 +14109,12 @@ fn validate_bound_trigger_source_objects(
     match effect {
         EffectOp::Sequence(steps) => {
             for step in steps {
-                validate_bound_trigger_source_objects(step, source, source_contract)?;
+                validate_bound_trigger_source_objects(state, step, source, source_contract)?;
             }
         }
         EffectOp::Conditional { then, else_, .. } => {
-            validate_bound_trigger_source_objects(then, source, source_contract)?;
-            validate_bound_trigger_source_objects(else_, source, source_contract)?;
+            validate_bound_trigger_source_objects(state, then, source, source_contract)?;
+            validate_bound_trigger_source_objects(state, else_, source, source_contract)?;
         }
         EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object }
         | EffectOp::BoostBoundObjectUntilEndOfTurn { object, .. }
@@ -14045,15 +14135,21 @@ fn validate_bound_trigger_source_objects(
             let Some(contract) = source_contract else {
                 return Err("Alesha Raid lost its source-power authority".to_string());
             };
+            let live_exact = state.objects.try_get(source).is_some_and(|live| {
+                live.zone == Zone::Battlefield
+                    && live.zone_change_count == contract.zone_change_count
+            });
             if contract.source != source
                 || contract.zone != Zone::Battlefield
                 || !card_def::CARD_DEFS
                     .get(usize::from(contract.card_def))
                     .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
-                || contract.power_lki != Some(*source_power_lki)
+                || (!live_exact
+                    && alesha_raid_source_power(state, contract) != Some(*source_power_lki))
             {
                 return Err(
-                    "Alesha Raid source power differs from its exact source contract".into(),
+                    "Alesha Raid source power lacks its canonical exact-incarnation authority"
+                        .into(),
                 );
             }
         }
@@ -14109,7 +14205,12 @@ fn triggered_stack_item_expected_target_spec(
     {
         return Err("attached-source trigger lost its host LKI".to_string());
     }
-    validate_bound_trigger_source_objects(inline_effect, item.source, ability_source_contract)?;
+    validate_bound_trigger_source_objects(
+        state,
+        inline_effect,
+        item.source,
+        ability_source_contract,
+    )?;
     crate::wildwood_capture_v1::validate_trigger(
         state,
         inline_effect,
@@ -14895,7 +14996,12 @@ pub(crate) fn stack_targets_still_legal(
                                         "triggered stack item lost its source incarnation",
                                     )?)
                                 };
-                            triggered_ability_targeting_source(item.source, source_contract, effect)
+                            triggered_ability_targeting_source(
+                                state,
+                                item.source,
+                                source_contract,
+                                effect,
+                            )
                         }
                         StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
                             unreachable!("handled or untargeted")
@@ -19602,7 +19708,7 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
                 pending.target_spec,
                 &pending.targets,
                 pending.controller,
-                pending_trigger_targeting_source(&pending),
+                pending_trigger_targeting_source(&pending, state),
                 state,
             )
             .contains(&target)
@@ -23084,6 +23190,7 @@ mod tests {
                     EffectOp::Sequence(vec![nested])
                 };
                 assert!(validate_bound_trigger_source_objects(
+                    &state,
                     &wrap(binding),
                     source,
                     Some(contract)
@@ -23104,15 +23211,20 @@ mod tests {
                     },
                 ] {
                     assert!(validate_bound_trigger_source_objects(
+                        &state,
                         &wrap(forged),
                         source,
                         Some(contract)
                     )
                     .is_err());
                 }
-                assert!(
-                    validate_bound_trigger_source_objects(&wrap(binding), source, None).is_err()
-                );
+                assert!(validate_bound_trigger_source_objects(
+                    &state,
+                    &wrap(binding),
+                    source,
+                    None
+                )
+                .is_err());
             }
         }
     }
@@ -23145,6 +23257,7 @@ mod tests {
             let grave = put_in_graveyard(&mut state, player, "Forest");
             let contract = AbilitySourceContractV4::capture(&state, source);
             let captured = triggered_ability_targeting_source(
+                &state,
                 source,
                 Some(contract),
                 &EffectOp::MoveAllTargets {

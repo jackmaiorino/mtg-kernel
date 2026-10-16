@@ -435,7 +435,6 @@ mod tests {
                     controller: PlayerId::P0,
                     zone: other.zone,
                     zone_change_count: other.zone_change_count,
-                    power_lki: None,
                     attached_to: Some(crate::state::ObjectLinkV4 {
                         object: ObjectId(source.arena_id),
                         zone_change_count: source.zone_change_count,
@@ -671,7 +670,6 @@ mod tests {
                 controller: PlayerId::P1,
                 zone: Zone::Exile,
                 zone_change_count: 3 + offset,
-                power_lki: None,
                 attached_to: None,
             });
             let visible = projected(&observation);

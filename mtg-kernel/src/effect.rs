@@ -17679,11 +17679,21 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             };
             if source.source != ctx.source
-                || source.power_lki != Some(*source_power_lki)
                 || !crate::card_def::CARD_DEFS
                     .get(usize::from(source.card_def))
                     .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
             {
+                return;
+            }
+            let Some(authoritative_power) = crate::engine::alesha_raid_source_power(state, source)
+            else {
+                return;
+            };
+            let live_exact = state.objects.try_get(source.source).is_some_and(|live| {
+                live.zone == crate::state::Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count
+            });
+            if !live_exact && authoritative_power != *source_power_lki {
                 return;
             }
             let target_spec =
@@ -17695,7 +17705,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 target_spec,
                 &ctx.targets,
                 0,
-                Some(*source_power_lki),
+                Some(authoritative_power),
             ) || !ctx.target_incarnation_matches(0, state)
             {
                 return;

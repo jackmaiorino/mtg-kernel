@@ -327,7 +327,6 @@ pub fn capture(state: &GameState) -> Result<FactsV56, RlContractError> {
                             controller: s.controller,
                             zone: s.zone,
                             zone_change_count: s.zone_change_count,
-                            power_lki: None,
                             attached_to: None,
                         },
                     ),
