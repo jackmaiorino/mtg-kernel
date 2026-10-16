@@ -635,7 +635,56 @@ fn genuine_paid_original_mill_public_api_and_erased_resume_refuse_readonly_both_
             assert!(begin_resumable_resolution(&op, &ctx, item.clone(), &mut bad).is_err());
             assert_eq!(bad, original);
         }
+        let foreign = EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        };
+        // Naming a Ward operation is insufficient: this actual paid source
+        // has no Ward grant and the actual Think Twice does not target it.
+        let forged_ward = EffectOp::CounterUnlessPaysGeneric {
+            ward_target: StackTargetContractV4::capture(&state, Target::Object(item.source)),
+            targeting_stack_item: state
+                .stack
+                .iter()
+                .find(|row| row.kind == crate::state::StackItemKind::Spell)
+                .unwrap()
+                .v4
+                .stack_item_id,
+            generic: 1,
+        };
+        for substituted in [foreign.clone(), forged_ward.clone()] {
+            let mut changed_item = item.clone();
+            changed_item.inline_effect = Some(substituted.clone());
+            let mut bad = restore(&state);
+            let original = bad.clone();
+            assert!(
+                begin_resumable_resolution(&substituted, &ctx, changed_item, &mut bad).is_err()
+            );
+            assert_eq!(bad, original);
+        }
         to_order(&mut state);
+        for substituted in [foreign, forged_ward] {
+            // The operation, sole frame and erased choice coherently agree,
+            // but the captured printed family still selects the refusal.
+            let mut changed = restore(&state);
+            let p = changed.engine.pending_effect.as_mut().unwrap();
+            p.resolving_item.inline_effect = Some(substituted.clone());
+            p.choice = None;
+            p.frames = vec![EffectFrame::Program {
+                op: substituted.clone(),
+                path: vec![],
+            }];
+            p.answered_choice_guard = None;
+            let original = changed.clone();
+            assert!(resume_resumable_resolution(&mut changed).is_err());
+            assert_eq!(changed, original);
+            // Synchronous execution with the actual captured context cannot
+            // replace the native mill by a foreign operation either.
+            execute(&substituted, &ctx, &mut changed);
+            assert!(changed.engine.halted.is_some());
+            changed.engine.halted = None;
+            assert_eq!(changed, original);
+        }
         for erase in [false, true] {
             let mut bad = restore(&state);
             if erase {

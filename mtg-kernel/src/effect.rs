@@ -4243,7 +4243,12 @@ pub fn begin_resumable_resolution(
     ) {
         return Err("Tutelage requires its genuine native pre-removal owner".into());
     }
-    if aberration_item_v1(&resolving_item) || aberration_reveal_context_v1(state, op, ctx) {
+    if (aberration_family_item_v1(&resolving_item)
+        && !(authenticated_aberration_ward_v1(state, &resolving_item)
+            && resolving_item.inline_effect.as_ref() == Some(op)
+            && aberration_context_matches_v1(state, &resolving_item, ctx)))
+        || aberration_reveal_context_v1(state, op, ctx)
+    {
         return Err("Aberration requires its genuine native pre-removal owner".into());
     }
     if alesha_optional_v1::selected(&resolving_item)
@@ -4351,7 +4356,8 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
-        aberration_continuation_v1(p)
+        (aberration_continuation_v1(p)
+            && validate_aberration_ward_continuation_v1(state, p).is_err())
             || p.resolving_item
                 .inline_effect
                 .as_ref()
@@ -9529,13 +9535,10 @@ pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), S
     vampire_gourmand_resolution_v1::validate(state)
 }
 
-fn aberration_item_v1(item: &StackItem) -> bool {
+// Selection must not depend on a caller-editable root. The exact printed
+// program is checked separately before private acquisition/execution.
+fn aberration_family_item_v1(item: &StackItem) -> bool {
     item.kind == crate::state::StackItemKind::TriggeredAbility
-        && item.inline_effect
-            == Some(EffectOp::RevealUntilCardTypeAndMill {
-                player: PlayerRef::Opponent,
-                card_type: CardType::Land,
-            })
         && item.v4.granted_by.is_none()
         && item.v4.ability_source_contract.is_some_and(|source| {
             crate::card_def::CARD_DEFS
@@ -9545,8 +9548,88 @@ fn aberration_item_v1(item: &StackItem) -> bool {
                 })
         })
 }
+// Ward is a separate native trigger on the same source, not the printed
+// mill trigger. Recognizing the operation alone cannot grant this exception:
+// validate its printed/granted provenance and its exact triggering targeter.
+fn authenticated_aberration_ward_v1(state: &GameState, item: &StackItem) -> bool {
+    aberration_family_item_v1(item)
+        && matches!(
+            item.inline_effect,
+            Some(EffectOp::CounterUnlessPaysGeneric { .. })
+        )
+        && validated_ward_observation_targeter(state, item).is_ok()
+}
+fn aberration_context_matches_v1(state: &GameState, item: &StackItem, ctx: &ExecCtx) -> bool {
+    let mut expected = crystal_prevention_v1::context(item);
+    expected.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
+    *ctx == expected
+}
+fn validate_aberration_ward_continuation_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if !authenticated_aberration_ward_v1(state, &pending.resolving_item)
+        || !aberration_context_matches_v1(state, &pending.resolving_item, &pending.ctx)
+    {
+        return Err("Aberration trigger is not an authenticated Ward continuation".into());
+    }
+    match (
+        &pending.choice,
+        pending.frames.as_slice(),
+        &pending.answered_choice_guard,
+    ) {
+        (
+            Some(PendingEffectChoice::ChooseBoolean {
+                player,
+                path,
+                default: Some(false),
+                purpose:
+                    EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                        ward_target,
+                        targeting_stack_item,
+                        player: payer,
+                        generic,
+                    },
+            }),
+            [],
+            None,
+        ) if player == payer && path.is_empty() => {
+            validate_ward_resolving_binding(
+                pending,
+                *ward_target,
+                *targeting_stack_item,
+                *generic,
+            )?;
+            validate_counter_unless_pays_generic(
+                state,
+                *ward_target,
+                pending.ctx.controller,
+                *targeting_stack_item,
+                *payer,
+                *generic,
+                false,
+                true,
+            )?;
+            Ok(())
+        }
+        (
+            None,
+            [frame @ EffectFrame::ResolveCounterUnlessPaysGeneric { .. }],
+            Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric { frame: saved }),
+        ) if **saved == *frame => validate_counter_unless_pays_frame(state, pending, frame),
+        _ => Err("Aberration Ward lost its exact native payment stage".into()),
+    }
+}
+fn aberration_item_v1(item: &StackItem) -> bool {
+    aberration_family_item_v1(item)
+        && item.inline_effect
+            == Some(EffectOp::RevealUntilCardTypeAndMill {
+                player: PlayerRef::Opponent,
+                card_type: CardType::Land,
+            })
+}
 fn aberration_continuation_v1(pending: &EffectContinuation) -> bool {
-    aberration_item_v1(&pending.resolving_item)
+    aberration_family_item_v1(&pending.resolving_item)
 }
 fn aberration_reveal_context_v1(state: &GameState, op: &EffectOp, ctx: &ExecCtx) -> bool {
     matches!(
@@ -9572,6 +9655,9 @@ fn validate_aberration_continuation_v1(
 ) -> Result<(), String> {
     if !aberration_continuation_v1(pending) {
         return Ok(());
+    }
+    if authenticated_aberration_ward_v1(state, &pending.resolving_item) {
+        return validate_aberration_ward_continuation_v1(state, pending);
     }
     let root = validated_definition_owned_root_effect(state, pending)?;
     if *root
@@ -18307,7 +18393,22 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if state.engine.halted.is_some() {
         return;
     }
-    if aberration_reveal_context_v1(state, op, ctx) {
+    if aberration_reveal_context_v1(state, op, ctx)
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            aberration_family_item_v1(&p.resolving_item)
+                && p.ctx.stack_item_id == ctx.stack_item_id
+                && !(validate_aberration_ward_continuation_v1(state, p).is_ok()
+                    && p.resolving_item.inline_effect.as_ref() == Some(op)
+                    && aberration_context_matches_v1(state, &p.resolving_item, ctx))
+        })
+        || state.stack.iter().any(|item| {
+            aberration_family_item_v1(item)
+                && Some(item.v4.stack_item_id) == ctx.stack_item_id
+                && !(authenticated_aberration_ward_v1(state, item)
+                    && item.inline_effect.as_ref() == Some(op)
+                    && aberration_context_matches_v1(state, item, ctx))
+        })
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
@@ -24875,9 +24976,21 @@ pub(crate) fn acquire_tutelage_resume_v1(
     if !matches!(
         pending.resolving_item.inline_effect,
         Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) && !aberration_item_v1(&pending.resolving_item)
+    ) && !aberration_family_item_v1(&pending.resolving_item)
     {
         return Ok(None);
+    }
+    if authenticated_aberration_ward_v1(state, &pending.resolving_item) {
+        validate_pending_effect_choice(state)?;
+        if pending.resolving_item != *item || pending.choice.is_some() {
+            return Err("Aberration Ward resume lost its ready original row".into());
+        }
+        return Ok(None);
+    }
+    if aberration_family_item_v1(&pending.resolving_item)
+        && !aberration_item_v1(&pending.resolving_item)
+    {
+        return Err("Aberration private resume lost its exact printed root".into());
     }
     validate_pending_effect_choice(state)?;
     if pending.resolving_item != *item || pending.choice.is_some() {
@@ -24933,9 +25046,15 @@ pub(crate) fn acquire_tutelage_begin_v1(
     if !matches!(
         item.inline_effect,
         Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) && !aberration_item_v1(item)
+    ) && !aberration_family_item_v1(item)
     {
         return Ok(None);
+    }
+    if authenticated_aberration_ward_v1(state, item) {
+        return Ok(None);
+    }
+    if aberration_family_item_v1(item) && !aberration_item_v1(item) {
+        return Err("Aberration private begin lost its exact printed root".into());
     }
     if !aberration_item_v1(item) {
         event::validate_published_tutelage_v1(state, item)?;
