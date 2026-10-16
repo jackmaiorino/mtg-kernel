@@ -1208,6 +1208,10 @@ fn assert_genuine_permanent_spell_copy_entry(
     );
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
     let (copy, copy_stack) = engine::copy_spell_for(&mut state, source, copy_controller).unwrap();
+    assert!(
+        state.engine.halted.is_none(),
+        "permanent-copy publication halted"
+    );
     assert_ne!(copy, source);
     assert_eq!(state.objects.get(copy).zone, Zone::Stack);
     assert!(
@@ -1224,6 +1228,13 @@ fn assert_genuine_permanent_spell_copy_entry(
     for _ in 0..3 {
         let mut branch = restore(&original);
         for _ in 0..32 {
+            if let Some(item) = branch.stack.last() {
+                let validation = engine::validated_stack_item_target_spec(item, &branch);
+                assert!(
+                    validation.is_ok(),
+                    "permanent-copy pre-advance stack validation rejected: {validation:?}"
+                );
+            }
             let decision = engine::advance_until_decision(&mut branch);
             assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
             if branch.objects.get(copy).zone == Zone::Battlefield {
