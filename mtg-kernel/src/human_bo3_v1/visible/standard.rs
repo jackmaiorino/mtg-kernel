@@ -79,7 +79,7 @@ pub struct HumanCounterValuesV1 {
 impl Project for crate::state::Counters {
     type Output = HumanCounterValuesV1;
     fn project(&self, _handles: &mut Handles) -> Result<Self::Output, Error> {
-        if self.soul != 0 || self.incubation != 0 {
+        if self.soul != 0 || self.incubation != 0 || self.revival != 0 {
             return Err(Error::InvalidVisibleReference);
         }
         Ok(HumanCounterValuesV1 {

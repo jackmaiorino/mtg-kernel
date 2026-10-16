@@ -202,6 +202,10 @@ fn apply_counter_transfer(
             .replaced_count(incubation_scaled)
             .ok()?;
     let incubation = live.counters.incubation.checked_add(incubation_placed)?;
+    let revival = live
+        .counters
+        .revival
+        .checked_add(scale(counters.revival)?)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -250,6 +254,7 @@ fn apply_counter_transfer(
     live.counters.bait = bait;
     live.counters.soul = soul;
     live.counters.incubation = incubation;
+    live.counters.revival = revival;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -1184,6 +1189,7 @@ mod doubling_season_transfer_tests_v48 {
                     bait: 1,
                     soul: 1,
                     incubation: 1,
+                    revival: 1,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
@@ -1208,6 +1214,7 @@ mod doubling_season_transfer_tests_v48 {
                 assert_eq!(o.counters.bait, 2);
                 assert_eq!(o.counters.soul, 2);
                 assert_eq!(o.counters.incubation, 2);
+                assert_eq!(o.counters.revival, 2);
                 assert_eq!(o.v4.lifelink_keyword_counters, 2);
                 assert_eq!(o.v4.time_counters_v1, 2);
                 assert_eq!(o.v4.creature_upgrade.as_ref().unwrap().finality, 2);

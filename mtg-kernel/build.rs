@@ -7099,6 +7099,7 @@ fn delve_for(name: &str) -> bool {
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Alesha, Who Laughs at Fate" => "source_attacks:plus_one_counter_exact_source:1;beginning_captured_controller_end_step:intervening_raid_declaration_this_turn:target_own_graveyard_creature_mana_value_at_most_original_source_current_power_or_lki:return_exact_target_graveyard_incarnation_to_owner_battlefield",
+        "Nine-Lives Familiar" => "genuine_cast_entry_eight_revival_counters;dies_if_exact_departure_lki_revival_positive;death_trigger_resolution_schedules_one_future_any_end_step;return_exact_graveyard_incarnation_under_captured_ability_controller_with_one_fewer_revival_counter_and_entry_replacements_once",
         "Midnight Snack" => "beginning_original_controller_end_step:intervening_raid_actual_declaration_turn_history:capture_and_resolution_recheck:create_food_token_for_original_controller:1",
         "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
         "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",

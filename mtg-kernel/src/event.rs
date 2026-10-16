@@ -129,6 +129,11 @@ pub struct ZoneChangeProposed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_added_subtype_v1: Option<crate::card_def::Subtype>,
     pub touched_by: Vec<ReplacementId>,
+    /// Revival counters installed simultaneously with a delayed return entry,
+    /// before entry-trigger collection and replacements.
+    /// Kept last so the existing serialized field prefix remains stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battlefield_revival_v1: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,6 +236,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -248,6 +254,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -265,6 +272,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -285,6 +293,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -315,6 +324,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -348,6 +358,7 @@ impl ProposedEvent {
             battlefield_stun_v48: None,
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
+            battlefield_revival_v1: None,
             touched_by: Vec::new(),
         })
     }
@@ -1527,7 +1538,9 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     let reads_standard = false;
     let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
-    if !reads_standard && !reads_soul {
+    let reads_revival = live.counters.revival != 0
+        || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
+    if !reads_standard && !reads_soul && !reads_revival {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();
@@ -1540,7 +1553,7 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
         time: live.v4.time_counters_v1,
         finality: live.v4.creature_upgrade.as_ref().map_or(0, |u| u.finality),
     };
-    if reads_soul || live.counters.any() || extras != Default::default() {
+    if reads_soul || reads_revival || live.counters.any() || extras != Default::default() {
         entries.push(crate::state::CounterLkiV1 {
             source: crate::state::ObjectLinkV4 {
                 object,
@@ -2883,6 +2896,15 @@ fn commit_with_entry_batch_and_source_color(
     let (mut entry_context, frozen_source_color, frozen_counter_input, token_input_index) =
         entry_context;
     if let ProposedEvent::ZoneChange(change) = &event {
+        if let Some(revival) = change.battlefield_revival_v1 {
+            if revival < 0 {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+        }
         if let Some(request) = change.battlefield_x_v48.as_ref() {
             if change.to_zone != Zone::Battlefield || request.original < 0 {
                 state.engine.halted = Some((
@@ -2934,6 +2956,59 @@ fn commit_with_entry_batch_and_source_color(
     }
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
+    if let ProposedEvent::ZoneChange(change) = &event {
+        if let Some(revival) = change.battlefield_revival_v1 {
+            let controller = change.battlefield_controller.unwrap_or_else(|| {
+                let object = state.objects.get(change.object);
+                if object.zone == Zone::Stack {
+                    object.controller
+                } else {
+                    object.owner
+                }
+            });
+            if crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input.as_ref(),
+                controller,
+                revival,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+        }
+        let source = state.objects.get(change.object);
+        let cast_nine_lives = change.to_zone == Zone::Battlefield
+            && source.zone == Zone::Stack
+            && crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                == "Nine-Lives Familiar"
+            && source.spell_copy_origin.is_none()
+            && !source.v4.is_token
+            && source
+                .v4
+                .spell_cast_origin
+                .is_some_and(|origin| origin.finalized_method.is_some());
+        if cast_nine_lives {
+            if crate::doubling_season_v48::entry_amount(
+                state,
+                counter_input.as_ref(),
+                change.battlefield_controller.unwrap_or(source.controller),
+                8,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    change.object,
+                ));
+                return;
+            }
+        }
+    }
     let season_entry_active = crate::doubling_season_v48::requires_successor(state)
         || counter_input
             .as_ref()
@@ -3236,6 +3311,7 @@ fn commit_with_entry_batch_and_source_color(
                         entry
                     },
                     counter_input.as_ref(),
+                    z.battlefield_revival_v1,
                 ),
             );
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -4615,9 +4691,11 @@ fn commit_zone_change(
         Option<&[crate::state::AbilitySourceContractV4]>,
         Option<crate::garruks_uprising_v1::EntryCharacteristicsV1>,
         Option<&crate::doubling_season_v48::ReplacementInputV48>,
+        Option<i32>,
     ),
 ) {
-    let (authority_observers, entering_characteristics, counter_input) = entry_context;
+    let (authority_observers, entering_characteristics, counter_input, requested_revival) =
+        entry_context;
     let entering_face_down = entering_characteristics.and_then(|entry| entry.face_down);
     #[cfg(feature = "standard-magezero-fixtures")]
     let battlefield_face_index = battlefield_face_index.or_else(|| {
@@ -4630,6 +4708,18 @@ fn commit_zone_change(
     });
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    let nine_lives_cast_entry = to_zone == Zone::Battlefield
+        && from_zone == Zone::Stack
+        && crate::card_def::CARD_DEFS[usize::from(state.objects.get(id).card_def)].name
+            == "Nine-Lives Familiar"
+        && state.objects.get(id).spell_copy_origin.is_none()
+        && !state.objects.get(id).v4.is_token
+        && state
+            .objects
+            .get(id)
+            .v4
+            .spell_cast_origin
+            .is_some_and(|origin| origin.finalized_method.is_some());
     // A resolving permanent enters under its spell controller (608.3),
     // including a spell cast from another player's exile through Etali.
     let battlefield_controller = battlefield_controller.or_else(|| {
@@ -4832,6 +4922,27 @@ fn commit_zone_change(
         let kicked = from_zone == Zone::Stack && state.engine.pending_kicked_source == Some(id);
         if entering_face_down.is_none() {
             initialize_entry_counters(state, id, kicked, counter_input);
+        }
+        if to_zone == Zone::Battlefield && (nine_lives_cast_entry || requested_revival.is_some()) {
+            if nine_lives_cast_entry && requested_revival.is_some() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    id,
+                ));
+                return;
+            }
+            let base = requested_revival.unwrap_or(8);
+            let controller = state.objects.get(id).controller;
+            match crate::doubling_season_v48::entry_amount(state, counter_input, controller, base) {
+                Ok(revival) if revival >= 0 => state.objects.get_mut(id).counters.revival = revival,
+                _ => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        id,
+                    ));
+                    return;
+                }
+            }
         }
         if initialize_entry_lore_v48(state, id, counter_input).is_err() {
             state.engine.halted = Some((

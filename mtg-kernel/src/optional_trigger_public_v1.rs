@@ -300,7 +300,13 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV1, String> {
         bait,
         soul,
         incubation,
+        revival,
     } = live.counters;
+    if revival != 0 {
+        return Err(error(
+            "optional trigger public projection does not expose revival counters",
+        ));
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         plus1_plus1,

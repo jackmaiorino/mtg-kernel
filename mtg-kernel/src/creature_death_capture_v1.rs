@@ -20,6 +20,7 @@ pub(crate) fn enabled() -> bool {
                             matches!(
                                 ability.condition,
                                 TriggerCondition::ThisOrControlledCreatureDies
+                                    | TriggerCondition::DiesWithRevivalCounterV1
                                     | TriggerCondition::DiesUnlessSubtype(_)
                                     | TriggerCondition::OtherNontokenCreatureDies
                                     | TriggerCondition::OtherControlledNontokenCreatureDiesV1
@@ -63,6 +64,12 @@ pub(crate) fn capture(
                         if source == change.object && !crate::engine::has_effective_subtype(state, source, subtype)))
                         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
                         && object.controller == dead.controller)
+                        || (ability.condition == TriggerCondition::DiesWithRevivalCounterV1
+                            && source == change.object
+                            && crate::card_def::CARD_DEFS[usize::from(object.card_def)].name
+                                == "Nine-Lives Familiar"
+                            && object.counters.revival > 0
+                            && object.controller == dead.controller)
                         || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
                             && crate::high_society_hunter_v1::owns_definition(object.card_def)
                             && !dead.v4.is_token
@@ -162,6 +169,7 @@ pub(crate) fn pending(
         || !matches!(
             ability.condition,
             TriggerCondition::ThisOrControlledCreatureDies
+                | TriggerCondition::DiesWithRevivalCounterV1
                 | TriggerCondition::DiesUnlessSubtype(_)
                 | TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
@@ -171,6 +179,14 @@ pub(crate) fn pending(
         || source.zone != Zone::Battlefield
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
             && source.controller != *controller_before)
+        || (ability.condition == TriggerCondition::DiesWithRevivalCounterV1
+            && (source.source != died.object
+                || source.controller != *controller_before
+                || crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                    != "Nine-Lives Familiar"
+                || state
+                    .counter_lki_for(source.source, source.zone_change_count)
+                    .is_none_or(|counters| counters.revival <= 0)))
         || (ability.condition == TriggerCondition::OtherNontokenCreatureDies
             && (!crate::high_society_hunter_v1::owns_definition(source.card_def)
                 || source.source == died.object
@@ -202,6 +218,7 @@ pub(crate) fn pending(
             TriggerCondition::OtherNontokenCreatureDies
                 | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                 | TriggerCondition::DiesUnlessSubtype(_)
+                | TriggerCondition::DiesWithRevivalCounterV1
         ) && crate::engine::validate_historical_ability_source_contract(state, *source)
             .is_err())
         || (ability.condition == TriggerCondition::ThisOrControlledCreatureDies
@@ -218,6 +235,19 @@ pub(crate) fn pending(
     }
     let effect = if ability.condition == TriggerCondition::OtherNontokenCreatureDies {
         crate::high_society_hunter_custody_v45::bound(history_index as u64, false)
+    } else if ability.condition == TriggerCondition::DiesWithRevivalCounterV1 {
+        let counters = state
+            .counter_lki_for(source.source, source.zone_change_count)
+            .ok_or_else(invalid)?;
+        let revival_counters = counters.revival.checked_sub(1).ok_or_else(invalid)?;
+        let graveyard_generation = died.zone_change_count.checked_add(1).ok_or_else(invalid)?;
+        crate::effect::EffectOp::ScheduleNineLivesFamiliarReturnV1 {
+            graveyard: crate::state::ObjectLinkV4 {
+                object: died.object,
+                zone_change_count: graveyard_generation,
+            },
+            revival_counters,
+        }
     } else {
         (ability.effect)()
     };
@@ -260,6 +290,7 @@ pub(crate) fn owns_program(
                 matches!(
                     ability.condition,
                     TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesWithRevivalCounterV1
                         | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
                 ) && ability.home_zone == Zone::Battlefield

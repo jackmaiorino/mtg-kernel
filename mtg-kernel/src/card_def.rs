@@ -3102,11 +3102,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by the source-only Alesha Partial registration at 457.
+        // followed by source-only Alesha and Nine-Lives Familiar Partial registrations at 457-458.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                458
+                459
             } else {
                 192
             }
@@ -3564,6 +3564,7 @@ mod tests {
                 (455, "Giada, Font of Hope"),
                 (456, "Goblin Negotiation"),
                 (457, "Alesha, Who Laughs at Fate"),
+                (458, "Nine-Lives Familiar"),
             ]
         } else {
             &[]

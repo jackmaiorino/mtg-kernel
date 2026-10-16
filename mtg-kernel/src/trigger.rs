@@ -275,6 +275,9 @@ pub enum TriggerCondition {
     OpponentCastsSpellV1,
     /// Precommit death capture checks the departed effective subtypes.
     DiesUnlessSubtype(Subtype),
+    /// Nine-Lives Familiar dies with positive counters in its exact departure LKI.
+    /// Appended to preserve the serialized discriminants of existing conditions.
+    DiesWithRevivalCounterV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -3699,6 +3702,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
         "Alesha, Who Laughs at Fate" => &crate::alesha_v1::TRIGGERS,
+        "Nine-Lives Familiar" => &crate::nine_lives_familiar_v1::TRIGGERS,
         "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -4142,6 +4146,16 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
         return false;
     };
+    if card.name == "Nine-Lives Familiar"
+        && matches!(
+            effect,
+            EffectOp::BindNineLivesFamiliarReturnV1
+                | EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        )
+    {
+        return true;
+    }
     if card.name == "Wardens of the Cycle"
         && wardens_of_the_cycle_modes()
             .iter()
@@ -4243,6 +4257,17 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Nine-Lives Familiar")
+    {
+        return matches!(
+            effect,
+            EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
+                | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        )
+        .then_some(TargetSpec::None);
+    }
     if crate::card_def::CARD_DEFS
         .get(usize::from(card_def))
         .is_some_and(|card| card.name == "Alesha, Who Laughs at Fate")
@@ -5184,6 +5209,58 @@ fn triggers_from_events(
             }
         }
     }
+    // A resolved Nine-Lives death trigger creates exactly one future
+    // beginning-of-end-step trigger. Consume its schedule when collected so
+    // repeated collection cannot duplicate it; a card moved out of that exact
+    // graveyard incarnation still gets a trigger whose resolution is a no-op.
+    if let Some(mut delayed) = state.nine_lives_delayed_v1.take() {
+        let mut retained = Vec::with_capacity(delayed.len());
+        for scheduled in delayed.drain(..) {
+            let due = events.iter().any(|event| {
+                if !matches!(event, CommittedEvent::BeginningEndStep { .. }) {
+                    return false;
+                }
+                state
+                    .engine
+                    .event_history
+                    .iter()
+                    .enumerate()
+                    .skip(
+                        usize::try_from(scheduled.created_after_history_len).unwrap_or(usize::MAX),
+                    )
+                    .any(|(history_index, historical)| {
+                        history_index
+                            >= usize::try_from(scheduled.created_after_history_len)
+                                .unwrap_or(usize::MAX)
+                            && historical == event
+                            && matches!(historical, CommittedEvent::BeginningEndStep { .. })
+                    })
+            });
+            if due {
+                new_triggers.push(PendingTrigger {
+                    controller: scheduled.source.controller,
+                    source: scheduled.source.source,
+                    effect: EffectOp::ReturnNineLivesFamiliarV1 {
+                        graveyard: scheduled.graveyard,
+                        revival_counters: scheduled.revival_counters,
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(scheduled.source),
+                    granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
+                });
+            } else {
+                retained.push(scheduled);
+            }
+        }
+        state.nine_lives_delayed_v1 = (!retained.is_empty()).then_some(retained);
+    }
     // Consume only after every new capture in this batch validates. Refusal
     // leaves committed history intact, and a replay cannot collect again.
     for history_index in death_capture_authorities {
@@ -5357,6 +5434,7 @@ fn triggers_from_events(
                     def.condition,
                     TriggerCondition::ControllerFirstLifeGain { .. }
                         | TriggerCondition::ThisOrControlledCreatureDies
+                        | TriggerCondition::DiesWithRevivalCounterV1
                         | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1

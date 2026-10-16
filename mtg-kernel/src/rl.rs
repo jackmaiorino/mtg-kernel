@@ -8775,6 +8775,8 @@ fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    crate::nine_lives_familiar_v1::require_legacy_public_counter_schema(state, id)
+        .map_err(RlContractError)?;
     if object.counters.soul != 0 {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
@@ -8917,6 +8919,8 @@ fn public_card_v2_non_soul_fields(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
+    crate::nine_lives_familiar_v1::require_legacy_public_counter_schema(state, id)
+        .map_err(RlContractError)?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
