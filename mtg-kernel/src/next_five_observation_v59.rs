@@ -130,7 +130,7 @@ fn annotation(
     else {
         return Ok(None);
     };
-    if granted_ability.is_some() {
+    if !granted_ability.is_none() {
         return Ok(None);
     }
     let Some(live) = state.objects.try_get(crate::ids::ObjectId(source.arena_id)) else {
