@@ -8,6 +8,36 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 pub const SCHEMA: &str = "mtg-kernel/midnight-snack-public/v58";
+/// Exact nonnegative native-history sum. Little-endian 32-bit limbs keep every
+/// operand integral in serde_json and the existing numeric-tree transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GainTotalV58 {
+    pub limbs: [u32; 4],
+}
+impl From<u128> for GainTotalV58 {
+    fn from(value: u128) -> Self {
+        let bytes = value.to_le_bytes();
+        Self {
+            limbs: std::array::from_fn(|i| {
+                u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().expect("four-byte limb"))
+            }),
+        }
+    }
+}
+impl GainTotalV58 {
+    pub fn value(self) -> u128 {
+        self.limbs.iter().enumerate().fold(0, |value, (i, limb)| {
+            value | (u128::from(*limb) << (i * 32))
+        })
+    }
+}
+impl PartialEq<u128> for GainTotalV58 {
+    fn eq(&self, other: &u128) -> bool {
+        self.value() == *other
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CastV58 {
@@ -37,7 +67,7 @@ pub struct ActivationV58 {
     pub target: Option<PlayerSeatV1>,
     pub target_legal_now: Option<bool>,
     /// A current input to the future resolution, never a captured payable amount.
-    pub original_controller_gained_this_turn_now: i32,
+    pub original_controller_gained_this_turn_now: GainTotalV58,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,7 +77,7 @@ pub struct FactsV58 {
     pub viewer: PlayerSeatV1,
     pub meaning: meaning::MeaningV58,
     pub attacked_this_turn: [bool; 2],
-    pub gained_this_turn: [i32; 2],
+    pub gained_this_turn: [GainTotalV58; 2],
     pub authorized_printings: Vec<public::ReferenceV1>,
     pub current: Vec<public::CurrentV1>,
     /// All visible Food tokens, without claiming they were made by Snack.
@@ -66,7 +96,7 @@ fn source_visible(state: &GameState, id: ObjectId, viewer: PlayerId, printing: u
 pub fn producer_sha256() -> String {
     meaning::producer_sha256()
 }
-fn turn_inputs(state: &GameState) -> Result<([bool; 2], [i32; 2]), String> {
+fn turn_inputs(state: &GameState) -> Result<([bool; 2], [GainTotalV58; 2]), String> {
     // The existing validated turn boundary and committed declarations/gains are
     // input authority. Neither current attackers nor a caller supplied total is.
     crate::life_loss_turn_v1::validate(state)?;
@@ -93,8 +123,8 @@ fn turn_inputs(state: &GameState) -> Result<([bool; 2], [i32; 2]), String> {
     Ok((
         attacked,
         [
-            crate::midnight_snack_v1::gained_this_turn(state, PlayerId::P0)?,
-            crate::midnight_snack_v1::gained_this_turn(state, PlayerId::P1)?,
+            crate::midnight_snack_v1::gained_this_turn(state, PlayerId::P0)?.into(),
+            crate::midnight_snack_v1::gained_this_turn(state, PlayerId::P1)?.into(),
         ],
     ))
 }

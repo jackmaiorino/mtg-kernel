@@ -199,8 +199,9 @@ COMPLETED = {"source":REF,"target":REF,"controller":SEAT,"original_x":U16,"letha
              "actual_damage":I32,"excess":U32,"tokens_created":U64}
 SNACK_CAST = {key:CAST[key] for key in ("source","original_controller","is_copy","payment_pending")}
 RAID = {"source":ROOT,"placement_ordered":bool,"on_stack":bool}
+GAIN_TOTAL = {"limbs": ("list", U32)}
 SNACK_ACTIVATION = {"source":ROOT,"stage":("enum",("ChoosingOpponentBeforeCosts","OpponentChosenAwaitingCosts","PaidAndSacrificedOnStack")),
-    "target":("optional",SEAT),"target_legal_now":("optional",bool),"original_controller_gained_this_turn_now":I32}
+    "target":("optional",SEAT),"target_legal_now":("optional",bool),"original_controller_gained_this_turn_now":GAIN_TOTAL}
 
 
 def _validate_next_five_visible(visible: Any, actor: str, annotations: Any, actions: Any) -> None:
@@ -229,12 +230,12 @@ def _validate_next_five_visible(visible: Any, actor: str, annotations: Any, acti
                      ("goblin_ordering_options",("list",OPTION)),("goblin_completed",("list",COMPLETED))):
         _shape(facts[key],spec,key)
     _shape(facts["authorized"],("list",("pair",FAMILY,REF)),"authorized")
-    for key,spec in (("attacked_this_turn",("list",bool)),("gained_this_turn",("list",I32)),
+    for key,spec in (("attacked_this_turn",("list",bool)),("gained_this_turn",("list",GAIN_TOTAL)),
                      ("authorized_printings",("list",REF)),("current",("list",CURRENT)),("current_food",("list",CURRENT)),
                      ("casts",("list",SNACK_CAST)),("held_raid",("list",RAID)),("published_raid",("list",RAID)),
                      ("activations",("list",SNACK_ACTIVATION))):
         _shape(snack[key],spec,"snack."+key)
-    if any(len(value) != 2 for value in (snack["attacked_this_turn"],snack["gained_this_turn"],facts["angel_mana"])) or any(n < 0 for n in snack["gained_this_turn"]):
+    if any(len(value) != 2 for value in (snack["attacked_this_turn"],snack["gained_this_turn"],facts["angel_mana"])) or any(len(n["limbs"]) != 4 for n in snack["gained_this_turn"]):
         raise LimitedSessionError("invalid two-seat gain or restricted mana roster")
     full={row["source"]["handle"]:row for cards in visible["prepared"]["drake"]["battlefield"] for row in cards}
     for rows in (facts["current"],snack["current"],snack["current_food"]):
@@ -298,7 +299,7 @@ def _validate_next_five_visible(visible: Any, actor: str, annotations: Any, acti
             raise LimitedSessionError("Raid publication changed")
     for row in snack["activations"]:
         controller=row["source"]["captured_controller"]
-        if row["original_controller_gained_this_turn_now"] != snack["gained_this_turn"][0 if controller=="p0" else 1]:
+        if len(row["original_controller_gained_this_turn_now"]["limbs"]) != 4 or row["original_controller_gained_this_turn_now"] != snack["gained_this_turn"][0 if controller=="p0" else 1]:
             raise LimitedSessionError("Snack amount uses another controller's gains")
         if row["stage"] == "ChoosingOpponentBeforeCosts":
             if row["target"] is not None or row["target_legal_now"] is not None:

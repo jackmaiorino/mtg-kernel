@@ -22,7 +22,7 @@ def mock_facts(actor="p0"):
     meaning=_expected_next_five_meanings()
     return {"viewer":actor,"meanings":meaning,"snack":{
         "viewer":actor,"meaning":deepcopy(meaning[0]["ordered_rules"][0]["Snack"]["meaning"]),
-        "attacked_this_turn":[False,False],"gained_this_turn":[0,0],"authorized_printings":[],
+        "attacked_this_turn":[False,False],"gained_this_turn":[{"limbs":[0,0,0,0]},{"limbs":[0,0,0,0]}],"authorized_printings":[],
         "current":[],"current_food":[],"casts":[],"held_raid":[],"published_raid":[],"activations":[]},
         "authorized":[],"current":[],"casts":[],"triggers":[],"aura_copy":None,"infernal_deaths":[],
         "angel_replacements":[],"angel_mana":[[],[]],"goblin_quotes":[],"goblin_ordering":None,
@@ -285,19 +285,34 @@ class LimitedNextFiveClientV6Test(unittest.TestCase):
 
     def test_snack_original_controller_gains_and_each_payment_stage(self):
         visible=self.visible();snack=visible["next_five"]["snack"]
-        snack["gained_this_turn"]=[7,11]
+        snack["gained_this_turn"]=[{"limbs":[7,0,0,0]},{"limbs":[11,0,0,0]}]
         original=ref("snack-old","Midnight Snack",owner="p0",controller="p1")
         row=dict(source=root(original),stage="ChoosingOpponentBeforeCosts",target=None,target_legal_now=None,
-                 original_controller_gained_this_turn_now=11)
+                 original_controller_gained_this_turn_now={"limbs":[11,0,0,0]})
         snack["activations"]=[row]; self.validate(visible)
         row.update(stage="OpponentChosenAwaitingCosts",target="p0"); self.validate(visible)
         row.update(stage="PaidAndSacrificedOnStack",target_legal_now=False); self.validate(visible)
-        for key,value in (("target","p1"),("original_controller_gained_this_turn_now",7),("target_legal_now",None)):
+        for key,value in (("target","p1"),("original_controller_gained_this_turn_now",{"limbs":[7,0,0,0]}),("target_legal_now",None)):
             changed=deepcopy(visible);changed["next_five"]["snack"]["activations"][0][key]=value
             with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
         snack["held_raid"]=[dict(source=root(original),placement_ordered=False,on_stack=False)]
         snack["published_raid"]=[dict(source=root(original),placement_ordered=True,on_stack=True)]
         self.validate(visible)
+
+    def test_snack_exact_gain_limbs_keep_above_i32_and_u64_and_reject_malformed_totals(self):
+        # Explicit wire mocks. They prove closed numeric grammar, not engine history.
+        for total in (3_000_000_000, (1 << 64) + 1, (1 << 94) - 1):
+            visible = self.visible()
+            limbs = [(total >> (32 * i)) & 0xffffffff for i in range(4)]
+            visible["next_five"]["snack"]["gained_this_turn"][0] = {"limbs": limbs}
+            self.validate(visible)
+            for invalid in (total, {"limbs": limbs[:3]}, {"limbs": limbs + [0]},
+                            {"limbs": [-1, 0, 0, 0]}, {"limbs": [1 << 32, 0, 0, 0]},
+                            {"limbs": [True, 0, 0, 0]}, {"limbs": limbs, "extra": 0}):
+                changed = deepcopy(visible)
+                changed["next_five"]["snack"]["gained_this_turn"][0] = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(LimitedSessionError):
+                    self.validate(changed)
 
     def test_goblin_affected_chooser_actual_excess_exact_width_and_safe_option_order(self):
         visible=self.visible();f=visible["next_five"]
