@@ -484,6 +484,174 @@ fn paid_quandary_discard_or_life_and_spinner_reveal_choices_keep_exact_packets_b
 }
 
 #[test]
+fn paid_spinner_accept_reveals_real_creature_randomizes_bottom_and_replays_private_native_stream_both_seats(
+) {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let seat: crate::rl::PlayerSeatV1 = actor.into();
+        let build = |hidden_hand: &str, hidden_library: &str| {
+            let id = |name| crate::card_def::card_id_by_name(name).unwrap();
+            // These are the initial physical library orders, before either
+            // owning stream advances. The first two cards are noncreatures;
+            // the genuine reveal must find the third, not an invented choice.
+            let mut ordered = vec![id("Forest"); 40];
+            ordered[1] = id("Island");
+            ordered[2] = id("Llanowar Elves");
+            ordered[12] = id(hidden_library);
+            let other_library = vec![id(hidden_library); 40];
+            let libraries = if actor == PlayerId::P0 {
+                [ordered.as_slice(), other_library.as_slice()]
+            } else {
+                [other_library.as_slice(), ordered.as_slice()]
+            };
+            let mut raw = GameState::new_from_libraries_with_starting_player_v1(
+                libraries[0],
+                libraries[1],
+                crate::rl::card_name,
+                110_423,
+                actor,
+            );
+            raw.step = crate::state::Step::Main1;
+            for player in [actor, actor.opponent()] {
+                put(&mut raw, player, "Forest", Zone::Hand);
+                raw.players[player.index()].mana_pool = [12; 6];
+            }
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut raw).unwrap();
+            put(&mut raw, actor.opponent(), hidden_hand, Zone::Hand);
+            let spinner = put(&mut raw, actor, "Spinner of Souls", Zone::Hand);
+            let elf = put(&mut raw, actor, "Llanowar Elves", Zone::Battlefield);
+            let bolt = put(&mut raw, actor.opponent(), "Lightning Bolt", Zone::Hand);
+            let library = raw.players[actor.index()].library.clone();
+            let mut stream = own(raw);
+            cast(&mut stream, actor, spinner, None);
+            drain(&mut stream);
+            cast(&mut stream, actor.opponent(), bolt, Some(elf));
+            until(&mut stream, |action| {
+                matches!(action, ActionSemanticV1::ChooseEffectOption {
+                    actor: chooser, source, option_count: 2, ..
+                } if *chooser == seat && source.arena_id == spinner.0)
+            });
+            assert_eq!(state(&stream).objects.get(elf).zone, Zone::Graveyard);
+            assert_eq!(state(&stream).objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(state(&stream).objects.get(spinner).zone, Zone::Battlefield);
+            assert_eq!(state(&stream).players[actor.index()].library, library);
+            assert_eq!(state(&stream).players[actor.index()].life, 20);
+            assert_eq!(state(&stream).players[actor.opponent().index()].life, 20);
+            (stream, spinner, library)
+        };
+        let (mut stream, spinner, library) = build("Forest", "Forest");
+        let (mut hidden, hidden_spinner, hidden_library) = build("Mountain", "Island");
+        assert_ne!(gameplay(&stream), gameplay(&hidden));
+        let decision = stream.encode(expected(&stream)).unwrap();
+        let hidden_decision = hidden.encode(expected(&hidden)).unwrap();
+        assert_eq!(decision.packet, hidden_decision.packet);
+        assert_eq!(decision.packet.source(), Source::PreparedV57);
+        assert_eq!(decision.packet.actions().len(), 2);
+        assert_ne!(decision.packet.actions()[0], decision.packet.actions()[1]);
+        let observation = decision.backend.observation();
+        let [root] = observation.spinner.stack.as_slice() else {
+            panic!("one genuine Spinner death root must own the choice")
+        };
+        assert_eq!(
+            root.stage,
+            crate::spinner_public_v54::StageV54::AwaitingReveal
+        );
+        assert_eq!(root.root.original_source.object, spinner.0);
+        assert_eq!(
+            root.root.original_source.generation,
+            state(&stream).objects.get(spinner).zone_change_count
+        );
+        assert_eq!(root.root.captured_controller, seat);
+        assert_eq!(
+            root.root.current_original_source.as_ref(),
+            Some(&root.root.original_source)
+        );
+        let native_actions = stream.inner.decision_v57().unwrap().actions().to_vec();
+        let reveal_index = native_actions
+            .iter()
+            .position(|action| {
+                matches!(action, ActionSemanticV1::ChooseEffectOption {
+                actor: chooser, source, option_index: 1, option_count: 2
+            } if *chooser == seat && source.arena_id == spinner.0)
+            })
+            .unwrap();
+        assert_eq!(reveal_index, 1);
+        let logits = NativeModel::deterministic_fixture()
+            .unwrap()
+            .forward(decision.packet())
+            .unwrap();
+        assert_eq!(logits.len(), native_actions.len());
+        assert_eq!(logits.len(), decision.packet.actions().len());
+        assert!(logits.iter().all(|value| value.is_finite()));
+        let saved = stream.snapshot();
+        let input = gameplay(&stream);
+        let rng_before = *state(&stream).legacy_rng().unwrap();
+        let mut forged = decision.clone();
+        forged.packet.actions.reverse();
+        assert!(stream.apply(&forged, reveal_index as u32).is_err());
+        assert_eq!(gameplay(&stream), input);
+        let mut erased = decision.clone();
+        erased.packet.state = NumericTree::encode(&json!({})).unwrap();
+        assert!(stream.apply(&erased, reveal_index as u32).is_err());
+        assert!(stream.apply(&decision, 2).is_err());
+        assert!(stream.apply(&hidden_decision, reveal_index as u32).is_err());
+        assert!(stream.restore(&hidden.snapshot()).is_err());
+        assert_eq!(gameplay(&stream), input);
+        let check_reveal = |stream: &FixturePrepared, original: &[ObjectId]| {
+            let current = state(stream);
+            let found = original[2];
+            assert_eq!(current.objects.get(found).zone, Zone::Hand);
+            assert_eq!(current.objects.get(found).zone_change_count, 1);
+            assert!(current.players[actor.index()].hand.contains(&found));
+            assert!(current
+                .known_hand_cards(actor.opponent(), actor)
+                .iter()
+                .any(|entry| entry.object == found && entry.zone_change_count == 1));
+            let after = &current.players[actor.index()].library;
+            assert_eq!(after.len(), original.len() - 1);
+            assert_eq!(&after[..after.len() - 2], &original[3..]);
+            let mut bottom = after[after.len() - 2..].to_vec();
+            let mut expected = original[..2].to_vec();
+            bottom.sort();
+            expected.sort();
+            assert_eq!(bottom, expected);
+            for observer in [actor, actor.opponent()] {
+                assert!(current.known_library_cards(observer, actor).is_empty());
+            }
+            assert_ne!(*current.legacy_rng().unwrap(), rng_before);
+            stream.assert_native_current();
+        };
+        stream.apply(&decision, reveal_index as u32).unwrap();
+        drain(&mut stream);
+        check_reveal(&stream, &library);
+        let output = gameplay(&stream);
+        let output_rng = *state(&stream).legacy_rng().unwrap();
+        let packet = stream.encode(expected(&stream)).unwrap().packet;
+        assert!(stream.apply(&decision, reveal_index as u32).is_err());
+        assert_eq!(gameplay(&stream), output);
+        act(&mut hidden, |action| {
+            matches!(action, ActionSemanticV1::ChooseEffectOption {
+            actor: chooser, source, option_index: 1, option_count: 2
+        } if *chooser == seat && source.arena_id == hidden_spinner.0)
+        });
+        drain(&mut hidden);
+        check_reveal(&hidden, &hidden_library);
+        assert_eq!(packet, hidden.encode(expected(&hidden)).unwrap().packet);
+        stream.restore(&saved).unwrap();
+        assert_eq!(gameplay(&stream), input);
+        assert_eq!(*state(&stream).legacy_rng().unwrap(), rng_before);
+        assert!(stream.apply(&decision, reveal_index as u32).is_err());
+        let replay = stream.encode(expected(&stream)).unwrap();
+        assert_eq!(replay.packet, decision.packet);
+        stream.apply(&replay, reveal_index as u32).unwrap();
+        drain(&mut stream);
+        check_reveal(&stream, &library);
+        assert_eq!(gameplay(&stream), output);
+        assert_eq!(*state(&stream).legacy_rng().unwrap(), output_rng);
+        assert_eq!(stream.encode(expected(&stream)).unwrap().packet, packet);
+    }
+}
+
+#[test]
 fn paid_hatcher_real_combat_payment_history_and_exact_width_privacy_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let build = |hidden: &str, wide_value: i32| {
