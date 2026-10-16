@@ -129,7 +129,10 @@ pub(crate) fn entry_input(
 ) -> Option<ReplacementInputV48> {
     match event {
         crate::event::ProposedEvent::CreateToken(t) => {
-            Some(ReplacementInputV48::capture(state, t.controller))
+            let mut input = ReplacementInputV48::capture(state, t.controller);
+            input.subtype_entries_v1 =
+                crate::giada_v1::capture_entry_replacements(state, t.controller, None);
+            Some(input)
         }
         crate::event::ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
             let mut input = ReplacementInputV48::capture(
@@ -148,6 +151,11 @@ pub(crate) fn entry_input(
             {
                 input.seasons.clear();
             }
+            input.subtype_entries_v1 = crate::giada_v1::capture_entry_replacements(
+                state,
+                input.controller,
+                Some(z.object),
+            );
             Some(input)
         }
         _ => None,
@@ -199,7 +207,7 @@ pub struct EffectXEntryV48 {
     pub host: Option<crate::state::ObjectLinkV4>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplacementInputV48 {
     pub controller: PlayerId,
@@ -208,12 +216,29 @@ pub struct ReplacementInputV48 {
     pub entry_controls_big: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_talent_doublings: Option<u32>,
+    /// Already-active entry replacements and prebatch counts, not later entrants.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtype_entries_v1: Vec<crate::giada_v1::EntryReplacementV1>,
+}
+impl std::hash::Hash for ReplacementInputV48 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.controller.hash(state);
+        self.seasons.hash(state);
+        self.entry_controls_big.hash(state);
+        self.entry_talent_doublings.hash(state);
+        if !self.subtype_entries_v1.is_empty() {
+            "subtype-entry-replacements/v1".hash(state);
+            self.subtype_entries_v1.hash(state);
+        }
+    }
 }
 impl ReplacementInputV48 {
     pub(crate) fn capture(state: &GameState, controller: PlayerId) -> Self {
         Self {
             controller,
             seasons: sources(state, controller),
+            subtype_entries_v1: Vec::new(),
             entry_talent_doublings: Some(crate::standard_cards_v1::counter_modifier_doublings_v48(
                 state, controller,
             )),

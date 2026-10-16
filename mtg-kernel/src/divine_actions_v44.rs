@@ -57,6 +57,30 @@ pub(crate) fn candidates_fake_scoped_v50(
     accept_conqueror: bool,
     accept_fake: bool,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (accept_hunter, accept_panda, accept_conqueror, accept_fake),
+        false,
+    )
+}
+pub(crate) fn candidates_next_five_v59(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    candidates_current_scope(origin, state, surface, (true, true, true, true), true)
+}
+fn candidates_current_scope(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    capabilities: (bool, bool, bool, bool),
+    accept_next_five: bool,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
+
     crate::divine_public_v44::validate_state(state).map_err(RlContractError)?;
     let context = crate::policy_observation_variable_cast_v1::variable_cast_context(state, origin)?;
     let priority_offer = matches!(origin,
@@ -69,15 +93,19 @@ pub(crate) fn candidates_fake_scoped_v50(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = crate::rl_variable_cast_v1::candidates_fake_scoped_v50(
-        state,
-        surface,
-        origin,
-        accept_hunter,
-        accept_panda,
-        accept_conqueror,
-        accept_fake,
-    )?;
+    let candidates = if accept_next_five {
+        crate::rl_variable_cast_v1::candidates_next_five_v59(state, surface, origin)?
+    } else {
+        crate::rl_variable_cast_v1::candidates_fake_scoped_v50(
+            state,
+            surface,
+            origin,
+            accept_hunter,
+            accept_panda,
+            accept_conqueror,
+            accept_fake,
+        )?
+    };
     candidates
         .into_iter()
         .map(|candidate| {

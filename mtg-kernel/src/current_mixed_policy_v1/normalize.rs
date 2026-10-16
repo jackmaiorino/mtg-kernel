@@ -95,7 +95,12 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::PreparedV57 && super::prepared::typed_meaning(values, covered)? {
+            if source == Source::NextFiveV59 && super::next_five::typed_meaning(values, covered)? {
+                return Ok(());
+            }
+            if matches!(source, Source::PreparedV57 | Source::NextFiveV59)
+                && super::prepared::typed_meaning(values, covered)?
+            {
                 return Ok(());
             }
             if values.contains_key("root_sha256") && values.contains_key("card_id") {
@@ -254,7 +259,7 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
 pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> Result<Packet> {
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
-    if source == Source::PreparedV57 {
+    if matches!(source, Source::PreparedV57 | Source::NextFiveV59) {
         super::prepared::references(&mut state)?;
     }
     let mut covered = BTreeSet::new();
@@ -266,7 +271,12 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::PreparedV57 && super::prepared::printing(*id)?.is_some() {
+        if source == Source::NextFiveV59 && super::next_five::printing(*id)?.is_some() {
+            continue;
+        }
+        if matches!(source, Source::PreparedV57 | Source::NextFiveV59)
+            && super::prepared::printing(*id)?.is_some()
+        {
             continue;
         }
         meanings.push(roots::baseline(*id)?);
@@ -285,9 +295,16 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     // V52's existing typed meaning covers the static rules. Preserve its
     // complete ordered body and add the immutable ordinary spell route only
     // for an actually actor-authorized referenced printing.
-    if source == Source::PreparedV57 {
+    if matches!(source, Source::PreparedV57 | Source::NextFiveV59) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if source == Source::NextFiveV59 {
+        for id in &cards {
+            if let Some(printing) = super::next_five::printing(*id)? {
                 meanings.push(printing);
             }
         }

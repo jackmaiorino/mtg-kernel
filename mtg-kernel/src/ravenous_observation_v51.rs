@@ -325,6 +325,54 @@ pub(crate) fn observe_parts_complete_prepared_v57(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::PreparedV57,
+    )
+}
+pub(crate) fn observe_parts_complete_next_five_v59(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::NextFiveV59,
+    )
+}
+fn observe_parts_complete_current_scope(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    scope: crate::rl::CommonProjectionScopeV42,
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    let (schema, producer) = match scope {
+        crate::rl::CommonProjectionScopeV42::PreparedV57 => (
+            crate::prepared_observation_v57::COMMON_SCHEMA,
+            crate::prepared_observation_v57::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::NextFiveV59 => (
+            crate::next_five_observation_v59::COMMON_SCHEMA,
+            crate::next_five_observation_v59::producer_sha256(),
+        ),
+        _ => return Err(RlContractError("wrong complete compatibility scope".into())),
+    };
     let (actor, origin) = actor_and_origin;
     if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
         return Err(RlContractError(
@@ -336,7 +384,7 @@ pub(crate) fn observe_parts_complete_prepared_v57(
     let roots = crate::akroma_public_v1::roots()?;
     let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
     let base = crate::rl::common_family_observation_storage_scoped(
-        (crate::rl::CommonProjectionScopeV42::PreparedV57, state),
+        (scope, state),
         surface,
         actor,
         step,
@@ -346,18 +394,12 @@ pub(crate) fn observe_parts_complete_prepared_v57(
     let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
     let mut base = storage.base;
     let mut parts = crate::akroma_family_public_v40::build_for_scope(
-        state,
-        surface,
-        actor,
-        step,
-        physical,
-        substep,
-        crate::rl::CommonProjectionScopeV42::PreparedV57,
+        state, surface, actor, step, physical, substep, scope,
     )?;
     base.projection = crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)?;
     let mut observation = RavenousObservationV51 {
-        schema: crate::prepared_observation_v57::COMMON_SCHEMA.into(),
-        producer_sha256: crate::prepared_observation_v57::producer_sha256(),
+        schema: schema.into(),
+        producer_sha256: producer,
         kernel_version: base.kernel_version,
         surface_version: base.surface_version,
         policy_surface_version: base.policy_surface_version,
@@ -465,6 +507,12 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::prepared_observation_v57::COMMON_SCHEMA,
             &crate::prepared_observation_v57::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_next_five_compatibility_v59(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::next_five_observation_v59::COMMON_SCHEMA,
+            &crate::next_five_observation_v59::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

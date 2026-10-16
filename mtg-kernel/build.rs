@@ -3498,6 +3498,14 @@ fn fdn_program_for(name: &str) -> Option<Special> {
             "TakeExtraTurnAfterThisOneV1(Controller,lastCreatedFirst,nextRegularTurnPreserved,distinctOccurrence)",
             "EffectOp::TakeExtraTurnAfterThisOneV1",
         ),
+        "Goblin Negotiation" => program(
+            "Creature",
+            "DealXDamageThenCreateTokensForExcess(Target0,GoblinToken,actualCommittedDamage,currentEffectiveToughnessMinusMarkedDamage,deathtouchLethalOne,oneTokenBatch)",
+            "EffectOp::DealXDamageThenCreateTokensForExcess { target_index: 0, token_def: crate::card_def::card_id_by_name(\"Goblin Token\").expect(\"Goblin Token in CARD_DEFS\") }",
+        ),
+        "Giada, Font of Hope" => program("None", "MoveObject(ThisSource,Battlefield);otherControlledAngelEntersWithCountersPerAlreadyControlledAngel;tapWhiteOnlyAngelSpell", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
+        "Infernal Vessel" => program("None", "MoveObject(ThisSource,Battlefield);diesUnlessSubtype:Demon:returnExactGraveyardIncarnationUnderOwnerWithCounters:2:addSubtype:Demon", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
+        "Extravagant Replication" => program("None", "MoveObject(ThisSource,Battlefield);controllerUpkeep:CreateAnotherControlledNonlandTargetCopyV1(exactOriginalSourceAndTargetIncarnations,currentCopiableValues,untargetedAuraAttachmentBeforeEntry,replacementsApply)", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Self-Reflection" => program(
             "ControlledCreature",
             "CreateControlledCreatureTargetCopyV1(Target0,currentController,exactPhysicalIncarnation,currentCopiableDefinitionAndFace,tokenOwnerController=spellController,ordinaryETB,noHasteOrDelayedSacrifice)",
@@ -4348,7 +4356,7 @@ fn keywords_for(card: &CardJson) -> String {
     }
     // FDN keyword-only creatures, in printed keyword order.
     match card.name.as_str() {
-        "Serra Angel" => {
+        "Serra Angel" | "Giada, Font of Hope" => {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::VIGILANCE");
         }
@@ -5793,6 +5801,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Midnight Snack" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana { colored: Some("B"), generic: 2 }, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::Program { name: "midnight_snack_turn_gain_loss_v1", effect: "crate::midnight_snack_v1::activation()" },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Drake Hatcher" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
             effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },
@@ -7083,6 +7097,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Midnight Snack" => "beginning_original_controller_end_step:intervening_raid_actual_declaration_turn_history:capture_and_resolution_recheck:create_food_token_for_original_controller:1",
         "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
         "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",
         "Restless Bivouac" => "attacks:controlled_creature_plus_one_counter:1",
@@ -7231,6 +7246,8 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Clockwork Percussionist" => "dies:impulse_top_one_until_owners_next_turn",
         "Ichor Wellspring" => "etb_and_dies:draw:1",
         "Experimental Synthesizer" => "etb_and_leaves:impulse_top_one_end_of_turn",
+        "Infernal Vessel" => "actual_creature_death:departed_effective_subtypes_not_demon:captured_original_controller:exact_successor_graveyard_incarnation:return_owner_with_two_plus_one_counters:replacement_aware_entry:add_demon_preserve_other_subtypes:new_incarnation_only",
+        "Extravagant Replication" => "controller_upkeep:target_another_controlled_nonland_permanent:create_token_copy:current_copiable_face:untargeted_aura_host_choice_before_entry",
         "Goblin Bushwhacker" => "etb_if_kicked:pump_controlled_creatures:1:0:haste",
         "Faerie Miscreant" => "etb_if_another_same_definition:draw:1",
         "Faerie Seer" => "etb:scry:2",
@@ -10429,6 +10446,8 @@ fn codegen(cards: &[CardJson]) -> String {
             "        token_counter_replacement_v48: {},",
             if executable && c.name == "Doubling Season" {
                 "Some(TokenCounterReplacementDefV48::DoubleEffectTokensAndControlledPermanentCounters)"
+            } else if executable && c.name == "Giada, Font of Hope" {
+                "Some(TokenCounterReplacementDefV48::OtherControlledSubtypeEntry(Subtype::Angel))"
             } else {
                 "None"
             }
@@ -10688,6 +10707,10 @@ fn codegen(cards: &[CardJson]) -> String {
             canon.push_str(
                 "other_controlled_nontoken_death_v1=MayRevealCreatureToHandRandomBottom|",
             );
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Giada, Font of Hope"
+        {
+            canon.push_str("token_counter_replacement_v48=OtherControlledSubtypeEntry(Angel):preentry_sources_and_count:excludes_entrant:simultaneous_batch_snapshot|" );
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Doubling Season" {
             canon.push_str(

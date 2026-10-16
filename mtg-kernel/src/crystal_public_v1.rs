@@ -409,34 +409,14 @@ pub(crate) fn discard_menu_fake_scoped_v50(
         draws_if_discarded: 1,
     }))
 }
-fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
-    menu_inner(state, false)
-}
-fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
-    menu_fake_scoped_v50(state, accept_akroma, false)
-}
-fn menu_fake_scoped_v50(
+// Shared read-only option projection. New public scopes must authenticate their
+// own actual native choice before calling; this supplies no execution authority.
+pub(crate) fn prevention_options(
     state: &GameState,
-    accept_akroma: bool,
-    accept_fake: bool,
-) -> Result<Option<MenuV1>, RlContractError> {
+    choice: &crate::effect::crystal_prevention_v1::ChoiceV1,
+) -> Result<Vec<OptionV1>, RlContractError> {
     use crate::effect::crystal_prevention_v1::PreventionV1;
-    use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
-    let Some(PendingEffectChoice::ChooseOption {
-        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
-        ..
-    }) = state
-        .engine
-        .pending_effect
-        .as_ref()
-        .and_then(|p| p.choice.as_ref())
-    else {
-        return Ok(None);
-    };
-    let Target::Object(recipient) = choice.target else {
-        return Err(RlContractError("Crystal menu lost recipient".into()));
-    };
-    let options = choice.options.iter().map(|option| {
+    choice.options.iter().map(|option| {
         let (kind, id, amount) = match option {
             PreventionV1::Multiplier(source) => ("multiplier", source.source, None),
             PreventionV1::Barricade(source) => ("barricade", source.source, None),
@@ -453,7 +433,35 @@ fn menu_fake_scoped_v50(
             },
         };
         Ok(OptionV1 { kind: kind.into(), source: public_ref(state, id)?, shield_remaining: amount })
-    }).collect::<Result<Vec<_>, RlContractError>>()?;
+    }).collect::<Result<Vec<_>, RlContractError>>()
+}
+fn menu(state: &GameState) -> Result<Option<MenuV1>, RlContractError> {
+    menu_inner(state, false)
+}
+fn menu_inner(state: &GameState, accept_akroma: bool) -> Result<Option<MenuV1>, RlContractError> {
+    menu_fake_scoped_v50(state, accept_akroma, false)
+}
+fn menu_fake_scoped_v50(
+    state: &GameState,
+    accept_akroma: bool,
+    accept_fake: bool,
+) -> Result<Option<MenuV1>, RlContractError> {
+    use crate::effect::{EffectOptionChoicePurpose, PendingEffectChoice};
+    let Some(PendingEffectChoice::ChooseOption {
+        purpose: EffectOptionChoicePurpose::CrystalPreventionV1 { choice },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|p| p.choice.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Target::Object(recipient) = choice.target else {
+        return Err(RlContractError("Crystal menu lost recipient".into()));
+    };
+    let options = prevention_options(state, choice)?;
     let (source, source_history, fixed_source_history, raid_source_history) =
         damage_origin(state, choice)?;
     Ok(Some(MenuV1 {
@@ -565,6 +573,7 @@ pub(crate) fn parts_for_common_scope(
         crate::rl::CommonProjectionScopeV42::FakeV50
             | crate::rl::CommonProjectionScopeV42::RavenousV51
             | crate::rl::CommonProjectionScopeV42::PreparedV57
+            | crate::rl::CommonProjectionScopeV42::NextFiveV59
     );
 
     validate_state(state).map_err(RlContractError)?;

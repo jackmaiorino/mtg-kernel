@@ -145,6 +145,7 @@ pub(super) struct SpellComponentChoicesV1 {
 
 pub(super) struct SelectedSpellManaCostsV1 {
     pub(super) legendary_spell: bool,
+    pub(super) spell_subtypes: Vec<u16>,
     pub(super) costs: Vec<Cost>,
     pub(super) component_groups: Vec<&'static [CostComponent]>,
     pub(super) types: &'static [CardType],
@@ -327,7 +328,7 @@ impl SelectedSpellManaCostsV1 {
             })
             .sum::<u32>();
         if self.convoke {
-            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_convoke_v1(
+            let (mana, convoke_tapped) = mana::plan_spell_mana_total_with_convoke_subtypes_v1(
                 &pips,
                 generic,
                 player,
@@ -335,6 +336,8 @@ impl SelectedSpellManaCostsV1 {
                 self.types.contains(&CardType::Creature),
                 reserved,
                 additional_life,
+                self.legendary_spell,
+                &self.spell_subtypes,
             )?;
             return Some(SpellManaPaymentV1 {
                 mana,
@@ -364,6 +367,7 @@ impl SelectedSpellManaCostsV1 {
                 reserved,
                 additional_life,
                 self.legendary_spell,
+                &self.spell_subtypes,
             ) {
                 return Some(SpellManaPaymentV1 {
                     mana,
@@ -432,6 +436,11 @@ pub(super) fn selected_spell_mana_costs_v1(
             .supertypes
             .contains(&card_def::Supertype::Legendary)
             && method != CastMethodV4::Omen,
+        spell_subtypes: definition
+            .subtypes
+            .iter()
+            .map(|subtype| subtype.stable_id())
+            .collect(),
         costs: Vec::new(),
         component_groups: Vec::new(),
         types: definition.types,
@@ -473,6 +482,33 @@ pub(super) fn selected_spell_mana_costs_v1(
             selected.types = &[CardType::Enchantment];
         }
     }
+    // Spend restrictions inspect the selected spell form, not the creature
+    // printed on a different face/form or the source of an activated ability.
+    if method == CastMethodV4::Omen
+        || (method == CastMethodV4::Alternative
+            && definition
+                .alt_cost
+                .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand))
+    {
+        selected.spell_subtypes.clear();
+    } else if method == CastMethodV4::Bestow {
+        selected.spell_subtypes.retain(|id| {
+            !card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .any(|subtype| subtype.stable_id() == *id)
+        });
+        selected
+            .spell_subtypes
+            .push(card_def::Subtype::Aura.stable_id());
+    } else if definition.changeling {
+        selected.spell_subtypes.extend(
+            card_def::Subtype::CREATURE_TYPES
+                .iter()
+                .map(|subtype| subtype.stable_id()),
+        );
+    }
+    selected.spell_subtypes.sort_unstable();
+    selected.spell_subtypes.dedup();
     // Keep surcharges separate from the base so intermediate u8 saturation
     // cannot discard generic mana before the u32 total is determined.
     let surcharge = with_spree_surcharge(definition, mode, Cost::zero());

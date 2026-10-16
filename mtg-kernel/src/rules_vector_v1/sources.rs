@@ -425,7 +425,25 @@ fn activated(walk: &mut Walk, ctx: CtxF, key: &str, ability: &ActivatedAbilityDe
 
 /// Extracts every rules source of one card definition.
 pub fn card_rules(card_id: u16) -> CardRulesV1 {
+    assert!(
+        !crate::trigger::triggers_for(card_id)
+            .iter()
+            .any(|t| matches!(
+                (t.effect)(),
+                EffectOp::CreateAnotherControlledNonlandTargetCopyV1
+                    | EffectOp::ReturnSourceAsDemonWithTwoCountersV1
+                    | EffectOp::DealXDamageThenCreateTokensForExcess { .. }
+            )),
+        "nonland token copy or departed-subtype death return requires its precise successor"
+    );
     let def: &CardDef = &CARD_DEFS[usize::from(card_id)];
+    assert!(
+        !matches!(
+            (def.spell_effect)(),
+            Some(EffectOp::DealXDamageThenCreateTokensForExcess { .. })
+        ),
+        "rules-vector-v1 cannot bind actual excess damage to token creation; successor required"
+    );
     assert!(!def.activated_abilities.iter().any(|a| a.cost.iter().any(|c| matches!(c, crate::card_def::CostComponent::RemoveSourceCountersV1 { .. }))), "rules-vector-v1 cannot represent exact typed source-counter costs or saved combat-damage incubation; successor required");
     let CardDef {
         // Identity, not rules.
@@ -852,6 +870,9 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 );
             }
             match restricted.restriction {
+                crate::card_def::ManaSpendRestrictionDef::SpellWithSubtype(_) => {
+                    panic!("subtype-only spell mana requires its precise successor");
+                }
                 crate::card_def::ManaSpendRestrictionDef::Unrestricted => {}
                 crate::card_def::ManaSpendRestrictionDef::CreatureSpell
                 | crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility

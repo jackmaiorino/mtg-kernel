@@ -193,6 +193,9 @@ pub struct ObjectStateV4 {
     pub effective_color_mask: u8,
     /// Sorted, unique `card_def::Subtype::stable_id()` values.
     pub effective_subtype_ids: Vec<u16>,
+    /// Incarnation-local additive layer-4 effect with its creation timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_subtype_v1: Option<(crate::card_def::Subtype, u64)>,
     pub chosen_color: Option<ManaColor>,
     pub entered_battlefield_turn: Option<u32>,
     /// Sorted by `(ability_kind, ability_index)`; absent abilities have zero uses.
@@ -325,6 +328,10 @@ impl Hash for ObjectStateV4 {
         self.face_index.hash(state);
         self.effective_color_mask.hash(state);
         self.effective_subtype_ids.hash(state);
+        if let Some(addition) = self.added_subtype_v1 {
+            "added-subtype/v1".hash(state);
+            addition.hash(state);
+        }
         self.chosen_color.hash(state);
         self.entered_battlefield_turn.hash(state);
         self.ability_uses_this_turn.hash(state);
@@ -421,6 +428,7 @@ impl ObjectStateV4 {
             face_index: 0,
             effective_color_mask: crate::card_def::mana_colors_mask(def.colors),
             effective_subtype_ids: subtype_ids,
+            added_subtype_v1: None,
             chosen_color: None,
             entered_battlefield_turn: None,
             ability_uses_this_turn: Vec::new(),
@@ -1345,6 +1353,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureToughnessAtLeastFour
                     | TargetSpec::CreatureEnchantmentOrPlaneswalker
                     | TargetSpec::AnotherControlledCreature
+                    | TargetSpec::AnotherControlledNonlandPermanent
                     | TargetSpec::ControlledCreatureWithSubtype(_)
                     | TargetSpec::AttackingCreatureWithSubtype(_)
                     | TargetSpec::ControlledPermanentWithAnySubtype(_)
