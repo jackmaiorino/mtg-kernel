@@ -930,6 +930,11 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         graveyard_generation: u32,
     },
+    OmniscienceHandV1 {
+        options_history_index: u64,
+        holder: PlayerId,
+        hand_generation: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1121,6 +1126,8 @@ pub struct PaidCostRefV4 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinalizedCastBindingV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omniscience_cast_v1: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sphinx_lore_cast_v1: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greatwurm_payment_v1: Option<u64>,
@@ -1148,6 +1155,10 @@ impl std::hash::Hash for FinalizedCastBindingV1 {
         if let Some(kicked) = self.variable_targeting_kicked {
             "variable_targeting_kicked/v1".hash(state);
             kicked.hash(state);
+        }
+        if let Some(index) = self.omniscience_cast_v1 {
+            "omniscience_cast/v1".hash(state);
+            index.hash(state);
         }
         if let Some(index) = self.sphinx_lore_cast_v1 {
             "sphinx_lore_cast/v1".hash(state);
@@ -4921,6 +4932,7 @@ mod tests {
         let spell = state.players[0].library[0];
         let source_contract = StackSourceContractV4::capture(&state, spell, CastMethodV4::Normal);
         state.engine.pending_cast = Some(crate::engine::PendingCast {
+            omniscience_v1: None,
             greatwurm_v1: None,
             sphinx_lore_v1: None,
             spell,

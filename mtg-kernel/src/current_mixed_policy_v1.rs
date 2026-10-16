@@ -288,6 +288,8 @@ pub fn feature_identity() -> String {
             include_str!("twinflame_observation_v1.rs"),
             include_str!("wildwood_public_v1.rs"),
             include_str!("zul_ashur_observation_v1.rs"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

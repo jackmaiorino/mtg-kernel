@@ -82,6 +82,8 @@ pub fn producer_sha256() -> String {
             include_str!("../build.rs"),
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());

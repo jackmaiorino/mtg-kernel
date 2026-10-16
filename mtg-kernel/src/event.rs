@@ -1899,6 +1899,14 @@ pub enum CommittedEvent {
         source: crate::state::StackSourceContractV4,
         stack_item_id: crate::ids::StackItemId,
     },
+    OmniscienceCastOptionsV1 {
+        options: crate::engine::omniscience_cast_v1::OptionsV1,
+    },
+    OmniscienceCastSelectedV1 {
+        choice: crate::engine::omniscience_cast_v1::ChoiceV1,
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: crate::ids::StackItemId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
