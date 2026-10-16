@@ -625,13 +625,21 @@ mod printed {
     ) {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
-            let source = panda(&mut state, actor);
+            // Cast Season at the genuine initial main-phase priority. The
+            // paid Panda helper passes that priority after its spell resolves.
             let season = put(&mut state, actor, "Doubling Season", Zone::Hand);
             state.players[actor.index()].mana_pool[ManaColor::G.pool_index()] = 1;
             state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == actor && castable_spells.contains(&season)
+            ));
             engine::step(&mut state, Action::CastSpell(season)).unwrap();
             settle_stack(&mut state);
             assert_eq!(state.objects.get(season).zone, Zone::Battlefield);
+            assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+            let source = panda(&mut state, actor);
             event::propose_and_commit(&mut state, ProposedEvent::life_gain(actor, 6));
             settle_stack(&mut state);
             assert_eq!(state.objects.get(source).counters.plus1_plus1, 2);

@@ -9013,6 +9013,7 @@ mod tests {
             .collect();
         assert_eq!(crate::card_def::CARD_DEFS.len(), 452);
         assert!(partials.is_empty());
+        let mut playable = Vec::new();
         for (id, name) in [
             (442, "Fake Your Own Death"),
             (443, "Ravenous Amulet"),
@@ -9030,8 +9031,27 @@ mod tests {
                 crate::card_def::CARD_DEFS[usize::from(id)].capability,
                 crate::card_def::CardCapability::Full
             );
-            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_ok());
+            let definition = &crate::card_def::CARD_DEFS[usize::from(id)];
+            if id == 449 {
+                // Full token implementation permits actual token creation,
+                // while the unchanged deck preflight must reject token cards.
+                assert!(definition.is_token);
+                assert!(matches!(
+                    crate::card_def::preflight_fully_supported_deck(&[id]),
+                    Err(crate::card_def::DeckPreflightError::TokenInDeck {
+                        index: 0,
+                        card_def: 449,
+                        name: "Drake Token",
+                    })
+                ));
+            } else {
+                assert!(!definition.is_token, "{name}");
+                crate::card_def::preflight_fully_supported_deck(&[id]).unwrap();
+                playable.push(id);
+            }
         }
+        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
     }
 
     #[test]
