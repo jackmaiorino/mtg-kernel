@@ -319,7 +319,7 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            NonlandSacrificePaymentV1 { .. } => true,
+            NonlandSacrificePaymentV1 { .. } | AleshaRaidAnswerV1 { .. } => true,
             CopyTarget { choice, selected } => {
                 self.copy(&choice.spell)
                     || self.fs(&choice.remaining)
@@ -806,6 +806,7 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
+                    AleshaRaidReturnV1 => true,
                     ExilePlay { choice } => {
                         choice.card.is_some_and(|b| self.b(&b))
                             || self.bs(&choice.rejected)

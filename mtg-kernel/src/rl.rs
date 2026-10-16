@@ -10787,7 +10787,8 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
+                        crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1
+                        | crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
                         | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
                         }

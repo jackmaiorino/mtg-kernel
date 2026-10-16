@@ -20,6 +20,10 @@ pub(crate) fn ready(actor: PlayerId) -> GameState {
 pub(crate) fn quiet(state: &mut GameState, decision: Decision) {
     let action = match decision {
         Decision::CastSpellOrPass { .. } => Action::Pass,
+        Decision::ChooseEffectBoolean {
+            purpose: crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+            ..
+        } => Action::ChooseEffectBoolean(true),
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
         Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
         Decision::OrderTriggers { pending, .. } => {

@@ -652,6 +652,261 @@ pub(crate) mod perforating_artist_v1 {
     }
 }
 
+/// Closed costless Alesha choice and move-only native pre-removal handoff.
+pub(crate) mod alesha_optional_v1 {
+    use super::*;
+    use crate::state::StackItemKind;
+    pub(crate) fn selected(item: &StackItem) -> bool {
+        matches!(
+            item.inline_effect.as_ref(),
+            Some(EffectOp::AleshaRaidReturn { .. })
+        )
+    }
+    fn validate_origin(state: &GameState, item: &StackItem) -> Result<(), String> {
+        let source = item
+            .v4
+            .ability_source_contract
+            .ok_or("Alesha source contract absent")?;
+        if !selected(item)
+            || item.kind != StackItemKind::TriggeredAbility
+            || source.source != item.source
+            || source.controller != item.controller
+            || !crate::card_def::CARD_DEFS
+                .get(usize::from(source.card_def))
+                .is_some_and(|d| d.name == "Alesha, Who Laughs at Fate")
+        {
+            return Err("Alesha optional root/source/controller changed".into());
+        }
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+        Ok(())
+    }
+    pub(super) fn eligible(state: &GameState, ctx: &ExecCtx, root: &EffectOp) -> bool {
+        let EffectOp::AleshaRaidReturn { source_power_lki } = root else {
+            return false;
+        };
+        let Some(source) = ctx.ability_source_contract else {
+            return false;
+        };
+        let Some(power) = crate::engine::alesha_raid_source_power(state, source) else {
+            return false;
+        };
+        let live = state.objects.try_get(source.source).is_some_and(|o| {
+            o.zone == Zone::Battlefield && o.zone_change_count == source.zone_change_count
+        });
+        source.source == ctx.source
+            && source.controller == ctx.controller
+            && state.player_attacked_this_turn_v1(source.controller)
+            && (live || power == *source_power_lki)
+            && ctx.targets.len() == 1
+            && ctx.target_incarnation_matches(0, state)
+            && crate::engine::effect_target_is_legal_from_ability_source_with_power_lki(
+                state,
+                source,
+                ctx.controller,
+                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower,
+                &ctx.targets,
+                0,
+                Some(power),
+            )
+    }
+    pub(crate) fn requires_stage(p: &EffectContinuation) -> bool {
+        selected(&p.resolving_item)
+            || p.frames.iter().any(|f| {
+                matches!(
+                    f,
+                    EffectFrame::AleshaRaidAnswerV1 { .. }
+                        | EffectFrame::Program {
+                            op: EffectOp::AleshaRaidReturn { .. },
+                            ..
+                        }
+                )
+            })
+            || matches!(
+                p.choice,
+                Some(PendingEffectChoice::ChooseBoolean {
+                    purpose: EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+                    ..
+                })
+            )
+    }
+    pub(crate) fn validate_continuation(
+        state: &GameState,
+        p: &EffectContinuation,
+    ) -> Result<(), String> {
+        if !requires_stage(p) {
+            return Ok(());
+        }
+        validate_origin(state, &p.resolving_item)?;
+        let item = &p.resolving_item;
+        let expected = ExecCtx {
+            stack_item_id: Some(item.v4.stack_item_id),
+            source: item.source,
+            controller: item.controller,
+            targets: item.targets.clone(),
+            target_contracts: item.v4.target_contracts.clone(),
+            discarded: item.discarded.clone(),
+            paid_cost_refs: item.v4.paid_cost_refs.clone(),
+            hidden_ability_source: item.v4.hidden_ability_source,
+            ability_source_contract: item.v4.ability_source_contract,
+            cauldron_grant: item.v4.cauldron_grant,
+            kicked: item.kicked,
+            optional_additional_cost_paid: item.v4.optional_additional_cost_paid,
+            x_value: item.v4.x_value,
+        };
+        if p.ctx != expected {
+            return Err("Alesha full original execution context changed".into());
+        }
+        let root = item.inline_effect.as_ref().unwrap();
+        match (&p.choice, &p.answered_choice_guard, p.frames.as_slice()) {
+            (None, None, [EffectFrame::Program { op, path }]) if op == root && path.is_empty() => {
+                Ok(())
+            }
+            (
+                Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+                }),
+                None,
+                [],
+            ) if *player == item.controller && path.is_empty() && eligible(state, &p.ctx, root) => {
+                Ok(())
+            }
+            (
+                None,
+                Some(EffectAnsweredChoiceGuard::StandardSelection { frame }),
+                [actual @ EffectFrame::AleshaRaidAnswerV1 { .. }],
+            ) if frame.as_ref() == actual && eligible(state, &p.ctx, root) => Ok(()),
+            _ => Err("Alesha optional continuation stage changed or erased".into()),
+        }
+    }
+    pub(super) fn return_accepted(
+        state: &mut GameState,
+        p: &EffectContinuation,
+    ) -> Result<(), String> {
+        let root = p
+            .resolving_item
+            .inline_effect
+            .as_ref()
+            .ok_or("Alesha root absent")?;
+        if eligible(state, &p.ctx, root) {
+            let Target::Object(target) = p.ctx.targets[0] else {
+                return Err("Alesha target ceased to be an object".into());
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+        }
+        Ok(())
+    }
+    pub(crate) struct RowOwnerV1 {
+        item: StackItem,
+        pending: Option<EffectContinuation>,
+        position: usize,
+        remaining_stack: Vec<StackItem>,
+    }
+    fn capture(
+        state: &GameState,
+        item: &StackItem,
+        pending: Option<EffectContinuation>,
+    ) -> Result<RowOwnerV1, String> {
+        let position =
+            crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+                .ok_or("Alesha handoff lacks actual row")?;
+        let mut remaining_stack = state.stack.clone();
+        if remaining_stack.remove(position) != *item
+            || remaining_stack
+                .iter()
+                .any(|i| i.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("Alesha native row changed or duplicated".into());
+        }
+        Ok(RowOwnerV1 {
+            item: item.clone(),
+            pending,
+            position,
+            remaining_stack,
+        })
+    }
+    pub(crate) fn acquire_begin(
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<RowOwnerV1>, String> {
+        if !selected(item) {
+            return Ok(None);
+        }
+        if state.engine.pending_effect.is_some() {
+            return Err("Alesha begin found another continuation".into());
+        }
+        validate_origin(state, item)?;
+        Ok(Some(capture(state, item, None)?))
+    }
+    pub(crate) fn acquire_resume(
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<RowOwnerV1>, String> {
+        let Some(p) = &state.engine.pending_effect else {
+            return Ok(None);
+        };
+        if !requires_stage(p) {
+            return Ok(None);
+        }
+        validate_pending_effect_choice(state)?;
+        if p.resolving_item != *item || p.choice.is_some() {
+            return Err("Alesha resume is not its exact ready continuation".into());
+        }
+        Ok(Some(capture(state, item, Some(p.clone()))?))
+    }
+    fn run_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+        ctx: Option<&ExecCtx>,
+    ) -> Result<ResumableProgress, String> {
+        if state.stack != owner.remaining_stack
+            || state.engine.pending_effect != owner.pending
+            || ctx.is_some() != owner.pending.is_none()
+        {
+            return Err("Alesha private pre-removal handoff changed".into());
+        }
+        if let Some(ctx) = ctx {
+            state.engine.pending_effect = Some(EffectContinuation {
+                resolving_item: owner.item.clone(),
+                ctx: ctx.clone(),
+                frames: vec![EffectFrame::Program {
+                    op: owner.item.inline_effect.clone().unwrap(),
+                    path: vec![],
+                }],
+                choice: None,
+                answered_choice_guard: None,
+            });
+        }
+        state.stack.insert(owner.position, owner.item.clone());
+        let loaned = state.stack.clone();
+        let result =
+            validate_pending_effect_choice(state).and_then(|_| super::drive_resumable(state));
+        let returned = std::mem::replace(&mut state.stack, owner.remaining_stack);
+        if returned != loaned {
+            return Err("Alesha stack loan changed before return".into());
+        }
+        result
+    }
+    pub(crate) fn begin_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+        ctx: &ExecCtx,
+    ) -> Result<ResumableProgress, String> {
+        run_owned(state, owner, Some(ctx))
+    }
+    pub(crate) fn resume_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+    ) -> Result<ResumableProgress, String> {
+        run_owned(state, owner, None)
+    }
+}
+
 pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
@@ -2883,6 +3138,9 @@ pub enum EffectFrame {
         choice: nonland_sacrifice_payment_v1::ChoiceV1,
         selected: Vec<EffectObjectBinding>,
     },
+    AleshaRaidAnswerV1 {
+        accept: bool,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3366,6 +3624,7 @@ pub enum EffectBooleanChoicePurpose {
         player: PlayerId,
         life: u8,
     },
+    AleshaRaidReturnV1,
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -3832,6 +4091,9 @@ pub(crate) fn contains_nonland_sacrifice_payment_v1(op: &EffectOp) -> bool {
 /// private library/hand ordering, and multi-card mill ordering enter the v4
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
+    if matches!(op, EffectOp::AleshaRaidReturn { .. }) {
+        return true;
+    }
     if crate::high_society_hunter_custody_v45::binding(op).is_some() {
         return true;
     }
@@ -3941,6 +4203,11 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if alesha_optional_v1::selected(&resolving_item)
+        || matches!(op, EffectOp::AleshaRaidReturn { .. })
+    {
+        return Err("Alesha root requires its genuine native pre-removal owner".into());
+    }
     if contains_nonland_sacrifice_payment_v1(op) || perforating_artist_v1::selected(&resolving_item)
     {
         return Err("nonland sacrifice root requires its distinct native pre-removal owner".into());
@@ -4013,6 +4280,14 @@ fn begin_resumable_resolution_with_inspiration_owner(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(alesha_optional_v1::requires_stage)
+    {
+        return Err("Alesha continuation requires its genuine native pre-removal owner".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|pending| {
         nonland_copy_v1::requires_stage(pending)
             || requires_ferocious_payment_stage(pending)
@@ -4573,6 +4848,14 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                         choice,
                         play: value,
                     };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardSelection {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
+                EffectBooleanChoicePurpose::AleshaRaidReturnV1 => {
+                    let frame = EffectFrame::AleshaRaidAnswerV1 { accept: value };
                     continuation.answered_choice_guard =
                         Some(EffectAnsweredChoiceGuard::StandardSelection {
                             frame: Box::new(frame.clone()),
@@ -8339,6 +8622,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -8383,6 +8667,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::AleshaRaidAnswerV1 { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -9172,6 +9457,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     validate_exact_spell_search_continuation(state, pending)?;
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
     perforating_artist_v1::validate_continuation(state, pending)?;
+    alesha_optional_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     nonland_copy_v1::validate_boundary(state, pending)?;
@@ -10583,6 +10869,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err("exiled play choice changed".into());
                 }
             }
+            EffectBooleanChoicePurpose::AleshaRaidReturnV1 => {
+                alesha_optional_v1::validate_continuation(state, pending)?
+            }
             EffectBooleanChoicePurpose::WardLife { choice } => {
                 standard_ward::validate_choice(state, pending, choice)?;
                 if *player != choice.payer
@@ -11269,6 +11558,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::DiscardDraw { .. }
                 | EffectFrame::DiscardPaymentV1 { .. }
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                | EffectFrame::AleshaRaidAnswerV1 { .. }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -11278,6 +11568,11 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::AleshaRaidAnswerV1 { accept } => {
+                    if accept {
+                        alesha_optional_v1::return_accepted(state, &continuation)?;
+                    }
+                }
                 EffectFrame::NonlandSacrificePaymentV1 { choice, selected } => {
                     nonland_sacrifice_payment_v1::finish(
                         state,
@@ -14392,6 +14687,19 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 standard_payment_v1::begin(state, &mut continuation, path)?;
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::AleshaRaidReturn { .. } => {
+                if !path.is_empty() { return Err("Alesha optional root path changed".into()); }
+                if alesha_optional_v1::eligible(state, &continuation.ctx, &op) {
+                    continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                        player: continuation.ctx.controller,
+                        path,
+                        default: Some(false),
+                        purpose: EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::MayPayManaThen {
                 player,
@@ -18489,49 +18797,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             };
             event::propose_and_commit(state, proposed);
         }
-        EffectOp::AleshaRaidReturn { source_power_lki } => {
-            let Some(source) = ctx.ability_source_contract else {
-                return;
-            };
-            if source.source != ctx.source
-                || !crate::card_def::CARD_DEFS
-                    .get(usize::from(source.card_def))
-                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
-            {
-                return;
-            }
-            let Some(authoritative_power) = crate::engine::alesha_raid_source_power(state, source)
-            else {
-                return;
-            };
-            let live_exact = state.objects.try_get(source.source).is_some_and(|live| {
-                live.zone == crate::state::Zone::Battlefield
-                    && live.zone_change_count == source.zone_change_count
-            });
-            if !live_exact && authoritative_power != *source_power_lki {
-                return;
-            }
-            let target_spec =
-                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower;
-            if !crate::engine::effect_target_is_legal_from_ability_source_with_power_lki(
-                state,
-                source,
-                ctx.controller,
-                target_spec,
-                &ctx.targets,
-                0,
-                Some(authoritative_power),
-            ) || !ctx.target_incarnation_matches(0, state)
-            {
-                return;
-            }
-            let Some(crate::state::Target::Object(target)) = ctx.targets.get(0) else {
-                return;
-            };
-            event::propose_and_commit(
-                state,
-                event::ProposedEvent::zone_change(*target, Zone::Battlefield),
-            );
+        EffectOp::AleshaRaidReturn { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::ScheduleNineLivesFamiliarReturnV1 {
             graveyard,

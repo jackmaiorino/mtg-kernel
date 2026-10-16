@@ -78,6 +78,13 @@ pub enum StageV61 {
     Published,
     Resolving,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum AleshaChoiceV61 {
+    BeforeResolution,
+    AwaitingCostlessReturnChoice,
+    Answered { accept: bool },
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum ProgramV61 {
@@ -87,6 +94,8 @@ pub enum ProgramV61 {
     AleshaRaid {
         power: PowerV61,
         captured_controller_attacked_this_turn: bool,
+        may_return_at_resolution: bool,
+        optional_choice: AleshaChoiceV61,
     },
     NineLivesDeath {
         departure_revival: i32,
@@ -454,6 +463,30 @@ fn trigger(
                 },
                 captured_controller_attacked_this_turn: state
                     .player_attacked_this_turn_v1(source.controller),
+                may_return_at_resolution: true,
+                optional_choice: if stage == StageV61::Resolving {
+                    let pending = state
+                        .engine
+                        .pending_effect
+                        .as_ref()
+                        .ok_or("V61 Alesha resolving stage absent")?;
+                    match (&pending.choice, pending.frames.as_slice()) {
+                        (
+                            Some(crate::effect::PendingEffectChoice::ChooseBoolean {
+                                purpose:
+                                    crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1,
+                                ..
+                            }),
+                            [],
+                        ) => AleshaChoiceV61::AwaitingCostlessReturnChoice,
+                        (None, [crate::effect::EffectFrame::AleshaRaidAnswerV1 { accept }]) => {
+                            AleshaChoiceV61::Answered { accept: *accept }
+                        }
+                        _ => AleshaChoiceV61::BeforeResolution,
+                    }
+                } else {
+                    AleshaChoiceV61::BeforeResolution
+                },
             }
         }
         (
@@ -636,6 +669,16 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV61, String> 
     }
     let mut casts = vec![];
     for (position, item) in state.stack.iter().enumerate() {
+        // The retained physical row is represented below by its actual resolving
+        // stage, not a second simultaneously published family occurrence.
+        if state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|p| p.resolving_item == *item)
+        {
+            continue;
+        }
         if item.kind == StackItemKind::Spell {
             let Some(family) = family(state.objects.get(item.source).card_def, &ids) else {
                 continue;
