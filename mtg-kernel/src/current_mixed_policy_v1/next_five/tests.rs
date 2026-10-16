@@ -5,10 +5,12 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::next_five_observation_v59::NextFiveObservationV59;
 use crate::rl::{ActionSemanticV1, TargetRefV1};
 
-struct AuditSnapshot {
+pub(in crate::current_mixed_policy_v1) struct AuditSnapshot {
     owner: NextFiveSnapshot,
     native: crate::rl_session::FastActorSessionSnapshotV1,
 }
+#[path = "shared_ordinary_tests.rs"]
+mod shared_ordinary;
 impl NextFiveSession {
     fn decision_v59(&self) -> Result<NextFiveDecision> {
         let FastActorResponseV1::Decision(expected) = self.current_response() else {
