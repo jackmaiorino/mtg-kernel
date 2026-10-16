@@ -40,6 +40,7 @@ pub enum JournalV59 {
 pub struct WorldV59 {
     history_count: u64,
     bytes: Vec<u8>,
+    linked_borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
 }
 impl WorldV59 {
     fn capture(state: &GameState) -> Result<Self, String> {
@@ -49,6 +50,7 @@ impl WorldV59 {
         Ok(Self {
             history_count,
             bytes: serde_json::to_vec(&original).map_err(|e| e.to_string())?,
+            linked_borrow: crate::linked_aura_operation_v1::capture_panda_replay_borrow_v1(state),
         })
     }
     fn restore(&self, state: &GameState, boundary: u64) -> Result<GameState, String> {
@@ -423,10 +425,21 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
     let marker = state.engine.event_history[*input as usize].clone();
     replay.engine.event_history.push(marker);
     let start = replay.engine.event_history.len();
-    crate::event::propose_and_commit(
+    // Serde intentionally does not restore an executable enclosing Runner.
+    // Borrow only the original scoped Advance input for this local replay;
+    // otherwise a live/historical Hatcher invents a nested Event enclosure.
+    crate::linked_aura_operation_v1::with_panda_replay_borrow_v1(
         &mut replay,
-        crate::event::ProposedEvent::life_gain_wide_v59(source.controller, amount),
-    );
+        item,
+        &world.linked_borrow,
+        |replay| {
+            crate::event::propose_and_commit(
+                replay,
+                crate::event::ProposedEvent::life_gain_wide_v59(source.controller, amount),
+            );
+            Ok(())
+        },
+    )?;
     if replay.engine.event_history[start..] != state.engine.event_history[start..at as usize] {
         return Err("Conqueror gain and its actual downstream captures changed".into());
     }

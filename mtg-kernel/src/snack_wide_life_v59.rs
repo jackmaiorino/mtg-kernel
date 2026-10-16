@@ -825,4 +825,35 @@ mod tests {
             assert_eq!(state, restored);
         }
     }
+    #[test]
+    fn paid_hatcher_and_wide_snack_conqueror_panda_keep_original_enclosure_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, snack, panda) = scene(actor, true);
+            let hatcher = native::cast(&mut state, actor, "Drake Hatcher", None, None);
+            native::settle(&mut state);
+            assert_eq!(state.objects.get(hatcher).zone, Zone::Battlefield);
+            gain_input(&mut state, actor);
+            crate::midnight_snack_v1::tests::activate_paid(&mut state, actor, snack);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                native::settle(game);
+                validate(game).unwrap();
+                crate::drake_hatcher_v1::custody::validate(game).unwrap();
+                crate::fiendish_panda_v1::validate_state(game).unwrap();
+                assert_eq!(game.players[actor.index()].life, 2_100_000_020);
+                assert_eq!(game.players[actor.opponent().index()].life, -52_516_353);
+                assert_eq!(game.objects.get(panda.unwrap()).counters.plus1_plus1, 3);
+                assert_eq!(game.engine.event_history.iter().filter(|event| matches!(event,
+                    CommittedEvent::LifeGainWideV59 { player, amount: 2_200_000_000 } if *player == actor)).count(), 1);
+                assert!(game
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event, CommittedEvent::DrakeJournalV1 { .. })));
+                assert!(game.engine.halted.is_none());
+            }
+            assert_eq!(state, restored);
+        }
+    }
 }

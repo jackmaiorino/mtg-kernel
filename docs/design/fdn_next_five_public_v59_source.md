@@ -67,3 +67,12 @@ facts and the owning/model/Human/V6 bridge remain follow-on source work before
 five-card Full admission; the temporary native checkpoint does not claim that
 those consumers can yet execute a wide history. All five printings stay Partial.
 Formatting/static checks alone do not establish Rust compilation or runtime.
+
+
+The gain replay also retains the existing opaque Panda replay-borrow input in
+its new WorldV59 only. A local speculative replay borrows the actual enclosing
+Advance Runner after the existing exact original-row/Advance checks, then
+clears that local runtime. It preserves complete downstream event equality
+without inventing a nested Hatcher Event wrapper. Frozen V49/Panda world types
+are not changed. A fifth genuinely paid Hatcher coexistence/restore source
+group exercises this boundary; it remains uncompiled and unrun.

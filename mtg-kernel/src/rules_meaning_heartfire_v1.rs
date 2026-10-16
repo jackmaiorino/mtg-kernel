@@ -132,6 +132,10 @@ pub fn source_sha256() -> String {
             include_str!("snack_wide_life_v59/custody.rs"),
         ),
         (
+            "linked_aura_operation_v1.rs",
+            include_str!("linked_aura_operation_v1.rs"),
+        ),
+        (
             "bloodthirsty_conqueror_v49.rs",
             include_str!("bloodthirsty_conqueror_v49.rs"),
         ),
