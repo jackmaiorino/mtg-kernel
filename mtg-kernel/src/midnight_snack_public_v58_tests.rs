@@ -328,7 +328,7 @@ fn independent_blind_hand_face_down_worlds_are_identical_and_current_counters_re
         assert_eq!(roundtrip(&s, viewer).current[0].counters.charge, i32::MAX);
         let facts = roundtrip(&s, viewer);
         let mut forged = facts.clone();
-        forged.gained_this_turn[viewer.index()] += 1;
+        forged.gained_this_turn[viewer.index()].limbs[0] += 1;
         let before = serde_json::to_vec(&s).unwrap();
         assert!(validate(&s, viewer, &forged).is_err());
         assert_eq!(serde_json::to_vec(&s).unwrap(), before);
@@ -465,5 +465,45 @@ fn paid_witness_effective_suppression_uses_public_form_and_actual_gain_totals_re
         assert_eq!(s.players[actor.opponent().index()].life, 23);
         walk(&mut s, actor.opponent(), Step::Main1, None);
         assert_eq!(roundtrip(&s, actor).gained_this_turn, [0; 2]);
+    }
+}
+
+#[test]
+fn paid_snack_exact_positive_gain_total_survives_losses_public_restore_and_forgery_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        // Actual committed event primitives on genuinely paid history. Every
+        // event amount and intermediate life total fits the native i32 domain.
+        for n in 0..3 {
+            event::propose_and_commit(&mut state, ProposedEvent::life_gain(actor, 1_000_000_000));
+            if n < 2 {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::life_loss(actor, 1_000_000_000),
+                );
+            }
+        }
+        assert_eq!(state.players[actor.index()].life, 1_000_000_020);
+        assert_eq!(
+            crate::midnight_snack_v1::gained_this_turn(&state, actor).unwrap(),
+            3_000_000_000
+        );
+        activate_paid(&mut state, actor, source);
+        let before = serde_json::to_vec(&state).unwrap();
+        for viewer in [actor, actor.opponent()] {
+            let facts = roundtrip(&state, viewer);
+            assert_eq!(facts.gained_this_turn[actor.index()].value(), 3_000_000_000);
+            assert_eq!(
+                facts.activations[0].original_controller_gained_this_turn_now,
+                facts.gained_this_turn[actor.index()]
+            );
+            let mut forged = facts.clone();
+            forged.gained_this_turn[actor.index()].limbs[2] = 1;
+            assert!(validate(&state, viewer, &forged).is_err());
+            let mut unknown = serde_json::to_value(facts.gained_this_turn[actor.index()]).unwrap();
+            unknown["extra"] = serde_json::json!(0);
+            assert!(serde_json::from_value::<GainTotalV58>(unknown).is_err());
+        }
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }

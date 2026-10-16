@@ -6,10 +6,34 @@ Source parent `89ed84be22e739d13eb36607625d1e982e402a96`; the separately authore
 
 `next_five_public_v59::{capture,validate}` derive viewer-specific facts from the existing native validators. Public references are visible or actor-known current incarnations and captured originally public incarnations, not native stack IDs. Facts contain authorized current printings/forms/counters, pending-versus-paid casts, held/published triggers, exact Aura template/host progress, Infernal original death owner and current return availability, current Giada/Angel rosters, actual restricted floating mana, and Goblin current X quote plus authenticated ordering and actual damage/excess/token completion. The existing Crystal option projection is factored without changing its old caller or output. V59 calls it only after the Goblin owner authenticates the current native choice. Unknown hands and concealed underlying printings do not select family facts. Validation recaptures all facts; DTO fields never authorize engine actions.
 
-The projection does not invent new historical Giada counter attribution, a Replica completion journal or whole-world attestation. Existing original input/capture and native continuation boundaries remain the authority limit. Current rosters and an available return are labelled as current facts, not completed operations. Goblin retains its explicit unsupported creature-plus-planeswalker recipient boundary. The shared checked PT evaluator is reused, with its documented remaining writer limits. Snack retains the existing representable positive-gain-sum projection limit. Goblin historical validation can replay existing owned execution, so its cost is not claimed constant.
+The projection does not invent new historical Giada counter attribution, a Replica completion journal or whole-world attestation. Existing original input/capture and native continuation boundaries remain the authority limit. Current rosters and an available return are labelled as current facts, not completed operations. Goblin retains its explicit unsupported creature-plus-planeswalker recipient boundary. The shared checked PT evaluator is reused, with its documented remaining writer limits. Snack now retains the exact positive-gain sum as a checked u128 transported in four little-endian u32 limbs. The native one-event loss and frozen Conqueror V49 amount still require their bounded wide successors before Full admission. Goblin historical validation can replay existing owned execution, so its cost is not claimed constant.
 
 Eight new source fixture groups cover genuine paid casts at both seats, actual Goblin damage/excess and both numeric-prevention orders with a labelled existing shield operand, stolen Infernal controller versus return owner, actual Giada Angel entry and restricted mana, independent hidden/face-down worlds, and paid Season/Replication/Witness with both actual expanded Aura choices. Serialized original/restore forward states, exact option order, public forgeries, foreign definition fields and closed JSON are asserted. Control, death and shield support primitives are explicitly labelled; no extra paid issuer is claimed.
 
 Observed checks are pinned Rust 1.94.1 formatting/parser, static complete 72-field closure and diff checks only. All new Rust remains uncompiled and unrun. This is not a V59 observation/session/Human/RPC/model consumer, Full qualification, profile/export, sampling/search/training or issue completion.
 
 The pending-cast repair reads selected public target contracts and optional X from the authenticated PendingCast, rather than its deliberately empty placeholder. No target-dependent Goblin resolution quote is emitted until real announcement/payment finalizes. A genuine both-seat target prompt, X prompt, accepted-X stage and finalized paid spell are captured and serialized before their actual resolution replay.
+
+
+The exact-total prerequisite starts from reviewed future `48046a754`. Native
+committed positive LifeGain amounts remain i32. There is no universal u32
+history-length guard; a Vec allocation on the supported at-most-64-bit targets
+has fewer than 2^63 members. The sum is therefore below 2^94, so u128 covers
+all native histories without a narrower artificial count limit. Public V58,
+V59 Human and V6 fields use closed `GainTotalV58 { limbs: [u32; 4] }` values,
+which the existing integral numeric tree preserves exactly. Current captures
+and bindings still recapture the full actual history and original controller;
+no caller total, cache or new execution permission is introduced.
+
+A genuine paid both-seat source fixture commits three one-billion gains with
+intervening losses. Every event and intermediate life value is representable;
+the exact three-billion aggregate survives serialized restore and both viewer
+captures, and a changed high limb refuses read-only. Explicit representation
+primitives additionally preserve adjacent totals above u64 through serde and
+numeric tensors; these do not claim to allocate an impossible test history.
+The previous aggregate-error assertions are superseded, while the real target
+life overflow, countered-ability and illegal-target-before-evaluation checks
+remain. The next prerequisite must preserve one loss occurrence and Conqueror's
+exact corresponding gain using a distinct successor to frozen V49, never split
+or omit those events. All five metadata capabilities remain Partial. Rust and
+native execution of this checkpoint remain uncompiled/unrun.

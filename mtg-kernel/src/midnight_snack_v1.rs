@@ -141,7 +141,10 @@ pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
 
 /// Read the existing independently validated current-turn boundary. No running
 /// total, first-gain ordinal, public projection, or new journal is authority.
-pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<i32, String> {
+// Each positive event is at most i32::MAX. A Vec allocation contains at most
+// isize::MAX bytes, hence fewer than 2^63 events on supported <=64-bit targets.
+// The exact positive sum is below 2^94 even without a narrower journal index.
+pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<u128, String> {
     crate::life_loss_turn_v1::validate(state)?;
     let boundary = state
         .engine
@@ -159,12 +162,12 @@ pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<i3
     }
     state.engine.event_history[boundary + 1..]
         .iter()
-        .try_fold(0_i32, |total, e| match e {
+        .try_fold(0_u128, |total, e| match e {
             CommittedEvent::LifeGain {
                 player: gained,
                 amount,
             } if *gained == player && *amount > 0 => total
-                .checked_add(*amount)
+                .checked_add(u128::from(amount.unsigned_abs()))
                 .ok_or_else(|| "Midnight Snack gain sum overflow".into()),
             _ => Ok(total),
         })
@@ -191,6 +194,9 @@ fn legal_loss(
         return Err("Midnight Snack target changed".into());
     }
     let total = gained_this_turn(state, controller)?;
+    // The existing one-event life-loss representation is checked separately
+    // from the exact turn aggregate. Its wide successor remains separate work.
+    let total = i32::try_from(total).map_err(|_| "Midnight Snack loss requires wide event")?;
     state.players[target.index()]
         .life
         .checked_sub(total)

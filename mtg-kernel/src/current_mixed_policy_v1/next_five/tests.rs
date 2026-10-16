@@ -871,6 +871,30 @@ fn next_five_exact_full_width_public_operands_preserve_every_bit() {
             );
         }
     }
+    // Explicit representation primitives, not a claim that this fixture
+    // allocated a greater-than-u64 native event history. Adjacent exact totals
+    // must remain distinct through serde and integral numeric operands.
+    for total in [
+        u128::from(u64::MAX),
+        u128::from(u64::MAX) + 1,
+        (1_u128 << 94) - 1,
+    ] {
+        let exact = crate::midnight_snack_public_v58::GainTotalV58::from(total);
+        let value = serde_json::to_value(exact).unwrap();
+        assert_eq!(
+            serde_json::from_value::<crate::midnight_snack_public_v58::GainTotalV58>(value.clone())
+                .unwrap()
+                .value(),
+            total
+        );
+        let tree = super::super::NumericTree::encode(&value).unwrap();
+        assert!(tree.tensors().iter().flatten().all(|v| v.is_finite()));
+        let prior = serde_json::to_value(crate::midnight_snack_public_v58::GainTotalV58::from(
+            total - 1,
+        ))
+        .unwrap();
+        assert_ne!(tree, super::super::NumericTree::encode(&prior).unwrap());
+    }
     // Closed root validation happens before conversion, never inferred from a
     // matching field count or schema/digest. Every new rule is mandatory.
     for family in crate::rules_meaning_next_five_v59::FamilyV59::ALL {
