@@ -124,8 +124,18 @@ impl EntryChoiceV1 {
         }
         let input = crate::doubling_season_v48::entry_input(state, &counter_proposal)
             .ok_or("entry counter replacement input missing")?;
-        let after =
-            crate::doubling_season_v48::entry_amount(state, Some(&input), self.controller, amount)?;
+        // Fellowship is new native-width storage. Never use the historical
+        // saturating fallback of entry_amount, including without Season.
+        // Retain the captured pre-entry Talent count and Season roster.
+        let doublings = input
+            .entry_talent_doublings
+            .ok_or("fellowship entry lost captured Talent modifiers")?;
+        let scaled = (0..doublings).try_fold(amount, |count, _| {
+            count
+                .checked_mul(2)
+                .ok_or("fellowship entry modifier overflow")
+        })?;
+        let after = input.replaced_count(scaled)?;
         Ok(EntryAmountsV1 {
             chosen,
             before_replacements: amount,

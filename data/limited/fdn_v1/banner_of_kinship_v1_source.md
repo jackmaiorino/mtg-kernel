@@ -41,6 +41,17 @@ read-only, and native Heraldic entry still commits only its printed chosen
 color with zero fellowship. This is primitive coverage, not paid Banner of
 Kinship coverage. Other tests explicitly exercise native counter primitives.
 
+Follow-up Standard fixtures pay for real Innkeeper's Talent casts and level
+activations using Forests, for both seats. A fellowship-only Elf receives the
+actual level-two ward trigger after an opposing paid Lightning Bolt targets
+it; zero and negative fellowship retain the predicate's earlier semantics.
+Without Season, level-three Talent doubles ordinary fellowship amounts, and
+both native transfer and entry quotes refuse overflow rather than saturating.
+The entry overflow fixture uses 31 genuinely paid, levelled Talents and a
+genuinely paid Gingerbrute entry proposal. The fellowship values remain native
+storage/quote primitives, not fabricated printed abilities. The new counter
+kind always uses checked arithmetic; older counter-kind arithmetic is unchanged.
+
 Remaining registration boundary:
 
 1. Add a distinct creature-type entry checkpoint to the existing immediate

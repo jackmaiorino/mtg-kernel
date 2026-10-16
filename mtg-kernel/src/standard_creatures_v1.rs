@@ -7,6 +7,9 @@ use crate::effect::ExecCtx;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Zone};
 
+#[cfg(all(test, feature = "standard-magezero-fixtures"))]
+mod fellowship_talent_tests;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CreatureUpgradeV1 {
@@ -209,10 +212,14 @@ fn apply_counter_transfer(
         .counters
         .revival
         .checked_add(scale(counters.revival)?)?;
-    let fellowship = live
-        .counters
-        .fellowship
-        .checked_add(scale(counters.fellowship)?)?;
+    let fellowship_scaled =
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.fellowship)
+            .ok()?;
+    let fellowship_placed =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, live.controller)
+            .replaced_count(fellowship_scaled)
+            .ok()?;
+    let fellowship = live.counters.fellowship.checked_add(fellowship_placed)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
