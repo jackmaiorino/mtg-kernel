@@ -308,27 +308,40 @@ def profile_gae_requested(request):
 
 def start_barrier(request, qualification):
     """A packed qualification trial's start barrier, or None. Its trial waits after
-    its checks until the pack tool writes `release` ({"go": true} starts it,
-    {"go": false} fails it); the wait is no part of the trial's seconds."""
+    its checks until the pack tool (`owner`, by pid and creation time) writes
+    `release` ({"go": true} starts it, {"go": false} fails it); the wait is no
+    part of the trial's seconds."""
     barrier = request.get("start_barrier")
     if barrier is None:
         return None
+    owner = barrier.get("owner") if type(barrier) is dict else None
     require(qualification and request["kind"] == "training" and type(barrier) is dict
-            and sorted(barrier) == ["ready", "release", "timeout_seconds"]
-            and all(type(barrier[key]) is str and Path(barrier[key]).is_absolute() for key in ("ready", "release")),
-            "a start barrier belongs to a training qualification trial, with absolute paths")
+            and sorted(barrier) == ["owner", "ready", "release", "timeout_seconds"]
+            and all(type(barrier[key]) is str and Path(barrier[key]).is_absolute() for key in ("ready", "release"))
+            and type(owner) is dict and sorted(owner) == ["creation_time", "pid"]
+            and all(type(owner[key]) is int and owner[key] > 0 for key in owner),
+            "a start barrier belongs to a training qualification trial, with absolute paths and its owner")
     positive(barrier["timeout_seconds"], "start barrier timeout")
     return barrier
 
 
-def await_release(barrier, request_path, poll=0.02):
+def await_release(barrier, request_path, poll=0.02, owner_poll=1.0):
     """Records that this trial waits at its start barrier, then waits for the
-    release. Returns the seconds waited."""
+    release. The wait fails once the barrier's owner has ended without releasing
+    it (looked at every `owner_poll` seconds), so a dead pack tool cannot hold the
+    trial and its reservation; the timeout is only a backstop. Returns the seconds
+    waited."""
+    import host_reservation_v1 as reservations
     write(Path(barrier["ready"]), {"request": pin(request_path), "pid": os.getpid()})
-    waited = time.monotonic()
-    release = Path(barrier["release"])
+    waited = looked = time.monotonic()
+    release, owner = Path(barrier["release"]), barrier["owner"]
     while not release.exists():  # the pack tool renames a complete file into place
         require(time.monotonic() - waited <= barrier["timeout_seconds"], "start barrier timed out")
+        if time.monotonic() - looked >= owner_poll:
+            looked = time.monotonic()
+            gone = reservations.process_state(owner["pid"], owner["creation_time"]) == "absent"
+            # A release written just before its owner ended still counts.
+            require(not gone or release.exists(), "the start barrier's pack tool ended without releasing it")
         time.sleep(poll)
     require(read(release) == {"go": True}, "start barrier released without go")
     return time.monotonic() - waited

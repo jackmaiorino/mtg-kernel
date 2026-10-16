@@ -14,9 +14,16 @@ import unittest
 import unittest.mock
 from unittest.mock import patch
 
+import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as dispatch
 
 LINUX = sys.platform.startswith("linux")
+
+
+def owner():
+    """A start barrier's owner: this test process, which stays alive."""
+    pid, creation = reservations.self_identity()
+    return {"pid": pid, "creation_time": creation}
 
 
 def lease_guard_files(folder, pod="testpod", now=None, **guard):
@@ -371,7 +378,7 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         request = self.request(1)
         release = self.root / "release.json"
         request["start_barrier"] = {"ready": str(self.root / "ready.json"), "release": str(release),
-                                    "timeout_seconds": 30}
+                                    "timeout_seconds": 30, "owner": owner()}
         request_ref = self.save(request)
 
         def popen(*args, **kwargs):
@@ -850,15 +857,22 @@ class StartBarrierTests(unittest.TestCase):
 
     def barrier(self, name, **fields):
         return {"ready": str(self.root / f"{name}.ready.json"), "release": str(self.root / "release.json"),
-                "timeout_seconds": 30, **fields}
+                "timeout_seconds": 30, "owner": owner(), **fields}
 
     def test_only_training_qualification_trials_carry_a_barrier(self):
         request = {"kind": "training", "start_barrier": self.barrier("a")}
         self.assertEqual(dispatch.start_barrier(request, True), request["start_barrier"])
         self.assertIsNone(dispatch.start_barrier({"kind": "training"}, False))
-        for value, qualification in ((request, False), (dict(request, kind="evaluation"), True),
-                                     (dict(request, start_barrier=self.barrier("a", ready="a.json")), True),
-                                     (dict(request, start_barrier=self.barrier("a", extra=1)), True)):
+        unowned = self.barrier("a")
+        del unowned["owner"]
+        cases = [(request, False), (dict(request, kind="evaluation"), True),
+                 (dict(request, start_barrier=self.barrier("a", ready="a.json")), True),
+                 (dict(request, start_barrier=self.barrier("a", extra=1)), True),
+                 (dict(request, start_barrier=unowned), True)]
+        for bad in ({"pid": 0, "creation_time": 1}, {"pid": 1, "creation_time": "1"},
+                    {"pid": 1, "creation_time": 1, "extra": 1}, {"pid": 1}, [1, 1]):
+            cases.append((dict(request, start_barrier=self.barrier("a", owner=bad)), True))
+        for value, qualification in cases:
             with self.assertRaisesRegex(ValueError, "start barrier belongs"):
                 dispatch.start_barrier(value, qualification)
         with self.assertRaisesRegex(ValueError, "start barrier timeout"):
@@ -877,6 +891,26 @@ class StartBarrierTests(unittest.TestCase):
         release.unlink()
         with self.assertRaisesRegex(ValueError, "timed out"):
             dispatch.await_release(self.barrier("c", timeout_seconds=0.05), self.request_path, poll=0.01)
+
+    def test_a_trial_stops_waiting_once_its_pack_tool_has_ended(self):
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        creation = reservations.creation_time(ended.pid)  # readable until it is reaped
+        ended.wait()
+        gone = {"pid": ended.pid, "creation_time": creation}
+        self.assertEqual(reservations.process_state(gone["pid"], gone["creation_time"]), "absent")
+        started = time.monotonic()
+        with self.assertRaisesRegex(ValueError, "pack tool ended without releasing it"):
+            dispatch.await_release(self.barrier("a", owner=gone, timeout_seconds=600), self.request_path,
+                                   poll=0.01, owner_poll=0.1)
+        self.assertLess(time.monotonic() - started, 30)  # long before the backstop
+        # A live owner keeps the trial waiting, here until the backstop.
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            dispatch.await_release(self.barrier("b", timeout_seconds=0.3), self.request_path,
+                                   poll=0.01, owner_poll=0.05)
+        # A release its owner wrote before it ended still counts.
+        (self.root / "release.json").write_text('{"go": true}')
+        self.assertGreaterEqual(dispatch.await_release(self.barrier("c", owner=gone), self.request_path,
+                                                       poll=0.01, owner_poll=0.0), 0)
 
 
 TOPOLOGY = [{"cpus": "0-1", "efficiency_class": 1, "smt": True}, {"cpus": "2-3", "efficiency_class": 1, "smt": True},
@@ -901,7 +935,8 @@ class PackChoiceTests(AdmissionTestCase):
         request.update(placement=dict(slot), root=str(self.root / name), cold_root=str(self.root / f"cold-{name}"))
         if barrier:
             request["start_barrier"] = {"ready": str(self.root / f"{name}.ready.json"),
-                                        "release": str(self.root / "release.json"), "timeout_seconds": 600}
+                                        "release": str(self.root / "release.json"), "timeout_seconds": 600,
+                                        "owner": owner()}
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
         native = Path(config["output_directory"])

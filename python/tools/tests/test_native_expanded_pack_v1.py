@@ -316,9 +316,12 @@ class QualifyTests(PackTestCase):
                 self.assertIsNone(barrier)
             else:
                 count = len(read(self.root / "plan.json")["slots"])
-                # The plan's 600 s, plus every packed start's busy retries.
+                # The plan's 600 s, plus every packed start's busy retries, as a backstop:
+                # the barrier names this process (the tool), which a waiting trial watches.
+                pid, creation = pack.reservations.self_identity()
                 self.assertEqual(barrier, {"ready": (self.root / "pack" / f"{name}.ready.json").as_posix(),
-                                           "release": release.as_posix(), "timeout_seconds": 600 + count * 3600})
+                                           "release": release.as_posix(), "timeout_seconds": 600 + count * 3600,
+                                           "owner": {"pid": pid, "creation_time": creation}})
                 self.assertFalse(release.exists())
                 self.assertEqual(state["storage"], [10 * count])  # admitted together, before the first start
             state["calls"].append(("start", name))

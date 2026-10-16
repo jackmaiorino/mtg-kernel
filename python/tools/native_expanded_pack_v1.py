@@ -40,9 +40,9 @@ QUALIFY = "native-expanded-pack-qualify/v1"
 RUN = "native-expanded-pack-run/v1"
 DISPATCHER = str(Path(dispatch.__file__).resolve())
 POLL_SECONDS = 5.0
-POST_POLL_SECONDS = 0.2
 POST_TIMEOUT_CODE = 124
 CREATE_SUSPENDED = 0x4
+PR_SET_CHILD_SUBREAPER = 36
 # A busy refusal spawns nothing: other work on the host ends, and a sibling of
 # this reservation caught before it was recorded is exempt on the next look
 # (as nine_deck_eval_driver_v1 waits it out).
@@ -287,8 +287,10 @@ def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, r
     root.mkdir(parents=True)
     timeout = dispatch.positive(plan["timeout_seconds"], "trial timeout")
     # A packed trial waits at its barrier while the later ones start, each of which
-    # may retry busy refusals.
+    # may retry busy refusals. The barrier names this process, and a trial stops
+    # waiting once it has ended without a release, so the timeout is only a backstop.
     barrier_timeout = timeout + len(pack_slots) * BUSY_RETRIES * BUSY_RETRY_SECONDS
+    pid, creation = reservations.self_identity()
     tag = pin(plan_path)["sha256"][:12]
     solo = [kinds.index(kind) for kind in dict.fromkeys(kinds)]
     requests = {}
@@ -297,7 +299,8 @@ def qualify(plan_path, start_=start, wait_=wait, admit_=admit, topology_=None, r
         if name.startswith("packed-"):  # packed trials start together, after all their checks
             requests[name]["start_barrier"] = {"ready": (root / f"{name}.ready.json").as_posix(),
                                                "release": (root / "release.json").as_posix(),
-                                               "timeout_seconds": barrier_timeout}
+                                               "timeout_seconds": barrier_timeout,
+                                               "owner": {"pid": pid, "creation_time": creation}}
         write(root / f"{name}.request.json", requests[name])
     family = dispatch.workload(read(checked(base["config"])), "training", family=base.get("schedule_family"))
     # The declaration and the host's claims before the solo trials, at the packed
@@ -577,23 +580,51 @@ def post_main(argv):
 
 
 def post_linux(cpu, timeout, command):
-    """The command in its own process group; the group is stopped at the timeout
-    or once the command exits. Returns its exit code, None when stopped."""
+    """The command in this wrapper's process group, the tool's, so a signal to that
+    group (or a host_slots kill or suspension of it) reaches the command too. The
+    wrapper is the subreaper of every process the command starts, so none leaves
+    its reach, not even one in a session of its own: all are stopped at the
+    timeout, once the command exits, and when the wrapper is interrupted or
+    terminated. Returns the command's exit code, None when stopped."""
     dispatch.set_affinity([cpu])  # read back; every process of the command inherits it
-    child = subprocess.Popen(command, start_new_session=True, preexec_fn=lambda: os.nice(10))
-    deadline, stopped = time.monotonic() + timeout, False
-    # Wait without reaping: an unreaped leader keeps its group's id from reuse.
-    while os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-        if time.monotonic() > deadline:
-            stopped = True
-            break
-        time.sleep(POST_POLL_SECONDS)
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "cannot become the post command's subreaper")
+    for number in (signal.SIGINT, signal.SIGTERM):  # unwind through the finally below
+        signal.signal(number, lambda received, _frame: sys.exit(128 + received))
+    child = None
     try:
-        os.killpg(child.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    code = child.wait()
-    return None if stopped else code
+        child = subprocess.Popen(command, preexec_fn=lambda: os.nice(10))
+        return child.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})  # finish stopping first
+        stop_tree(child)
+
+
+def stop_tree(child):
+    """Kills the post command if it still runs and reaps it (keeping its exit code),
+    then every process left that it started: as their subreaper, this wrapper
+    inherits the orphans of each one killed, until it has no child left. A child
+    keeps its pid until this wrapper reaps it, so no kill can reach a reused pid."""
+    if child is not None:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+    while True:
+        try:
+            if os.waitpid(-1, os.WNOHANG)[0]:
+                continue
+        except ChildProcessError:
+            return  # nothing it started is left
+        for row in reservations._rows():
+            if row.ppid == os.getpid():
+                try:
+                    os.kill(row.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        time.sleep(0.01)
 
 
 def post_windows(cpu, timeout, command):

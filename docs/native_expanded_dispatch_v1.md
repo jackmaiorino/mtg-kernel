@@ -209,8 +209,11 @@ Each packed trial carries a `start_barrier`. It waits after all of its checks
 until every packed trial waits, and then they all start; the wait counts in
 neither its seconds nor its wall-time limit, and is limited to the trial
 timeout plus an hour of busy retries per packed trial, since each later trial
-may retry busy refusals before it starts. A trial that ends before the release,
-or fails before the barrier, fails the others. The tool writes `root/pack.json`
+may retry busy refusals before it starts. That limit is only a backstop: the
+barrier names the pack tool by pid and creation time, and a waiting trial fails
+once the tool has ended without releasing it, so a tool that is killed or
+crashes cannot leave its trials holding the host. A trial that ends before the
+release, or fails before the barrier, fails the others. The tool writes `root/pack.json`
 (`native-expanded-cpu-pack/v1`: workload, slots, kinds, the host topology, pins
 of each trial's report and start record, and the host load before the solo
 trials, at the packed trials' release and after them: the reservation's timed
@@ -284,10 +287,13 @@ ends without a receipt, or a supervisor that ends without that record, fails
 the member. A failed member or a STOP file stops new starts, and running
 members finish. The optional post command runs after each member on one of
 the post CPUs at below-normal priority, so a trace overlaps the next member.
-It runs with every process it starts in its own process group on Linux, and
-on Windows in its own one-CPU job nested in the declaration's job, whose
-affinity is read back before the command runs. Every process of it still
-running when it exits or times out is stopped. Post CPUs are declared and
+On Linux it runs in the tool's process group, so a signal to that group (or a
+host_slots kill or suspension of the tool) reaches it too, and its wrapper is
+the subreaper of every process it starts. On Windows it runs in its own
+one-CPU job nested in the declaration's job, whose affinity is read back
+before the command runs. Every process of it still running when it exits or
+times out, or when its wrapper is interrupted or terminated, is stopped, on
+Linux even one that started a session of its own. Post CPUs are declared and
 share no physical core with a slot. In the command,
 `{name}`, `{report}` and `{request_root}` are replaced and other text, braces
 included, stays. A post command that fails, cannot start or outlives
