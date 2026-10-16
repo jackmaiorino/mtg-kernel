@@ -36,9 +36,9 @@ The next authorized genuine execution can distinguish:
   an error after removing the row and restored it before preserving its halt.
 
 The labels expose no source ID, printing, actor, hand, continuation operands or
-dynamic error text. They grant no owning authority. A production repair still
-needs evidence of the actual rejection and must retain authenticated public
-validation plus the genuine native removal/restore contract. No SSH, Cargo,
+dynamic error text. They grant no owning authority. Attribution of the retained
+halt still needs its actual rejecting branch. A production repair must retain
+authenticated public validation plus the genuine native removal/restore contract. No SSH, Cargo,
 CI/native launch or observer was run or changed for this diagnostic.
 
 ## Separate native contract repair
