@@ -9905,6 +9905,12 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if crate::leyline_axe_v1::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        let source = ObjectId(0);
+        state.engine.halted = Some((mechanic, source));
+        return Decision::Halted { mechanic, source };
+    }
     if halt_on_invalid_battlefield_pt(state) {
         let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
         return Decision::Halted { mechanic, source };
@@ -10155,6 +10161,16 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
                         Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
                     continue;
                 }
+            }
+        }
+
+        match crate::leyline_axe_v1::drain_or_decide(state) {
+            Ok(Some(decision)) => return decision,
+            Ok(None) => {}
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                continue;
             }
         }
 
@@ -20243,6 +20259,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     crate::drake_hatcher_v1::custody::validate(state)?;
@@ -20258,6 +20275,12 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::krenko_v1::validate_state(state)?;
     crate::fishing_pole_v39::lifecycle::validate_state(state)?;
     crate::twinflame_tyrant_v1::combat::validate(state)?;
+    if state.leyline_opening_v1.is_some() {
+        return crate::leyline_axe_v1::answer(state, action);
+    }
+    if crate::leyline_axe_v1::requires_initial_advance(state)? {
+        return Err("complete the actual opening-hand checkpoint before gameplay".into());
+    }
     if crate::twinflame_tyrant_v1::combat::has_pending(state) {
         if crate::drake_hatcher_v1::custody::relevant(state) {
             return crate::linked_aura_operation_v1::step(state, action);

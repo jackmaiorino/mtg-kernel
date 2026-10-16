@@ -134,6 +134,11 @@ pub fn producer_sha256_v2() -> String {
             "effect/harvester_v1.rs",
             include_str!("effect/harvester_v1.rs"),
         ),
+        ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+        (
+            "london_mulligan_v1.rs",
+            include_str!("london_mulligan_v1.rs"),
+        ),
         ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
         (
             "soul_shackled_zombie_v1.rs",

@@ -1937,6 +1937,10 @@ pub enum CommittedEvent {
         move_history_index: Option<u64>,
         source: crate::state::AbilitySourceContractV4,
     },
+    /// Private native pregame custody, never a public committed event.
+    LeylineOpeningV1 {
+        record: crate::leyline_axe_v1::RecordV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

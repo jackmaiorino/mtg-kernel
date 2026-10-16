@@ -3131,11 +3131,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience, Abyssal Harvester, Progenitus and Etali, Primal Storm Partial registrations at 457-481.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience, Abyssal Harvester, Progenitus, Etali, Primal Storm and Leyline Axe Partial registrations at 457-482.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                482
+                483
             } else {
                 192
             }
@@ -3617,6 +3617,7 @@ mod tests {
                 (479, "Abyssal Harvester"),
                 (480, "Progenitus"),
                 (481, "Etali, Primal Storm"),
+                (482, "Leyline Axe"),
             ]
         } else {
             &[]

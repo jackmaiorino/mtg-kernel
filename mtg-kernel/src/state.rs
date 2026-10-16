@@ -2301,6 +2301,10 @@ pub struct GameState {
     /// an end step. Absent until the first such schedule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nine_lives_delayed_v1: Option<Vec<NineLivesDelayedReturnV1>>,
+    /// Native opening-hand action after London keeps, before turn one.
+    /// Historical games and hands without this printing retain absence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2557,6 +2561,10 @@ impl Hash for GameState {
             "nine-lives-delayed/v1".hash(state);
             delayed.hash(state);
         }
+        if let Some(opening) = &self.leyline_opening_v1 {
+            "leyline-opening/v1".hash(state);
+            opening.hash(state);
+        }
     }
 }
 
@@ -2767,6 +2775,7 @@ impl GameState {
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
             nine_lives_delayed_v1: None,
+            leyline_opening_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
