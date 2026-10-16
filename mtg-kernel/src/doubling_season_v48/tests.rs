@@ -301,16 +301,32 @@ fn cast_season(state: &mut GameState, actor: PlayerId) -> ObjectId {
     );
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
     for _ in 0..32 {
+        let decision = engine::advance_until_decision(state);
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
         if state.objects.get(source).zone == Zone::Battlefield {
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert!(state.engine.pending_cast.is_none());
+            assert!(state.stack.is_empty());
             return source;
         }
-        assert!(matches!(
-            engine::advance_until_decision(state),
-            Decision::CastSpellOrPass { .. }
-        ));
         engine::step(state, Action::Pass).unwrap();
     }
     panic!("actual Season spell did not resolve");
+}
+
+/// Initial physical Stack setup for entry primitives only. This creates no
+/// spell row, cast permission, cost payment, or printed X ability.
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn physical_stack_primitive(state: &mut GameState, owner: PlayerId, name: &str) -> ObjectId {
+    let source = put(state, owner, name, Zone::Hand);
+    assert_eq!(state.players[owner.index()].hand.pop(), Some(source));
+    state.objects.get_mut(source).zone = Zone::Stack;
+    source
 }
 
 #[test]
@@ -1087,11 +1103,10 @@ fn shared_x_entry_primitives_initialize_before_observers_with_full_native_count_
                     ProposedEvent::zone_change(season, Zone::Battlefield),
                 );
                 let host = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
-                let source = put(
+                let source = physical_stack_primitive(
                     &mut state,
                     actor,
                     if attached { "Pacifism" } else { "Forest" },
-                    Zone::Stack,
                 );
                 let mut ctx = ExecCtx::no_targets(source, actor);
                 ctx.x_value = original;
@@ -1310,7 +1325,7 @@ fn nonowned_stack_entry_samples_actual_spell_controller_not_owner() {
                 &mut state,
                 ProposedEvent::zone_change(season, Zone::Battlefield),
             );
-            let source = put(&mut state, owner, "Mossborn Hydra", Zone::Stack);
+            let source = physical_stack_primitive(&mut state, owner, "Mossborn Hydra");
             // Declared physical Stack-controller boundary. No synthetic cast
             // permission or paid receipt is claimed for the foreign card.
             state.objects.get_mut(source).controller = actor;
