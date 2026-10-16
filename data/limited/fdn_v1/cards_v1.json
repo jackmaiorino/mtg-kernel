@@ -8386,6 +8386,40 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Loot, Exuberant Explorer",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}",
+      "mana_value": 3,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Beast",
+        "Noble"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "additional_land_own_turn_effective_source",
+        "activated_private_top_six_creature_mv_at_most_controlled_lands_battlefield_random_bottom"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LootExuberantExplorer.java",
+      "decks": [
+        "FDN_reference_loot_exuberant_explorer_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

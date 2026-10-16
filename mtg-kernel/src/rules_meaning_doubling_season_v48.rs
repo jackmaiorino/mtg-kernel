@@ -68,6 +68,8 @@ pub fn producer_sha256() -> String {
             include_str!("standard_creatures_v1.rs"),
             include_str!("effect.rs"),
             include_str!("effect/curator_v1.rs"),
+            include_str!("effect/loot_v1.rs"),
+            include_str!("effect/squad_rallier_resolution_v1.rs"),
             include_str!("planeswalker_v1.rs"),
             include_str!("continuous_characteristics_v1.rs"),
             include_str!("standard_cards_v1.rs"),

@@ -3496,6 +3496,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     Some(match name {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
+        "Loot, Exuberant Explorer" => program("None", "MoveObject(ThisSource,Battlefield);effectiveActivePrintedSource:oneAdditionalLandOwnTurn:currentController:stackingAllowanceNoCountRefund;activated4GGT:privateTop6:optionalRevealCreatureMvAtMostResolutionControlledLandsToBattlefield:randomBottomRest", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Curator of Destinies" => program("None", "MoveObject(ThisSource,Battlefield);etb:event_time_original_source_controller:lookTop5Private:controllerSeparatesFaceDownAndFaceUp:revealOnlyFaceUp:opponentChoosesHandPile:ownerOrdersOtherGraveyardPile:originalTopIncarnations:checkedNativeMoves;cannotBeCountered;flying", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Electroduplicate" => program("ControlledCreature", "copyTargetControlledCreature:currentCopiableFace:permanentCopiableHaste:appendOneRecurringAnyEndStepSelfSacrificeAbility:checkedMultiplicity:beforeEntryObservers:replacementBatch;flashback:2RR", "EffectOp::ElectroduplicateCopyV1"),
         "Consuming Aberration" => program("None", "MoveObject(ThisSource,Battlefield);cda_all_zones:power_and_toughness_equal_all_opponents_graveyard_physical_cards;controller_cast_spell:each_opponent_reveal_through_first_land_then_owner_ordered_graveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -5020,6 +5021,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             target_spec: "CardInGraveyards",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
+        }],
+        "Loot, Exuberant Explorer" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{4}{G}{G}"), AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::StandardProgram("crate::effect::loot_v1::program"),
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "None", activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
         "Squad Rallier" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{2}{W}")],
