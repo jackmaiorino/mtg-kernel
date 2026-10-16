@@ -35,15 +35,18 @@ struct CollectorV1 {
 /// Bounded dynamic scheduling with no shared model lock and no worker left
 /// alive on return. A failed job or panic cancels new dispatch; already active
 /// jobs join before the caller can attempt an update or publish completion.
-fn ordered_parallel_jobs_v1<W, T, F>(
+/// A worker that finds no job left calls `on_idle` once before it stops.
+fn ordered_parallel_jobs_v1<W, T, F, I>(
     contexts: Vec<W>,
     job_count: usize,
     work: F,
+    on_idle: I,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
 where
     W: Send,
     T: Send,
     F: Fn(&mut W, usize) -> Result<T, String> + Sync,
+    I: Fn() + Sync,
 {
     ensure(
         !contexts.is_empty() && contexts.len() <= job_count,
@@ -58,6 +61,7 @@ where
             let next = &next;
             let cancelled = &cancelled;
             let work = &work;
+            let on_idle = &on_idle;
             let spawned = thread::Builder::new()
                 .name(format!("expanded-collector-{worker}"))
                 .stack_size(8 * 1024 * 1024)
@@ -68,6 +72,9 @@ where
                     while !cancelled.load(Ordering::Acquire) {
                         let index = next.fetch_add(1, Ordering::Relaxed);
                         if index >= job_count || cancelled.load(Ordering::Acquire) {
+                            if index >= job_count {
+                                on_idle();
+                            }
                             break;
                         }
                         let started = Instant::now();
@@ -110,8 +117,9 @@ where
         }
         let mut ordered: Vec<Option<T>> = (0..job_count).map(|_| None).collect();
         let mut timings = Vec::with_capacity(handles.len());
-        // Join every child even after an error. There is no background work
-        // that could race the scheduler's next collection or update phase.
+        // Join every child even after an error. No collector outlives this
+        // call; `on_idle` may leave parse-ahead helpers running, which publish
+        // nothing and only hand exact parses to later readers.
         for handle in handles {
             match handle.join() {
                 Ok(Ok((results, timing))) => {
@@ -200,8 +208,10 @@ pub(super) fn collect_parallel_v1(
     // `ordered_parallel_jobs_v1` turns into a fatal `Err` that discards
     // every worker's normal `T` return value).
     let ledger: Mutex<Vec<NonNaturalLedgerEntryV1>> = Mutex::new(Vec::new());
-    let collection_result =
-        ordered_parallel_jobs_v1(contexts, episodes.len(), |collector, index| {
+    let collection_result = ordered_parallel_jobs_v1(
+        contexts,
+        episodes.len(),
+        |collector, index| {
             let episode = &episodes[index];
             eprintln!(
                 "collect parallel episode {}/{} {}",
@@ -249,14 +259,21 @@ pub(super) fn collect_parallel_v1(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .extend(entries);
-            // Publish directly from each private worker so completed tensors
-            // do not accumulate in RAM while an earlier episode is running.
-            publish_json(
+            // Publish directly from each private worker. The published bytes,
+            // at most one batch of them, wait for idle workers to parse them
+            // ahead of validation and the update (`trajectory_parse_ahead_v1`).
+            let bytes = serde_json::to_vec(&trajectory).map_err(err)?;
+            drop(trajectory);
+            let pin = publish_json_bytes_v1(
                 &output_directory,
                 &format!("episode-{index:04}.json"),
-                &trajectory,
-            )
-        });
+                &bytes,
+            )?;
+            trajectory_parse_ahead_v1::offer_v1(&pin.sha256, bytes);
+            Ok(pin)
+        },
+        trajectory_parse_ahead_v1::start_helper_v1,
+    );
     let mut ledger_entries = ledger
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -317,18 +334,27 @@ mod tests {
         let barrier = Arc::new(Barrier::new(4));
         let active = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
-        let (results, timings) = ordered_parallel_jobs_v1(vec![0usize; 4], 40, |seen, index| {
-            *seen += 1;
-            let concurrent = active.fetch_add(1, Ordering::SeqCst) + 1;
-            peak.fetch_max(concurrent, Ordering::SeqCst);
-            if *seen == 1 {
-                barrier.wait();
-            }
-            active.fetch_sub(1, Ordering::SeqCst);
-            Ok(index * 17)
-        })
+        let idle = AtomicUsize::new(0);
+        let (results, timings) = ordered_parallel_jobs_v1(
+            vec![0usize; 4],
+            40,
+            |seen, index| {
+                *seen += 1;
+                let concurrent = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(concurrent, Ordering::SeqCst);
+                if *seen == 1 {
+                    barrier.wait();
+                }
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(index * 17)
+            },
+            || {
+                idle.fetch_add(1, Ordering::SeqCst);
+            },
+        )
         .unwrap();
         assert_eq!(results, (0..40).map(|i| i * 17).collect::<Vec<_>>());
+        assert_eq!(idle.load(Ordering::SeqCst), 4);
         assert_eq!(peak.load(Ordering::SeqCst), 4);
         assert_eq!(active.load(Ordering::SeqCst), 0);
         assert_eq!(timings.len(), 4);
@@ -343,35 +369,50 @@ mod tests {
     fn phase1_parallel_jobs_return_error_and_join_active_workers() {
         let active = AtomicUsize::new(0);
         let barrier = Barrier::new(2);
-        let result = ordered_parallel_jobs_v1(vec![(); 2], 20, |_, index| {
-            active.fetch_add(1, Ordering::SeqCst);
-            if index < 2 {
-                barrier.wait();
-            }
-            active.fetch_sub(1, Ordering::SeqCst);
-            if index == 0 {
-                Err("deliberate failure".to_string())
-            } else {
-                Ok(index)
-            }
-        });
+        let result = ordered_parallel_jobs_v1(
+            vec![(); 2],
+            20,
+            |_, index| {
+                active.fetch_add(1, Ordering::SeqCst);
+                if index < 2 {
+                    barrier.wait();
+                }
+                active.fetch_sub(1, Ordering::SeqCst);
+                if index == 0 {
+                    Err("deliberate failure".to_string())
+                } else {
+                    Ok(index)
+                }
+            },
+            // The other worker may run out of jobs before the failure is
+            // visible to it; idle work then starts and must not disturb the
+            // reported error.
+            || (),
+        );
         assert!(result.unwrap_err().contains("deliberate failure"));
         assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn phase1_parallel_jobs_convert_panic_to_failure() {
-        let result = ordered_parallel_jobs_v1(vec![(); 2], 4, |_, index| {
-            assert_ne!(index, 0, "deliberate panic");
-            Ok(index)
-        });
+        let result = ordered_parallel_jobs_v1(
+            vec![(); 2],
+            4,
+            |_, index| {
+                assert_ne!(index, 0, "deliberate panic");
+                Ok(index)
+            },
+            || (),
+        );
         assert!(result.unwrap_err().contains("worker panicked"));
     }
 
     #[test]
     fn phase1_parallel_jobs_reject_invalid_dimensions() {
         for (workers, jobs) in [(0, 1), (2, 1), (1, 0)] {
-            assert!(ordered_parallel_jobs_v1(vec![(); workers], jobs, |_, i| Ok(i)).is_err());
+            assert!(
+                ordered_parallel_jobs_v1(vec![(); workers], jobs, |_, i| Ok(i), || ()).is_err()
+            );
         }
         assert!(validate_collection_workers_v1(0).is_err());
         assert!(validate_collection_workers_v1(1025).is_err());
@@ -403,6 +444,150 @@ mod tests {
         assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(invalid).is_err());
         parallel.as_object_mut().unwrap().remove("workers");
         assert!(serde_json::from_value::<ExpandedTrainingCommandV1>(parallel).is_err());
+    }
+
+    /// A five-game parallel collection on two workers under a fresh temporary
+    /// root, returning the root and the published trajectory pins.
+    fn collect_parallel_for_parse_ahead_test_v1(label: &str) -> (PathBuf, Vec<PinnedFileV1>) {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+        let root = std::env::temp_dir().join(format!(
+            "expanded-collect-parallel-{label}-{}",
+            std::process::id()
+        ));
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+        };
+        let deck = |id: &str| {
+            let registration =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            let cards = registration.registered_configuration();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        };
+        let decks = [deck("Affinity"), deck("Terror")];
+        let episodes: Vec<_> = (0..5u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("{label}-{index}"),
+                seed: 2_026_101_600 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: 0,
+                opponent: None,
+                opponent_kind: None,
+                opponent_search: None,
+                registered: decks.clone(),
+                selected: decks.clone(),
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+            })
+            .collect();
+        let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+            source,
+            episodes,
+            workers: 2,
+            max_non_natural_episode_fraction: 0.0,
+            collection_sampler: CollectionSamplerV1::Legacy,
+            output_directory: root.join("collect"),
+        })
+        .unwrap();
+        let pins = serde_json::from_value(result["trajectories"].clone()).unwrap();
+        (root, pins)
+    }
+
+    /// Parse-ahead end to end: every trajectory a parallel collection
+    /// publishes is offered under its pin and parsed by idle workers, and
+    /// validation's fields and the update's reader receive exactly a fresh
+    /// parse of the file.
+    #[test]
+    fn parallel_collection_parses_its_trajectories_ahead_for_both_readers() {
+        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
+        for pin in &pins {
+            trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
+        }
+        let read = read_trajectory_batch_v1(&pins, 2).unwrap();
+        for (pin, trajectory) in pins.iter().zip(&read) {
+            let bytes = fs::read(&pin.path).unwrap();
+            let fresh: ExpandedTrajectoryV1 = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                serde_json::to_vec(trajectory).unwrap(),
+                serde_json::to_vec(&fresh).unwrap()
+            );
+            let document: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                take_collection_fields_v1(&pin.sha256, &bytes),
+                Some(CollectionTrajectoryFieldsV1::of_document_v1(&document))
+            );
+            assert_eq!(
+                trajectory_parse_ahead_v1::served_for_test_v1(&pin.sha256),
+                [true, true]
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Stage 1's failure-order check for parse-ahead (collab actor-learner
+    /// design v1, section 2.6): a trajectory changed after it was parsed
+    /// ahead fails the update's reader with exactly the error the reader
+    /// gives without parse-ahead, since the pin check comes first; the held
+    /// parse is never handed to a reader of other bytes; and once the
+    /// published bytes are back, it is served to them.
+    #[test]
+    fn a_trajectory_changed_after_its_parse_ahead_fails_its_readers_as_before() {
+        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
+        for pin in &pins {
+            trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
+        }
+        let original = fs::read(&pins[1].path).unwrap();
+        let mut changed = original.clone();
+        let middle = changed.len() / 2;
+        changed[middle] ^= 1;
+        fs::write(&pins[1].path, &changed).unwrap();
+        // The pin check's error, which the two-worker reader reports with the
+        // file's position, as it did before parse-ahead.
+        let expected = format!(
+            "preparation group 1: {}",
+            read_pinned_bytes(&pins[1]).unwrap_err()
+        );
+        assert_eq!(read_trajectory_batch_v1(&pins, 2).unwrap_err(), expected);
+        assert_eq!(take_collection_fields_v1(&pins[1].sha256, &changed), None);
+        assert_eq!(
+            trajectory_parse_ahead_v1::served_for_test_v1(&pins[1].sha256),
+            [false, false]
+        );
+        fs::write(&pins[1].path, &original).unwrap();
+        let read = read_trajectory_batch_v1(&pins, 2).unwrap();
+        let fresh: ExpandedTrajectoryV1 = serde_json::from_slice(&original).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&read[1]).unwrap(),
+            serde_json::to_vec(&fresh).unwrap()
+        );
+        assert_eq!(
+            trajectory_parse_ahead_v1::served_for_test_v1(&pins[1].sha256),
+            [false, true]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Mirrors `expanded_deck_training_v1::tests::
@@ -597,7 +782,7 @@ mod tests {
         for workers in [2, 4] {
             let contexts = (0..workers).map(|_| context()).collect();
             let (parallel, _) =
-                ordered_parallel_jobs_v1(contexts, episodes.len(), collect).unwrap();
+                ordered_parallel_jobs_v1(contexts, episodes.len(), collect, || ()).unwrap();
             assert_eq!(parallel, serial, "worker count {workers}");
         }
     }
