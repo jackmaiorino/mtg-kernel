@@ -133,22 +133,56 @@ pub(crate) fn lethal_threshold(
     source: crate::ids::ObjectId,
     target: crate::ids::ObjectId,
 ) -> Result<i64, String> {
-    // CR120.10's creature+planeswalker grammar needs a separate implementation.
-    // No current genuine FDN path produces that combination; refuse it if added.
-    if crate::engine::object_has_type(state, target, CardType::Planeswalker) {
-        return Err("excess damage to creature planeswalker requires successor".into());
-    }
+    let creature = creature_lethal_threshold(state, source, target);
+    Ok(intersection(state, target, creature)?
+        .map_or(creature, |input| input.effective_lethal_damage))
+}
+
+pub(crate) fn creature_lethal_threshold(
+    state: &GameState,
+    source: crate::ids::ObjectId,
+    target: crate::ids::ObjectId,
+) -> i64 {
     let live = state.objects.get(target);
     let remaining = (i64::from(crate::engine::effective_toughness(state, target))
         - i64::from(live.damage))
     .max(0);
-    Ok(
-        if crate::engine::has_effective_keyword(state, source, Keywords::DEATHTOUCH) {
-            remaining.min(1)
-        } else {
-            remaining
-        },
-    )
+    if crate::engine::has_effective_keyword(state, source, Keywords::DEATHTOUCH) {
+        remaining.min(1)
+    } else {
+        remaining
+    }
+}
+
+/// CR 120.10: greatest per-type excess means the smaller lethal threshold.
+/// Loyalty is the unsigned incarnation-bound ledger before actual damage.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntersectionV1 {
+    pub schema: String,
+    pub creature_lethal_damage: i64,
+    pub predamage_loyalty: u32,
+    pub effective_lethal_damage: i64,
+}
+pub(crate) fn intersection(
+    state: &GameState,
+    target: crate::ids::ObjectId,
+    creature: i64,
+) -> Result<Option<IntersectionV1>, String> {
+    if !crate::engine::object_has_type(state, target, CardType::Planeswalker) {
+        return Ok(None);
+    }
+    if !crate::engine::object_has_type(state, target, CardType::Creature) {
+        return Err("excess intersection lost creature type".into());
+    }
+    let loyalty = crate::planeswalker_v1::loyalty(state, target)
+        .ok_or("excess intersection lost original loyalty ledger")?;
+    Ok(Some(IntersectionV1 {
+        schema: "mtg-kernel/goblin-excess-intersection/v1".into(),
+        creature_lethal_damage: creature,
+        predamage_loyalty: loyalty,
+        effective_lethal_damage: creature.min(i64::from(loyalty)),
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -161,6 +195,8 @@ pub struct PublicOrderingStageV1 {
     pub original_x: u16,
     pub lethal_damage: i64,
     pub remaining_damage: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intersection: Option<IntersectionV1>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -173,6 +209,8 @@ pub struct PublicCompletedV1 {
     pub actual_damage: i32,
     pub excess: u32,
     pub tokens_created: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intersection: Option<IntersectionV1>,
 }
 pub fn public_ordering_stage(
     state: &GameState,

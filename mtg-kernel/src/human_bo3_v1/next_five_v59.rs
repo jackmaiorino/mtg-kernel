@@ -14,9 +14,9 @@ use std::sync::Arc;
 type Error = HumanDecisionErrorV1;
 
 macro_rules! record {
-    ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+    ($name:ident { $($(#[$attr:meta])* $field:ident : $ty:ty),* $(,)? }) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-        pub struct $name { $(pub $field: $ty),* }
+        pub struct $name { $($(#[$attr])* pub $field: $ty),* }
     };
 }
 
@@ -121,6 +121,8 @@ record!(HumanNextFiveGoblinQuoteV59 {
     target: HumanNextFiveTargetV59,
     target_legal_now: bool,
     creature_lethal_damage_now: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intersection: Option<crate::goblin_negotiation_v1::IntersectionV1>,
     quote_can_change_before_resolution: bool
 });
 record!(HumanNextFiveGoblinOrderingV59 {
@@ -130,7 +132,9 @@ record!(HumanNextFiveGoblinOrderingV59 {
     chooser: PlayerSeatV1,
     original_x: u16,
     lethal_damage: i64,
-    remaining_damage: i32
+    remaining_damage: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intersection: Option<crate::goblin_negotiation_v1::IntersectionV1>
 });
 record!(HumanNextFiveGoblinCompletedV59 {
     source: HumanCardRefV1,
@@ -140,7 +144,9 @@ record!(HumanNextFiveGoblinCompletedV59 {
     lethal_damage: i64,
     actual_damage: i32,
     excess: u32,
-    tokens_created: u64
+    tokens_created: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intersection: Option<crate::goblin_negotiation_v1::IntersectionV1>
 });
 record!(HumanNextFiveSnackCastV59 {
     source: HumanCardRefV1,
@@ -204,6 +210,9 @@ pub enum HumanNextFiveInstructionV59 {
         source_deathtouch_lethal_one: bool,
         no_sba_between_damage_and_tokens: bool,
         one_complete_replacement_batch: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        creature_planeswalker_intersection:
+            Option<crate::rules_meaning_next_five_v59::ExcessIntersectionRuleV59>,
     },
     CopyOriginalTarget {
         controller: crate::rules_meaning_next_five_v59::ActorV59,
@@ -397,6 +406,7 @@ fn instruction(
             source_deathtouch_lethal_one,
             no_sba_between_damage_and_tokens,
             one_complete_replacement_batch,
+            creature_planeswalker_intersection,
         } => HumanNextFiveInstructionV59::CreateExcessGoblins {
             token: HumanNextFiveTokenV59 {
                 printed: token.printed.clone(),
@@ -407,6 +417,7 @@ fn instruction(
             source_deathtouch_lethal_one: *source_deathtouch_lethal_one,
             no_sba_between_damage_and_tokens: *no_sba_between_damage_and_tokens,
             one_complete_replacement_batch: *one_complete_replacement_batch,
+            creature_planeswalker_intersection: creature_planeswalker_intersection.clone(),
         },
         I::CopyOriginalTarget {
             controller,
@@ -674,6 +685,7 @@ fn project_facts(
                 target: target(&r.target, handles)?,
                 target_legal_now: r.target_legal_now,
                 creature_lethal_damage_now: r.creature_lethal_damage_now,
+                intersection: r.intersection.clone(),
                 quote_can_change_before_resolution: r.quote_can_change_before_resolution,
             })
         })
@@ -690,6 +702,7 @@ fn project_facts(
                 original_x: r.original_x,
                 lethal_damage: r.lethal_damage,
                 remaining_damage: r.remaining_damage,
+                intersection: r.intersection.clone(),
             })
         })
         .transpose()?;
@@ -706,6 +719,7 @@ fn project_facts(
                 actual_damage: r.actual_damage,
                 excess: r.excess,
                 tokens_created: r.tokens_created,
+                intersection: r.intersection.clone(),
             })
         })
         .collect::<Result<_, Error>>()?;

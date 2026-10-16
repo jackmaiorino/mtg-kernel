@@ -108,6 +108,8 @@ pub struct GoblinQuoteV59 {
     pub target: TargetV59,
     pub target_legal_now: bool,
     pub creature_lethal_damage_now: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intersection: Option<crate::goblin_negotiation_v1::IntersectionV1>,
     pub quote_can_change_before_resolution: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -481,14 +483,21 @@ fn capture_scoped(
                 let lethal = if legal {
                     match item.targets.first() {
                         Some(Target::Object(id)) => {
-                            Some(crate::goblin_negotiation_v1::lethal_threshold(
+                            Some(crate::goblin_negotiation_v1::creature_lethal_threshold(
                                 state,
                                 item.source,
                                 *id,
-                            )?)
+                            ))
                         }
                         _ => None,
                     }
+                } else {
+                    None
+                };
+                let intersection = if let (Some(creature), Some(Target::Object(id))) =
+                    (lethal, item.targets.first())
+                {
+                    crate::goblin_negotiation_v1::intersection(state, *id, creature)?
                 } else {
                     None
                 };
@@ -502,6 +511,7 @@ fn capture_scoped(
                         .ok_or("V59 Goblin original target missing")?,
                     target_legal_now: legal,
                     creature_lethal_damage_now: lethal,
+                    intersection,
                     quote_can_change_before_resolution: true,
                 });
             }

@@ -194,6 +194,42 @@ class LimitedNextFiveClientV6Test(unittest.TestCase):
         f["goblin_quotes"][0].update(target_legal_now=False,creature_lethal_damage_now=None)
         self.validate(visible)
 
+    def test_mock_goblin_intersection_keeps_creature_quote_and_closed_unsigned_formula(self):
+        visible=self.visible(); facts=visible["next_five"]
+        spell=ref("goblin-stack","Goblin Negotiation",zone="Stack")
+        target=ref("dual","Explicit mock creature planeswalker",owner="p1",controller="p1")
+        facts["casts"]=[dict(family="Goblin",source=spell,original_controller="p0",is_copy=False,
+                             payment_pending=False,x=3,targets=[{"Object":target}])]
+        input=dict(schema="mtg-kernel/goblin-excess-intersection/v1",creature_lethal_damage=4,
+                   predamage_loyalty=1,effective_lethal_damage=1)
+        facts["goblin_quotes"]=[dict(source=spell,original_controller="p0",original_x=3,target={"Object":target},
+            target_legal_now=True,creature_lethal_damage_now=4,quote_can_change_before_resolution=True,intersection=input)]
+        self.validate(visible)
+        for key,value in (("predamage_loyalty",False),("predamage_loyalty",1<<32),
+                          ("effective_lethal_damage",4),("creature_lethal_damage",3),
+                          ("schema","unknown"),("arena_id",9)):
+            changed=deepcopy(visible);changed["next_five"]["goblin_quotes"][0]["intersection"][key]=value
+            with self.subTest(key=key),self.assertRaises(LimitedSessionError): self.validate(changed)
+        input.update(predamage_loyalty=(1<<32)-1,effective_lethal_damage=4)
+        self.validate(visible)
+        for kind in ("goblin_ordering","goblin_completed"):
+            changed=deepcopy(visible)
+            row=dict(source=spell,target=target,controller="p0",original_x=3,lethal_damage=4,intersection=deepcopy(input))
+            if kind=="goblin_ordering":
+                row.update(chooser="p1",remaining_damage=3)
+                changed["next_five"]["viewer"]="p1"
+                changed["next_five"]["snack"]["viewer"]="p1"
+                changed["next_five"]["goblin_ordering_options"]=[dict(kind="shield",source=target,shield_remaining=1)]
+            else:
+                row.update(actual_damage=6,excess=2,tokens_created=2)
+            changed["next_five"][kind]=row if kind=="goblin_ordering" else [row]
+            # Check the strict row grammar independently of unrelated actor mocks.
+            from limited_next_five_session_v6 import _shape, ORDERING, COMPLETED
+            _shape(row,ORDERING if kind=="goblin_ordering" else COMPLETED,kind)
+            row["lethal_damage"]=1
+            with self.assertRaises(LimitedSessionError):
+                _shape(row,ORDERING if kind=="goblin_ordering" else COMPLETED,kind)
+
     def test_expanded_aura_each_host_may_repeat_and_accepted_answer_remains_pending(self):
         visible=self.visible(); f=visible["next_five"]
         source=ref("replica","Extravagant Replication")

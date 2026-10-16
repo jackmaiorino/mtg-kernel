@@ -86,6 +86,13 @@ pub struct TokenV59 {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ExcessIntersectionRuleV59 {
+    pub schema: String,
+    pub greatest_of_creature_and_planeswalker_excess: bool,
+    pub planeswalker_uses_predamage_unsigned_loyalty: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum InstructionV59 {
     PayPrintedMana,
     MoveOriginalSpellToBattlefieldUnderCaster,
@@ -99,6 +106,8 @@ pub enum InstructionV59 {
         source_deathtouch_lethal_one: bool,
         no_sba_between_damage_and_tokens: bool,
         one_complete_replacement_batch: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        creature_planeswalker_intersection: Option<ExcessIntersectionRuleV59>,
     },
     CopyOriginalTarget {
         controller: ActorV59,
@@ -218,6 +227,8 @@ pub fn producer_sha256() -> String {
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
             include_str!("planeswalker_v1.rs"),
+            include_str!("human_bo3_v1/next_five_v59.rs"),
+            include_str!("../../python/tools/limited_next_five_session_v6.py"),
         ] {
             h.update((part.len() as u64).to_le_bytes());
             h.update(part.as_bytes());
@@ -304,6 +315,11 @@ pub fn printed_meaning(family: FamilyV59) -> Result<MeaningV59, String> {
                     source_deathtouch_lethal_one: true,
                     no_sba_between_damage_and_tokens: true,
                     one_complete_replacement_batch: true,
+                    creature_planeswalker_intersection: Some(ExcessIntersectionRuleV59 {
+                        schema: "rules-meaning/goblin-excess-intersection/v1".into(),
+                        greatest_of_creature_and_planeswalker_excess: true,
+                        planeswalker_uses_predamage_unsigned_loyalty: true,
+                    }),
                 },
             ]);
         } else {

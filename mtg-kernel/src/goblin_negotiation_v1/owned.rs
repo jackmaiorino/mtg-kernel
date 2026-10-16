@@ -9,7 +9,7 @@ use crate::ids::ObjectId;
 use crate::state::{GameObject, StackTargetContractV4, Zone};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaptureV1 {
     pub previous: u32,
     pub history_start: u32,
@@ -22,6 +22,28 @@ pub struct CaptureV1 {
     pub deathtouch: bool,
     pub lethal: i64,
     pub replacement: crate::doubling_season_v48::ReplacementInputV48,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intersection: Option<super::IntersectionV1>,
+}
+impl std::hash::Hash for CaptureV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        use std::hash::Hash;
+        self.previous.hash(h);
+        self.history_start.hash(h);
+        self.ctx.hash(h);
+        self.op.hash(h);
+        self.path.hash(h);
+        self.source.hash(h);
+        self.target.hash(h);
+        self.toughness.hash(h);
+        self.deathtouch.hash(h);
+        self.lethal.hash(h);
+        self.replacement.hash(h);
+        if let Some(input) = &self.intersection {
+            "goblin-excess-intersection/v1".hash(h);
+            input.hash(h);
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FinishV1 {
@@ -108,6 +130,11 @@ pub(crate) fn capture(
             state,
             ctx.controller,
         ),
+        intersection: super::intersection(
+            state,
+            *target,
+            super::creature_lethal_threshold(state, ctx.source, *target),
+        )?,
     })
 }
 fn actual_damage(
@@ -193,6 +220,16 @@ pub(crate) fn finish(
         .checked_add(amount as u32)
         .ok_or("excess marked damage overflow")?;
     expected_target.v4.deathtouch_damage |= amount > 0 && c.deathtouch;
+    let target_id = target(c)?;
+    if crate::engine::object_has_type(state, target_id, CardType::Planeswalker)
+        != c.intersection.is_some()
+        || c.intersection.as_ref().is_some_and(|input| {
+            crate::planeswalker_v1::loyalty(state, target_id)
+                != Some(input.predamage_loyalty.saturating_sub(amount as u32))
+        })
+    {
+        return Err("excess finishing original loyalty result changed".into());
+    }
     if state.objects.try_get(c.ctx.source) != Some(&c.source)
         || state.objects.try_get(target(c)?) != Some(&expected_target)
     {
@@ -245,6 +282,22 @@ fn validate_capture(c: &CaptureV1, item: &StackItem, ctx: &ExecCtx) -> Result<()
                 && *zone == c.target.zone && *zone_change_count == c.target.zone_change_count
                 && *spell_copy_origin == c.target.spell_copy_origin);
     let remaining = (i64::from(c.toughness) - i64::from(c.target.damage)).max(0);
+    let creature = if c.deathtouch {
+        remaining.min(1)
+    } else {
+        remaining
+    };
+    let lethal = if let Some(input) = &c.intersection {
+        if input.schema != "mtg-kernel/goblin-excess-intersection/v1"
+            || input.creature_lethal_damage != creature
+            || input.effective_lethal_damage != creature.min(i64::from(input.predamage_loyalty))
+        {
+            return Err("excess original intersection operands changed".into());
+        }
+        input.effective_lethal_damage
+    } else {
+        creature
+    };
     if c.ctx != *ctx
         || !c
             .ctx
@@ -253,12 +306,7 @@ fn validate_capture(c: &CaptureV1, item: &StackItem, ctx: &ExecCtx) -> Result<()
         || c.source.controller != ctx.controller
         || !same_incarnation
         || c.target.zone != Zone::Battlefield
-        || c.lethal
-            != if c.deathtouch {
-                remaining.min(1)
-            } else {
-                remaining
-            }
+        || c.lethal != lethal
         || c.replacement.controller != ctx.controller
     {
         return Err("excess original source/target/context/lethal snapshot changed".into());
@@ -373,6 +421,11 @@ pub(crate) fn validate_live_choice(
     validate_capture(&c, &pending.resolving_item, &pending.ctx)?;
     if state.objects.try_get(c.ctx.source) != Some(&c.source)
         || state.objects.try_get(target(&c)?) != Some(&c.target)
+        || super::intersection(
+            state,
+            target(&c)?,
+            super::creature_lethal_threshold(state, c.ctx.source, target(&c)?),
+        )? != c.intersection
     {
         return Err("excess pending source or target incarnation/world changed".into());
     }
@@ -410,6 +463,7 @@ pub(crate) fn public_ordering_stage(
         original_x: c.ctx.x_value,
         lethal_damage: c.lethal,
         remaining_damage: choice.remaining_amount,
+        intersection: c.intersection,
     }))
 }
 pub(crate) fn public_completed(
@@ -454,6 +508,7 @@ pub(crate) fn public_completed(
                 tokens_created: u64::try_from(finish.created.len()).map_err(|_| {
                     crate::rl::RlContractError("excess public token count overflow".into())
                 })?,
+                intersection: c.intersection,
             });
         }
     }
