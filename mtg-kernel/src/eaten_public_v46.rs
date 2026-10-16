@@ -123,6 +123,10 @@ pub fn producer_sha256() -> String {
             include_str!("standard_statics_v1.rs"),
             include_str!("sower_restriction_capture_v1.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

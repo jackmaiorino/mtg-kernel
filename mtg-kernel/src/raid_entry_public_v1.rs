@@ -62,6 +62,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("rl.rs"),
         include_str!("rl_session/raid_entry_v21.rs"),
         include_str!("human_bo3_v1/raid_entry_v21.rs"),
+        include_str!("counter_target_effects_v1.rs"),
+        include_str!("zimone_paradox_sculptor_v1.rs"),
+        include_str!("standard_creatures_v1.rs"),
     ] {
         h.update([0]);
         h.update(s.as_bytes());

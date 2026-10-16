@@ -109,6 +109,19 @@ pub fn producer_sha256_v2() -> String {
         ("effect.rs", include_str!("effect.rs")),
         ("build.rs", include_str!("../build.rs")),
         ("facets.rs", include_str!("rules_vector_v1/facets.rs")),
+        (
+            "counter_target_effects_v1.rs",
+            include_str!("counter_target_effects_v1.rs"),
+        ),
+        (
+            "zimone_paradox_sculptor_v1.rs",
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+        ),
+        (
+            "standard_creatures_v1.rs",
+            include_str!("standard_creatures_v1.rs"),
+        ),
+        ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

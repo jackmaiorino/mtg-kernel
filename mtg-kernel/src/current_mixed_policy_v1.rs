@@ -243,6 +243,9 @@ pub fn feature_identity() -> String {
             include_str!("creature_types_v60.rs"),
             include_str!("../../data/rules/creature_types_v60.json"),
             include_str!("event.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

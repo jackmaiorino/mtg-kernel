@@ -119,7 +119,7 @@ fn paid_ready(actor: PlayerId) -> (GameState, ObjectId) {
     (state, source)
 }
 
-fn select(state: &mut GameState, actor: PlayerId, source: ObjectId, targets: &[ObjectId]) {
+fn select_trigger(state: &mut GameState, actor: PlayerId, source: ObjectId, targets: &[ObjectId]) {
     for (index, target) in targets.iter().enumerate() {
         let decision = engine::advance_until_decision(state);
         assert!(
@@ -153,11 +153,77 @@ fn select(state: &mut GameState, actor: PlayerId, source: ObjectId, targets: &[O
     }
 }
 
+fn select_activation(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    targets: &[ObjectId],
+) {
+    for (index, target) in targets.iter().enumerate() {
+        assert!(matches!(engine::advance_until_decision(state),
+            Decision::ChooseEffectTargets { player, source: original, selected_count,
+                ref legal_targets, can_finish: true, .. }
+            if player == actor && original == source && usize::from(selected_count) == index
+                && legal_targets.contains(&Target::Object(*target))));
+        engine::step(state, Action::ChooseEffectTarget(Target::Object(*target))).unwrap();
+        if index == 0 && targets.len() == 2 {
+            assert!(matches!(
+                engine::advance_until_decision(state),
+                Decision::ChooseEffectTargets {
+                    selected_count: 1,
+                    can_finish: true,
+                    ..
+                }
+            ));
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+            assert_eq!(&restored, state);
+            *state = restored;
+        }
+    }
+    if targets.len() < 2 {
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            }
+        ));
+        engine::step(state, Action::FinishEffectSelection).unwrap();
+    }
+}
+
+fn assert_activation_published(
+    state: &mut GameState,
+    actor: PlayerId,
+    source: ObjectId,
+    targets: &[ObjectId],
+) {
+    // The final optional pick only appends pending targets. Genuine Advance
+    // finalizes payment and publishes the ability before any response scene.
+    assert!(matches!(engine::advance_until_decision(state),
+        Decision::CastSpellOrPass { player, .. } if player == actor));
+    assert!(state.engine.pending_activation.is_none());
+    let item = state.stack.last().unwrap();
+    assert_eq!(item.source, source);
+    assert_eq!(
+        item.targets,
+        targets
+            .iter()
+            .copied()
+            .map(Target::Object)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(item.controller, actor);
+    assert_eq!(item.v4.ability_source_contract.unwrap().controller, actor);
+}
+
 fn activate(state: &mut GameState, actor: PlayerId, source: ObjectId, targets: &[ObjectId]) {
     priority(state, actor);
     let before = tapped_lands(state, actor);
     engine::step(state, Action::ActivateAbility(source, 0)).unwrap();
-    select(state, actor, source, targets);
+    select_activation(state, actor, source, targets);
+    assert_activation_published(state, actor, source, targets);
     assert!(state.objects.get(source).tapped);
     assert_eq!(tapped_lands(state, actor) - before, 2);
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
@@ -290,7 +356,7 @@ fn paid_beginning_combat_zero_one_two_controlled_creatures_and_pending_restore_b
                 quiet(&mut state, decision);
             }
             assert_eq!(state.step, Step::BeginCombat);
-            select(&mut state, actor, source, &[a, b][..count]);
+            select_trigger(&mut state, actor, source, &[a, b][..count]);
             let saved = serde_json::to_vec(&state).unwrap();
             let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
             settle(&mut state);
@@ -482,18 +548,26 @@ fn paid_target_rejection_original_source_departure_and_simultaneous_control_reen
         }
         priority(&mut state, actor);
         engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseEffectTargets { source: original, selected_count: 0, .. }
+                if original == source));
         let before = state.clone();
-        assert!(engine::step(&mut state, Action::ChooseTarget(Target::Object(enemy))).is_err());
+        assert!(engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(enemy))
+        )
+        .is_err());
         assert_eq!(state, before);
-        engine::step(&mut state, Action::ChooseTarget(Target::Object(a))).unwrap();
+        engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(a))).unwrap();
         assert!(
-            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. }
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseEffectTargets { ref legal_targets, .. }
             if !legal_targets.contains(&Target::Object(a)))
         );
         let before = state.clone();
-        assert!(engine::step(&mut state, Action::ChooseTarget(Target::Object(a))).is_err());
+        assert!(engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(a))).is_err());
         assert_eq!(state, before);
-        engine::step(&mut state, Action::ChooseTarget(Target::Object(b))).unwrap();
+        engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(b))).unwrap();
+        assert_activation_published(&mut state, actor, source, &[a, b]);
         let paid = state.clone();
         assert!(paid.objects.get(source).tapped);
         assert_eq!(paid.players[actor.index()].mana_pool, [0; 6]);

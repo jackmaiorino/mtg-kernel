@@ -2120,3 +2120,137 @@ fn genuine_offer_counter_reward_is_one_whole_expanded_entry_roster_for_original_
         }
     }
 }
+
+#[test]
+#[cfg(feature = "standard-magezero-fixtures")]
+fn paid_level_three_talent_checked_counter_placement_keeps_unsigned_loyalty_and_overflow_both_seats(
+) {
+    use crate::engine::{self, Action, Decision};
+    use crate::standard_creatures_v1::{CounterExtrasV1, CounterTransferV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        for _ in 0..12 {
+            put(&mut state, actor, "Forest", Zone::Battlefield);
+        }
+        let recipient = put(&mut state, actor, "Forest", Zone::Battlefield);
+        let overflow = put(&mut state, actor, "Forest", Zone::Battlefield);
+        // Explicit native counter-placement operands. The genuine Standard
+        // catalog supplies Talent, but does not register a fake Zimone joint
+        // printing. This test exercises the shared placement primitive only.
+        for (target, loyalty) in [(recipient, 1_100_000_000), (overflow, 1_500_000_000)] {
+            crate::standard_creatures_v1::place_counters_checked_v1(
+                &mut state,
+                target,
+                actor,
+                CounterTransferV1 {
+                    extras: CounterExtrasV1 {
+                        loyalty,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        let talent = put(&mut state, actor, "Innkeeper's Talent", Zone::Hand);
+        let tapped_before = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .filter(|id| state.objects.get(**id).tapped)
+            .count();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor));
+        engine::step(&mut state, Action::CastSpell(talent)).unwrap();
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.stack.is_empty() && state.objects.get(talent).zone == Zone::Battlefield {
+                assert!(
+                    matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                );
+                break;
+            }
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert_eq!(state.objects.get(talent).zone, Zone::Battlefield);
+        assert_eq!(crate::standard_cards_v1::class_level(&state, talent), 1);
+        for (ability, level) in [(0, 2), (1, 3)] {
+            engine::step(&mut state, Action::ActivateAbility(talent, ability)).unwrap();
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.stack.is_empty() && state.engine.pending_activation.is_none() {
+                    assert!(
+                        matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor)
+                    );
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(crate::standard_cards_v1::class_level(&state, talent), level);
+        }
+        let tapped_after = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .filter(|id| state.objects.get(**id).tapped)
+            .count();
+        assert_eq!(
+            tapped_after - tapped_before,
+            7,
+            "printed cast + level 2 + level 3 costs"
+        );
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert!(!requires_successor(&state), "genuine Talent without Season");
+        let mut restored = restore(&state);
+        for world in [&mut state, &mut restored] {
+            crate::standard_creatures_v1::place_counters_checked_v1(
+                world,
+                recipient,
+                actor,
+                CounterTransferV1 {
+                    extras: CounterExtrasV1 {
+                        loyalty: 1_100_000_000,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                crate::planeswalker_v1::loyalty(world, recipient),
+                Some(3_300_000_000)
+            );
+            let before = world.clone();
+            assert!(crate::standard_creatures_v1::place_counters_checked_v1(
+                world,
+                overflow,
+                actor,
+                CounterTransferV1 {
+                    extras: CounterExtrasV1 {
+                        loyalty: 1_500_000_000,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            )
+            .is_none());
+            assert_eq!(*world, before);
+            assert!(crate::standard_creatures_v1::place_counters_checked_v1(
+                world,
+                overflow,
+                actor,
+                CounterTransferV1 {
+                    counters: crate::state::Counters {
+                        charge: i32::MAX,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            )
+            .is_none());
+            assert_eq!(*world, before);
+        }
+        assert_eq!(state, restored);
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}

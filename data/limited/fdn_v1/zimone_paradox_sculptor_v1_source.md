@@ -40,3 +40,23 @@ transport, export or Full admission is claimed.
 
 Rust source is explicitly uncompiled and unrun. Formatting and Python/static
 checks do not establish runtime correctness or performance.
+
+Source-review repairs preserve the native optional activation protocol:
+`ChooseEffectTargets` / `ChooseEffectTarget` / `FinishEffectSelection`, then
+native Advance and exact public stack-row checks before payment assertions or
+source-departure response scenes. The combat trigger keeps its distinct native
+target-selection protocol. The exhaustive keyed-trigger audit names Zimone.
+
+All 89 existing producer input arrays that directly include Standard, trigger
+or build source now also include the two new child sources and any missing
+counter-transfer/loyalty helper source. Existing array inputs, duplicates,
+ordering and flat or path/source hash framing remain unchanged. Identities
+derive from actual source bytes; no schema or permission is widened.
+
+A seventh fixture in `doubling_season_v48::tests`, gated to the genuine
+Standard catalog, pays Talent's cast and both level costs from real Forests.
+It tests the shared placement primitive with an added unsigned loyalty amount
+above i32, its exact 3.3-billion result, restore equality and unchanged-world
+unsigned and signed overflow refusals. Initial counter operands are labelled
+native primitives. It does not fabricate a Zimone printing in Standard or
+claim runtime verification of a joint Zimone/Talent catalog.
