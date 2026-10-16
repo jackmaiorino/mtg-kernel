@@ -1,0 +1,80 @@
+{
+  "schema": "mtg-kernel/fdn-next-five-full-source-candidate/v59",
+  "status": "unaccepted_source_candidate",
+  "source_base": "29ae13f621aed0e6ef52cfd829f7de01cd764a38",
+  "printing_ids": [
+    452,
+    453,
+    454,
+    455,
+    456
+  ],
+  "printing_names": [
+    "Midnight Snack",
+    "Extravagant Replication",
+    "Infernal Vessel",
+    "Giada, Font of Hope",
+    "Goblin Negotiation"
+  ],
+  "source_catalog_counts": {
+    "definitions": 484,
+    "fdn_rows": 292,
+    "frozen_printings": 286,
+    "frozen_token_dependencies": 24,
+    "pool_full_candidate": 250,
+    "pool_partial": 26,
+    "pool_missing": 10,
+    "registry_partial_including_token": 27
+  },
+  "production_reference_decks": [
+    "FDN_reference_midnight_snack_full_candidate.dck",
+    "FDN_reference_extravagant_replication_full_candidate.dck",
+    "FDN_reference_infernal_vessel_full_candidate.dck",
+    "FDN_reference_giada_full_candidate.dck",
+    "FDN_reference_goblin_negotiation_full_candidate.dck"
+  ],
+  "production_apis": [
+    "NextFiveSessionV59::reset",
+    "current_mixed_policy_v1::NextFiveSession::from_next_five",
+    "HumanNextFiveSessionV59::reset",
+    "kernel_limited_next_five_jsonl/schema6 Reset"
+  ],
+  "runtime_qualified": false,
+  "accepted_full_promotion": false,
+  "sampling_admitted": false,
+  "search_admitted": false,
+  "training_admitted": false,
+  "new_catalog_hash": null,
+  "new_runtime_catalog_sha256": null,
+  "new_native_run_profile": null,
+  "remaining_qualification": [
+    "compile and run all affected native, public, owning, numeric, Human and V6 groups on the exact composed candidate",
+    "run genuine production deck cases for all five and both seats",
+    "actual fresh catalog export and complete printing/capability/roster check",
+    "derive a distinct native run profile from actual export, preserving V88 historical tuple",
+    "actual V6 subprocess replay with current headers and genuine five-card deck inputs",
+    "reconcile original seed123 current qualification separately; a basic-land seed123 game does not qualify these five",
+    "required production CI and default-branch delivery"
+  ],
+  "composition_notes": [
+    "Source counts describe this isolated29ae candidate; later Moon484 and other registered tails require exact inventory reconciliation.",
+    "Original V88 catalog/profile canaries remain frozen and cannot certify this changed catalog.",
+    "Ordinary V49 lost-Runner repair99422 is owned separately by root and must survive final composition alongside the V59 successor."
+  ],
+  "source_test_counts": {
+    "next_five_native_public_owner_human_v6_excluding_numeric": 118,
+    "complete_current_mixed_policy_v1": 162,
+    "next_five_numeric_subset": 27,
+    "unique_combined": 280,
+    "new_production_groups": 4
+  },
+  "observed_checks": {
+    "pinned_formatter": "Rust1.94.1 parser/format only",
+    "python_limited_decks": 97,
+    "python_v6": 20,
+    "python_v7": 11,
+    "python_v8": 4,
+    "rust_compiled": false,
+    "rust_executed": false
+  }
+}

@@ -3130,7 +3130,7 @@ mod tests {
         // batches append through id 472 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
+        // Seven Full candidates retain ids 444-448 and 450-451; five unaccepted Full candidates retain ids 452-456,
         // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience, Abyssal Harvester, Progenitus, Etali, Primal Storm Leyline Axe and Fiend Artisan Partial registrations at 457-483.
         assert_eq!(
             CARD_DEFS.len(),
@@ -3587,11 +3587,6 @@ mod tests {
     fn capability_is_the_fail_closed_source_for_programs_and_deck_preflight() {
         let expected_partial: &[(u16, &str)] = if cfg!(feature = "limited-fdn-fixtures") {
             &[
-                (452, "Midnight Snack"),
-                (453, "Extravagant Replication"),
-                (454, "Infernal Vessel"),
-                (455, "Giada, Font of Hope"),
-                (456, "Goblin Negotiation"),
                 (457, "Alesha, Who Laughs at Fate"),
                 (458, "Nine-Lives Familiar"),
                 (459, "Valkyrie's Call"),

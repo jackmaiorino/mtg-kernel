@@ -261,20 +261,24 @@ fn genuine_reference_inputs_stay_partial_and_full_only_reset_refuses_both_seats(
             deck.extend(std::iter::repeat_n(id, count.parse::<usize>().unwrap()));
         }
         assert_eq!(deck.len(), 40);
-        assert!(card_def::preflight_fully_supported_deck(&deck).is_err());
+        card_def::preflight_fully_supported_deck(&deck).unwrap();
         for actor in [PlayerId::P0, PlayerId::P1] {
-            assert!(NextFiveSessionV59::reset(
+            let owner = NextFiveSessionV59::reset(
                 59,
                 123,
                 (10_000, 10_000),
                 [
                     "actual-partial-reference".into(),
-                    "actual-partial-reference".into()
+                    "actual-partial-reference".into(),
                 ],
                 [deck.clone(), deck.clone()],
-                actor
+                actor,
             )
-            .is_err());
+            .unwrap();
+            assert!(matches!(
+                owner.current_response(),
+                FastActorResponseV1::Decision(_)
+            ));
         }
     }
 }
@@ -1006,5 +1010,83 @@ fn paid_exact_wide_snack_conqueror_panda_numeric_full_native_pair_and_restore_bo
         assert_eq!(gameplay(&owner), before);
         drain(&mut owner);
         assert_eq!(gameplay(&owner), result);
+    }
+}
+
+#[test]
+fn production_five_full_candidate_real_decks_numeric_paid_and_restore_both_seats() {
+    use crate::next_five_public_v59::tests::production as p;
+    use crate::rules_meaning_next_five_v59::FamilyV59;
+    let model = crate::current_mixed_policy_v1::NativeModel::deterministic_fixture().unwrap();
+    for family in FamilyV59::ALL {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut owner = NextFiveSession::from_next_five(p::owner(family, actor));
+            let mut native = p::native(family, actor);
+            let mut source = None;
+            let mut before = 0;
+            let mut saved = None;
+            let mut replay_completed = false;
+            let mut completed_once = None;
+            let mut foreign = NextFiveSession::from_next_five(p::owner(family, actor));
+            assert!(foreign.restore(&owner.snapshot()).is_err());
+            for _ in 0..4096 {
+                assert_eq!(owner.current_response(), native.current_response());
+                assert_eq!(owner.fixture_state(), native.next_five_fixture_state());
+                assert_eq!(
+                    owner.fixture_counts(),
+                    (native.policy_step_count(), native.physical_decision_count())
+                );
+                if let Some(id) = source {
+                    if p::completed(owner.fixture_state(), family, id) {
+                        p::assert_completed(owner.fixture_state(), family, id);
+                        let bytes = serde_json::to_vec(owner.fixture_state()).unwrap();
+                        if let Some(first) = &completed_once {
+                            assert_eq!(&bytes, first);
+                            replay_completed = true;
+                            break;
+                        }
+                        completed_once = Some(bytes);
+                        let (own, nat) = saved.as_ref().unwrap();
+                        let stale = owner.decision_v59().unwrap();
+                        owner.restore(own).unwrap();
+                        native.restore_v1(nat);
+                        let world = owner.fixture_state().clone();
+                        let counts = owner.fixture_counts();
+                        assert!(owner.apply(&stale, 0).is_err());
+                        assert_eq!(owner.fixture_state(), &world);
+                        assert_eq!(owner.fixture_counts(), counts);
+                        continue;
+                    }
+                }
+                let d = owner.decision_v59().unwrap();
+                let logits = model.forward(d.packet()).unwrap();
+                assert_eq!(logits.len(), d.actions().len());
+                assert!(logits.iter().all(|x| x.is_finite()));
+                let i = p::choose(owner.fixture_state(), actor, family, source, d.actions());
+                if let Some(id) = p::selected_source(&d.actions()[i], family) {
+                    source = Some(id);
+                    before = p::tapped(owner.fixture_state(), actor);
+                }
+                let expected = d.expected();
+                let response = owner.apply(&d, u32::try_from(i).unwrap()).unwrap();
+                assert_eq!(
+                    response,
+                    native
+                        .step(
+                            expected.episode_id,
+                            expected.step,
+                            u32::try_from(i).unwrap()
+                        )
+                        .unwrap()
+                );
+                if saved.is_none()
+                    && source
+                        .is_some_and(|id| p::paid(owner.fixture_state(), actor, family, id, before))
+                {
+                    saved = Some((owner.snapshot(), native.snapshot_v1()));
+                }
+            }
+            assert!(replay_completed);
+        }
     }
 }

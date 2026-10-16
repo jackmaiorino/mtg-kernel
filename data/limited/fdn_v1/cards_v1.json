@@ -7763,7 +7763,7 @@
     },
     {
       "name": "Midnight Snack",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{B}",
       "mana_value": 3,
       "colors": [
@@ -7779,7 +7779,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "FDN_reference_midnight_snack_partial.dck"
+        "FDN_reference_midnight_snack_partial.dck",
+        "FDN_reference_midnight_snack_full_candidate.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -7792,7 +7793,7 @@
     },
     {
       "name": "Extravagant Replication",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{4}{U}{U}",
       "mana_value": 6,
       "colors": [
@@ -7808,7 +7809,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "FDN_reference_extravagant_replication_partial.dck"
+        "FDN_reference_extravagant_replication_partial.dck",
+        "FDN_reference_extravagant_replication_full_candidate.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -7822,7 +7824,7 @@
     },
     {
       "name": "Infernal Vessel",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{B}",
       "mana_value": 3,
       "colors": [
@@ -7841,7 +7843,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "FDN_reference_infernal_vessel_partial.dck"
+        "FDN_reference_infernal_vessel_partial.dck",
+        "FDN_reference_infernal_vessel_full_candidate.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -7855,7 +7858,7 @@
     },
     {
       "name": "Giada, Font of Hope",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -7877,7 +7880,8 @@
         "W"
       ],
       "decks": [
-        "FDN_reference_giada_partial.dck"
+        "FDN_reference_giada_partial.dck",
+        "FDN_reference_giada_full_candidate.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",
@@ -7892,7 +7896,7 @@
     },
     {
       "name": "Goblin Negotiation",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{X}{R}{R}",
       "mana_value": 2,
       "colors": [
@@ -7908,7 +7912,8 @@
       "is_land": false,
       "produces_mana": [],
       "decks": [
-        "FDN_reference_goblin_negotiation_partial.dck"
+        "FDN_reference_goblin_negotiation_partial.dck",
+        "FDN_reference_goblin_negotiation_full_candidate.dck"
       ],
       "sideboard_only": false,
       "complexity": "complex",

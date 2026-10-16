@@ -1418,3 +1418,139 @@ mod wide_tests {
         }
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod production_tests {
+    use super::*;
+    use crate::{
+        ids::PlayerId, next_five_public_v59::tests::production as p,
+        rules_meaning_next_five_v59::FamilyV59,
+    };
+    #[test]
+    fn production_five_full_candidate_real_decks_human_opponent_paid_restore_both_seats() {
+        for family in FamilyV59::ALL {
+            for actor in [PlayerId::P0, PlayerId::P1] {
+                for human in [actor, actor.opponent()] {
+                    let mut session = HumanNextFiveSessionV59::reset(
+                        p::EPISODE,
+                        p::SEED,
+                        p::LIMITS,
+                        p::identities(),
+                        p::boards(family),
+                        actor,
+                        human.into(),
+                    )
+                    .unwrap();
+                    let mut native = p::native(family, actor);
+                    let mut projector = HumanNextFiveProjectorV59::new(human.into());
+                    let mut source = None;
+                    let mut before = 0;
+                    let mut saved = None;
+                    let mut replay_completed = false;
+                    let mut completed_once = None;
+                    let mut last_request = None;
+                    for _ in 0..4096 {
+                        assert_eq!(session.current_response(), native.current_response());
+                        assert_eq!(
+                            session.inner.fixture_state_v59(),
+                            native.next_five_fixture_state()
+                        );
+                        assert_eq!(
+                            session.inner.fixture_counts_v59(),
+                            (native.policy_step_count(), native.physical_decision_count())
+                        );
+                        if let Some(id) = source {
+                            if p::completed(session.inner.fixture_state_v59(), family, id) {
+                                p::assert_completed(session.inner.fixture_state_v59(), family, id);
+                                let bytes =
+                                    serde_json::to_vec(session.inner.fixture_state_v59()).unwrap();
+                                if let Some(first) = &completed_once {
+                                    assert_eq!(&bytes, first);
+                                    replay_completed = true;
+                                    break;
+                                }
+                                completed_once = Some(bytes);
+                                let (own, nat) = saved.as_ref().unwrap();
+                                session.restore_v59(own).unwrap();
+                                native.restore_v1(nat);
+                                let before = session.inner.fixture_state_v59().clone();
+                                assert!(projector
+                                    .submit(&mut session, last_request.clone().unwrap())
+                                    .is_err());
+                                assert_eq!(session.inner.fixture_state_v59(), &before);
+                                projector = HumanNextFiveProjectorV59::new(human.into());
+                                continue;
+                            }
+                        }
+                        let d = session.inner.decision_v59().unwrap();
+                        let expected = d.expected();
+                        let i = p::choose(
+                            session.inner.fixture_state_v59(),
+                            actor,
+                            family,
+                            source,
+                            d.actions(),
+                        );
+                        if let Some(id) = p::selected_source(&d.actions()[i], family) {
+                            source = Some(id);
+                            before = p::tapped(session.inner.fixture_state_v59(), actor);
+                        }
+                        if expected.acting_player == human.into() {
+                            let visible = projector.project_current(&session, expected).unwrap();
+                            let mapped = projector
+                                .pending
+                                .as_ref()
+                                .unwrap()
+                                .indexes
+                                .iter()
+                                .position(|x| usize::try_from(*x) == Ok(i))
+                                .unwrap();
+                            let request = HumanActionRequestV1 {
+                                prompt_seq: visible.prompt_seq,
+                                action_index: u32::try_from(mapped).unwrap(),
+                            };
+                            last_request = Some(request.clone());
+                            let receipt = projector.submit(&mut session, request.clone()).unwrap();
+                            let after = session.inner.fixture_state_v59().clone();
+                            assert_eq!(projector.submit(&mut session, request).unwrap(), receipt);
+                            assert_eq!(session.inner.fixture_state_v59(), &after);
+                        } else {
+                            session
+                                .step_opponent_with(expected, |observation, actions| {
+                                    assert_eq!(observation, d.observation());
+                                    assert_eq!(actions, d.actions());
+                                    Ok(u32::try_from(i).unwrap())
+                                })
+                                .unwrap();
+                        }
+                        native
+                            .step(
+                                expected.episode_id,
+                                expected.step,
+                                u32::try_from(i).unwrap(),
+                            )
+                            .unwrap();
+                        if saved.is_none()
+                            && source.is_some_and(|id| {
+                                p::paid(
+                                    session.inner.fixture_state_v59(),
+                                    actor,
+                                    family,
+                                    id,
+                                    before,
+                                )
+                            })
+                        {
+                            saved = Some((session.snapshot_v59(), native.snapshot_v1()));
+                        }
+                    }
+                    assert!(replay_completed);
+                }
+            }
+        }
+    }
+}

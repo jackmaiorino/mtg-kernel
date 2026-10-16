@@ -709,7 +709,7 @@ impl NextFiveSessionV59 {
             generation: 0,
         })
     }
-    /// Retains the genuine catalog deck preflight. Partial NextFive is not admitted.
+    /// Retains genuine Full-only catalog preflight; no Partial printing is admitted.
     pub fn reset(
         episode_id: u64,
         env_seed: u64,

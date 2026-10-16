@@ -454,7 +454,7 @@ mod tests {
             ("Nine-Lives Familiar", false),
         ] {
             let id = card_id_by_name(name).unwrap();
-            assert!(!CARD_DEFS[usize::from(id)].has_full_support());
+            assert_eq!(CARD_DEFS[usize::from(id)].has_full_support(), next_five);
             assert!(
                 crate::rl::require_declared_cards_for_scope(Scope::ExistingV40, &[id]).is_err()
             );
@@ -472,11 +472,22 @@ mod tests {
                     count: 40,
                 }],
             };
-            let original = deck.resolve_full().unwrap_err();
-            assert!(original.contains("lacks full engine support"));
-            assert_eq!(deck.resolve().unwrap_err(), original);
-            assert_eq!(deck.resolve_next_five_v59().unwrap_err(), original);
-            assert_eq!(deck.resolve_graveyard_return_v61().unwrap_err(), original);
+            if next_five {
+                let resolved = deck.resolve_full().unwrap();
+                assert_eq!(resolved, vec![id; 40]);
+                assert!(
+                    deck.resolve().is_err(),
+                    "old consumer still refuses complete new rules"
+                );
+                assert_eq!(deck.resolve_next_five_v59().unwrap(), resolved);
+                assert_eq!(deck.resolve_graveyard_return_v61().unwrap(), resolved);
+            } else {
+                let original = deck.resolve_full().unwrap_err();
+                assert!(original.contains("lacks full engine support"));
+                assert_eq!(deck.resolve().unwrap_err(), original);
+                assert_eq!(deck.resolve_next_five_v59().unwrap_err(), original);
+                assert_eq!(deck.resolve_graveyard_return_v61().unwrap_err(), original);
+            }
         }
         let basics = CustomDeckV1 {
             cards: vec![CustomCardCountV1 {

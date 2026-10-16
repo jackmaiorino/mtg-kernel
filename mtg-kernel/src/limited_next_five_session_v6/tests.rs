@@ -1219,3 +1219,116 @@ fn v6_paid_exact_wide_snack_gain_and_panda_public_outcome_restore_both_seats() {
         assert_eq!(wire.bytes(), after);
     }
 }
+
+#[test]
+fn v6_production_five_full_candidate_real_decks_paid_reset_and_restore_both_seats() {
+    use crate::next_five_public_v59::tests::production as p;
+    use crate::rules_meaning_next_five_v59::FamilyV59;
+    for family in FamilyV59::ALL {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut wire = Wire::new();
+            let deck = json!({"cards":p::rows(family)});
+            let reset = json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
+            "episode_id":p::EPISODE,"env_seed":p::SEED,"starting_player":PlayerSeatV1::from(actor),
+            "decks":[deck.clone(),deck],"max_physical_decisions":p::LIMITS.0,"max_policy_steps":p::LIMITS.1});
+            let reply = wire.send(reset.clone());
+            assert_eq!(reply["response_type"], "state", "{reply}");
+            let mut native = p::native(family, actor);
+            // Failed production reset is atomic, including the executable prompt.
+            for name in ["Alesha, Who Laughs at Fate", "Goblin Token"] {
+                let mut invalid = reset.clone();
+                invalid["decks"][0]["cards"] =
+                    json!([{"name":"Forest","count":39},{"name":name,"count":1}]);
+                let before = wire.bytes();
+                let prompt = wire.last["state"].clone();
+                let reply = wire.send(invalid);
+                assert_eq!(reply["code"], "unsupported_deck");
+                assert_eq!(wire.bytes(), before);
+                wire.send(json!({"request_type":"current"}));
+                assert_eq!(wire.last["state"], prompt);
+            }
+            let mut source = None;
+            let mut before = 0;
+            let mut saved = None;
+            let mut completed_once = None;
+            let mut replay_completed = false;
+            for _ in 0..4096 {
+                assert_eq!(wire.state(), native.next_five_fixture_state());
+                assert_eq!(
+                    wire.server.active.as_ref().unwrap().core.current_response(),
+                    native.current_response()
+                );
+                assert_eq!(
+                    wire.server
+                        .active
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .fixture_counts_v59(),
+                    (native.policy_step_count(), native.physical_decision_count())
+                );
+                if let Some(id) = source {
+                    if p::completed(wire.state(), family, id) {
+                        p::assert_completed(wire.state(), family, id);
+                        let bytes = wire.bytes();
+                        if let Some(first) = &completed_once {
+                            assert_eq!(&bytes, first);
+                            replay_completed = true;
+                            break;
+                        }
+                        completed_once = Some(bytes);
+                        let (snapshot, native_snapshot) = saved.as_ref().unwrap();
+                        let stale = wire.request(|_| true);
+                        wire.restore(*snapshot);
+                        native.restore_v1(native_snapshot);
+                        wire.reject_unchanged(stale, "stale_decision");
+                        continue;
+                    }
+                }
+                let bound = wire.server.pending.as_ref().unwrap();
+                let expected = bound.decision.expected();
+                let i = p::choose(
+                    wire.state(),
+                    actor,
+                    family,
+                    source,
+                    bound.decision.actions(),
+                );
+                if let Some(id) = p::selected_source(&bound.decision.actions()[i], family) {
+                    source = Some(id);
+                    before = p::tapped(wire.state(), actor);
+                }
+                let visible = bound
+                    .indexes
+                    .iter()
+                    .position(|index| usize::try_from(*index) == Ok(i))
+                    .unwrap();
+                let request = json!({"request_type":"step","episode_id":wire.last["state"]["episode_id"],
+                "authority_generation":wire.last["state"]["authority_generation"],"actor":wire.menu()["actor"],
+                "prompt_seq":wire.menu()["prompt_seq"],"action_index":visible});
+                let reply = wire.send(request.clone());
+                assert_eq!(reply["response_type"], "state", "{reply}");
+                assert_eq!(reply["receipt"]["action_index"], visible);
+                let after = wire.bytes();
+                let retried = wire.send(request);
+                assert_eq!(retried["receipt"], reply["receipt"]);
+                assert_eq!(retried["state"], reply["state"]);
+                assert_eq!(wire.bytes(), after);
+                native
+                    .step(
+                        expected.episode_id,
+                        expected.step,
+                        u32::try_from(i).unwrap(),
+                    )
+                    .unwrap();
+                if saved.is_none()
+                    && source.is_some_and(|id| p::paid(wire.state(), actor, family, id, before))
+                {
+                    saved = Some((wire.snapshot(), native.snapshot_v1()));
+                }
+                safe(&wire.last);
+            }
+            assert!(replay_completed);
+        }
+    }
+}

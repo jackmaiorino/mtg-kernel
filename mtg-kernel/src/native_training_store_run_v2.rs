@@ -9015,11 +9015,6 @@ mod tests {
         assert_eq!(
             partials,
             [
-                (452, "Midnight Snack"),
-                (453, "Extravagant Replication"),
-                (454, "Infernal Vessel"),
-                (455, "Giada, Font of Hope"),
-                (456, "Goblin Negotiation"),
                 (457, "Alesha, Who Laughs at Fate"),
                 (458, "Nine-Lives Familiar"),
                 (459, "Valkyrie's Call"),
@@ -9061,6 +9056,11 @@ mod tests {
             (449, "Drake Token"),
             (450, "Bloodthirsty Conqueror"),
             (451, "Doubling Season"),
+            (452, "Midnight Snack"),
+            (453, "Extravagant Replication"),
+            (454, "Infernal Vessel"),
+            (455, "Giada, Font of Hope"),
+            (456, "Goblin Negotiation"),
         ] {
             assert_eq!(crate::card_def::card_id_by_name(name), Some(id));
             assert_eq!(
@@ -9086,7 +9086,10 @@ mod tests {
                 playable.push(id);
             }
         }
-        assert_eq!(playable, [442, 443, 444, 445, 446, 447, 448, 450, 451]);
+        assert_eq!(
+            playable,
+            [442, 443, 444, 445, 446, 447, 448, 450, 451, 452, 453, 454, 455, 456]
+        );
         crate::card_def::preflight_fully_supported_deck(&playable).unwrap();
         // The appended native source recipes grant no Full-deck permission.
         // Check the complete actual registry, including every Full token.

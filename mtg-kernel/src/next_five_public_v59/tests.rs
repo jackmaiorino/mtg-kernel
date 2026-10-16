@@ -197,8 +197,8 @@ fn all_five_exact_meanings_keep_order_costs_and_partial_truth_both_seats() {
     for family in FamilyV59::ALL {
         let m = meaning::printed_meaning(family).unwrap();
         meaning::validate(&m).unwrap();
-        assert!(!m.full_engine_admitted && !m.model_admitted && !m.sampler_admitted);
-        assert!(card_def::preflight_fully_supported_deck(&[m.card_id]).is_err());
+        assert!(m.full_engine_admitted && !m.model_admitted && !m.sampler_admitted);
+        card_def::preflight_fully_supported_deck(&[m.card_id]).unwrap();
         let d = &CARD_DEFS[usize::from(m.card_id)];
         let mut foreign = crate::midnight_snack_v1::tests::definition_fixture(d);
         foreign.ward_cost = Some(crate::card_def::WardCostDef::Generic(1));
@@ -624,3 +624,6 @@ fn actual_paid_replication_target_and_multi_host_aura_progress_restore() {
         assert_eq!(host_answers, 2);
     }
 }
+
+#[path = "production_tests.rs"]
+pub(crate) mod production;

@@ -189,20 +189,24 @@ fn genuine_reference_inputs_stay_partial_and_full_only_reset_refuses_both_seats(
             deck.extend(std::iter::repeat_n(id, count.parse::<usize>().unwrap()));
         }
         assert_eq!(deck.len(), 40);
-        assert!(card_def::preflight_fully_supported_deck(&deck).is_err());
+        card_def::preflight_fully_supported_deck(&deck).unwrap();
         for actor in [PlayerId::P0, PlayerId::P1] {
-            assert!(NextFiveSessionV59::reset(
+            let owner = NextFiveSessionV59::reset(
                 59,
                 123,
                 (10_000, 10_000),
                 [
                     "actual-partial-reference".into(),
-                    "actual-partial-reference".into()
+                    "actual-partial-reference".into(),
                 ],
                 [deck.clone(), deck.clone()],
-                actor
+                actor,
             )
-            .is_err());
+            .unwrap();
+            assert!(matches!(
+                owner.current_response(),
+                FastActorResponseV1::Decision(_)
+            ));
         }
     }
 }
