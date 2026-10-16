@@ -790,7 +790,8 @@ fn predecessor_visible_boundary_and_hidden_noninterference_both_seats() {
                 .unwrap()
                 .0
         );
-        // Catalog capability remains an independent public reset limitation.
+        // The prospective Full candidate can pass catalog-only deck preflight.
+        // This is source coverage, not completed gameplay qualification.
         let forest = crate::card_def::card_id_by_name("Forest").unwrap();
         let mut deck = vec![forest; 40];
         deck[0] = crate::card_def::card_id_by_name(ELENDA).unwrap();
@@ -802,7 +803,7 @@ fn predecessor_visible_boundary_and_hidden_noninterference_both_seats() {
             [deck, vec![forest; 40]],
             actor
         )
-        .is_err());
+        .is_ok());
     }
 }
 

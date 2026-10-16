@@ -23,6 +23,10 @@
 //! In `s4a-budget`, `S4A_INTERCHANGE=1` merges interchangeable choices
 //! (`stage4a/interchange.rs`); unset or `0` leaves the search unchanged, and
 //! rows carry `"interchange"` only when it is on.
+//! `BUDGET_ARM=plain-v1` selects an explicit ordinary-opening plain control
+//! in `s4a-budget`, with `BUDGET_TOTAL=0`, mean backup and no interchange.
+//! It uses the case's guide policy seeds and never constructs a search.
+//! Unset or `search-v1` preserves the existing search and row format.
 //! In `s4a-budget` and `s4a-diag`, `S4A_BACKUP=bestline-m<m>` (m = 3 or 8)
 //! uses the opt-in best-line backup (`stage4a/tree.rs` `BestLine`); unset or
 //! `mean` is the formal backup, and rows carry `"backup"` only when it is on.
@@ -1236,6 +1240,16 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // off unless set, so existing budget runs are unchanged.
         let interchange = parse_interchange(std::env::var("S4A_INTERCHANGE"))?;
         let bestline = parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
+        let plain = match std::env::var("BUDGET_ARM").as_deref() {
+            Ok("plain-v1") => {
+                if total != 0 || interchange || bestline.is_some() {
+                    return Err("BUDGET_ARM=plain-v1 requires BUDGET_TOTAL=0, mean backup and no interchange".into());
+                }
+                true
+            }
+            Ok("search-v1") | Err(std::env::VarError::NotPresent) => false,
+            _ => return Err("BUDGET_ARM must be plain-v1 or search-v1".into()),
+        };
         let first = cfg.first_game as usize;
         let end = (first + cfg.games as usize).min(cases.len());
         let mut out = String::new();
@@ -1244,6 +1258,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 std::thread::Builder::new()
                     .stack_size(256 << 20)
                     .spawn_scoped(scope, || {
+                        if plain {
+                            return refresh::budget_plain_case(&sh, policy, src, &binding);
+                        }
                         refresh::budget_case(
                             &sh,
                             policy,

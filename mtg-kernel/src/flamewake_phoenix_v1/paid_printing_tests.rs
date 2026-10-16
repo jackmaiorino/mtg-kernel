@@ -114,7 +114,7 @@ fn paid(actor: PlayerId) -> (GameState, ObjectId) {
 fn paid_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
     let phoenix = put(&mut state, actor, "Flamewake Phoenix", Zone::Hand);
     let definition = &CARD_DEFS[usize::from(state.objects.get(phoenix).card_def)];
-    assert_eq!(definition.capability, CardCapability::Partial);
+    assert_eq!(definition.capability, CardCapability::Full);
     assert_eq!(definition.cost.generic, 1);
     assert_eq!(definition.cost.pips, &[Pip::Colored(ManaColor::R); 2]);
     assert_eq!(definition.types, &[CardType::Creature]);
@@ -133,7 +133,7 @@ fn paid_in(mut state: GameState, actor: PlayerId) -> (GameState, ObjectId) {
         .objects
         .get(phoenix)
         .card_def])
-    .is_err());
+    .is_ok());
     for _ in 0..3 {
         let mountain = put(&mut state, actor, "Mountain", Zone::Battlefield);
         priority(&mut state, actor);

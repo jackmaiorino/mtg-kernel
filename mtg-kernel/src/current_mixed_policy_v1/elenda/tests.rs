@@ -969,3 +969,226 @@ fn wildwood_variable_printing_supplement_preserves_independent_hidden_hands_v52_
         }
     }
 }
+
+// A fresh native Elenda-mode stream owns its own issued menu. It never
+// clones or receives the model owner's sealed backend capability. Construction
+// from the complete fixture world must preserve that world and exact menu;
+// a surface-only prefix that cannot be reconstructed must fail these checks.
+struct NativeReference {
+    session: FastActorSessionV1,
+    current: FastActorDecisionV1,
+    original: FastActorDecisionV1,
+    original_counts: (u64, u64),
+    native_counts: (u64, u64),
+}
+fn native_reference(s: &ElendaSession) -> NativeReference {
+    let session =
+        FastActorSessionV1::from_elenda_v52_fixture_state(s.inner.fixture_state_v52().clone());
+    assert_eq!(s.inner.fixture_state_v52(), session.elenda_fixture_state());
+    let FastActorResponseV1::Decision(current) = session.current_response() else {
+        panic!("independent native Elenda reference has no current decision")
+    };
+    let original = expected(s);
+    let (_, actions, _) = session
+        .elenda_current_decision_input_v52(current, current.acting_player)
+        .unwrap();
+    assert_eq!(
+        actions.as_slice(),
+        s.inner.decision_v52().unwrap().actions()
+    );
+    assert_eq!(
+        (
+            current.episode_id,
+            current.substep_index,
+            current.substep_count,
+            current.acting_player,
+            current.decision_kind,
+            current.legal_action_count
+        ),
+        (
+            original.episode_id,
+            original.substep_index,
+            original.substep_count,
+            original.acting_player,
+            original.decision_kind,
+            original.legal_action_count
+        )
+    );
+    let native_counts = (
+        session.policy_step_count(),
+        session.physical_decision_count(),
+    );
+    NativeReference {
+        session,
+        current,
+        original,
+        original_counts: s.inner.fixture_counts_v52(),
+        native_counts,
+    }
+}
+fn rebase_counter(value: u64, native_before: u64, original_before: u64) -> u64 {
+    original_before
+        .checked_add(value.checked_sub(native_before).unwrap())
+        .unwrap()
+}
+impl NativeReference {
+    fn assert_step(&mut self, s: &ElendaSession, actual: FastActorResponseV1, index: u32) {
+        let mut response = self
+            .session
+            .step(self.current.episode_id, self.current.step, index)
+            .unwrap();
+        // Only independent stream clock origins differ. Every actor/kind/menu,
+        // substep, outcome/reason/reward/deck field is still compared exactly.
+        match &mut response {
+            FastActorResponseV1::Decision(next) => {
+                next.step = rebase_counter(next.step, self.current.step, self.original.step);
+                next.environment_revision = rebase_counter(
+                    next.environment_revision,
+                    self.current.environment_revision,
+                    self.original.environment_revision,
+                );
+                next.physical_decision_id = rebase_counter(
+                    next.physical_decision_id,
+                    self.current.physical_decision_id,
+                    self.original.physical_decision_id,
+                );
+            }
+            FastActorResponseV1::Terminal(terminal) => {
+                terminal.policy_step_count = rebase_counter(
+                    terminal.policy_step_count,
+                    self.native_counts.0,
+                    self.original_counts.0,
+                );
+                terminal.physical_decision_count = rebase_counter(
+                    terminal.physical_decision_count,
+                    self.native_counts.1,
+                    self.original_counts.1,
+                );
+            }
+        }
+        assert_eq!(actual, response);
+        assert_eq!(
+            s.inner.fixture_state_v52(),
+            self.session.elenda_fixture_state()
+        );
+        assert_eq!(
+            s.inner.fixture_counts_v52(),
+            (
+                rebase_counter(
+                    self.session.policy_step_count(),
+                    self.native_counts.0,
+                    self.original_counts.0
+                ),
+                rebase_counter(
+                    self.session.physical_decision_count(),
+                    self.native_counts.1,
+                    self.original_counts.1
+                )
+            )
+        );
+    }
+}
+
+impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for ElendaSession {
+    type Decision = ElendaDecision;
+    type Snapshot = ElendaSnapshot;
+    fn own(s: GameState) -> Self {
+        Self::from_session(FastActorSessionV1::from_elenda_v52_fixture_state(s)).unwrap()
+    }
+    fn world(&self) -> &GameState {
+        self.inner.fixture_state_v52()
+    }
+    fn counts(&self) -> (u64, u64) {
+        self.inner.fixture_counts_v52()
+    }
+    fn actions(&self) -> Vec<ActionSemanticV1> {
+        self.inner.decision_v52().unwrap().actions().to_vec()
+    }
+    fn encode(&self) -> Self::Decision {
+        let e = match self.inner.current_response() {
+            FastActorResponseV1::Decision(e) => e,
+            other => panic!("real decision absent:{other:?}"),
+        };
+        ElendaSession::encode(self, e).unwrap()
+    }
+    fn packet(d: &Self::Decision) -> &crate::current_mixed_policy_v1::Packet {
+        d.packet()
+    }
+    fn erase(d: &mut Self::Decision) {
+        d.packet.state =
+            crate::current_mixed_policy_v1::NumericTree::encode(&serde_json::json!({})).unwrap();
+    }
+    fn apply(&mut self, d: &Self::Decision, index: u32) -> Result<()> {
+        let mut reference = native_reference(self);
+        let actual = ElendaSession::apply(self, d, index)?;
+        reference.assert_step(self, actual, index);
+        Ok(())
+    }
+    fn snapshot(&self) -> Self::Snapshot {
+        ElendaSession::snapshot(self)
+    }
+    fn restore(&mut self, s: &Self::Snapshot) -> Result<()> {
+        ElendaSession::restore(self, s)
+    }
+}
+#[test]
+fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<ElendaSession>();
+}
+#[test]
+fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_entry_attack::<ElendaSession>();
+}
+#[test]
+fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<ElendaSession>();
+}
+
+#[test]
+fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_memorial_panda::<ElendaSession>(
+    );
+}
+
+#[test]
+fn early_printings_paid_ordinary_activations_and_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_early_activation::<ElendaSession>(
+    );
+}
+
+#[test]
+fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_crystal::<ElendaSession>();
+}
+
+#[test]
+fn tyrant_herald_paid_cast_damage_flash_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_tyrant_herald::<ElendaSession>();
+}
+
+#[test]
+fn rallier_bloom_paid_cast_private_pick_and_mana_restore_elenda_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<ElendaSession>();
+}
+
+#[test]
+fn enchantment_hunter_paid_cast_trigger_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_enchantment_hunter::<
+        ElendaSession,
+    >();
+}
+
+#[test]
+fn eaten_paid_additional_branches_exile_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<ElendaSession>();
+}
+
+#[test]
+fn faebloom_paid_instant_reflexive_season_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_faebloom::<ElendaSession>();
+}
+
+#[test]
+fn kellan_paid_upgrades_combat_impulse_restore_privacy_elendasession_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<ElendaSession>();
+}

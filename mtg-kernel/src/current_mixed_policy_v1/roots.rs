@@ -5,6 +5,27 @@ use crate::effect::{EffectCond, EffectOp, ObjectRef, PlayerRef};
 use crate::state::Zone;
 use serde_json::{json, Value};
 
+#[path = "crystal_printing.rs"]
+pub(super) mod crystal_printing;
+#[path = "early_activation_printing.rs"]
+pub(super) mod early_activation_printing;
+#[path = "eaten_printing.rs"]
+pub(super) mod eaten_printing;
+#[path = "enchantment_hunter_printing.rs"]
+pub(super) mod enchantment_hunter_printing;
+#[path = "faebloom_printing.rs"]
+pub(super) mod faebloom_printing;
+#[path = "kellan_printing.rs"]
+pub(super) mod kellan_printing;
+#[path = "legendary_printing.rs"]
+mod legendary_printing;
+#[path = "rallier_bloom_printing.rs"]
+pub(super) mod rallier_bloom_printing;
+#[path = "soulstone_printing.rs"]
+pub(super) mod soulstone_printing;
+#[path = "tyrant_herald_printing.rs"]
+pub(super) mod tyrant_herald_printing;
+
 /// A printing-owned route, not a cast permission or a quoted payment plan.
 /// The current typed candidate/source zone and cast state select the route;
 /// the owning backend still authenticates and pays it before execution.
@@ -291,6 +312,39 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if d.name == "Faebloom Trick" {
+        return faebloom_printing::baseline(id, d);
+    }
+    if d.name == "Kellan, Planar Trailblazer" {
+        return kellan_printing::baseline(id, d);
+    }
+    if d.name == "Eaten Alive" {
+        return eaten_printing::baseline(id, d);
+    }
+    if d.name == "Soulstone Sanctuary" {
+        return soulstone_printing::baseline(id, d);
+    }
+    if matches!(
+        d.name,
+        "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter"
+    ) {
+        return enchantment_hunter_printing::baseline(id, d);
+    }
+    if matches!(d.name, "Squad Rallier" | "Bloom Tender") {
+        return rallier_bloom_printing::baseline(id, d);
+    }
+    if matches!(
+        d.name,
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie"
+    ) {
+        return early_activation_printing::baseline(id, d);
+    }
+    if d.name == "Crystal Barricade" {
+        return crystal_printing::baseline(id, d);
+    }
+    if matches!(d.name, "Twinflame Tyrant" | "Herald of Eternal Dawn") {
+        return tyrant_herald_printing::baseline(id, d);
+    }
     // Every other field is checked by the common exclusion guard below. A
     // familiar name alone never admits a different cost, program or cast form.
     let think_twice = d.name == "Think Twice"
@@ -524,6 +578,7 @@ struct OrdinaryPermanentCastRoot {
 #[derive(serde::Serialize)]
 enum PermanentTiming {
     CasterMainPhaseEmptyStackWithPriority,
+    InstantWithPriorityIncludingOpponentsTurnAndNonemptyStack,
 }
 #[derive(serde::Serialize)]
 enum PermanentTargets {
@@ -600,6 +655,22 @@ struct PermanentCharacteristics {
 enum PermanentKeyword {
     Flying,
     Deathtouch,
+    Trample,
+    Defender,
+    Flash,
+}
+
+/// Mandatory spell supplements are independent of catalog family coverage.
+/// Only actor-authorized printing references reach this dispatch.
+pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    match d.name {
+        "Faebloom Trick" => faebloom_printing::printing(id, d).map(Some),
+        "Eaten Alive" => eaten_printing::printing(id, d).map(Some),
+        _ => Ok(None),
+    }
 }
 
 /// Mandatory even when one or all family meanings already marked this ID
@@ -611,9 +682,38 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     let keywords = match d.name {
+        "Kellan, Planar Trailblazer" => return kellan_printing::printing(id, d),
+        "Soulstone Sanctuary" => return soulstone_printing::printing(id, d),
+        "Banishing Light" | "Garruk's Uprising" | "High-Society Hunter" => {
+            return enchantment_hunter_printing::printing(id, d)
+        }
+        "Crystal Barricade" => return crystal_printing::printing(id, d),
+        "Twinflame Tyrant" | "Herald of Eternal Dawn" => {
+            return tyrant_herald_printing::printing(id, d)
+        }
+        "Squad Rallier" | "Bloom Tender" => return rallier_bloom_printing::printing(id, d),
+        "Scavenging Ooze" | "Heartfire Immolator" | "Soul-Shackled Zombie" => {
+            return early_activation_printing::printing(id, d)
+        }
+        "Arahbo, the First Fang" | "Zul Ashur, Lich Lord" => {
+            return legendary_printing::printing(id, d)
+        }
         "Frenzied Goblin" | "Heraldic Banner" => return attack_or_banner_printing(id, d),
         "Sower of Chaos" => return sower_printing(id, d),
         "Wildwood Scourge" => return wildwood_printing(id, d),
+        "Ashroot Animist"
+        | "Stromkirk Bloodthief"
+        | "Strongbox Raider"
+        | "Vampire Gourmand"
+        | "Akroma's Memorial"
+        | "Fiendish Panda" => {
+            validate_family_permanent_recipe(id, d)?;
+            if d.name == "Ashroot Animist" {
+                vec![PermanentKeyword::Trample]
+            } else {
+                Vec::new()
+            }
+        }
         "Bloodthirsty Conqueror" => {
             if !crate::bloodthirsty_conqueror_v49::owns_definition(id) {
                 return Err(Error::UnsupportedPrintedRoot(id));
@@ -628,8 +728,8 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
         }
         _ => return Ok(None),
     };
-    // Both complete 72-field family selectors authenticate this exact ordinary
-    // program and reject alternate casts, foreign static rules or activations.
+    // Complete family selectors or the closed 72-field recipes above authenticate
+    // this ordinary program and reject foreign casts, statics or activations.
     // Check the mapped leaf here as well: no raw EffectOp enters the packet.
     if d.target_spec != TargetSpec::None
         || !d.activated_abilities.is_empty()
@@ -672,6 +772,315 @@ pub(super) fn registered_permanent_printing(id: u16) -> Result<Option<Value>> {
             zone_replacements_still_apply:true,
         }]
     }})))
+}
+
+/// Family records need an independently closed ordinary printing, even when
+/// they already carry some ordinary or triggered facts. The exact
+/// ordinary recipe is independently required for every authorized reference.
+/// Keep the exhaustive field pattern so a newly added CardDef field cannot
+/// silently acquire an unauthenticated default in this closed supplement.
+pub(super) fn validate_family_permanent_recipe(id: u16, d: &CardDef) -> Result<()> {
+    use crate::card_def::{Keywords, Subtype};
+    use crate::mana::{Cost, ManaColor, Pip};
+    if CARD_DEFS
+        .get(usize::from(id))
+        .is_none_or(|actual| actual.name != d.name)
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+    let (cost, mana_value, types, subtypes, supertypes, colors, power, toughness, keywords, grant) =
+        match d.name {
+            "Ashroot Animist" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::G)],
+                    x_count: 0,
+                },
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Lizard, Subtype::Druid][..],
+                &[][..],
+                &[ManaColor::R, ManaColor::G][..],
+                Some(4),
+                Some(4),
+                Keywords::TRAMPLE,
+                None,
+            ),
+            "Stromkirk Bloodthief" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::B)],
+                    x_count: 0,
+                },
+                3,
+                &[CardType::Creature][..],
+                &[Subtype::Vampire, Subtype::Rogue][..],
+                &[][..],
+                &[ManaColor::B][..],
+                Some(2),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Strongbox Raider" => (
+                Cost {
+                    generic: 2,
+                    pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)],
+                    x_count: 0,
+                },
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Orc, Subtype::Pirate][..],
+                &[][..],
+                &[ManaColor::R][..],
+                Some(5),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Vampire Gourmand" => (
+                Cost {
+                    generic: 1,
+                    pips: &[Pip::Colored(ManaColor::B)],
+                    x_count: 0,
+                },
+                2,
+                &[CardType::Creature][..],
+                &[Subtype::Vampire][..],
+                &[][..],
+                &[ManaColor::B][..],
+                Some(2),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            "Akroma's Memorial" => (
+                Cost {
+                    generic: 7,
+                    pips: &[],
+                    x_count: 0,
+                },
+                7,
+                &[CardType::Artifact][..],
+                &[][..],
+                &[crate::card_def::Supertype::Legendary][..],
+                &[][..],
+                None,
+                None,
+                Keywords::NONE,
+                Some(crate::controlled_creature_grants_v1::MEMORIAL),
+            ),
+            "Fiendish Panda" => (
+                crate::fiendish_panda_v1::PRINTED_COST,
+                4,
+                &[CardType::Creature][..],
+                &[Subtype::Bear, Subtype::Demon][..],
+                &[][..],
+                &[ManaColor::W, ManaColor::B][..],
+                Some(3),
+                Some(2),
+                Keywords::NONE,
+                None,
+            ),
+            _ => return Err(Error::UnsupportedPrintedRoot(id)),
+        };
+    let crate::card_def::CardDef {
+        name: _,
+        capability: _,
+        cost: _,
+        generic_cost_reduction: _,
+        ward_cost: _,
+        spell_cannot_be_countered: _,
+        records_mana_spent: _,
+        equipment: _,
+        types: _,
+        subtypes: _,
+        supertypes: _,
+        power: _,
+        toughness: _,
+        starting_loyalty: _,
+        enters_with_plus_one_counters: _,
+        controlled_counter_keyword: _,
+        game_outcome_protection_v1: _,
+        controlled_creature_grant: _,
+        is_land: _,
+        produces_mana: _,
+        colors: _,
+        target_spec: _,
+        keywords: _,
+        spell_effect: _,
+        mana_ability: _,
+        alt_cost: _,
+        kicker_cost: _,
+        additional_cost: _,
+        flashback: _,
+        activated_abilities: _,
+        plot_cost: _,
+        madness_cost: _,
+        mode2: _,
+        mode3: _,
+        additional_modes: _,
+        kicked_target_spec: _,
+        is_token: _,
+        escape: _,
+        mana_ability_choices: _,
+        enters_battlefield_tapped: _,
+        mana_ability_def: _,
+        minimum_blockers: _,
+        omen: _,
+        mana_value: _,
+        mana_ability_includes_chosen_color: _,
+        as_enters_choose_color_other_than: _,
+        additional_mana_abilities: _,
+        object_name: _,
+        enters_battlefield_tapped_unless: _,
+        attachment: _,
+        transform_face: _,
+        saga: _,
+        optional_additional_cost: _,
+        changeling: _,
+        bestow: _,
+        delve: _,
+        adventure: _,
+        cant_be_blocked_by_monarchs_creatures: _,
+        conditional_tap_yield: _,
+        enters_tapped_unless_controller: _,
+        additional_mana_ability_conditions: _,
+        restricted_mana_abilities: _,
+        animation: _,
+        activated_ability_generic_reductions: _,
+        combat_static_rules: _,
+        as_enters_color_choice_v1: _,
+        chosen_color_creature_boost_v1: _,
+        damage_replacement_v1: _,
+        token_counter_replacement_v48: _,
+        starting_life_self_bonuses_v1: _,
+        source_type_hexproof_v1: _,
+        other_controlled_nontoken_death_v1: _,
+    } = d;
+    if d.object_name != d.name
+        || d.capability != CardCapability::Full
+        || d.cost != cost
+        || d.mana_value != mana_value
+        || d.types != types
+        || d.subtypes != subtypes
+        || d.colors != colors
+        || d.supertypes != supertypes
+        || d.power != power
+        || d.toughness != toughness
+        || d.keywords != keywords
+        || d.is_land
+        || d.is_token
+        || d.minimum_blockers != 1
+        || d.target_spec != TargetSpec::None
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        || !d.produces_mana.is_empty()
+        || (d.mana_ability)().is_some()
+        || !d.mana_ability_choices.is_empty()
+        || !d.activated_abilities.is_empty()
+        || d.generic_cost_reduction.is_some()
+        || d.ward_cost.is_some()
+        || d.spell_cannot_be_countered
+        || d.records_mana_spent
+        || d.equipment.is_some()
+        || d.attachment.is_some()
+        || d.starting_loyalty.is_some()
+        || d.enters_with_plus_one_counters.is_some()
+        || d.controlled_counter_keyword.is_some()
+        || d.controlled_creature_grant != grant
+        || d.game_outcome_protection_v1.is_some()
+        || d.alt_cost.is_some()
+        || d.kicker_cost.is_some()
+        || d.additional_cost.is_some()
+        || d.flashback.is_some()
+        || d.plot_cost.is_some()
+        || d.madness_cost.is_some()
+        || d.mode2.is_some()
+        || d.mode3.is_some()
+        || !d.additional_modes.is_empty()
+        || d.kicked_target_spec.is_some()
+        || d.escape.is_some()
+        || d.enters_battlefield_tapped
+        || d.mana_ability_def.is_some()
+        || d.omen.is_some()
+        || d.mana_ability_includes_chosen_color
+        || d.as_enters_choose_color_other_than.is_some()
+        || !d.additional_mana_abilities.is_empty()
+        || d.enters_battlefield_tapped_unless.is_some()
+        || d.transform_face.is_some()
+        || d.saga.is_some()
+        || d.optional_additional_cost.is_some()
+        || d.changeling
+        || d.bestow.is_some()
+        || d.delve
+        || d.adventure.is_some()
+        || d.cant_be_blocked_by_monarchs_creatures
+        || d.conditional_tap_yield.is_some()
+        || d.enters_tapped_unless_controller.is_some()
+        || !d.additional_mana_ability_conditions.is_empty()
+        || !d.restricted_mana_abilities.is_empty()
+        || d.animation.is_some()
+        || !d.activated_ability_generic_reductions.is_empty()
+        || d.combat_static_rules != crate::card_def::CombatStaticRulesDef::NONE
+        || d.as_enters_color_choice_v1.is_some()
+        || d.chosen_color_creature_boost_v1.is_some()
+        || d.damage_replacement_v1.is_some()
+        || d.token_counter_replacement_v48.is_some()
+        || !d.starting_life_self_bonuses_v1.is_empty()
+        || d.source_type_hexproof_v1.is_some()
+        || d.other_controlled_nontoken_death_v1.is_some()
+    {
+        return Err(Error::UnsupportedPrintedRoot(id));
+    }
+
+    // Recompute the complete original typed trigger meaning from the actual
+    // catalog/program, never from an observed name or supplied root digest.
+    macro_rules! family {
+        ($module:ident) => {{
+            use crate::$module as family;
+            let selector =
+                family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            family::meaning(&selector, id, 0).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            Ok(())
+        }};
+    }
+    match d.name {
+        "Ashroot Animist" => family!(rules_meaning_ashroot_v1),
+        "Stromkirk Bloodthief" => family!(rules_meaning_stromkirk_v1),
+        "Strongbox Raider" => family!(rules_meaning_strongbox_v1),
+        "Vampire Gourmand" => family!(rules_meaning_gourmand_v1),
+        "Akroma's Memorial" => {
+            use crate::rules_meaning_akroma_v1 as family;
+            let selector =
+                family::live_selector().map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            for root in [
+                family::RootV1::PermanentSpell,
+                family::RootV1::ControlledCreatureGrant,
+            ] {
+                family::meaning(&selector, id, root)
+                    .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            }
+            Ok(())
+        }
+        "Fiendish Panda" => {
+            use crate::rules_meaning_fiendish_panda_v1 as family;
+            for root in [
+                family::RootV1::CreatureSpell,
+                family::RootV1::ControllerLifeGain,
+                family::RootV1::SourceDeath,
+            ] {
+                let meaning = family::printed_meaning(id, root)
+                    .map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+                family::validate(&meaning).map_err(|_| Error::UnsupportedPrintedRoot(id))?;
+            }
+            Ok(())
+        }
+        _ => Err(Error::UnsupportedPrintedRoot(id)),
+    }
 }
 
 /// These two older family meanings describe the attack/entry rules, not the

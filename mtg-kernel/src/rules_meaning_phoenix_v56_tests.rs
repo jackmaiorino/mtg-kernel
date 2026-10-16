@@ -37,17 +37,16 @@ fn genuine_printed_cost_intervening_checks_and_irreversible_payment_order() {
     assert_eq!(real.printed.colored_pips, [ManaColor::R, ManaColor::R]);
     assert_eq!((real.printed.power, real.printed.toughness), (2, 2));
     assert_eq!(real.printed.subtypes, [Subtype::Phoenix]);
-    assert_eq!(real.capability, CardCapability::Partial);
+    assert_eq!(real.capability, CardCapability::Full);
     assert_eq!(
         real.battlefield_entry,
         EntryV56::UntappedByDefaultSubjectToEntryReplacements
     );
-    assert!(
-        !real.full_engine_admitted
-            && !real.model_admitted
-            && !real.sampler_admitted
-            && !real.fair_search_admitted
+    assert_eq!(
+        real.full_engine_admitted,
+        real.capability == CardCapability::Full
     );
+    assert!(!real.model_admitted && !real.sampler_admitted && !real.fair_search_admitted);
     assert_eq!(
         &real.ordered_rules[..4],
         &[

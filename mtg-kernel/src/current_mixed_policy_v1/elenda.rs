@@ -23,6 +23,14 @@ impl ElendaDecision {
     pub fn packet(&self) -> &Packet {
         &self.packet
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_packet_mut(&mut self) -> &mut Packet {
+        &mut self.packet
+    }
 }
 impl ElendaSession {
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
@@ -33,6 +41,22 @@ impl ElendaSession {
     }
     pub fn current_response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_state(&self) -> &crate::state::GameState {
+        self.inner.fixture_state_v52()
+    }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(super) fn fixture_counts(&self) -> (u64, u64) {
+        self.inner.fixture_counts_v52()
     }
     pub fn snapshot(&self) -> ElendaSnapshot {
         ElendaSnapshot {

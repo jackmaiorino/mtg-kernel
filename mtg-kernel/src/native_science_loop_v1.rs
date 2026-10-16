@@ -653,7 +653,8 @@ fn run_native_science_loop_with_opponents_v1(
         | NativeRunCatalogProfileV1::FdnHunterFlyingRepairBatch
         | NativeRunCatalogProfileV1::FdnFakePartialBatch
         | NativeRunCatalogProfileV1::FdnRavenousPartialBatch
-        | NativeRunCatalogProfileV1::FdnDualFullBatch => {
+        | NativeRunCatalogProfileV1::FdnDualFullBatch
+        | NativeRunCatalogProfileV1::FdnSevenFullBatch => {
             if !crate::native_training_store_run_v2::current_profile_matches_live_build_identity_v1(
                 run.record().environment(),
             ) {
@@ -1391,6 +1392,40 @@ mod windows_science_loop_tests {
         );
         let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
         let parent = TestParentV1::new("prior-fdn-ravenous-partial-v86");
+        let result = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile
+        );
+        assert_eq!(fs::read_dir(&parent.parent).unwrap().count(), 0);
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    fn science_loop_rejects_prior_fdn_batch_dual_full_v87_before_bootstrap() {
+        use crate::native_training_store_run_v2::{
+            test_fixture_bytes_fdn_dual_full_batch_v1, NativeRunCatalogProfileV1,
+        };
+        let run = decode_train_run_v2(&test_fixture_bytes_fdn_dual_full_batch_v1()).unwrap();
+        assert_eq!(
+            run.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::FdnDualFullBatch
+        );
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("prior-fdn-dual-full-v87");
         let result = run_native_science_loop_v1(
             &parent.parent,
             "store",

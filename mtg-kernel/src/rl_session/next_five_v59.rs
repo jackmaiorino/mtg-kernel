@@ -764,6 +764,14 @@ impl NextFiveSessionV59 {
             self.inner.physical_decision_count(),
         )
     }
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn fixture_native_v59(&self) -> FastActorSessionV1 {
+        self.inner.clone()
+    }
     pub fn snapshot_v59(&self) -> NextFiveSnapshotV59 {
         NextFiveSnapshotV59 {
             inner: self.inner.snapshot_v1(),

@@ -955,7 +955,7 @@ mod paid {
             let id = crate::card_def::card_id_by_name(name).unwrap();
             assert_eq!(
                 crate::card_def::CARD_DEFS[usize::from(id)].capability,
-                crate::card_def::CardCapability::Partial
+                crate::card_def::CardCapability::Full
             );
             let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
             let printing = &descriptor["registered_permanent_printing"];
@@ -1173,7 +1173,7 @@ mod paid {
             enters_with_plus_one_counters: None,
             controlled_counter_keyword: None,
             game_outcome_protection_v1: None,
-            controlled_creature_grant: None,
+            controlled_creature_grant: d.controlled_creature_grant,
             is_land: d.is_land,
             produces_mana: d.produces_mana,
             colors: d.colors,
@@ -1228,6 +1228,183 @@ mod paid {
             starting_life_self_bonuses_v1: d.starting_life_self_bonuses_v1,
             source_type_hexproof_v1: None,
             other_controlled_nontoken_death_v1: None,
+        }
+    }
+
+    #[test]
+    fn rallier_bloom_exact_closed_printings_keep_private_selection_and_dynamic_mana_meaning() {
+        use crate::{
+            card_def::{ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef},
+            mana::ManaColor,
+        };
+        for name in ["Squad Rallier", "Bloom Tender"] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let bloom = name == "Bloom Tender";
+            let fixture = || {
+                let mut d = ordinary_recipe(id);
+                d.mana_ability_def = crate::card_def::CARD_DEFS[usize::from(id)].mana_ability_def;
+                d
+            };
+            let d = fixture();
+            let baseline = roots::baseline(id).unwrap();
+            assert_eq!(
+                baseline["definition_owned_family_meanings"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            let printing = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &printing["registered_permanent_printing"];
+            assert_eq!(p["characteristics"]["power"], if bloom { 1 } else { 3 });
+            assert_eq!(p["characteristics"]["toughness"], if bloom { 1 } else { 4 });
+            assert_eq!(
+                p["characteristics"]["subtypes"],
+                if bloom {
+                    json!(["Elf", "Druid"])
+                } else {
+                    json!(["Human", "Scout"])
+                }
+            );
+            assert_eq!(
+                p["characteristics"]["printed_mana_abilities"],
+                u8::from(bloom)
+            );
+            assert_eq!(
+                p["characteristics"]["printed_activated_abilities"],
+                u8::from(!bloom)
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"],
+                json!({"generic":if bloom{1}else{3},"pips":[{"Colored":if bloom{"G"}else{"W"}}],"x_count":0})
+            );
+            let m = &p["canonical_family_roots"][0];
+            if bloom {
+                assert_eq!(m["tap_source"], true);
+                assert_eq!(m["immediate_mana_ability_without_stack_or_targets"], true);
+                assert_eq!(
+                    m["color_query_uses_current_control_and_effective_battlefield_colors"],
+                    true
+                );
+                assert_eq!(m["source_included"], true);
+                assert_eq!(m["colorless_is_not_a_color"], true);
+                assert_eq!(
+                    m["one_unit_of_each_distinct_color_added_simultaneously"],
+                    true
+                );
+                assert_eq!(
+                    m["all_output_pool_cells_preflight_before_any_cost_or_use_mutation"],
+                    true
+                );
+                assert_eq!(
+                    p["ordered_mana_roots"][0]["ordered_costs"],
+                    json!(["TapOriginalSource"])
+                );
+                assert_eq!(p["ordered_mana_roots"][0]["uses_stack"], false);
+                assert_eq!(
+                    p["ordered_mana_roots"][0]["timing"],
+                    "CurrentManaWindowAndOrdinaryCreatureTapRestrictions"
+                );
+                assert!(p["ordered_activation_roots"].as_array().unwrap().is_empty());
+            } else {
+                assert_eq!(m["mana_cost"], "{2}{W}");
+                assert_eq!(m["private_look_maximum"], 4);
+                assert_eq!(m["select_minimum"], 0);
+                assert_eq!(m["select_maximum"], 1);
+                assert_eq!(
+                    m["selected_card_effective_power_including_supported_cda_maximum"],
+                    2
+                );
+                assert_eq!(m["selected_card_mana_value_unrestricted"], true);
+                assert_eq!(
+                    m["selection_is_nontargeting_and_ignores_hexproof_protection"],
+                    true
+                );
+                assert_eq!(
+                    m["selected_card_revealed_to_both_then_put_in_controllers_hand"],
+                    true
+                );
+                assert_eq!(m["rest_goes_to_bottom_in_random_order"], true);
+                assert_eq!(m["unseen_library_suffix_keeps_order"], true);
+                assert_eq!(m["captured_controller_library_after_source_departure_reentry_or_control_change"],true);
+                assert_eq!(m["continuation_authority_is_never_public"], true);
+                assert_eq!(p["ordered_activation_roots"][0]["target_count"], 0);
+                assert_eq!(
+                    p["ordered_activation_roots"][0]["ordered_costs"],
+                    json!([{"Mana":{"generic":2,"pips":[{"Colored":"W"}],"x_count":0}}])
+                );
+                assert_eq!(p["ordered_activation_roots"][0]["uses_stack"], true);
+                assert!(p["ordered_mana_roots"].as_array().unwrap().is_empty());
+            }
+            macro_rules! reject {($field:ident,$value:expr)=>{{let mut changed=fixture();changed.$field=$value;
+                assert!(matches!(roots::rallier_bloom_printing::printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};}
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(power, Some(8));
+            reject!(toughness, Some(8));
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(subtypes, &[crate::card_def::Subtype::Bear]);
+            reject!(colors, &[ManaColor::R]);
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(spell_effect, || None);
+            reject!(minimum_blockers, 2);
+            reject!(produces_mana, &[ManaColor::C]);
+            if bloom {
+                reject!(mana_ability, || None);
+                reject!(mana_ability_def, None);
+                reject!(mana_ability_choices, &[ManaColor::W]);
+                for corrupt in 0..4 {
+                    let mut changed = fixture();
+                    let mut a = d.mana_ability_def.unwrap();
+                    match corrupt {
+                        0 => a.cost = ManaAbilityCostDef::SacrificeSelf,
+                        1 => a.amount = ManaAbilityAmountDef::Fixed(1),
+                        2 => a.controller_damage = 1,
+                        _ => a.max_activations_per_turn = Some(1),
+                    }
+                    changed.mana_ability_def = Some(a);
+                    assert!(roots::rallier_bloom_printing::printing(id, &changed).is_err());
+                }
+            } else {
+                reject!(
+                    mana_ability_def,
+                    Some(ManaAbilityDef {
+                        cost: ManaAbilityCostDef::TapSelf,
+                        amount: ManaAbilityAmountDef::Fixed(1),
+                        controller_damage: 0,
+                        max_activations_per_turn: None
+                    })
+                );
+                reject!(mana_ability, || Some(crate::effect::EffectOp::Sequence(
+                    vec![]
+                )));
+                for corrupt in 0..9 {
+                    let mut changed = fixture();
+                    let mut a = d.activated_abilities[0];
+                    match corrupt {
+                        0 => a.cost = &[crate::card_def::CostComponent::Tap],
+                        1 => a.target_spec = crate::card_def::TargetSpec::AnyPlayer,
+                        2 => a.effect = || crate::effect::EffectOp::Sequence(vec![]),
+                        3 => a.activation_zone = Zone::Hand,
+                        4 => a.sorcery_speed_only = true,
+                        5 => {
+                            a.activation_target_filter =
+                                crate::card_def::ActivationTargetFilter::CreatureSubtype(
+                                    crate::card_def::Subtype::Bear,
+                                )
+                        }
+                        6 => a.max_activations_per_turn = Some(1),
+                        7 => a.face = Some(1),
+                        _ => {}
+                    }
+                    changed.activated_abilities = Box::leak(
+                        if corrupt == 8 { vec![a, a] } else { vec![a] }.into_boxed_slice(),
+                    );
+                    assert!(
+                        roots::rallier_bloom_printing::printing(id, &changed).is_err(),
+                        "nested activation {corrupt}"
+                    );
+                }
+            }
         }
     }
 
@@ -1693,6 +1870,461 @@ mod paid {
         );
         reject_ability!(max_activations_per_turn, Some(1));
         reject_ability!(face, Some(1));
+    }
+
+    #[test]
+    fn four_triggered_creature_supplements_preserve_native_printing_and_reject_foreign_fields() {
+        use crate::mana::ManaColor;
+        for (name, subtypes, power, toughness, keywords, generic, pips, colors, mana_value) in [
+            (
+                "Ashroot Animist",
+                json!(["Lizard", "Druid"]),
+                4,
+                4,
+                json!(["Trample"]),
+                2,
+                json!([{"Colored":"R"},{"Colored":"G"}]),
+                json!(["R", "G"]),
+                4,
+            ),
+            (
+                "Stromkirk Bloodthief",
+                json!(["Vampire", "Rogue"]),
+                2,
+                2,
+                json!([]),
+                2,
+                json!([{"Colored":"B"}]),
+                json!(["B"]),
+                3,
+            ),
+            (
+                "Strongbox Raider",
+                json!(["Orc", "Pirate"]),
+                5,
+                2,
+                json!([]),
+                2,
+                json!([{"Colored":"R"},{"Colored":"R"}]),
+                json!(["R"]),
+                4,
+            ),
+            (
+                "Vampire Gourmand",
+                json!(["Vampire"]),
+                2,
+                2,
+                json!([]),
+                1,
+                json!([{"Colored":"B"}]),
+                json!(["B"]),
+                2,
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let d = ordinary_recipe(id);
+            roots::validate_family_permanent_recipe(id, &d).unwrap();
+            let descriptor = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &descriptor["registered_permanent_printing"];
+            let c = &p["characteristics"];
+            assert_eq!(c["types"], json!(["Creature"]));
+            assert_eq!(c["subtypes"], subtypes);
+            assert_eq!(c["supertypes"], json!([]));
+            assert_eq!(c["power"], power);
+            assert_eq!(c["toughness"], toughness);
+            assert_eq!(c["ordered_keywords"], keywords);
+            assert_eq!(c["printed_mana_abilities"], 0);
+            assert_eq!(c["printed_activated_abilities"], 0);
+            assert_eq!(c["colors"], colors);
+            assert_eq!(c["mana_value"], mana_value);
+            let cast = &p["ordered_cast_roots"][0];
+            assert_eq!(
+                cast["ordered_costs"][0]["PrintedMana"],
+                json!({"generic":generic,"pips":pips,"x_count":0})
+            );
+            assert_eq!(cast["ordinary_origin"], "Hand");
+            assert_eq!(cast["ordinary_route"], "Hand");
+            assert_eq!(cast["timing"], "CasterMainPhaseEmptyStackWithPriority");
+            assert_eq!(cast["targets"], "None");
+            assert_eq!(
+                cast["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            assert_eq!(
+                cast["physical_departure"],
+                "BattlefieldOnResolutionOtherwiseGraveyard"
+            );
+            assert_eq!(
+                cast["other_cast_permissions_require_current_candidate_authority"],
+                true
+            );
+            assert_eq!(cast["zone_replacements_still_apply"], true);
+            macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::validate_family_permanent_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(mana_value, 0);
+            reject!(object_name, "different");
+            reject!(capability, crate::card_def::CardCapability::Partial);
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(subtypes, &[crate::card_def::Subtype::Human]);
+            reject!(supertypes, &[crate::card_def::Supertype::Legendary]);
+            reject!(colors, &[ManaColor::U]);
+            reject!(power, Some(7));
+            reject!(toughness, Some(8));
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(target_spec, crate::card_def::TargetSpec::Creature);
+            reject!(spell_effect, || None);
+            reject!(
+                alt_cost,
+                Some(crate::card_def::AltCostDef {
+                    components: &[],
+                    condition: crate::card_def::AltCostCondition::Always
+                })
+            );
+            reject!(
+                mode2,
+                Some(crate::card_def::ModeDef {
+                    target_spec: crate::card_def::TargetSpec::None,
+                    effect: || crate::effect::EffectOp::Sequence(vec![])
+                })
+            );
+            reject!(
+                activated_abilities,
+                crate::card_def::CARD_DEFS
+                    [usize::from(crate::card_def::card_id_by_name("Masked Meower").unwrap())]
+                .activated_abilities
+            );
+            reject!(
+                combat_static_rules,
+                crate::card_def::CombatStaticRulesDef {
+                    must_attack_each_combat: true,
+                    cant_be_blocked_by_subtype: None
+                }
+            );
+            reject!(
+                source_type_hexproof_v1,
+                Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+            );
+            reject!(other_controlled_nontoken_death_v1,Some(crate::card_def::OtherControlledNontokenDeathDefV1::MayRevealCreatureToHandRandomBottom));
+            reject!(produces_mana, &[ManaColor::G]);
+            reject!(mana_ability, || Some(crate::effect::EffectOp::Sequence(
+                vec![]
+            )));
+            reject!(minimum_blockers, 2);
+            reject!(is_land, true);
+            reject!(is_token, true);
+            reject!(enters_battlefield_tapped, true);
+        }
+        let ash = crate::rules_meaning_ashroot_v1::meaning(
+            &crate::rules_meaning_ashroot_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Ashroot Animist").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            ash.rule
+                .mandatory_another_controlled_creature_target_at_placement
+                && ash.rule.source_power_sampled_once_at_resolution
+                && ash.rule.actual_departure_power_used_after_source_leaves
+        );
+        let blood = crate::rules_meaning_stromkirk_v1::meaning(
+            &crate::rules_meaning_stromkirk_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Stromkirk Bloodthief").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            blood.rule.actual_opponent_loss_before_trigger
+                && blood.rule.intervening_condition_rechecked_at_resolution
+                && blood.rule.mandatory_controlled_vampire_permanent_target
+        );
+        let strongbox = crate::rules_meaning_strongbox_v1::meaning(
+            &crate::rules_meaning_strongbox_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Strongbox Raider").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            strongbox.raid_at_capture_and_resolution
+                && strongbox.choose_exactly_one_surviving_exile
+                && strongbox.ordinary_timing_costs_land_quota
+                && !strongbox.source_survival_required
+        );
+        let gourmand = crate::rules_meaning_gourmand_v1::meaning(
+            &crate::rules_meaning_gourmand_v1::live_selector().unwrap(),
+            crate::card_def::card_id_by_name("Vampire Gourmand").unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(
+            gourmand.rule.optional_resolution_cost
+                && gourmand.rule.sacrifice_is_not_targeting
+                && gourmand.rule.unblockable_binds_original_source_incarnation
+                && gourmand.rule.draw_count_after_payment == 1
+        );
+    }
+
+    #[test]
+    fn memorial_panda_closed_ordinary_printings_preserve_grants_and_all_family_roots() {
+        for (name, cost, characteristics) in [
+            (
+                "Akroma's Memorial",
+                json!({"generic":7,"pips":[],"x_count":0}),
+                json!({"types":["Artifact"],"subtypes":[],"supertypes":[crate::card_def::Supertype::Legendary as u8],
+                "colors":[],"mana_value":7,"power":null,"toughness":null,"ordered_keywords":[],
+                "minimum_blockers":1,"token":false,"land":false,"enters_tapped":false,
+                "printed_mana_abilities":0,"printed_activated_abilities":0}),
+            ),
+            (
+                "Fiendish Panda",
+                json!({"generic":2,"pips":[{"Colored":"W"},{"Colored":"B"}],"x_count":0}),
+                json!({"types":["Creature"],"subtypes":["Bear","Demon"],"supertypes":[],
+                "colors":["W","B"],"mana_value":4,"power":3,"toughness":2,"ordered_keywords":[],
+                "minimum_blockers":1,"token":false,"land":false,"enters_tapped":false,
+                "printed_mana_abilities":0,"printed_activated_abilities":0}),
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            roots::validate_family_permanent_recipe(id, &ordinary_recipe(id)).unwrap();
+            let value = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let printing = &value["registered_permanent_printing"];
+            assert_eq!(printing["characteristics"], characteristics);
+            let root = &printing["ordered_cast_roots"][0];
+            assert_eq!(root["ordered_costs"][0]["PrintedMana"], cost);
+            assert_eq!(root["ordinary_origin"], "Hand");
+            assert_eq!(root["targets"], "None");
+            assert_eq!(
+                root["ordered_resolution"],
+                json!(["MoveOriginalSpellFromStackToBattlefieldUnderCasterControl"])
+            );
+            macro_rules! reject { ($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::validate_family_permanent_recipe(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}}; }
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(types, &[crate::card_def::CardType::Enchantment]);
+            reject!(power, Some(9));
+            reject!(toughness, Some(9));
+            reject!(keywords, crate::card_def::Keywords::FLYING);
+            reject!(minimum_blockers, 2);
+            reject!(target_spec, crate::card_def::TargetSpec::Creature);
+            reject!(spell_effect, || None);
+            reject!(
+                controlled_creature_grant,
+                if name == "Akroma's Memorial" {
+                    None
+                } else {
+                    Some(crate::controlled_creature_grants_v1::MEMORIAL)
+                }
+            );
+            reject!(
+                source_type_hexproof_v1,
+                Some(crate::card_def::SourceTypeHexproofDefV1::Instants)
+            );
+        }
+        use crate::rules_meaning_akroma_v1 as memorial;
+        let id = crate::card_def::card_id_by_name("Akroma's Memorial").unwrap();
+        for root in [
+            memorial::RootV1::PermanentSpell,
+            memorial::RootV1::ControlledCreatureGrant,
+        ] {
+            let value = memorial::meaning(&memorial::live_selector().unwrap(), id, root).unwrap();
+            assert_eq!(
+                value.rule.keywords,
+                ["Flying", "First strike", "Vigilance", "Trample", "Haste"].map(String::from)
+            );
+            assert_eq!(
+                value.rule.protection_colors,
+                ["Black", "Red"].map(String::from)
+            );
+            assert!(
+                value.rule.current_source_controller
+                    && value.rule.current_effective_creature
+                    && value.rule.recipient_ability_loss_timestamp_applies
+            );
+        }
+        use crate::rules_meaning_fiendish_panda_v1 as panda;
+        let id = crate::card_def::card_id_by_name("Fiendish Panda").unwrap();
+        for root in [
+            panda::RootV1::CreatureSpell,
+            panda::RootV1::ControllerLifeGain,
+            panda::RootV1::SourceDeath,
+        ] {
+            let value = panda::printed_meaning(id, root).unwrap();
+            panda::validate(&value).unwrap();
+            assert_eq!(
+                value.ordered_printed_roots,
+                [
+                    panda::RootV1::ControllerLifeGain,
+                    panda::RootV1::SourceDeath
+                ]
+            );
+            if root == panda::RootV1::ControllerLifeGain {
+                assert!(
+                    value.one_counter_per_event && !value.counter_count_multiplied_by_life_amount
+                );
+            }
+            if root == panda::RootV1::SourceDeath {
+                assert!(
+                    value.last_battlefield_power_signed
+                        && value.target_excludes_bear_and_changeling
+                        && value.return_to_battlefield
+                        && !value.instruction_forces_tapped
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn three_early_closed_printings_authenticate_ordinary_and_activation_semantics() {
+        for (name, power, subtypes, colors, cost, activations) in [
+            (
+                "Scavenging Ooze",
+                2,
+                json!(["Ooze"]),
+                json!(["G"]),
+                json!({"generic":1,"pips":[{"Colored":"G"}],"x_count":0}),
+                1,
+            ),
+            (
+                "Heartfire Immolator",
+                2,
+                json!(["Human", "Wizard"]),
+                json!(["R"]),
+                json!({"generic":1,"pips":[{"Colored":"R"}],"x_count":0}),
+                1,
+            ),
+            (
+                "Soul-Shackled Zombie",
+                4,
+                json!(["Zombie"]),
+                json!(["B"]),
+                json!({"generic":3,"pips":[{"Colored":"B"}],"x_count":0}),
+                0,
+            ),
+        ] {
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            let d = ordinary_recipe(id);
+            // The old vanilla path refused before the mandatory supplement.
+            // Exact typed routing now retains full canonical bodies, not a digest or alias.
+            let routed = roots::baseline(id).unwrap();
+            assert!(!routed["definition_owned_family_meanings"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            let value = roots::registered_permanent_printing(id).unwrap().unwrap();
+            let p = &value["registered_permanent_printing"];
+            assert_eq!(p["characteristics"]["types"], json!(["Creature"]));
+            assert_eq!(p["characteristics"]["subtypes"], subtypes);
+            assert_eq!(p["characteristics"]["colors"], colors);
+            assert_eq!(p["characteristics"]["power"], power);
+            assert_eq!(p["characteristics"]["toughness"], 2);
+            assert_eq!(
+                p["characteristics"]["printed_activated_abilities"],
+                activations
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["ordered_costs"][0]["PrintedMana"],
+                cost
+            );
+            assert_eq!(
+                p["ordered_cast_roots"][0]["timing"],
+                "CasterMainPhaseEmptyStackWithPriority"
+            );
+            assert_eq!(
+                p["ordered_activation_roots"].as_array().unwrap().len(),
+                activations as usize
+            );
+            macro_rules! reject {($field:ident,$value:expr)=>{{let mut changed=ordinary_recipe(id);changed.$field=$value;
+                assert!(matches!(roots::early_activation_printing::printing(id,&changed),Err(Error::UnsupportedPrintedRoot(actual))if actual==id),stringify!($field));}};}
+            reject!(cost, crate::mana::Cost::zero());
+            reject!(power, Some(9));
+            reject!(mana_value, 0);
+            reject!(types, &[crate::card_def::CardType::Sorcery]);
+            reject!(keywords, crate::card_def::Keywords::HASTE);
+            reject!(
+                alt_cost,
+                Some(crate::card_def::AltCostDef {
+                    components: &[],
+                    condition: crate::card_def::AltCostCondition::Always
+                })
+            );
+            reject!(
+                controlled_creature_grant,
+                Some(crate::controlled_creature_grants_v1::MEMORIAL)
+            );
+            reject!(spell_effect, || None);
+            reject!(minimum_blockers, 2);
+            if activations != 0 {
+                let a = &p["ordered_activation_roots"][0];
+                assert_eq!(a["printed_ability_index"], 0);
+                assert_eq!(a["activation_zone"], "Battlefield");
+                assert_eq!(a["timing"], "WithPriorityAtInstantSpeed");
+                assert_eq!(
+                    a["ordered_costs"][0]["Mana"],
+                    json!({"generic":0,"pips":[{"Colored":if name=="Scavenging Ooze"{"G"}else{"R"}}],"x_count":0})
+                );
+                assert_eq!(
+                    a["ordered_costs"].as_array().unwrap().len(),
+                    if name == "Scavenging Ooze" { 1 } else { 2 }
+                );
+                if name == "Heartfire Immolator" {
+                    assert_eq!(a["ordered_costs"][1], "SacrificeOriginalSource");
+                    let prowess = &p["canonical_family_roots"][0]["prowess"];
+                    assert_eq!(prowess["trigger"], "CurrentControllerCastsNoncreatureSpell");
+                    assert_eq!(prowess["ordered_resolution"][0]["power"], 1);
+                    assert_eq!(prowess["ordered_resolution"][0]["toughness"], 1);
+                    assert_eq!(
+                        prowess["ordered_resolution"][0]["original_source_battlefield_incarnation"],
+                        true
+                    );
+                    assert_eq!(prowess["intervening_condition"], false);
+                }
+                for corrupt in 0..9 {
+                    let mut changed = ordinary_recipe(id);
+                    let mut ability = d.activated_abilities[0];
+                    match corrupt {
+                        0 => ability.cost = &[crate::card_def::CostComponent::Tap],
+                        1 => ability.target_spec = crate::card_def::TargetSpec::AnyPlayer,
+                        2 => ability.effect = || crate::effect::EffectOp::Sequence(vec![]),
+                        3 => ability.activation_zone = Zone::Hand,
+                        4 => ability.sorcery_speed_only = true,
+                        5 => {
+                            ability.activation_target_filter =
+                                crate::card_def::ActivationTargetFilter::CreatureSubtype(
+                                    crate::card_def::Subtype::Bear,
+                                )
+                        }
+                        6 => ability.max_activations_per_turn = Some(1),
+                        7 => ability.face = Some(1),
+                        _ => {}
+                    }
+                    changed.activated_abilities = Box::leak(
+                        if corrupt == 8 {
+                            vec![ability, ability]
+                        } else {
+                            vec![ability]
+                        }
+                        .into_boxed_slice(),
+                    );
+                    assert!(
+                        roots::early_activation_printing::printing(id, &changed).is_err(),
+                        "nested ability {corrupt}"
+                    );
+                }
+            }
+        }
+        let id = crate::card_def::card_id_by_name("Scavenging Ooze").unwrap();
+        assert!(
+            !crate::rules_meaning_ooze_v1::root_meaning(id, 0)
+                .unwrap()
+                .effect
+                .conditional_requires_successful_exile
+        );
+        let id = crate::card_def::card_id_by_name("Soul-Shackled Zombie").unwrap();
+        let zombie = crate::rules_meaning_soul_shackled_zombie_v1::root_meaning(id, 0).unwrap();
+        assert!(
+            zombie.effect.requires_actual_successful_creature_exile
+                && zombie.effect.drain_once_if_one_or_two_creatures_exiled
+        );
     }
 
     #[test]
@@ -2403,3 +3035,9 @@ mod thin_producer_transport {
         );
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) mod ordinary_triggers;

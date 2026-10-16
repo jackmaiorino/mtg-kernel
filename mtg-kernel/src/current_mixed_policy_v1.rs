@@ -1,7 +1,10 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
 mod elenda;
+mod kellan_public_operands;
 mod network;
+mod next_five;
+mod next_five_support;
 mod normalize;
 mod numeric;
 mod prepared;
@@ -11,6 +14,7 @@ use crate::rl_session::{
 };
 pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
 pub use network::{ModelConfig, NativeModel};
+pub use next_five::{NextFiveDecision, NextFiveSession, NextFiveSnapshot};
 pub use numeric::NumericTree;
 pub use prepared::{PreparedDecision, PreparedSession, PreparedSnapshot};
 use sha2::{Digest, Sha256};
@@ -44,6 +48,7 @@ pub enum Source {
     RavenousV51,
     ElendaV52,
     PreparedV57,
+    NextFiveV59,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -74,9 +79,47 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/numeric.rs"),
             include_str!("current_mixed_policy_v1/normalize.rs"),
             include_str!("current_mixed_policy_v1/roots.rs"),
+            include_str!("current_mixed_policy_v1/eaten_printing.rs"),
+            include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
+            include_str!("current_mixed_policy_v1/faebloom_printing.rs"),
+            include_str!("current_mixed_policy_v1/crystal_printing.rs"),
+            include_str!("current_mixed_policy_v1/tyrant_herald_printing.rs"),
+            include_str!("current_mixed_policy_v1/soulstone_printing.rs"),
+            include_str!("twinflame_tyrant_v1.rs"),
+            include_str!("current_mixed_policy_v1/legendary_printing.rs"),
+            include_str!("current_mixed_policy_v1/early_activation_printing.rs"),
+            include_str!("current_mixed_policy_v1/rallier_bloom_printing.rs"),
+            include_str!("current_mixed_policy_v1/kellan_printing.rs"),
+            include_str!("current_mixed_policy_v1/kellan_public_operands.rs"),
+            include_str!("arahbo_v1.rs"),
+            include_str!("zul_ashur_v1.rs"),
             include_str!("current_mixed_policy_v1/network.rs"),
             include_str!("current_mixed_policy_v1/elenda.rs"),
             include_str!("current_mixed_policy_v1/prepared.rs"),
+            include_str!("current_mixed_policy_v1/next_five.rs"),
+            include_str!("current_mixed_policy_v1/next_five_support.rs"),
+            include_str!("next_five_observation_v59.rs"),
+            include_str!("next_five_public_v59.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("rules_meaning_midnight_snack_v58.rs"),
+            include_str!("midnight_snack_public_v58.rs"),
+            include_str!("midnight_snack_v1.rs"),
+            include_str!("extravagant_replication_v1.rs"),
+            include_str!("infernal_vessel_v1.rs"),
+            include_str!("giada_v1.rs"),
+            include_str!("goblin_negotiation_v1.rs"),
+            include_str!("goblin_negotiation_v1/owned.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("rl_variable_cast_v1.rs"),
+            include_str!("rl_session/next_five_v59.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("life_loss_turn_v1.rs"),
+            include_str!("../build.rs"),
             include_str!("prepared_observation_v57.rs"),
             include_str!("rl_session/prepared_v57.rs"),
             include_str!("drake_public_v53.rs"),
@@ -159,6 +202,12 @@ pub fn feature_identity() -> String {
             include_str!("policy_surface_v5.rs"),
             include_str!("ravenous_public_v51.rs"),
             include_str!("fake_your_own_death_v50/public_v50.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("state.rs"),
+            include_str!("event.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -322,3 +371,10 @@ session!(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod legendary_tests;

@@ -263,8 +263,8 @@ fn public_facts(state: &GameState) -> mtg_kernel::elenda_public_v52::FactsV52 {
 fn genuine_definition_is_partial_and_has_exact_printed_cost_and_typed_rules() {
     let id = card_id_by_name(ELENDA).unwrap();
     let def = &CARD_DEFS[id as usize];
-    assert_eq!(def.capability, CardCapability::Partial);
-    assert!(preflight_fully_supported_deck(&[id]).is_err());
+    assert_eq!(def.capability, CardCapability::Full);
+    assert!(preflight_fully_supported_deck(&[id]).is_ok());
     assert_eq!(def.mana_value, 4);
     assert_eq!(def.cost.generic, 2);
     assert_eq!(

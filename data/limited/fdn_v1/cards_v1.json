@@ -7498,7 +7498,7 @@
     },
     {
       "name": "Elenda, Saint of Dusk",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}{B}",
       "mana_value": 4,
       "colors": [
@@ -7535,7 +7535,7 @@
     },
     {
       "name": "Flamewake Phoenix",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}{R}",
       "mana_value": 3,
       "colors": [
@@ -7571,7 +7571,7 @@
     },
     {
       "name": "Spinner of Souls",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}",
       "mana_value": 3,
       "colors": [
@@ -7609,7 +7609,7 @@
     },
     {
       "name": "Painful Quandary",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{3}{B}{B}",
       "mana_value": 5,
       "colors": [
@@ -7639,7 +7639,7 @@
     },
     {
       "name": "Drake Hatcher",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -7701,7 +7701,7 @@
     },
     {
       "name": "Bloodthirsty Conqueror",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{3}{B}{B}",
       "mana_value": 5,
       "colors": [
@@ -7734,7 +7734,7 @@
     },
     {
       "name": "Doubling Season",
-      "engine_capability": "partial",
+      "engine_capability": "full",
       "mana_cost": "{4}{G}",
       "mana_value": 5,
       "colors": [

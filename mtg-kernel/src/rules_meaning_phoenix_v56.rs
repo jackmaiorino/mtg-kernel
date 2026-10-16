@@ -260,7 +260,7 @@ pub(crate) fn selected_definition(d: &CardDef, card_id: u16) -> bool {
     } = d;
     d.name == "Flamewake Phoenix"
         && d.object_name == d.name
-        && d.capability == CardCapability::Partial
+        && matches!(d.capability, CardCapability::Partial | CardCapability::Full)
         && d.is_executable()
         && d.cost.generic == 1
         && d.cost.x_count == 0
@@ -401,7 +401,7 @@ pub fn meaning(selector: &SelectorV56, card_id: u16) -> Result<MeaningV56, Strin
                 ],
             },
         ],
-        full_engine_admitted: false,
+        full_engine_admitted: d.capability == CardCapability::Full,
         model_admitted: false,
         sampler_admitted: false,
         fair_search_admitted: false,
