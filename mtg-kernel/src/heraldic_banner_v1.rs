@@ -121,7 +121,16 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(()); // Only the actual nonserializable operation runner owns this interval.
     }
-    if crate::linked_aura_operation_v1::has_banner_pending(state) {
+    // A mixed simultaneous batch can suspend its color receipts under the
+    // Kinship owner. Reconstruct that entire operation before requiring a
+    // completed color journal; an erased owner still fails below.
+    if crate::linked_aura_operation_v1::has_banner_pending(state)
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some()
+    {
         return crate::linked_aura_operation_v1::validate(state);
     }
     if state.engine.event_log.iter().any(|event| {

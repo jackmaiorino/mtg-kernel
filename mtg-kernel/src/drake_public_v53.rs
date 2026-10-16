@@ -647,6 +647,24 @@ fn capture_scoped(
             "V53 cannot publish a private synchronous operation tail",
         ));
     }
+    // Fellowship zero still leaves an incarnation-bound chosen type and a
+    // current-counter anthem. Neither that entry checkpoint nor its live
+    // metadata has a representation in this frozen V53 appendix. Inspect
+    // public battlefield rows only, never hidden hand/library printings.
+    if state
+        .engine
+        .linked_aura_operation_v1
+        .pending_kinship_v1
+        .is_some()
+        || state
+            .objects
+            .iter()
+            .any(|(_, live)| live.zone == Zone::Battlefield && live.v4.kinship_type_v1.is_some())
+    {
+        return Err(error(
+            "V53 does not expose native creature-type entry mechanics",
+        ));
+    }
     custody::validate(state).map_err(error)?;
     // Reuse existing generic authority for Prowess/current effect state. This
     // does not manufacture a new historical Prowess occurrence receipt.

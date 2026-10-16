@@ -122,6 +122,7 @@ fn paid_banner_complete_domain_original_payment_checkpoint_restore_and_zero_coun
         assert_eq!(pending.objects.get(banner).zone, Zone::Stack);
         assert_eq!(pending.objects.get(banner).counters.fellowship, 0);
         assert!(pending.stack.iter().any(|item| item.source == banner));
+        assert!(crate::drake_public_v53::capture(&pending).is_err());
         for action in [
             Action::ChooseEffectOption(324),
             Action::ChooseEffectOption(u16::MAX),
@@ -351,13 +352,31 @@ fn mixed_native_entry_batch_keeps_apnap_complete_preentry_scene_and_answered_res
                 ProposedEvent::zone_change(first, Zone::Battlefield),
             ],
         );
-        reach_type(&mut state, actor);
-        assert_eq!(state.objects.get(first).zone, Zone::Hand);
-        assert_eq!(state.objects.get(heraldic).zone, Zone::Hand);
-        choose(&mut state, CreatureTypeV60::Druid);
-        assert!(
-            matches!(engine::advance_until_decision(&mut state), Decision::ChooseEntryColorV36 { player, .. } if player == actor.opponent())
-        );
+        assert!(state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some());
+        entry::validate_state(&state).unwrap();
+        crate::heraldic_banner_v1::validate_state(&state).unwrap();
+        let mut erased = state.clone();
+        erased.engine.linked_aura_operation_v1.pending_kinship_v1 = None;
+        let erased_before = erased.clone();
+        assert!(crate::heraldic_banner_v1::validate_state(&erased).is_err());
+        assert!(crate::effect::validate_pending_effect_choice(&erased).is_err());
+        assert_eq!(erased, erased_before);
+        let mut first_restored = roundtrip(&state);
+        for branch in [&mut state, &mut first_restored] {
+            reach_type(branch, actor);
+            assert_eq!(branch.objects.get(first).zone, Zone::Hand);
+            assert_eq!(branch.objects.get(heraldic).zone, Zone::Hand);
+            choose(branch, CreatureTypeV60::Druid);
+            assert!(
+                matches!(engine::advance_until_decision(branch), Decision::ChooseEntryColorV36 { player, .. } if player == actor.opponent())
+            );
+            crate::heraldic_banner_v1::validate_state(branch).unwrap();
+        }
+        assert_eq!(state, first_restored);
         assert_eq!(state.objects.get(first).zone, Zone::Hand);
         let mut forged = state.clone();
         let pending = forged
