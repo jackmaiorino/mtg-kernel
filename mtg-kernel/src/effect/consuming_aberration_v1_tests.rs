@@ -761,6 +761,79 @@ fn genuine_paid_original_mill_public_api_and_erased_resume_refuse_readonly_both_
         );
         bad.engine.halted = None;
         assert_eq!(bad, original);
+        // An unknown Some id, changed kind/root and erased source contract
+        // cannot hide the actual still-published source in either checkpoint.
+        let waiting = restore(&state);
+        let mut answered = restore(&state);
+        for _ in 0..8 {
+            if answered
+                .engine
+                .pending_effect
+                .as_ref()
+                .unwrap()
+                .choice
+                .is_none()
+            {
+                break;
+            }
+            let decision = engine::advance_until_decision(&mut answered);
+            respond(&mut answered, decision, false);
+        }
+        assert!(answered
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .choice
+            .is_none());
+        for checkpoint in [waiting, answered] {
+            for erase_contract in [false, true] {
+                let mut forged = restore(&checkpoint);
+                let pending = forged.engine.pending_effect.as_mut().unwrap();
+                pending.ctx.stack_item_id = Some(crate::ids::StackItemId(u64::MAX));
+                pending.resolving_item.v4.stack_item_id = pending.ctx.stack_item_id.unwrap();
+                pending.resolving_item.kind = crate::state::StackItemKind::Spell;
+                let draw = EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                };
+                pending.resolving_item.inline_effect = Some(draw.clone());
+                if erase_contract {
+                    pending.ctx.ability_source_contract = None;
+                    pending.resolving_item.v4.ability_source_contract = None;
+                }
+                pending.choice = None;
+                pending.frames = vec![EffectFrame::Program {
+                    op: draw.clone(),
+                    path: vec![],
+                }];
+                pending.answered_choice_guard = None;
+                let ctx = pending.ctx.clone();
+                let item = pending.resolving_item.clone();
+                let before = forged.clone();
+                assert!(validate_pending_effect_choice(&forged).is_err());
+                assert!(resume_resumable_resolution(&mut forged).is_err());
+                assert_eq!(forged, before);
+                execute(&draw, &ctx, &mut forged);
+                assert_eq!(
+                    forged.engine.halted,
+                    Some((
+                        engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source
+                    ))
+                );
+                forged.engine.halted = None;
+                assert_eq!(forged, before);
+                forged.engine.pending_effect = None;
+                let before = forged.clone();
+                assert!(
+                    begin_resumable_resolution(&draw, &ctx, item.clone(), &mut forged).is_err()
+                );
+                assert_eq!(forged, before);
+                assert!(acquire_native_execution_owner_v1(&forged, &item).is_err());
+                assert_eq!(forged, before);
+            }
+        }
         // The genuine native engine, using its consumed private owner, still
         // completes both the waiting and immediately answered restore paths.
         let mut replay = restore(&state);
@@ -1164,5 +1237,65 @@ fn native_checked_negative_power_flashback_announcement_refuses_before_stack_mov
         );
         state.engine.halted = None;
         assert_eq!(state, original);
+    }
+}
+
+#[test]
+fn paid_longbow_granted_activation_above_original_mill_keeps_native_owner_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 10]);
+        let source = paid_aberration(&mut state, actor);
+        let equipment = cast(&mut state, actor, "Viridian Longbow", None, 1);
+        finish(&mut state, false);
+        let before = taps(&state, actor);
+        engine::step(&mut state, Action::ActivateAbility(equipment, 0)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(taps(&state, actor) - before, 3);
+        finish(&mut state, false);
+        assert_eq!(
+            state.objects.get(equipment).v4.attached_to.unwrap().object,
+            source
+        );
+        crate::policy_observation_v6::tests::advance_to_next_main_for(&mut state, actor);
+        assert!(!state.objects.get(source).summoning_sick);
+        cast(&mut state, actor, "Think Twice", None, 2);
+        let waiting = trigger_rows(&state)[0].clone();
+        assert!(aberration_item_v1(&waiting));
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Player(actor.opponent())))
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let ping = state.stack.last().unwrap();
+        assert_eq!(ping.kind, crate::state::StackItemKind::ActivatedAbility);
+        assert_eq!((ping.source, ping.controller), (source, actor));
+        assert_ne!(ping.v4.stack_item_id, waiting.v4.stack_item_id);
+        assert!(ping.v4.granted_by.is_some());
+        assert!(state.stack.iter().any(|row| row == &waiting));
+        assert!(state.objects.get(source).tapped);
+        let life = state.players[actor.opponent().index()].life;
+        let mut replay = restore(&state);
+        finish(&mut state, false);
+        finish(&mut replay, false);
+        assert_eq!(state, replay);
+        assert_eq!(state.players[actor.opponent().index()].life, life - 1);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert_eq!(
+            state.objects.get(equipment).v4.attached_to.unwrap().object,
+            source
+        );
     }
 }

@@ -4254,7 +4254,7 @@ pub fn begin_resumable_resolution(
         return Err("Edict requires its genuine native pre-removal owner".into());
     }
     if lathril_context_v1(state, ctx.stack_item_id)
-        || lathril_waiting_source_v1(state, ctx)
+        || native_waiting_source_v1(state, ctx)
         || event::lathril_item_selected_v1(state, &resolving_item)
         || matches!(
             op,
@@ -4265,7 +4265,7 @@ pub fn begin_resumable_resolution(
             Some(EffectOp::LathrilCombatTokensV1 { .. })
         )
     {
-        return Err("Lathril requires its genuine native pre-removal owner".into());
+        return Err("published source requires its genuine native pre-removal owner".into());
     }
     if matches!(
         op,
@@ -4413,6 +4413,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|pending| native_waiting_source_v1(state, &pending.ctx))
+    {
+        return Err("published source continuation requires its genuine native row owner".into());
+    }
     if state
         .engine
         .pending_effect
@@ -12051,12 +12059,10 @@ fn drive_resumable_inner_with_native_row_v1(
     let native_row = if let Some(owner) = supplied_owner {
         owner.validate_initial_pending(state)?;
         Some(owner)
-    } else if state
-        .engine
-        .pending_effect
-        .as_ref()
-        .is_some_and(|p| lathril_waiting_source_v1(state, &p.ctx))
-    {
+    } else if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        native_waiting_source_v1(state, &p.ctx)
+            && !distinct_published_program_v1(state, &p.resolving_item)
+    }) {
         validate_pending_effect_choice(state)?;
         resumed_owner = NativeExecutionOwnerV1::from_validated_pending(state)?;
         Some(&resumed_owner)
@@ -18589,7 +18595,7 @@ fn execute_with_native_row_v1(
             .pending_effect
             .as_ref()
             .is_some_and(|pending| event::lathril_item_selected_v1(state, &pending.resolving_item))
-        || (lathril_waiting_source_v1(state, ctx)
+        || (native_waiting_source_v1(state, ctx)
             && native_proof.is_none_or(|proof| proof.ctx != ctx))
     {
         state.engine.halted = Some((
@@ -25233,6 +25239,7 @@ pub(crate) fn acquire_tutelage_resume_v1(
             .stack_item_id
             .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
         && !aberration_resolving_family_v1(state, pending)
+        && !native_waiting_source_v1(state, &pending.ctx)
     {
         return Ok(None);
     }
@@ -25241,9 +25248,12 @@ pub(crate) fn acquire_tutelage_resume_v1(
         if pending.resolving_item != *item || pending.choice.is_some() {
             return Err("Aberration Ward resume lost its ready original row".into());
         }
-        return Ok(None);
+        if !native_waiting_source_v1(state, &pending.ctx) {
+            return Ok(None);
+        }
     }
     if aberration_resolving_family_v1(state, pending)
+        && !authenticated_aberration_ward_v1(state, &pending.resolving_item)
         && !aberration_item_v1(&pending.resolving_item)
     {
         return Err("Aberration private resume lost its exact printed root".into());
@@ -25402,6 +25412,30 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     })
 }
 
+// Only a current actual published row selects its source. Caller-supplied
+// ids, kinds, roots and source-contract erasure cannot hide that row; completed
+// historical occurrences alone never select an unrelated future operation.
+fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    lathril_waiting_source_v1(state, ctx)
+        || state.stack.iter().any(|item| {
+            (tutelage_item_v1(state, item)
+                || (aberration_family_item_v1(item)
+                    && !authenticated_aberration_ward_v1(state, item)))
+                && (item.source == ctx.source
+                    || item.v4.ability_source_contract.is_some()
+                        && item.v4.ability_source_contract == ctx.ability_source_contract)
+        })
+}
+
+// These printed programs have their own consumed row owners. A different
+// genuine activation or Ward/granted ability above them uses the ordinary
+// lexical owner, after complete native row and root validation.
+fn distinct_published_program_v1(state: &GameState, item: &StackItem) -> bool {
+    event::lathril_item_selected_v1(state, item)
+        || tutelage_item_v1(state, item)
+        || (aberration_family_item_v1(item) && !authenticated_aberration_ward_v1(state, item))
+}
+
 /// A lexical native execution frame, never serialized, cloned or stored in a
 /// world. Only the actual unique top row can mint its initial removed-row form.
 pub(crate) struct NativeExecutionOwnerV1 {
@@ -25514,7 +25548,7 @@ pub(crate) fn acquire_native_execution_owner_v1(
 ) -> Result<Option<NativeExecutionOwnerV1>, String> {
     let mut ctx = crystal_prevention_v1::context(item);
     ctx.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
-    if !lathril_waiting_source_v1(state, &ctx) || event::lathril_item_selected_v1(state, item) {
+    if !native_waiting_source_v1(state, &ctx) || distinct_published_program_v1(state, item) {
         return Ok(None);
     }
     crate::engine::validated_stack_item_target_spec(item, state)?;
