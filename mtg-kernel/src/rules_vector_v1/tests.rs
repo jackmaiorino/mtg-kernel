@@ -1163,6 +1163,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("event.rs", "Lathril, Blade of the Elves", "positive final combat damage capture; token root remains opaque in frozen v1"),
     ("effect.rs", "Elf Warrior Token", "private exact captured Lathril token batch; frozen v1 root opaque"),
+    ("effect.rs", "Blasphemous Edict", "definition-owned APNAP simultaneous sacrifice root remains opaque in frozen V1; conditional mana cost is extracted"),
     ("effect.rs", "Consuming Aberration", "exact native revealed-mill answer-stage validation; reveal-until effect remains opaque"),
     ("engine.rs", "Consuming Aberration", "native all-zone layer7a CDA; exact opponent-graveyard cardinality remains opaque in frozen V1"),
     ("event.rs", "Sphinx's Tutelage",
@@ -1681,4 +1682,25 @@ fn lathril_native_combat_tokens_and_ten_other_elf_cost_remain_opaque() {
         .collect::<Vec<_>>();
     assert_eq!(activations.len(), 1);
     assert!(activations[0].atoms.contains(&Atom::Opaque));
+}
+
+#[test]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn edict_native_conditional_cost_and_simultaneous_choices_remain_opaque_in_frozen_v1() {
+    let actual = rules("Blasphemous Edict");
+    assert!(atoms(&actual).contains(&Atom::Opaque));
+    assert!(atoms(&actual).contains(&Atom::Read(ReadAtom {
+        player: RelF::EachPlayer,
+        zone: Some(ZoneF::Battlefield),
+        obj: Some(ObjF::Creature),
+        agg: AggF::AtLeast(13)
+    })));
+    assert_eq!(
+        crate::card_def::CARD_DEFS[usize::from(card_id("Blasphemous Edict"))].target_spec,
+        TargetSpec::None
+    );
 }

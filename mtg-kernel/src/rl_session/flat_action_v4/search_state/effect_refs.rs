@@ -52,7 +52,7 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            BindSphinxsTutelageMillV1
+            BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
             | MaySacrificeNonlandOtherwiseV1 { .. }
             | BindAleshaRaidReturn
@@ -329,7 +329,8 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            NonlandSacrificePaymentV1 { .. }
+            BlasphemousEdictV1 { .. }
+            | NonlandSacrificePaymentV1 { .. }
             | AleshaRaidAnswerV1 { .. }
             | SphinxsTutelageMillV1 { .. } => true,
             CopyTarget { choice, selected } => {
@@ -584,7 +585,9 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
-            NonlandSacrificePaymentV1 { .. } | SphinxsTutelageMillOrderV1 { .. } => true,
+            BlasphemousEdictV1 { .. }
+            | NonlandSacrificePaymentV1 { .. }
+            | SphinxsTutelageMillOrderV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),

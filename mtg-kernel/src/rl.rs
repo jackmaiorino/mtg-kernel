@@ -10512,6 +10512,11 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PendingEffectSemanticV4> {
+    if crate::effect::blasphemous_edict_v1::selected(state, &pending.resolving_item) {
+        return Err(RlContractError(
+            "Blasphemous Edict requires its distinct complete consumer".into(),
+        ));
+    }
     if pending
         .resolving_item
         .inline_effect
@@ -10798,6 +10803,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
                                 return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
                             }
