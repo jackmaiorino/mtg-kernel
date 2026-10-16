@@ -4310,7 +4310,11 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
             || requires_printed_optional_trigger_stage(state, pending)
             || perforating_artist_v1::requires_stage(pending)
     }) {
-        validate_pending_effect_choice(state)?;
+        validate_pending_effect_choice(state).map_err(|error| {
+            #[cfg(test)]
+            eprintln!("native_continuation::resume::required_choice_validation_rejected");
+            error
+        })?;
     }
     if state
         .engine
@@ -9442,6 +9446,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     .and_then(|i| state.stack.get(i))
         != Some(&pending.resolving_item)
     {
+        #[cfg(test)]
+        eprintln!("native_continuation::validate::resolving_stack_row_rejected");
         return Err(
             "effect continuation resolving item no longer exactly matches the public stack top"
                 .to_string(),
