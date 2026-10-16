@@ -45,13 +45,25 @@ Both lineages:
               by the probe), ROWS files and the census with the stop rule
               (fewer than 100 training or 20 held-out evidence rows in either
               lineage)
+Per lineage:
+  commands    stage 3: each seed's dry run, full run and 32-step rerun (cell
+              SD1-T-sK, K = 0 to 7, on the training keep-set file, steps 8 to
+              8,192), on the census's games file and bank, once its stop rule is
+              open and phase-1 exactness passed in both lineages
+  probe       stage 2's reference probe (the parent and O-final) or one seed
+              run's probe (its eleven checkpoints besides, 13 candidates), with
+              both keep-set files as the probe's evidence inputs
 Per lineage and seed run:
   select      stage 3: the probe identity check (the parent's and O-final's
               readouts and the probe's inputs equal stage 2's reference probe's
-              bit for bit), G3, then F and G2 (naming each failed part) at each
-              checkpoint until the first gated one failing G2 (later ones are
-              never selected, counted or reported), the fit reading and D1-k by
-              the clustered-SE rule
+              bit for bit, file paths aside), G3, then F and G2 (naming each
+              failed part) at each checkpoint until the first gated one failing
+              G2 (later ones are never selected, counted or reported), the fit
+              reading and D1-k by the clustered-SE rule, with D1-k's checkpoint
+Per lineage, once all eight seeds have a D1:
+  phase2      stage 4: D2-k from D1-k and O-k (k >= 1) from the parent, each on
+              schedule seed k under the sd1 namespace (phase2.py); O-0 is
+              stage 0's O-s0
 Checks of the tools and builds:
   known-answer   the rebuild's maps over the Spy archive's games against BT1's
                  committed live maps (the new_root rows of BT1's ROWS in archive
@@ -70,8 +82,14 @@ CLI (JSON summary on stdout; a failed check exits 1 after writing its record):
         --out-dir DIR --output-directory BANK_DIR
   bank-check --games-status GAMES.json --bank BANK.json --out CHECK.json
   targets --spec SPEC.json --out-dir DIR
+  commands --lineage r1 --parent P.json --anchor ANCHOR.json --census CENSUS.json
+           --exactness EXACT-r1.json EXACT-r2.json --root DIR --out-dir DIR
+  probe --lineage r1 --parent P.json --o-final O.json --anchor ANCHOR.json --offers OFFERS.json
+        --census CENSUS.json [--full PHASE1.json] --output-directory DIR --out CMD.json
   select --lineage r1 --seed K --probe PROBE.json --reference REF_PROBE.json --full PHASE1.json
          --rerun RERUN.json [--split SPLIT.json] --out SELECT.json
+  phase2 --lineage r1 --o-config O.json --select SELECT-0.json ... SELECT-7.json --workers W
+         --root DIR --out-dir DIR
   known-answer --rebuild r1=REBUILD.jsonl [r2=...] --rows r1=ROWS-r1.jsonl [r2=...] --out KNOWN.json
   bt1-regression --rows r1=ROWS-r1.jsonl [r2=...] --out REGRESSION.json
   o-check --lineage r1 --run O-s0/completion.json --recorded O/completion.json
@@ -94,6 +112,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import bt1  # noqa: E402
 import fit  # noqa: E402
+import phase1  # noqa: E402
 import phase2  # noqa: E402
 from distill_common import (LINEAGES, absolute, check_parent, episode, pilot, pin, read_json,  # noqa: E402
                             read_jsonl, require, write_json)
@@ -595,15 +614,27 @@ def readouts(probe: dict) -> dict:
     return out
 
 
+def unpathed(value):
+    """``value`` without its file paths (every "path" key), so that pinned
+    inputs compare by their SHA-256 alone."""
+    if isinstance(value, dict):
+        return {k: unpathed(v) for k, v in value.items() if k != "path"}
+    if isinstance(value, list):
+        return [unpathed(v) for v in value]
+    return value
+
+
 def probe_identity(probe: dict, reference: dict) -> dict:
     """The parent's and O-final's readouts, and the probe's inputs and build,
-    equal stage 2's reference probe's bit for bit."""
-    differ = [field for field in PROBE_INPUTS if canonical(probe.get(field)) != canonical(reference.get(field))]
+    equal stage 2's reference probe's bit for bit; pinned files compare by
+    their SHA-256, not their paths."""
+    differ = [field for field in PROBE_INPUTS
+              if canonical(unpathed(probe.get(field))) != canonical(unpathed(reference.get(field)))]
     require(probe.get("evidence") is not None, "an SD1 probe reads the evidence keep-set files")
     mine, ref = readouts(probe), readouts(reference)
     for cid in REFERENCE_IDS:
         require(cid in mine and cid in ref, f"a probe lacks the {cid} candidate")
-        if canonical(mine[cid]) != canonical(ref[cid]):
+        if canonical(unpathed(mine[cid])) != canonical(unpathed(ref[cid])):
             differ.append(cid)
     return {"differing": differ, "pass": not differ}
 
@@ -685,7 +716,7 @@ def select(lineage: str, seed: int, probe: dict, reference: dict, full: dict, re
     require([c["step"] for c in full["checkpoints"]] == list(CHECKPOINT_STEPS),
             f"{label}: the run's checkpoints are not steps 8 to 8,192")
     require(probe.get("lineage") == lineage and reference.get("lineage") == lineage, "a probe of another lineage")
-    require(canonical(probe["evidence"]["training"]) == canonical(options["keep_sets"]),
+    require(probe["evidence"]["training"]["sha256"] == options["keep_sets"]["sha256"],
             f"{label}: the probe's training keep-sets are not the run's")
     out = {"schema": SELECT_SCHEMA, "lineage": lineage, "seed": seed, "label": label,
            "identity": probe_identity(probe, reference)}
@@ -759,14 +790,115 @@ def select(lineage: str, seed: int, probe: dict, reference: dict, full: dict, re
     passing = [e for e in entries if e["gated"] and e["F"]["pass"]]
     if passing:
         d1 = select_d1(passing)
+        chosen = next(c for c in full["checkpoints"] if c["step"] == d1["selected_step"])
         out.update(reading="passes", d1=d1, selected_step=d1["selected_step"], fit_dose=passing[0]["step"],
-                   highest_passing_step=passing[-1]["step"])
+                   highest_passing_step=passing[-1]["step"],
+                   d1_checkpoint={k: chosen[k] for k in ("step", "checkpoint", "source", "state_sha256")})
     elif stop is not None and stop[1]["F"]["pass"]:
         out["reading"] = "required fit reached only together with collapse"
     elif stop is not None:
         out["reading"] = "collapse before the required fit"
     else:
         out["reading"] = "required fit not reached"
+    return out
+
+
+# ------------------------------------------------- phase-1 and probe commands
+
+
+def census_inputs(census_record: dict, lineage: str) -> dict:
+    """The stage-2 census's inputs of one lineage, once its stop rule is
+    open: the games file and bank it read and its two keep-set files, each
+    checked against its pin."""
+    require(census_record.get("schema") == CENSUS_SCHEMA, "not an SD1 census")
+    require(census_record["stop_rule"]["stop"] is False, "the census's stop rule stopped SD1")
+    entry = census_record["lineages"][lineage]
+    keep = entry["keep_sets"]
+    require(all(keep.get(side) is not None for side in SPLITS), f"{lineage}: a keep-set file is missing")
+    for side in SPLITS:
+        pinned(keep[side], f"{lineage} {side} keep sets")
+    check = read_pinned(census_record["spec"][lineage]["bank_check"], f"{lineage} bank check")
+    status = read_pinned(census_record["spec"][lineage]["games"], f"{lineage} games status")
+    games_file, bank = status["games_file"], check["bank"]
+    pinned(games_file, f"{lineage} games file")
+    pinned(bank, f"{lineage} bank")
+    return {"games": games_file, "bank": bank, "keep_sets": keep}
+
+
+def seed_options(keep_sets: dict, seed: int) -> dict:
+    """A seed run's phase-1 options (section 5): its cell label, the training
+    keep-set file and the read checkpoint steps. Nothing else changes from
+    the screen's arm U recipe; the engine reads the seed from the label."""
+    return {"cell": cell_label(seed), "keep_sets": keep_sets["training"], "checkpoint_steps": list(CHECKPOINT_STEPS)}
+
+
+def commands(lineage: str, parent: dict, anchor: dict, census_record: dict, exactness: list, root: str) -> dict:
+    """Each seed's dry-run, full-run and rerun phase-1 command, on the
+    census's games file and bank, once the stop rule is open and phase-1
+    exactness has passed in both lineages."""
+    inputs = census_inputs(census_record, lineage)
+    bt1.exact_in_both_lineages(exactness)
+    out = {}
+    for seed in SEEDS:
+        label = cell_label(seed)
+        base = f"{root.rstrip('/')}/{lineage}-{label}"
+        for suffix, extra in (("-dry", {"dry_run": True}), ("", {}), ("-rerun", {"rerun": True})):
+            out[label + suffix] = phase1.phase1_command(
+                lineage, "U", parent, Path(inputs["games"]["path"]), Path(inputs["bank"]["path"]), anchor,
+                base + suffix, options=seed_options(inputs["keep_sets"], seed), **extra)
+    return out
+
+
+def probe_command(lineage: str, parent: dict, o_final: dict, anchor: dict, offers: list, census_record: dict,
+                  full: dict | None, output_directory: str) -> dict:
+    """Stage 2's reference probe (the parent and O-final, ``full`` None) or
+    one seed run's probe (its eleven checkpoints besides), on the census's
+    games file and bank, with both keep-set files as evidence inputs."""
+    inputs = census_inputs(census_record, lineage)
+    runs = []
+    if full is not None:
+        options = full["identity"]["recipe"].get("options") or {}
+        require(CELL_LABEL.match(str(options.get("cell", ""))) is not None
+                and (options.get("keep_sets") or {}).get("sha256") == inputs["keep_sets"]["training"]["sha256"]
+                and options.get("checkpoint_steps") == list(CHECKPOINT_STEPS)
+                and full["identity"]["bank"]["sha256"] == inputs["bank"]["sha256"],
+                "not an SD1 seed run on the census's bank and training keep sets")
+        runs.append(full)
+    command = phase1.probe_command(lineage, parent, o_final, Path(inputs["games"]["path"]),
+                                   Path(inputs["bank"]["path"]), anchor, offers, runs, output_directory,
+                                   evidence=(Path(inputs["keep_sets"]["training"]["path"]),
+                                             Path(inputs["keep_sets"]["held_out"]["path"])))
+    require(len(command["candidates"]) == len(REFERENCE_IDS) + (len(CHECKPOINT_STEPS) if runs else 0),
+            "a seed run's probe reads the parent, O-final and its eleven checkpoints")
+    return command
+
+
+def phase2_configs(lineage: str, o_config: dict, selections: list, workers: int, root: str) -> dict:
+    """Stage 4's configs (section 6), once all eight seeds have a D1: D2-k
+    from D1-k's checkpoint and O-k (k = 1 to 7) from the parent, each on
+    schedule seed k under the sd1 namespace. O-0 is stage 0's O-s0."""
+    by_seed = {}
+    for selection in selections:
+        require(selection.get("schema") == SELECT_SCHEMA and selection.get("lineage") == lineage,
+                "not this lineage's selection")
+        require(selection["seed"] not in by_seed, f"seed {selection['seed']} is selected twice")
+        by_seed[selection["seed"]] = selection
+    require(sorted(by_seed) == list(SEEDS), "phase 2 needs every seed's selection")
+    missing = [k for k in SEEDS if by_seed[k]["reading"] != "passes"]
+    require(not missing, f"{lineage}: seeds {missing} have no D1, so the lineage runs no phase 2 or panels")
+    out = {}
+    for seed in SEEDS:
+        chosen = by_seed[seed]["d1_checkpoint"]
+        source = read_pinned(chosen["source"], f"{lineage} D1-{seed} source")
+        require(source.get("checkpoint") == chosen["checkpoint"], f"{lineage} D1-{seed}: the source's checkpoint "
+                "is not the selected one")
+        pinned(chosen["checkpoint"], f"{lineage} D1-{seed} checkpoint")
+        base = f"{root.rstrip('/')}/{lineage}"
+        out[f"D2-{seed}"] = phase2.config(lineage, o_config, source, workers, f"{base}-D2-{seed}/native",
+                                          replicate=seed, namespace=phase2.SD1_NS)
+        if seed:
+            out[f"O-{seed}"] = phase2.config(lineage, o_config, None, workers, f"{base}-O-{seed}/native",
+                                             replicate=seed, namespace=phase2.SD1_NS)
     return out
 
 
@@ -911,6 +1043,25 @@ def main(argv=None) -> int:
     e.add_argument("--rerun", type=Path, required=True)
     e.add_argument("--split", type=Path)
     e.add_argument("--out", type=Path, required=True)
+    m = sub.add_parser("commands")
+    m.add_argument("--lineage", required=True, choices=LINEAGES)
+    for flag in ("--parent", "--anchor", "--census", "--out-dir"):
+        m.add_argument(flag, type=Path, required=True)
+    m.add_argument("--exactness", type=Path, nargs="+", required=True)
+    m.add_argument("--root", required=True)
+    pr = sub.add_parser("probe")
+    pr.add_argument("--lineage", required=True, choices=LINEAGES)
+    for flag in ("--parent", "--o-final", "--anchor", "--offers", "--census", "--out"):
+        pr.add_argument(flag, type=Path, required=True)
+    pr.add_argument("--full", type=Path)
+    pr.add_argument("--output-directory", required=True)
+    p2 = sub.add_parser("phase2")
+    p2.add_argument("--lineage", required=True, choices=LINEAGES)
+    p2.add_argument("--o-config", type=Path, required=True)
+    p2.add_argument("--select", type=Path, nargs="+", required=True)
+    p2.add_argument("--workers", type=int, required=True)
+    p2.add_argument("--root", required=True)
+    p2.add_argument("--out-dir", type=Path, required=True)
     k = sub.add_parser("known-answer")
     k.add_argument("--rebuild", nargs="+", required=True)
     k.add_argument("--rows", nargs="+", required=True)
@@ -938,6 +1089,20 @@ def main(argv=None) -> int:
         result, ok = write_json(a.out, value), value["pass"]
     elif a.op == "targets":
         result = targets(read_json(a.spec), a.out_dir)
+    elif a.op == "commands":
+        result = {name: write_json(a.out_dir / f"{a.lineage}-{name}.command.json", command)
+                  for name, command in commands(a.lineage, read_json(a.parent), read_json(a.anchor),
+                                                read_json(a.census), [read_json(p) for p in a.exactness],
+                                                a.root).items()}
+    elif a.op == "probe":
+        result = write_json(a.out, probe_command(a.lineage, read_json(a.parent), read_json(a.o_final),
+                                                 read_json(a.anchor), read_json(a.offers), read_json(a.census),
+                                                 read_json(a.full) if a.full else None, a.output_directory))
+    elif a.op == "phase2":
+        result = {name: write_json(a.out_dir / f"{a.lineage}-{name}.config.json", value)
+                  for name, value in phase2_configs(a.lineage, read_json(a.o_config),
+                                                    [read_json(p) for p in a.select], a.workers,
+                                                    a.root).items()}
     elif a.op == "select":
         value = select(a.lineage, a.seed, read_json(a.probe), read_json(a.reference), read_json(a.full),
                        read_json(a.rerun), read_json(a.split) if a.split else None)

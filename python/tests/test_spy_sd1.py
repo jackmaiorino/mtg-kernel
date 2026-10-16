@@ -13,7 +13,11 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.spy_distill import sd1  # noqa: E402
+from tools.spy_distill import analyze, phase2  # noqa: E402
 from tools.spy_distill import distill_common as common  # noqa: E402
+from tools.spy_reset import panel  # noqa: E402
+
+pilot = common.pilot
 
 NAMES = [f"Deck{i}/{i:012x}" for i in range(9)]
 DECKS = [{"label": name} for name in NAMES]
@@ -92,7 +96,8 @@ class Split(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "formal-r1.jsonl"
             write_lines(path, schedule())
-            sd1.main(["split", "--lineage", "r1", "--schedule", str(path), "--out", str(Path(d) / "S.json")])
+            with mock.patch("sys.stdout"):
+                sd1.main(["split", "--lineage", "r1", "--schedule", str(path), "--out", str(Path(d) / "S.json")])
             self.assertEqual(json.loads((Path(d) / "S.json").read_text())["counts"]["held_out"], 36)
             with self.assertRaisesRegex(ValueError, "not the r2 schedule"):
                 sd1.schedule_cases(path, "r2")
@@ -428,7 +433,9 @@ class Select(Temp):
         self.telemetry_pin = write(self.root / "telemetry.json", telemetry)
         identity = {"lineage": "r1", "recipe": {"options": {"cell": LABEL, "keep_sets": KEEP_PIN}}}
         self.full = {"schema": sd1.PHASE1_SCHEMA, "complete": True, "stop_after_steps": None, "identity": identity,
-                     "checkpoints": [{"step": s, "state_sha256": f"state-{LABEL}-step-{s}"}
+                     "checkpoints": [{"step": s, "state_sha256": f"state-{LABEL}-step-{s}",
+                                      "checkpoint": {"path": f"ck-{s}.json", "sha256": f"{s:064d}"},
+                                      "source": {"path": f"src-{s}.json", "sha256": f"{s + 1:064d}"}}
                                      for s in sd1.CHECKPOINT_STEPS],
                      "telemetry": self.telemetry_pin, "state_hashes": [{"step": 32, "phase1_state_sha256": "h32"}]}
         self.rerun = {"schema": sd1.PHASE1_SCHEMA, "complete": True, "stop_after_steps": 32, "identity": identity,
@@ -475,6 +482,9 @@ class Select(Temp):
         self.assertAlmostEqual(first["se"], se, places=15)
         self.assertTrue(7.5 / 64 <= 7 / 64 + se)
         self.assertEqual((out["selected_step"], out["fit_dose"], out["highest_passing_step"]), (64, 64, 8192))
+        self.assertEqual(out["d1_checkpoint"], {k: self.full["checkpoints"][3][k]
+                                                for k in ("step", "checkpoint", "source", "state_sha256")})
+        self.assertEqual(out["d1_checkpoint"]["step"], 64)
         self.assertEqual([c["step"] for c in out["checkpoints"]], list(sd1.CHECKPOINT_STEPS))
         self.assertEqual(out["references"]["parent"]["training_separated_mass"], 0.4)
 
@@ -548,6 +558,18 @@ class Select(Temp):
         probe["runtime_commit"] = "d"
         self.assertEqual(self.select(probe)["identity"]["differing"], ["runtime_commit"])
 
+    def test_pinned_inputs_compare_by_hash_not_path(self):
+        probe = self.probe()
+        probe["evidence"] = {side: {**pin, "path": f"elsewhere/{side}.json"} for side, pin in probe["evidence"].items()}
+        probe["candidates"][0]["source"] = {"checkpoint": {"path": "elsewhere/parent.json", "sha256": "p"}}
+        self.reference["candidates"][0]["source"] = {"checkpoint": {"path": "here/parent.json", "sha256": "p"}}
+        self.assertTrue(self.select(probe)["identity"]["pass"])
+        probe["candidates"][0]["source"]["checkpoint"]["sha256"] = "q"
+        self.assertEqual(self.select(probe)["identity"]["differing"], ["parent"])
+        probe = self.probe()
+        probe["evidence"]["held_out"] = {**probe["evidence"]["held_out"], "sha256": "0" * 64}
+        self.assertEqual(self.select(probe)["identity"]["differing"], ["evidence"])
+
     def test_the_split_binds_each_held_out_rows_matchup(self):
         the_split = {"schema": sd1.SPLIT_SCHEMA, "lineage": "r1",
                      "games": {"g0": "held_out", "g1": "held_out", "g2": "held_out", "g3": "held_out"},
@@ -566,6 +588,243 @@ class Select(Temp):
         self.assertTrue(sd1.CELL_LABEL.match("SD1-T-s7"))
         for label in ("SD1-T-s8", "SD1-T-s07", "U-s32", "BT1-T", "SD1-T-s1x"):
             self.assertIsNone(sd1.CELL_LABEL.match(label))
+
+
+# -------------------------------------------------- stage 3 and 4 commands
+
+
+def model_source(checkpoint) -> dict:
+    return {"play_import": {"path": "parent-import.json", "sha256": "1" * 64},
+            "feature_transfer": {"expected_feature_contract_digest": "c", "expected_feature_encoding_digest": "e"},
+            "checkpoint": checkpoint}
+
+
+def r1_parent() -> dict:
+    return model_source({"path": "parent.json", "sha256": common.PARENT_CHECKPOINT_SHA256["r1"]})
+
+
+class Commands(Temp):
+    def setUp(self):
+        super().setUp()
+        self.games = write_lines(self.root / "games-r1.jsonl", [{"id": "g0"}, {"id": "g1"}])
+        self.bank = write(self.root / "bank-r1.json", {"rows": []})
+        self.keep = {side: write(self.root / f"KEEP-{side}-r1.json", {"side": side}) for side in sd1.SPLITS}
+        status = write(self.root / "GAMES-r1.json", {"games_file": self.games})
+        check = write(self.root / "CHECK-r1.json", {"bank": self.bank})
+        self.census = {"schema": sd1.CENSUS_SCHEMA, "stop_rule": {"stop": False},
+                       "spec": {"r1": {"games": status, "bank_check": check}},
+                       "lineages": {"r1": {"keep_sets": self.keep}}}
+        self.exactness = [{"lineage": lin, "arm": "uniform", "pass": True} for lin in common.LINEAGES]
+        self.anchor = {"training": [], "held_out": []}
+        self.o_final = model_source({"path": "o-final.json", "sha256": "9" * 64})
+
+    def test_each_seed_runs_its_own_cell_on_the_training_keep_sets(self):
+        out = sd1.commands("r1", r1_parent(), self.anchor, self.census, self.exactness, "runs")
+        self.assertEqual(len(out), 24)
+        for seed in sd1.SEEDS:
+            label = f"SD1-T-s{seed}"
+            full, dry, rerun = out[label], out[f"{label}-dry"], out[f"{label}-rerun"]
+            for command in (full, dry, rerun):
+                self.assertEqual(command["options"], {"cell": label, "keep_sets": self.keep["training"],
+                                                      "checkpoint_steps": list(sd1.CHECKPOINT_STEPS)})
+                self.assertEqual(command["arm"], "uniform")
+                self.assertEqual((command["games"]["sha256"], command["bank"]["sha256"]),
+                                 (self.games["sha256"], self.bank["sha256"]))
+            self.assertTrue(dry["dry_run"])
+            self.assertEqual(rerun["stop_after_steps"], 32)
+            self.assertNotIn("dry_run", full)
+            self.assertNotIn("stop_after_steps", full)
+            self.assertTrue(full["output_directory"].endswith(f"runs/r1-{label}"))
+        stopped = copy.deepcopy(self.census)
+        stopped["stop_rule"]["stop"] = True
+        with self.assertRaisesRegex(ValueError, "stop rule"):
+            sd1.commands("r1", r1_parent(), self.anchor, stopped, self.exactness, "runs")
+        with self.assertRaisesRegex(ValueError, "exactness"):
+            sd1.commands("r1", r1_parent(), self.anchor, self.census, self.exactness[:1], "runs")
+        Path(self.keep["held_out"]["path"]).write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "held_out keep sets"):
+            sd1.commands("r1", r1_parent(), self.anchor, self.census, self.exactness, "runs")
+
+    def full_run(self, seed: int, keep=None, bank=None) -> dict:
+        checkpoints = []
+        for step in sd1.CHECKPOINT_STEPS:
+            checkpoint = {"path": f"ck-{step}.json", "sha256": f"{step:064d}"}
+            checkpoints.append({"step": step, "checkpoint": checkpoint, "state_sha256": f"s{step}",
+                                "source": write(self.root / f"s{seed}" / f"src-{step}.json",
+                                                model_source(checkpoint))})
+        return {"schema": sd1.PHASE1_SCHEMA, "complete": True, "stop_after_steps": None,
+                "identity": {"lineage": "r1", "arm": "uniform", "bank": bank or self.bank,
+                             "recipe": {"options": sd1.seed_options(keep or self.keep, seed)}},
+                "checkpoints": checkpoints}
+
+    def test_the_reference_and_seed_probes_read_both_keep_set_files(self):
+        ref = sd1.probe_command("r1", r1_parent(), self.o_final, self.anchor, [], self.census, None, "probes/ref")
+        self.assertEqual([c["id"] for c in ref["candidates"]], ["parent", "O-final"])
+        self.assertEqual({side: pin["sha256"] for side, pin in ref["evidence"].items()},
+                         {side: self.keep[side]["sha256"] for side in sd1.SPLITS})
+        self.assertEqual([b["role"] for b in ref["banks"]], ["training"])
+        self.assertEqual(ref["banks"][0]["bank"]["sha256"], self.bank["sha256"])
+        seed = sd1.probe_command("r1", r1_parent(), self.o_final, self.anchor, [], self.census, self.full_run(5),
+                                 "probes/s5")
+        self.assertEqual([c["id"] for c in seed["candidates"]],
+                         ["parent", "O-final"] + [f"SD1-T-s5-step-{s}" for s in sd1.CHECKPOINT_STEPS])
+        self.assertEqual(seed["evidence"], ref["evidence"])
+        other = {**self.keep, "training": {**self.keep["training"], "sha256": "0" * 64}}
+        for run in (self.full_run(5, keep=other), self.full_run(5, bank={**self.bank, "sha256": "0" * 64})):
+            with self.assertRaisesRegex(ValueError, "not an SD1 seed run"):
+                sd1.probe_command("r1", r1_parent(), self.o_final, self.anchor, [], self.census, run, "probes/x")
+
+
+class PhaseTwoConfigs(Temp):
+    def setUp(self):
+        super().setUp()
+        its, _ = pilot.iterations("r1", "O", pilot.load_decks(), None)
+        self.o_config = {"schema": pilot.ndb.SCHEMA, "initial_source": r1_parent(),
+                         "opponents": [{"id": pilot.FIXED_OPPONENT_ID,
+                                        "source": model_source({"path": "a48.json", "sha256": "4" * 64})}],
+                         "iterations": its, **json.loads(json.dumps(pilot.ndb.FROZEN)),
+                         "update_backend": {"kind": "cpu"}, "collection_workers": 8, "preparation_workers": 8,
+                         "output_directory": "runs/r1-O"}
+        self.entry = pilot.schedule("r1")["updates"][0][0]
+
+    def d1(self, seed: int, cell=None) -> dict:
+        provenance = {"method": "m", "cell": cell if cell is not None else
+                      {"cell": f"SD1-T-s{seed}", "keep_sets": {"path": "k.json", "sha256": "k" * 64}}}
+        checkpoint = write(self.root / f"d1-{seed}.json", {"archive_distillation": provenance})
+        return {"checkpoint": checkpoint, "source": write(self.root / f"d1-{seed}-source.json",
+                                                          model_source(checkpoint))}
+
+    def selection(self, seed: int, reading="passes") -> dict:
+        d1 = self.d1(seed)
+        return {"schema": sd1.SELECT_SCHEMA, "lineage": "r1", "seed": seed, "reading": reading,
+                "d1_checkpoint": {"step": 64, "state_sha256": "s", **d1}}
+
+    def first_episode(self, config: dict) -> dict:
+        return config["iterations"][0]["episodes"][0]["episode"]
+
+    def test_d2_k_starts_from_d1_k_and_o_k_from_the_parent_on_seed_k(self):
+        out = sd1.phase2_configs("r1", self.o_config, [self.selection(k) for k in sd1.SEEDS], 4, "runs")
+        self.assertEqual(sorted(out), sorted([f"D2-{k}" for k in sd1.SEEDS] + [f"O-{k}" for k in range(1, 8)]))
+        e = self.entry
+        for k in sd1.SEEDS:
+            d2 = out[f"D2-{k}"]
+            self.assertEqual(d2["initial_source"]["checkpoint"]["path"], str(self.root / f"d1-{k}.json"))
+            first = self.first_episode(d2)
+            if k == 0:
+                self.assertEqual((first["id"], first["seed"]), (phase2.unit_id("r1", e), e["seed"]))
+                continue
+            self.assertEqual(first["seed"], pilot.seed([f"sd1/train/rep{k}", "r1", e["own"], e["other"], e["j"]]))
+            self.assertEqual(first["id"], f"sd1-r1-rep{k}-o{e['own']}-t{e['other']}-j{e['j']}-s{e['seat']}")
+            o = out[f"O-{k}"]
+            self.assertEqual(o["initial_source"], r1_parent())
+            self.assertEqual(o["iterations"], d2["iterations"])
+            self.assertTrue(o["output_directory"].endswith(f"runs/r1-O-{k}/native"))
+        rt1 = phase2.replicate_seed("r1", 1, e["own"], e["other"], e["j"])
+        self.assertNotEqual(self.first_episode(out["D2-1"])["seed"], rt1)
+
+    def test_every_seed_needs_its_d1(self):
+        selections = [self.selection(k) for k in sd1.SEEDS]
+        selections[6] = self.selection(6, reading="collapse before the required fit")
+        with self.assertRaisesRegex(ValueError, r"seeds \[6\] have no D1"):
+            sd1.phase2_configs("r1", self.o_config, selections, 4, "runs")
+        with self.assertRaisesRegex(ValueError, "every seed"):
+            sd1.phase2_configs("r1", self.o_config, selections[:7], 4, "runs")
+        swapped = [self.selection(k) for k in sd1.SEEDS]
+        swapped[2]["d1_checkpoint"] = swapped[3]["d1_checkpoint"]
+        with self.assertRaisesRegex(ValueError, "seed 3"):
+            sd1.phase2_configs("r1", self.o_config, swapped, 4, "runs")
+
+    def test_phase2_admits_sd1_cells_only_under_its_namespace(self):
+        sd1_start = model_source(self.d1(3)["checkpoint"])
+        with self.assertRaisesRegex(ValueError, "does not start phase 2"):
+            phase2.config("r1", self.o_config, sd1_start, 4, "runs/x", replicate=3)
+        config = phase2.config("r1", self.o_config, sd1_start, 4, "runs/x", replicate=3, namespace=phase2.SD1_NS)
+        self.assertEqual(config["initial_source"], sd1_start)
+        with self.assertRaisesRegex(ValueError, "seed 3"):
+            phase2.config("r1", self.o_config, sd1_start, 4, "runs/x", replicate=2, namespace=phase2.SD1_NS)
+        for cell in ({}, {"cell": "BT1-T", "keep_sets": {"path": "k", "sha256": "k"}}, {"cell": "SD1-T-s3"}):
+            start = model_source(self.d1(9, cell=cell)["checkpoint"])
+            with self.assertRaisesRegex(ValueError, "SD1 cell's checkpoint"):
+                phase2.config("r1", self.o_config, start, 4, "runs/x", replicate=3, namespace=phase2.SD1_NS)
+        with self.assertRaisesRegex(ValueError, "keeps every unit"):
+            phase2.config("r1", self.o_config, sd1_start, 4, "runs/x", replicate=3, namespace=phase2.SD1_NS,
+                          drop_spy_learner=True)
+        # O-k from the parent: seeds 1 to 7 under SD1's namespace only.
+        for k in (1, 7):
+            config = phase2.config("r1", self.o_config, None, 4, "runs/o", replicate=k, namespace=phase2.SD1_NS)
+            self.assertEqual(config["initial_source"], r1_parent())
+        with self.assertRaisesRegex(ValueError, "unknown replicate"):
+            phase2.config("r1", self.o_config, None, 4, "runs/o", replicate=8, namespace=phase2.SD1_NS)
+        with self.assertRaisesRegex(ValueError, "not to O's reproduction"):
+            phase2.config("r1", self.o_config, None, 4, "runs/o", replicate=1)
+        with self.assertRaisesRegex(ValueError, "unknown replicate namespace"):
+            phase2.config("r1", self.o_config, None, 4, "runs/o", namespace="other")
+
+    def test_the_cli_keeps_its_retention_choices_and_names_sd1s_starts(self):
+        o_path = self.root / "O.json"
+        o_path.write_text(json.dumps(self.o_config), encoding="utf-8")
+        base = ["config", "--lineage", "r1", "--o-config", str(o_path), "--workers", "4",
+                "--output-directory", "runs/o", "--out", str(self.root / "cfg.json")]
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            phase2.main(base + ["--from-parent", "--replicate", "5"])
+        with self.assertRaisesRegex(ValueError, "--from-parent"):
+            phase2.main(base + ["--from-parent", "--replicate", "1"])
+        with self.assertRaisesRegex(ValueError, "keeps O's own seeds"):
+            phase2.main(base + ["--reproduce", "--replicate", "1", "--namespace", "sd1"])
+        with mock.patch("sys.stdout"):
+            self.assertEqual(phase2.main(base + ["--from-parent", "--replicate", "5", "--namespace", "sd1"]), 0)
+        written = json.loads((self.root / "cfg.json").read_text(encoding="utf-8"))
+        e = self.entry
+        self.assertEqual(self.first_episode(written)["seed"],
+                         pilot.seed(["sd1/train/rep5", "r1", e["own"], e["other"], e["j"]]))
+
+
+class PanelNamespace(Temp):
+    def test_sd1_panels_take_fresh_seeds_and_the_frozen_panel_keeps_its_own(self):
+        self.assertEqual(pilot.panel_seed(1, 2, 3), pilot.seed(["spy-reset-pilot-v1/eval", 1, 2, 3]))
+        self.assertEqual(pilot.panel_seed(1, 2, 3, pilot.SD1_PANEL_NS), pilot.seed(["sd1-panel-v1", 1, 2, 3]))
+        self.assertNotEqual(pilot.panel_seed(1, 2, 3), pilot.panel_seed(1, 2, 3, pilot.SD1_PANEL_NS))
+        with self.assertRaisesRegex(ValueError, "unknown panel seed namespace"):
+            pilot.panel_seed(1, 2, 3, "sd1-panel-v2")
+        frozen, fresh = panel.cases(), panel.cases(pilot.SD1_PANEL_NS)
+        self.assertEqual(len(fresh), 1944)
+        self.assertEqual([{k: v for k, v in c.items() if k != "seed"} for c in fresh],
+                         [{k: v for k, v in c.items() if k != "seed"} for c in frozen])
+        self.assertFalse({c["seed"] for c in fresh} & {c["seed"] for c in frozen})
+        decks = pilot.load_decks()
+        candidate, opponent = {"tag": "candidate"}, {"tag": "opponent"}
+        plan = panel.build("r1-parent", candidate, "T1", opponent, decks, self.root / "frozen", 2)
+        self.assertNotIn("seed_namespace", plan)
+        sd1_plan = panel.build("r1-parent", candidate, "T1", opponent, decks, self.root / "fresh", 2,
+                               pilot.SD1_PANEL_NS)
+        self.assertEqual(sd1_plan["seed_namespace"], "sd1-panel-v1")
+        self.assertNotEqual(sd1_plan["schedule_sha256"], plan["schedule_sha256"])
+        request = json.loads(Path(sd1_plan["requests"][0]["request"]["path"]).read_text(encoding="utf-8"))
+        first = sd1_plan["requests"][0]["cases"][0]
+        self.assertEqual(request["matches"][0]["config"]["seed"],
+                         pilot.panel_seed(first["own"], first["other"], first["repeat"], pilot.SD1_PANEL_NS))
+
+    def test_the_analyzer_checks_each_rows_seed_in_its_panels_namespace(self):
+        rows, labels = [], []
+        name = "r1-parent-vs-T1"
+        for o in range(pilot.DECKS):
+            for t in range(pilot.DECKS):
+                for k in range(pilot.PANEL_REPEATS):
+                    for s in (0, 1):
+                        rows.append({"panel": name, "checkpoint_sha256": "a" * 64, "own": o, "other": t,
+                                     "repeat": k, "seat": s, "seed": pilot.panel_seed(o, t, k, pilot.SD1_PANEL_NS),
+                                     "score": 1, "complete": True})
+                        if o == pilot.SPY:
+                            labels.append({"id": f"{name}/o{o}-t{t}-k{k}-s{s}", "kind": "label_replay",
+                                           "focal": s, "winner": s, "win": True, "combo_resolved": False,
+                                           "combo_won": False, "labels": {}})
+        entry = {"checkpoint": "r1-parent", "opponent": "T1", "checkpoint_sha256": "a" * 64,
+                 "rows": str(write_lines(self.root / "rows.jsonl", rows)["path"]),
+                 "labels": str(write_lines(self.root / "labels.jsonl", labels)["path"])}
+        data = analyze.load({"panels": [entry]}, {"r1-parent"}, pilot.SD1_PANEL_NS)
+        self.assertEqual(len(data[("r1-parent", "T1")]), 1944)
+        with self.assertRaisesRegex(ValueError, "seed differs"):
+            analyze.load({"panels": [entry]}, {"r1-parent"})
 
 
 # ----------------------------------------------------------- tool checks

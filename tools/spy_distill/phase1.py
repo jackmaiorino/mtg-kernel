@@ -22,11 +22,17 @@ CLI (JSON on stdout):
          [--update-scope full_network|scorer_only]
   probe  --lineage r1 --parent P.json --o-final O.json --games GAMES.jsonl --bank BANK.json
          [--completion-games GAMES.jsonl --completion-bank BANK.json]
+         [--evidence-training KEEP.json --evidence-held-out KEEP.json]
          --anchor ANCHOR.json --offers OFFERS.json --phase1 PHASE1.json [PHASE1.json ...]
          --output-directory DIR --out CMD.json
 ``--bank`` is the bank command's bank.json; ``--phase1`` the full runs'
 phase1.json receipts, whose checkpoint sources become candidates
-``U-step-N`` and ``L-step-N``.
+``U-step-N`` and ``L-step-N``. The optional evidence files are search-evidence
+distillation's two keep-set files (collab
+LANES/search-evidence-distillation-20261016), keyed to the training bank: the
+probe then also reads each candidate's evidence fit and its held-out anchor
+readings over all decks, the non-Spy decks and each deck. Without them the
+command is as before.
 The optional ``scorer_only`` scope updates both policy scorer layers and
 freezes all representation and value parameters plus their Adam moments.
 The final scorer bias retains its canonical gauge. Omission preserves the
@@ -111,7 +117,8 @@ def checkpoint_candidates(record: dict, lineage: str) -> list[dict]:
 
 def probe_command(lineage: str, parent: dict, o_final: dict, games: Path, bank: Path, anchor: dict,
                   offers: list, phase1: list[dict], output_directory: str,
-                  completion: tuple[Path, Path] | None = None) -> dict:
+                  completion: tuple[Path, Path] | None = None,
+                  evidence: tuple[Path, Path] | None = None) -> dict:
     check_parent(lineage, parent)
     candidates = [{"id": "parent", "source": parent}, {"id": "O-final", "source": o_final}]
     for record in phase1:
@@ -125,9 +132,13 @@ def probe_command(lineage: str, parent: dict, o_final: dict, games: Path, bank: 
         require(not training_ids & completion_ids, "a completion game is also a training game")
         banks.append({"role": "completion", "games": pin(Path(completion[0]).resolve()),
                       "bank": pin(Path(completion[1]).resolve())})
-    return {"mode": "archive_distillation_probe", "parent": parent, "lineage": lineage, "candidates": candidates,
-            "banks": banks, "anchor": anchor, "offers": offers,
-            "output_directory": absolute(output_directory)}
+    command = {"mode": "archive_distillation_probe", "parent": parent, "lineage": lineage,
+               "candidates": candidates, "banks": banks, "anchor": anchor, "offers": offers}
+    if evidence is not None:
+        command["evidence"] = {"training": pin(Path(evidence[0]).resolve()),
+                               "held_out": pin(Path(evidence[1]).resolve())}
+    command["output_directory"] = absolute(output_directory)
+    return command
 
 
 def main(argv=None) -> int:
@@ -154,6 +165,8 @@ def main(argv=None) -> int:
     q.add_argument("--phase1", type=Path, nargs="+", required=True)
     q.add_argument("--completion-games", type=Path)
     q.add_argument("--completion-bank", type=Path)
+    q.add_argument("--evidence-training", type=Path)
+    q.add_argument("--evidence-held-out", type=Path)
     for s in (p, q):
         s.add_argument("--lineage", required=True, choices=pilot.LINEAGES)
         s.add_argument("--parent", type=Path, required=True)
@@ -173,9 +186,12 @@ def main(argv=None) -> int:
         require((a.completion_games is None) == (a.completion_bank is None),
                 "a completion bank needs its games and its bank")
         completion = (a.completion_games, a.completion_bank) if a.completion_games else None
+        require((a.evidence_training is None) == (a.evidence_held_out is None),
+                "the evidence files are a training file and a held-out file")
+        evidence = (a.evidence_training, a.evidence_held_out) if a.evidence_training else None
         command = probe_command(a.lineage, parent, read_json(a.o_final), a.games, a.bank, anchor,
                                 read_json(a.offers), [read_json(x) for x in a.phase1], a.output_directory,
-                                completion)
+                                completion, evidence)
     print(json.dumps(write_json(a.out, command)))
     return 0
 
