@@ -414,14 +414,15 @@ fn committed_gain_sum_overflow_refuses_before_resolved_loss_with_original_histor
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut s, source) = paid(actor);
         // Every individual life total and committed event remains representable;
-        // the turn's aggregate alone exceeds the dynamic amount's i32 domain.
+        // the exact turn aggregate exceeds i32, and this target's final life
+        // would also be outside the existing i32 life-total representation.
         for n in 0..3 {
             event::propose_and_commit(&mut s, ProposedEvent::life_gain(actor, 1_000_000_000));
             if n < 2 {
                 event::propose_and_commit(&mut s, ProposedEvent::life_loss(actor, 1_000_000_000));
             }
         }
-        assert!(gained_this_turn(&s, actor).is_err());
+        assert_eq!(gained_this_turn(&s, actor).unwrap(), 3_000_000_000);
         activate_paid(&mut s, actor, source);
         let item = s.stack.last().unwrap();
         assert!(acquire(&s, item, true).is_err());
@@ -485,7 +486,7 @@ fn paid_crystal_response_fizzles_without_evaluating_overflowed_turn_total_both_s
                 .is_some());
             drain(game);
             assert!(game.engine.halted.is_none());
-            assert!(gained_this_turn(game, actor).is_err());
+            assert_eq!(gained_this_turn(game, actor).unwrap(), 3_000_000_000);
             assert_eq!(game.players[opponent.index()].life, 20);
         }
         assert_eq!(countered.state_hash(), countered_restore.state_hash());
@@ -506,7 +507,7 @@ fn paid_crystal_response_fizzles_without_evaluating_overflowed_turn_total_both_s
             assert!(crate::crystal_barricade_v1::controller_has_hexproof(
                 game, opponent
             ));
-            assert!(gained_this_turn(game, actor).is_err());
+            assert_eq!(gained_this_turn(game, actor).unwrap(), 3_000_000_000);
             assert!(game.engine.halted.is_none());
             assert!(game.stack.is_empty());
             assert_eq!(game.players[opponent.index()].life, 20);

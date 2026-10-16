@@ -164,7 +164,7 @@ record!(HumanNextFiveSnackActivationV59 {
     stage: crate::midnight_snack_public_v58::ActivationStageV58,
     target: Option<PlayerSeatV1>,
     target_legal_now: Option<bool>,
-    original_controller_gained_this_turn_now: i32
+    original_controller_gained_this_turn_now: crate::midnight_snack_public_v58::GainTotalV58
 });
 record!(HumanNextFiveSnackMeaningV59 {
     printed: crate::rules_meaning_midnight_snack_v58::PrintedV58,
@@ -179,7 +179,7 @@ record!(HumanNextFiveSnackFactsV59 {
     viewer: PlayerSeatV1,
     meaning: HumanNextFiveSnackMeaningV59,
     attacked_this_turn: [bool; 2],
-    gained_this_turn: [i32; 2],
+    gained_this_turn: [crate::midnight_snack_public_v58::GainTotalV58; 2],
     authorized_printings: Vec<HumanCardRefV1>,
     current: Vec<HumanNextFiveCurrentV59>,
     current_food: Vec<HumanNextFiveCurrentV59>,
