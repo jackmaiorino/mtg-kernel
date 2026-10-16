@@ -181,19 +181,28 @@ pub(crate) fn root(
         captured_controller: s.controller.into(),
     })
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CounterScopeV61 {
+    Legacy,
+    CompleteV61,
+}
 pub(crate) fn current(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
-    current_with_form(state, id, form)
+    current_with_form(state, id, form, CounterScopeV61::Legacy)
 }
 /// Successor-only current form query. The roster, concealment and printed-ID
 /// selection stay identical to the frozen helper; only selected public forms
 /// use the engine's shared checked final PT result.
 pub(crate) fn current_checked(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
-    current_with_form(state, id, checked_form)
+    current_with_form(state, id, checked_form, CounterScopeV61::Legacy)
+}
+pub(crate) fn current_complete_v61(state: &GameState, id: u16) -> Result<Vec<CurrentV1>, String> {
+    current_with_form(state, id, checked_form, CounterScopeV61::CompleteV61)
 }
 fn current_with_form(
     state: &GameState,
     id: u16,
     form: fn(&GameState, ObjectId) -> Result<FormV1, String>,
+    scope: CounterScopeV61,
 ) -> Result<Vec<CurrentV1>, String> {
     let mut rows = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -214,7 +223,7 @@ fn current_with_form(
                     tapped: o.tapped,
                     summoning_sick: o.summoning_sick,
                     marked_damage: o.damage,
-                    counters: counters(state, object)?,
+                    counters: counters(state, object, scope)?,
                     form: form(state, object)?,
                 });
             }
@@ -284,7 +293,7 @@ fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String
     }
     Ok(())
 }
-fn counters(state: &GameState, id: ObjectId) -> Result<CountersV1, String> {
+fn counters(state: &GameState, id: ObjectId, scope: CounterScopeV61) -> Result<CountersV1, String> {
     let live = state.objects.get(id);
     // Exhaustive destructuring requires a deliberate optional trigger decision for any
     // newly added storage family, rather than silently losing its counters.
@@ -302,7 +311,10 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV1, String> {
         incubation,
         revival,
     } = live.counters;
-    if revival != 0 {
+    if scope == CounterScopeV61::CompleteV61 {
+        crate::graveyard_return_public_v61::counter_values(state, id)?;
+    }
+    if revival != 0 && scope == CounterScopeV61::Legacy {
         return Err(error(
             "optional trigger public projection does not expose revival counters",
         ));
