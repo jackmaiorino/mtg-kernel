@@ -3584,6 +3584,7 @@ mod tests {
                 (460, "Perforating Artist"),
                 (461, "Niv-Mizzet, Visionary"),
                 (462, "Embercleave"),
+                (463, "Banner of Kinship"),
             ]
         } else {
             &[]
