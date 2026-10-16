@@ -65,6 +65,7 @@ pub mod conqueror_v49;
 pub mod eaten_v46;
 pub mod elenda_v52;
 pub mod fake_v50;
+pub mod graveyard_return_v61;
 mod limited_next_five_v6;
 pub mod next_five_v59;
 pub mod panda_v47;
@@ -336,6 +337,11 @@ pub use game_outcome_family_v40::{HumanGameOutcomeFamilyV40, HumanGameOutcomeRul
 pub use game_outcome_v41::{
     HumanDecisionGameOutcomeV41, HumanGameOutcomeExtensionsV41, HumanGameOutcomeProjectorV41,
     HumanGameOutcomeSessionV41, HumanGameOutcomeSnapshotV41, HumanGameOutcomeSourceV41,
+};
+pub use graveyard_return_v61::{
+    HumanDecisionGraveyardReturnV61, HumanGraveyardReturnProjectorV61,
+    HumanGraveyardReturnSessionV61, HumanGraveyardReturnSnapshotV61,
+    HumanVisibleStateGraveyardReturnV61,
 };
 pub(crate) use limited_common_v1::project_limited_common_v1;
 pub use limited_common_v1::{LimitedCombatAssignmentV1, LimitedCombatV1, LimitedCommonDecisionV1};
