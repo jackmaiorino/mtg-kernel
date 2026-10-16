@@ -433,6 +433,25 @@ class HostReservationTests(unittest.TestCase):
             hr.reclaim("test", "recovery", "must be refused")
         hr.release(result["token"], "cancelled", "no process was created")
 
+    def test_busy_refusal_exempts_this_reservations_work_started_during_the_scan(self):
+        # The scan finds a process that became this reservation's work after the
+        # exemptions were read (a sibling job's child): not busy. Other work refuses.
+        found = [{"ProcessId": 4242, "Name": "trainer.exe"}]
+        def nothing(line, cwd):
+            raise TimeoutError("no response")
+        reads = iter([[], [4242]])
+        with patch.object(hr, "exempt_pids", side_effect=lambda token: next(reads)), \
+                patch.object(hr, "busy_processes", return_value=found):
+            result = hr.dispatch("test", "busy-sibling", "cancelled by the test", [sys.executable, "-c", "pass"],
+                                 cwd=self.root, busy_pattern="trainer", create=nothing)
+        self.assertEqual(result["state"], "spawn-unconfirmed")
+        hr.release(result["token"], "cancelled", "no process was created")
+        with patch.object(hr, "exempt_pids", return_value=[]), patch.object(hr, "busy_processes", return_value=found):
+            with self.assertRaisesRegex(hr.Held, "busy refusal"):
+                hr.dispatch("test", "busy-other", "refused", [sys.executable, "-c", "pass"], cwd=self.root,
+                            busy_pattern="trainer", create=nothing)
+        self.assertEqual(hr.status()["state"], "free")
+
     def test_two_competing_reclaimers_one_wins(self):
         owner = self.spawn(SLEEP.format(30))
         time.sleep(0.3)

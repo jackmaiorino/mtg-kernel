@@ -2,7 +2,9 @@
 
 Qualification runs one complete initial update, or at most 20 evaluation games.
 Production requires compatible measured serial/parallel receipts and the fastest
-eligible allocation. The runtime binding is independent of the launcher's commit.
+eligible allocation; for a study of several runs that may be a qualified pack of
+side-by-side slots (native_expanded_pack_v1.py). The runtime binding is
+independent of the launcher's commit.
 Runs on the two Windows hosts and, as the ``runpod`` placement, on a rented
 Linux pod with live lease-guard evidence (docs/native_expanded_dispatch_v1.md).
 """
@@ -28,6 +30,10 @@ from public_training_dispatch_v2 import checked, pin, read, write, DISK_RESERVE_
 
 SCHEMA = "native-expanded-cpu-dispatch/v1"
 CHOICE = "native-expanded-cpu-allocation/v1"
+# Side-by-side runs (docs/native_expanded_dispatch_v1.md, "Packs"): a family's
+# qualification payload alone on one slot of each kind, then on every slot at once.
+PACK = "native-expanded-cpu-pack/v1"
+SLOT_FIELDS = ("host", "cpu_affinity", "workers", "preparation_workers", "memory_bytes")
 # The compute host's machine name is site configuration, not a public constant.
 HOSTS = {"desktop": "DESKTOP-DJ1C40R", "computehost": os.environ.get("COMPUTE_HOST_NAME", "COMPUTEHOST").upper()}
 PLACEMENTS = ("desktop", "computehost", "runpod")
@@ -300,6 +306,34 @@ def profile_gae_requested(request):
     return value
 
 
+def start_barrier(request, qualification):
+    """A packed qualification trial's start barrier, or None. Its trial waits after
+    its checks until the pack tool writes `release` ({"go": true} starts it,
+    {"go": false} fails it); the wait is no part of the trial's seconds."""
+    barrier = request.get("start_barrier")
+    if barrier is None:
+        return None
+    require(qualification and request["kind"] == "training" and type(barrier) is dict
+            and sorted(barrier) == ["ready", "release", "timeout_seconds"]
+            and all(type(barrier[key]) is str and Path(barrier[key]).is_absolute() for key in ("ready", "release")),
+            "a start barrier belongs to a training qualification trial, with absolute paths")
+    positive(barrier["timeout_seconds"], "start barrier timeout")
+    return barrier
+
+
+def await_release(barrier, request_path, poll=0.02):
+    """Records that this trial waits at its start barrier, then waits for the
+    release. Returns the seconds waited."""
+    write(Path(barrier["ready"]), {"request": pin(request_path), "pid": os.getpid()})
+    waited = time.monotonic()
+    release = Path(barrier["release"])
+    while not release.exists():  # the pack tool renames a complete file into place
+        require(time.monotonic() - waited <= barrier["timeout_seconds"], "start barrier timed out")
+        time.sleep(poll)
+    require(read(release) == {"go": True}, "start barrier released without go")
+    return time.monotonic() - waited
+
+
 def native_child_environment(request):
     environment = os.environ.copy()
     # A shell or supervisor's inherited diagnostic flag cannot silently profile
@@ -314,6 +348,7 @@ def validate_request(request, qualification):
     require(request["schema"] == SCHEMA, "unsupported request")
     require(request["kind"] in ("training", "evaluation"), "unsupported native workload")
     profile_gae_requested(request)
+    start_barrier(request, qualification)
     runtime = runtime_for(request)
     host_runtime(runtime)
     config = read(checked(request["config"]))
@@ -547,6 +582,186 @@ def projected_seconds(report, config, kind):
     return positive(report["seconds"], "completed-work seconds") * units / measured
 
 
+def qualification_evidence(report, request, config, runtime, family, resolve, verify_outputs):
+    """The identity checks of one qualification report, before its outputs are
+    compared with other trials: returns its request, that request's config, the
+    executed config and the output fingerprint (recomputed when verifying)."""
+    require(report["schema"] == SCHEMA and report["qualification"] and report["complete"],
+            "not completed qualification")
+    original = read(resolve(report["request"]))
+    require(not profile_gae_requested(original),
+            "profiled qualification cannot select production allocation")
+    actual_config = read(resolve(report["executed_config"]))
+    original_config = read(resolve(original["config"]))
+    other_runtime = runtime_for(original, resolve)
+    require(runtime_identity(other_runtime) == runtime_identity(runtime)
+            and runtime_identity(report["runtime"]) == runtime_identity(runtime), "qualification runtime differs")
+    require(original.get("schedule_family") == request.get("schedule_family")
+            and workload(original_config, request["kind"], family=original.get("schedule_family")) == family
+            and actual_config == placed_config(original, original_config, True),
+            "qualification workload or placement differs")
+    actual = report["fingerprint"]
+    if verify_outputs:
+        result = read(resolve(report["native_result"]))
+        actual = output_fingerprint(actual_config, request["kind"], result, runtime, True, resolve,
+                                    report.get("collection"), report.get("run"))
+        require(actual == report["fingerprint"], "qualification outputs changed")
+    return original, original_config, actual_config, actual
+
+
+def qualification_sample(original, original_config, kind):
+    """The exact trial: the configuration with its seeds, and any evaluation sample."""
+    return digest({"configuration": workload(original_config, kind, keep_seeds=True),
+                   "indices": original.get("episode_indices")})
+
+
+def qualification_work(report, request, actual_config, resolve, verify_outputs):
+    """The execution, completed-work and recovery checks of one qualification
+    report; returns its execution record."""
+    execution = read(resolve(report["execution"]))
+    require(execution["exit_code"] == 0 and execution["error"] is None,
+            "qualification native execution failed")
+    require(report["seconds"] >= positive(execution["seconds"], "native wall seconds"),
+            "qualification omits native wall time")
+    expected_games = len(actual_config["iterations"][0]["episodes"]) if request["kind"] == "training" else len(actual_config["episodes"])
+    require(report["completed_games"] == expected_games and report["completed_updates"] ==
+            (1 if request["kind"] == "training" else 0), "qualification completed-work count differs")
+    archive = read(resolve(report["archive"]))
+    require(archive["mismatches"] == 0 and len(archive["shards"]) == 2
+            and archive["scheme"] == "two-deflate1-shards-full-readback/v1"
+            and archive["native_root"] == actual_config["output_directory"],
+            "qualification recovery does not match native output")
+    if verify_outputs:
+        for shard in archive["shards"]:
+            resolve(shard["archive"])
+    return execution
+
+
+def placement_overheads(choice, host):
+    """Measured transport and remaining queue seconds of an inventory host."""
+    status = choice["inventory"][host]
+    # External transport must be measured and retained, never assumed free.
+    transport = status["transport_seconds"]
+    require(type(transport) in (int, float) and math.isfinite(transport) and transport >= 0,
+            "invalid measured transport overhead")
+    queue = status.get("queue_seconds", 0)
+    require(type(queue) in (int, float) and math.isfinite(queue) and queue >= 0,
+            "invalid measured remaining queue time")
+    if queue:
+        checked(status["queue_evidence"])
+    return transport, queue
+
+
+def host_topology():
+    """This host's physical cores (host_slots_v1.topology), read at each admission."""
+    import host_slots_v1
+    return host_slots_v1.topology()
+
+
+def slot_kinds(slots, topology):
+    """Each slot's kind: its workers and the core type of its CPUs (one efficiency
+    class, the physical cores and logical CPUs it spans). Equal kinds are
+    equivalent slots."""
+    import host_slots_v1
+    owner = {}
+    for row in topology:
+        for cpu in host_slots_v1.parse_cores(row["cpus"]):
+            owner[cpu] = (row["cpus"], row["efficiency_class"])
+    kinds = []
+    for slot in slots:
+        cpus = slot["cpu_affinity"]
+        require(all(cpu in owner for cpu in cpus), "slot CPU outside this host's topology")
+        classes = {owner[cpu][1] for cpu in cpus}
+        require(len(classes) == 1, "slot spans core types")
+        kinds.append(f"class{classes.pop()}-cores{len({owner[cpu][0] for cpu in cpus})}-cpus{len(cpus)}"
+                     f"-w{slot['workers']}-p{slot['preparation_workers']}")
+    return kinds
+
+
+def layout(slots):
+    """A layout's identity: each slot's host, CPUs and worker counts, in any order
+    (memory limits aside)."""
+    return sorted([slot["host"], sorted(slot["cpu_affinity"]), slot["workers"], slot["preparation_workers"]]
+                  for slot in slots)
+
+
+def pack_candidate(entry, request, config, runtime, family, choice, eligible, verify_outputs, reference):
+    """A pack qualification of this family, or None for another family's.
+
+    Its trials are the family's qualification payload, with one exact
+    configuration and seeds: alone on one slot of each kind, one after another,
+    then on every slot at once. It is refused unless every trial passes the
+    qualification checks, each trial's placement is its slot, every trial's
+    sample and outputs equal `reference` (the family's serial/parallel
+    qualifications'), the packed trials started together (within a tenth of the
+    shortest one's native seconds) and each solo trial overlapped no other.
+    Kinds come from the host topology recorded at qualification, which must
+    still be this host's when the pack is on this host. Returns the slowest
+    packed slot's projected seconds, the host's overheads, the pin, the slots,
+    each slot's packed projected seconds and the slowdown of each kind (mean
+    packed over solo projected seconds)."""
+    ref = entry.get("report", entry)
+    resolve = artifact_reader(entry.get("path_mappings", []))
+    pack = read(checked(ref))
+    require(pack["schema"] == PACK, "unsupported pack qualification")
+    if pack["workload"] != family:
+        return None
+    require(request["kind"] == "training", "packs apply to training only")
+    slots = pack["slots"]
+    require(slots and all(sorted(slot) == sorted(SLOT_FIELDS) for slot in slots), "invalid pack slots")
+    host = slots[0]["host"]
+    require(all(slot["host"] == host for slot in slots) and host in eligible,
+            "pack placement no longer eligible")
+    cpus = [cpu for slot in slots for cpu in slot["cpu_affinity"]]
+    require(len(cpus) == len(set(cpus)), "pack slots overlap")
+    require(set(cpus) <= set(choice["inventory"][host]["cpu_affinity"]), "pack exceeds eligible CPU set")
+    if host == request["placement"]["host"]:
+        require(pack["topology"] == host_topology(), "host topology changed since the pack qualified")
+    kinds = slot_kinds(slots, pack["topology"])
+    solo, packed = pack["solo"], pack["packed"]
+    require([member["slot"] for member in packed] == list(range(len(slots))),
+            "a pack needs one packed trial per slot, in slot order")
+    require(all(type(member["slot"]) is int and 0 <= member["slot"] < len(slots) for member in solo)
+            and sorted(kinds[member["slot"]] for member in solo) == sorted(set(kinds)),
+            "a pack needs one solo trial per slot kind")
+    intervals, seconds = [], []
+    for member in solo + packed:
+        report = read(resolve(member["report"]))
+        require(report["workload"] == family, "pack trial workload differs")
+        original, original_config, actual_config, actual = qualification_evidence(
+            report, request, config, runtime, family, resolve, verify_outputs)
+        require(report["placement"] == original["placement"] == slots[member["slot"]],
+                "pack trial placement differs from its slot")
+        require((qualification_sample(original, original_config, request["kind"]), actual) == reference,
+                "packed trials changed the sample or the saved learning outputs")
+        execution = qualification_work(report, request, actual_config, resolve, verify_outputs)
+        started = read(resolve(member["started"]))
+        require(started["request"] == report["request"], "pack trial start record belongs to another request")
+        start = started["started_unix"]
+        intervals.append((start, start + positive(execution["child_seconds"], "native child seconds")))
+        seconds.append(projected_seconds(report, config, request["kind"]))
+    alone, together = intervals[:len(solo)], intervals[len(solo):]
+    starts = [start for start, _ in together]
+    require(max(starts) - min(starts) <= 0.1 * min(end - start for start, end in together),
+            "packed trials did not start together")
+    for index, (start, end) in enumerate(alone):
+        require(all(end <= other_start or other_end <= start
+                    for other, (other_start, other_end) in enumerate(intervals) if other != index),
+                "a solo trial overlapped another trial")
+    baseline = {kinds[member["slot"]]: value for member, value in zip(solo, seconds)}
+    packed_seconds = seconds[len(solo):]
+    slowdown = {kind: sum(value for value, other in zip(packed_seconds, kinds) if other == kind)
+                / kinds.count(kind) / baseline[kind] for kind in sorted(set(kinds))}
+    transport, queue = placement_overheads(choice, host)
+    return max(packed_seconds), transport, queue, ref, slots, packed_seconds, slowdown
+
+
+def selected_slots(ref):
+    """The slots of a choice's selected allocation: a pack's, or a qualification's one placement."""
+    allocation = read(checked(ref))
+    return allocation["slots"] if allocation.get("schema") == PACK else [allocation["placement"]]
+
+
 def require_choice(path, request, verify_outputs=False):
     choice = read(checked(path))
     require(choice["schema"] == CHOICE, "unsupported throughput choice")
@@ -570,26 +785,8 @@ def require_choice(path, request, verify_outputs=False):
         report = read(checked(ref))
         if report["workload"] != family:
             continue
-        require(report["schema"] == SCHEMA and report["qualification"] and report["complete"],
-                "not completed qualification")
-        original = read(resolve(report["request"]))
-        require(not profile_gae_requested(original),
-                "profiled qualification cannot select production allocation")
-        actual_config = read(resolve(report["executed_config"]))
-        original_config = read(resolve(original["config"]))
-        other_runtime = runtime_for(original, resolve)
-        require(runtime_identity(other_runtime) == runtime_identity(runtime)
-                and runtime_identity(report["runtime"]) == runtime_identity(runtime), "qualification runtime differs")
-        require(original.get("schedule_family") == request.get("schedule_family")
-                and workload(original_config, request["kind"], family=original.get("schedule_family")) == family
-                and actual_config == placed_config(original, original_config, True),
-                "qualification workload or placement differs")
-        actual = report["fingerprint"]
-        if verify_outputs:
-            result = read(resolve(report["native_result"]))
-            actual = output_fingerprint(actual_config, request["kind"], result, runtime, True, resolve,
-                                        report.get("collection"), report.get("run"))
-            require(actual == report["fingerprint"], "qualification outputs changed")
+        original, original_config, actual_config, actual = qualification_evidence(
+            report, request, config, runtime, family, resolve, verify_outputs)
         placement = report["placement"]
         require(placement == original["placement"] and placement["host"] in eligible,
                 "qualification placement no longer eligible")
@@ -598,48 +795,50 @@ def require_choice(path, request, verify_outputs=False):
                 "qualification exceeds eligible CPU set")
         # Same exact sample for each family on every candidate host. Replication
         # seeds may differ in production but cannot be changed between trials.
-        sample = digest({"configuration": workload(original_config, request["kind"], keep_seeds=True),
-                         "indices": original.get("episode_indices")})
+        sample = qualification_sample(original, original_config, request["kind"])
         if fingerprints:
             require((sample, actual) == next(iter(fingerprints.values())),
                     "serial/parallel qualification changed sample or saved learning outputs")
         fingerprints[ref["sha256"]] = (sample, actual)
         worker_counts.setdefault(placement["host"], []).append(placement["workers"])
-        execution = read(resolve(report["execution"]))
-        require(execution["exit_code"] == 0 and execution["error"] is None,
-                "qualification native execution failed")
-        require(report["seconds"] >= positive(execution["seconds"], "native wall seconds"),
-                "qualification omits native wall time")
-        expected_games = len(actual_config["iterations"][0]["episodes"]) if request["kind"] == "training" else len(actual_config["episodes"])
-        require(report["completed_games"] == expected_games and report["completed_updates"] ==
-                (1 if request["kind"] == "training" else 0), "qualification completed-work count differs")
-        archive = read(resolve(report["archive"]))
-        require(archive["mismatches"] == 0 and len(archive["shards"]) == 2
-                and archive["scheme"] == "two-deflate1-shards-full-readback/v1"
-                and archive["native_root"] == actual_config["output_directory"],
-                "qualification recovery does not match native output")
-        if verify_outputs:
-            for shard in archive["shards"]:
-                resolve(shard["archive"])
+        qualification_work(report, request, actual_config, resolve, verify_outputs)
         seconds = projected_seconds(report, config, request["kind"])
-        # External transport must be measured and retained, never assumed free.
-        transport = choice["inventory"][placement["host"]]["transport_seconds"]
-        require(type(transport) in (int, float) and math.isfinite(transport) and transport >= 0,
-                "invalid measured transport overhead")
-        queue = status.get("queue_seconds", 0)
-        require(type(queue) in (int, float) and math.isfinite(queue) and queue >= 0,
-                "invalid measured remaining queue time")
-        if queue:
-            checked(status["queue_evidence"])
-        candidates.append((seconds + transport + queue, ref, placement))
+        transport, queue = placement_overheads(choice, placement["host"])
+        candidates.append((seconds, transport, queue, ref, placement))
     require(set(worker_counts) == eligible, "eligible host lacks measured allocation")
     require(all(counts[0] == 1 and counts == sorted(set(counts)) and any(w > 1 for w in counts)
                 for counts in worker_counts.values()), "each host needs serial then increasing workers")
     require(candidates, "missing compatible completed-work throughput evidence")
-    best = min(candidates, key=lambda item: item[0])
-    require(choice["selected"][family] == best[1] and request["placement"] == best[2],
-            "production does not use fastest qualified eligible allocation")
-    selected = {"qualification": best[1], "projected_seconds": best[0], "workload": family}
+    if "packs" not in choice:
+        best = min(((seconds + transport + queue, ref, placement)
+                    for seconds, transport, queue, ref, placement in candidates), key=lambda item: item[0])
+        require(choice["selected"][family] == best[1] and request["placement"] == best[2],
+                "production does not use fastest qualified eligible allocation")
+        selected = {"qualification": best[1], "projected_seconds": best[0], "workload": family}
+    else:
+        # A study of `runs` runs of this family: each solo allocation runs them one
+        # after another; a pack runs one per slot at once, wave after wave.
+        runs = choice.get("study_runs", {}).get(family)
+        require(type(runs) is int and runs > 0, "invalid study size")
+        options = [(runs * (seconds + transport) + queue, ref, [placement], "qualification", None)
+                   for seconds, transport, queue, ref, placement in candidates]
+        reference = next(iter(fingerprints.values()))
+        for entry in choice["packs"]:
+            pack = pack_candidate(entry, request, config, runtime, family, choice, eligible, verify_outputs,
+                                  reference)
+            if pack is not None:
+                wave, transport, queue, ref, slots, slot_seconds, slowdown = pack
+                options.append((math.ceil(runs / len(slots)) * (wave + transport) + queue, ref, slots,
+                                "pack", {"slots": len(slots), "slot_seconds": slot_seconds, "slowdown": slowdown}))
+        best = min(options, key=lambda item: item[0])
+        require(choice["selected"][family] == best[1] and request["placement"] in best[2],
+                "production does not use fastest qualified eligible allocation")
+        # All arms of one study run in one layout, so their timing stays comparable.
+        require(all(layout(selected_slots(ref)) == layout(best[2]) for ref in choice["selected"].values()),
+                "a study's families must run in one layout")
+        selected = {best[3]: best[1], "projected_seconds": best[0], "workload": family, "study_runs": runs}
+        if best[3] == "pack":
+            selected |= best[4]
     if not verify_outputs:
         verification = read(checked(request["choice_verification"]))
         require(verification["schema"] == CHOICE and verification["choice"] == path
@@ -738,6 +937,9 @@ def execute(request_path, qualification):
     command = [str(checked(runtime["binary"])), str((root/"config.json").resolve())]
     if qualification and request["kind"] == "training":
         command.extend(["--max-new-iterations", "1"])
+    barrier = start_barrier(request, qualification)
+    barrier_seconds = 0.0 if barrier is None else await_release(barrier, request_path)
+    started += barrier_seconds  # waiting for the other packed trials is not this trial's time
     failure = None
     with (root/"stdout.jsonl").open("x") as stdout, (root/"stderr.log").open("x") as stderr, \
             (root/"telemetry.jsonl").open("x") as telemetry:
@@ -774,7 +976,8 @@ def execute(request_path, qualification):
             child_seconds = time.monotonic() - child_started
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
                                          "child_seconds": child_seconds,
-                                         "seconds": time.monotonic() - started})
+                                         "seconds": time.monotonic() - started,
+                                         **({"barrier_seconds": barrier_seconds} if barrier else {})})
     if failure:
         raise RuntimeError(failure + "; preserve failed outputs at " + str(root))
     last = None

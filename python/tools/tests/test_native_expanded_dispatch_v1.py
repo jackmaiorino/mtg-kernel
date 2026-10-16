@@ -8,8 +8,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 import native_expanded_dispatch_v1 as dispatch
@@ -35,7 +37,9 @@ def lease_guard_files(folder, pod="testpod", now=None, **guard):
     return lease
 
 
-class NativeExpandedAdmissionTests(unittest.TestCase):
+class AdmissionTestCase(unittest.TestCase):
+    """A fixture config, runtime and serial/parallel qualification trials."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -118,6 +122,8 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                 "qualifications": [one, two],
                 "selected": {dispatch.workload(self.config, "training"): two}}
 
+
+class NativeExpandedAdmissionTests(AdmissionTestCase):
     def test_replication_seeds_only_are_compatible(self):
         replica = copy.deepcopy(self.config)
         replica["iterations"][0]["episodes"][0]["episode"].update(id="replica", seed=999)
@@ -360,6 +366,36 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                     self.assertEqual(environment["MTG_KERNEL_PROFILE_GAE_V1"], "1")
                 else:
                     self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
+
+    def test_execute_waits_at_the_start_barrier_outside_its_seconds(self):
+        request = self.request(1)
+        release = self.root / "release.json"
+        request["start_barrier"] = {"ready": str(self.root / "ready.json"), "release": str(release),
+                                    "timeout_seconds": 30}
+        request_ref = self.save(request)
+
+        def popen(*args, **kwargs):
+            self.assertTrue(release.exists())  # the native child starts only after the release
+            child = unittest.mock.MagicMock(pid=4242, returncode=1)
+            child.poll.return_value = 1
+            return child
+        timer = threading.Timer(0.5, lambda: release.write_text('{"go": true}'))
+        self.addCleanup(timer.cancel)
+        with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
+                patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "set_affinity"), \
+                patch.object(dispatch, "require_mapped_libraries"), \
+                patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                patch("host_reservation_v1.record_descendant"), \
+                patch.object(dispatch.subprocess, "Popen", side_effect=popen) as spawn:
+            timer.start()
+            with self.assertRaisesRegex(RuntimeError, "native process failed"):
+                dispatch.execute(Path(request_ref["path"]), True)
+        self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(dispatch.read(self.root / "ready.json")["request"], request_ref)
+        execution = dispatch.read(Path(request["root"]) / "execution.json")
+        self.assertGreaterEqual(execution["barrier_seconds"], 0.4)
+        self.assertLess(execution["seconds"], execution["barrier_seconds"])
 
     def test_fastest_choice_rejects_profiled_qualification(self):
         choice = self.choice()
@@ -758,6 +794,264 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             self.assertTrue(pattern.search(name), name)
         for name in ("python3.13", "trainer2", "nineXdeck-trainer"):
             self.assertFalse(pattern.search(name), name)
+
+
+# Two SMT P-cores (CPUs 0-1 and 2-3) and two E-cores (CPUs 4 and 5).
+class StartBarrierTests(unittest.TestCase):
+    """A packed qualification trial waits after its checks for the pack tool's release."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.request_path = self.root / "request.json"
+        self.request_path.write_text("{}")
+
+    def barrier(self, name, **fields):
+        return {"ready": str(self.root / f"{name}.ready.json"), "release": str(self.root / "release.json"),
+                "timeout_seconds": 30, **fields}
+
+    def test_only_training_qualification_trials_carry_a_barrier(self):
+        request = {"kind": "training", "start_barrier": self.barrier("a")}
+        self.assertEqual(dispatch.start_barrier(request, True), request["start_barrier"])
+        self.assertIsNone(dispatch.start_barrier({"kind": "training"}, False))
+        for value, qualification in ((request, False), (dict(request, kind="evaluation"), True),
+                                     (dict(request, start_barrier=self.barrier("a", ready="a.json")), True),
+                                     (dict(request, start_barrier=self.barrier("a", extra=1)), True)):
+            with self.assertRaisesRegex(ValueError, "start barrier belongs"):
+                dispatch.start_barrier(value, qualification)
+        with self.assertRaisesRegex(ValueError, "start barrier timeout"):
+            dispatch.start_barrier(dict(request, start_barrier=self.barrier("a", timeout_seconds=0)), True)
+
+    def test_a_trial_waits_for_go_and_fails_without_it(self):
+        release = self.root / "release.json"
+        timer = threading.Timer(0.3, lambda: release.write_text('{"go": true}'))
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.assertGreaterEqual(dispatch.await_release(self.barrier("a"), self.request_path, poll=0.01), 0.2)
+        self.assertEqual(dispatch.read(self.root / "a.ready.json")["request"], dispatch.pin(self.request_path))
+        release.write_text('{"go": false}')
+        with self.assertRaisesRegex(ValueError, "without go"):
+            dispatch.await_release(self.barrier("b"), self.request_path, poll=0.01)
+        release.unlink()
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            dispatch.await_release(self.barrier("c", timeout_seconds=0.05), self.request_path, poll=0.01)
+
+
+TOPOLOGY = [{"cpus": "0-1", "efficiency_class": 1, "smt": True}, {"cpus": "2-3", "efficiency_class": 1, "smt": True},
+            {"cpus": "4", "efficiency_class": 0, "smt": False}, {"cpus": "5", "efficiency_class": 0, "smt": False}]
+
+
+class PackChoiceTests(AdmissionTestCase):
+    """Side-by-side runs: a pack is chosen only on byte-equal trials that started
+    together, when its waves beat the fastest solo allocation for the study."""
+
+    def setUp(self):
+        super().setUp()
+        # Members run on one-worker slots, so their production config keeps the serial defaults.
+        del self.config["collection_workers"], self.config["preparation_workers"]
+
+    def slot(self, cpus):
+        return {"host": "desktop", "cpu_affinity": cpus, "workers": 1, "preparation_workers": 1,
+                "memory_bytes": 1024**3}
+
+    def pack_trial(self, name, slot, seconds, start, child_seconds, tensors=(1, 2)):
+        request = self.request(slot["workers"])
+        request.update(placement=dict(slot), root=str(self.root / name), cold_root=str(self.root / f"cold-{name}"))
+        original = dispatch.read(dispatch.checked(request["config"]))
+        config = dispatch.placed_config(request, original, True)
+        native = Path(config["output_directory"])
+        self.save({"git_commit": self.runtime["engine_commit"],
+                   "tracked_tree_sha256": self.runtime["tracked_tree_sha256"]}, native/"run.json")
+        trajectory = self.save({"terminal": {"terminal_classification": "natural"}, "tensors": list(tensors)},
+                               native/"episode.json")
+        collection = self.save({"complete": True, "trajectories": [trajectory]}, native/"collection.json")
+        checkpoint = self.save({"trajectories": [trajectory], "parameters": [123], "first_moments": [456],
+                                "second_moments": [789], "adam_step": 32401}, native/"checkpoint.json")
+        update = self.save({"complete": True, "checkpoint": checkpoint})
+        receipt = self.save({"iteration": 0, "collection": collection, "update": update})
+        result = {"complete": False, "completed_iterations": 1, "planned_iterations": 64, "iterations": [receipt]}
+        request_pin = self.save(request)
+        report = {"schema": dispatch.SCHEMA, "qualification": True, "complete": True, "request": request_pin,
+                  "executed_config": self.save(config), "native_result": self.save(result),
+                  "runtime": self.runtime, "launcher_sha256": dispatch.pin(dispatch.__file__)["sha256"],
+                  "workload": dispatch.workload(original, "training"), "placement": dict(slot),
+                  "fingerprint": dispatch.output_fingerprint(config, "training", result, self.runtime, True),
+                  "completed_games": 1, "completed_updates": 1, "seconds": seconds,
+                  "execution": self.save({"exit_code": 0, "error": None, "child_seconds": child_seconds,
+                                          "seconds": seconds - 1}),
+                  "run": dispatch.pin(native/"run.json"),
+                  "archive": self.save({"mismatches": 0, "native_root": str(native),
+                      "scheme": "two-deflate1-shards-full-readback/v1",
+                      "shards": [{"archive": self.save({"archive": i})} for i in range(2)]})}
+        return {"report": self.save(report),
+                "started": self.save({"pid": 1, "started_unix": start, "placement": dict(slot),
+                                      "request": request_pin})}
+
+    def pack(self, packed_seconds=12, packed_start=1000, solo_overlap=False, changed=None, host="desktop",
+             topology=TOPOLOGY):
+        """Slots: two P-threads (CPUs 0 and 2) and two E-cores (4 and 5); one solo trial per kind.
+        The packed trials start 0.1 s apart (a 0.3 s spread against 9 s native runs)."""
+        slots = [dict(self.slot(cpus), host=host) for cpus in ([0], [2], [4], [5])]
+        solo = [dict(slot=0, **self.pack_trial(f"solo-0-{host}", slots[0], 10, 0, 8)),
+                dict(slot=2, **self.pack_trial(f"solo-2-{host}", slots[2], 11, 1005 if solo_overlap else 100, 8))]
+        packed = [dict(slot=i, **self.pack_trial(f"packed-{i}-{host}", slot, packed_seconds, packed_start + i / 10, 9,
+                                                 (1, 3) if changed == i else (1, 2)))
+                  for i, slot in enumerate(slots)]
+        return {"schema": dispatch.PACK, "workload": dispatch.workload(self.config, "training"),
+                "slots": slots, "kinds": dispatch.slot_kinds(slots, topology), "topology": topology,
+                "solo": solo, "packed": packed}
+
+    def study(self, runs, pack, select_pack=True):
+        choice = self.choice()
+        choice["inventory"]["desktop"]["cpu_affinity"] = [0, 1, 2, 3, 4, 5]
+        choice["packs"] = [self.save(pack)]
+        choice["study_runs"] = {dispatch.workload(self.config, "training"): runs}
+        if select_pack:
+            choice["selected"][dispatch.workload(self.config, "training")] = choice["packs"][0]
+        return choice
+
+    def admit(self, choice, placement, verify=True):
+        request = self.request(1)
+        request["placement"] = placement
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "host_topology", return_value=TOPOLOGY):
+            return dispatch.require_choice(self.save(choice), request, verify_outputs=verify)
+
+    def test_slot_kinds_name_core_type_and_workers(self):
+        slots = [self.slot([0]), self.slot([0, 1]), self.slot([0, 2]), self.slot([4]),
+                 dict(self.slot([0, 2]), workers=2)]
+        self.assertEqual(dispatch.slot_kinds(slots, TOPOLOGY),
+                         ["class1-cores1-cpus1-w1-p1", "class1-cores1-cpus2-w1-p1", "class1-cores2-cpus2-w1-p1",
+                          "class0-cores1-cpus1-w1-p1", "class1-cores2-cpus2-w2-p1"])
+        with self.assertRaisesRegex(ValueError, "spans core types"):
+            dispatch.slot_kinds([self.slot([0, 4])], TOPOLOGY)
+        with self.assertRaisesRegex(ValueError, "outside this host"):
+            dispatch.slot_kinds([self.slot([9])], TOPOLOGY)
+
+    def test_study_picks_a_faster_pack_and_admits_any_of_its_slots(self):
+        # Solo: 6 s x 64 updates = 384 s a run, 8 runs = 3,072 s. Pack: 4 slots,
+        # 12 s x 64 = 768 s a wave, two waves = 1,536 s.
+        choice = self.study(8, self.pack())
+        selected = self.admit(choice, self.slot([4]))
+        self.assertEqual(selected["pack"], choice["packs"][0])
+        self.assertEqual((selected["projected_seconds"], selected["slots"], selected["study_runs"]), (1536, 4, 8))
+        self.assertEqual(selected["slot_seconds"], [768, 768, 768, 768])  # 12 s x 64 updates, each slot
+        self.assertEqual(selected["slowdown"], {"class0-cores1-cpus1-w1-p1": 12 / 11,
+                                                "class1-cores1-cpus1-w1-p1": 12 / 10})
+        for slot in (self.slot([0]), self.slot([2]), self.slot([5])):
+            self.assertEqual(self.admit(choice, slot), selected)
+            self.assertEqual(dispatch.placed_config(dict(self.request(1), placement=slot), self.config, False),
+                             self.config)  # what execute() runs on that slot
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(choice, self.slot([1]))
+        request = self.request(1)
+        request["placement"] = self.slot([2])
+        choice_ref = self.save(choice)
+        request["choice_verification"] = self.save({"schema": dispatch.CHOICE, "choice": choice_ref,
+                                                   "selected": selected, "outputs_verified": True})
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "host_topology", return_value=TOPOLOGY):
+            self.assertEqual(dispatch.require_choice(choice_ref, request), selected)
+
+    def test_study_keeps_solo_when_the_pack_is_slower(self):
+        # One run: solo 384 s against one 768 s wave.
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(self.study(1, self.pack()), self.slot([0]))
+        choice = self.study(1, self.pack(), select_pack=False)
+        selected = self.admit(choice, self.request(2)["placement"])
+        self.assertEqual((selected["qualification"], selected["projected_seconds"], selected["study_runs"]),
+                         (choice["qualifications"][1], 384, 1))
+
+    def test_pack_refuses_changed_outputs_and_unproven_timing(self):
+        with self.assertRaisesRegex(ValueError, "changed the sample or the saved learning outputs"):
+            self.admit(self.study(8, self.pack(changed=3)), self.slot([0]))
+        for start in (5000, 1000.91):  # far apart, or just past a tenth of the 9 s runs
+            with self.assertRaisesRegex(ValueError, "did not start together"):
+                pack = self.pack()
+                later = dispatch.read(pack["packed"][3]["started"]["path"])
+                later["started_unix"] = start
+                pack["packed"][3]["started"] = self.save(later)
+                self.admit(self.study(8, pack), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "solo trial overlapped"):
+            self.admit(self.study(8, self.pack(solo_overlap=True)), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "start record"):
+            pack = self.pack()
+            pack["packed"][1]["started"] = pack["packed"][0]["started"]
+            self.admit(self.study(8, pack), self.slot([0]))
+
+    def test_pack_needs_its_slots_kinds_and_trials(self):
+        pack = self.pack()
+        pack["solo"] = pack["solo"][:1]
+        with self.assertRaisesRegex(ValueError, "one solo trial per slot kind"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["packed"] = pack["packed"][:3]
+        with self.assertRaisesRegex(ValueError, "one packed trial per slot"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["slots"][1] = self.slot([0])
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["packed"][1], pack["packed"][2] = dict(pack["packed"][2], slot=1), dict(pack["packed"][1], slot=2)
+        with self.assertRaisesRegex(ValueError, "placement differs from its slot"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        choice = self.study(8, self.pack())
+        choice["inventory"]["desktop"]["cpu_affinity"] = [0, 1, 2, 3]
+        with self.assertRaisesRegex(ValueError, "eligible CPU set"):
+            self.admit(choice, self.slot([0]))
+        choice = self.study(8, self.pack())
+        choice["study_runs"][dispatch.workload(self.config, "training")] = 0
+        with self.assertRaisesRegex(ValueError, "study size"):
+            self.admit(choice, self.slot([0]))
+        del choice["study_runs"]
+        with self.assertRaisesRegex(ValueError, "study size"):
+            self.admit(choice, self.slot([0]))
+
+    def test_a_study_runs_in_one_layout(self):
+        """Every family a pack choice selects for must use the same slots."""
+        choice = self.study(8, self.pack())
+        choice["selected"]["another-family"] = choice["packs"][0]
+        self.admit(choice, self.slot([0]))
+        choice["selected"]["another-family"] = choice["qualifications"][1]  # a solo allocation
+        with self.assertRaisesRegex(ValueError, "one layout"):
+            self.admit(choice, self.slot([0]))
+        other = self.pack()
+        other["slots"][3] = self.slot([1])  # an equal-shaped slot on other CPUs
+        choice["selected"]["another-family"] = self.save(other)
+        with self.assertRaisesRegex(ValueError, "one layout"):
+            self.admit(choice, self.slot([0]))
+
+    def test_kinds_come_from_the_recorded_topology(self):
+        """On its own host a pack needs the topology it qualified on; another host's
+        pack keeps its own recorded topology."""
+        pack = self.pack(topology=[dict(row, efficiency_class=2) if row["cpus"] == "4" else row for row in TOPOLOGY])
+        with self.assertRaisesRegex(ValueError, "topology changed"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        choice = self.study(8, self.pack())
+        computehost = [{"cpus": str(cpu), "efficiency_class": 0, "smt": False} for cpu in (0, 2, 4, 5)]
+        remote = self.pack(host="computehost", topology=computehost)
+        remote["solo"] = remote["solo"][:1]  # one kind there; this host's topology would make two
+        choice["packs"].append(self.save(remote))
+        choice["inventory"]["computehost"].update(eligible=True, cpu_affinity=[0, 1, 2, 4, 5], transport_seconds=0)
+        choice["qualifications"] += [self.save(dict(dispatch.read(dispatch.checked(ref)),
+                                                    placement=dict(dispatch.read(dispatch.checked(ref))["placement"],
+                                                                   host="computehost")))
+                                     for ref in choice["qualifications"]]
+        with patch.object(dispatch, "qualification_evidence", side_effect=lambda report, *args: (
+                    dispatch.read(dispatch.checked(report["request"])) | {"placement": report["placement"]},
+                    self.config, None, "fingerprint")), \
+                patch.object(dispatch, "qualification_sample", return_value="sample"), \
+                patch.object(dispatch, "qualification_work", return_value={"child_seconds": 9}):
+            # The computehost's slots (CPUs 0, 2, 4, 5, one class) classify by its record, not by this host.
+            self.assertEqual(self.admit(choice, self.slot([0]))["pack"], choice["packs"][0])
+
+    def test_verified_pack_detects_changed_trial_outputs(self):
+        choice = self.study(8, self.pack())
+        (self.root / "packed-2-desktop" / "native" / "episode.json").write_text("changed")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            self.admit(choice, self.slot([0]))
 
 
 if __name__ == "__main__":

@@ -156,6 +156,125 @@ claim of playing strength. Source-dependent endpoint validation and statistical
 analysis remain in the accepted research lane. No paid launch path is provided;
 a `runpod` placement only runs on an already leased pod under its guard (below).
 
+## Packs: side-by-side runs of one family
+
+A run is mostly serial, so one run on many held cores leaves most of them idle.
+A study of several runs of one workload family (replicates that differ only in
+IDs and seeds) can instead run them side by side, each on its own slot, inside
+the study's held reservation. Nothing a run writes changes: each member is an
+ordinary production dispatch with its own config, seeds, outputs and receipt.
+
+A slot is a fixed CPU set plus its worker counts and memory limit:
+
+```json
+{"cpu_affinity": [6], "workers": 1, "preparation_workers": 1, "memory_bytes": 8589934592}
+```
+
+Slots of a layout are disjoint. A slot's kind is its core type (efficiency
+class from `host_slots_v1.py topology`), physical cores, logical CPUs and worker
+counts, e.g. one thread of a P core, both threads of a P core, or one E core. A
+slot may not span core types.
+
+The pack tool runs inside the study's held reservation under a
+`host_slots_v1.py timed` declaration. The declared cores must hold every slot
+CPU and every SMT sibling of one, so no work outside the slots shares a slot's
+physical cores, plus any post CPUs (below). The slots' memory limits together
+must fit the host's free memory. On Linux, set `HOST_SLOTS_ROOT` to the
+reservation's root (`$MTG_HOST_LOCK_ROOT`, else `/var/lib/mtg-node/host-lock`).
+Both plans may name `compute_host_name`, which every nested dispatch gets as
+`--compute-host-name`: WMI-created supervisors inherit no `COMPUTE_HOST_NAME`.
+
+**Pack qualification.** Write a plan beside a training qualification request
+of the family (one without `choice`):
+
+```json
+{"schema": "native-expanded-pack-qualify/v1",
+ "base_request": {"path": "ABS/qualification-w1.request.json", "sha256": "SHA256"},
+ "slots": [SLOT, SLOT, ...], "root": "ABS/pack-qualification", "timeout_seconds": 3600}
+```
+
+```text
+python -B python/tools/host_slots_v1.py timed --cores CPUS -- python -B python/tools/native_expanded_pack_v1.py qualify ABS_PLAN.json
+```
+
+The tool runs the base request's one-update payload as nested `qualify`
+dispatches, unchanged apart from placement and roots (the base request's roots
+with the plan's SHA256 prefix and the trial's name appended): alone on the
+first slot of each kind, one after another, then on every slot at once. Each
+packed trial carries a `start_barrier`. It waits after all of its checks until
+every packed trial waits, and then they all start; the wait counts in neither
+its seconds nor its wall-time limit, and a trial that fails before the barrier
+fails the others. The tool writes `root/pack.json`
+(`native-expanded-cpu-pack/v1`: workload, slots, kinds, the host topology, and
+pins of each trial's report and start record). It prints each trial's seconds,
+whether every output matched, the packed trials' start spread and the mean
+packed over solo seconds of each kind, and exits nonzero if any output
+differed.
+
+**Choosing a pack.** Add to the choice JSON the pack indexes and the study's
+size per family:
+
+```json
+"packs": [{"path": "ABS/pack-qualification/pack.json", "sha256": "SHA256"}],
+"study_runs": {"WORKLOAD_DIGEST": 16}
+```
+
+A pack counts only if every trial passes the qualification checks above, each
+trial ran on its slot, every trial's sample and full output fingerprint equals
+those of the family's serial/parallel qualifications (so each packed output is
+byte-equal to the serial run's), the packed trials started within a tenth of
+the shortest one's native seconds of each other, no solo trial overlapped
+another trial, there is one solo trial per kind and one packed trial per slot,
+and the slots lie inside the host's eligible CPU set. Kinds come from the
+topology recorded in the pack, which must still be the host's own when the
+pack is on the admitting host. For a study of N runs the launcher compares,
+per option, N x (projected seconds + transport) + queue for each solo
+allocation with ceil(N / slots) x (the slowest packed slot's projected seconds
++ transport) + queue for each pack, and requires `selected` to name the
+fastest and the production placement to be one of its slots. Every family a
+choice selects for must run in one layout (the same hosts, CPUs and worker
+counts), so a study's arms stay comparable. The verified snapshot then records
+the pack, the study's projected seconds and size, the number of slots, each
+slot's packed projected seconds (`slot_seconds`) and the slowdown of each
+kind. Choices without `packs` behave as before.
+
+**Running a pack.** List the members, each a complete production request with
+`choice` and `choice_verification` whose verified choice selects a pack. All
+members' packs must have the same slots, each member's placement is one of
+them, members have their own roots, and no family has more members than its
+`study_runs`:
+
+```json
+{"schema": "native-expanded-pack-run/v1", "root": "ABS/pack-run", "stop_files": ["ABS/STOP"],
+ "members": [{"name": "r1-a", "request": {"path": "ABS/r1-a.request.json", "sha256": "SHA256"}}],
+ "post": ["python", "-B", "ABS/trace.py", "{report}"], "post_cpus": [15], "post_timeout_seconds": 1800}
+```
+
+```text
+python -B python/tools/host_slots_v1.py timed --cores CPUS -- python -B python/tools/native_expanded_pack_v1.py run ABS_PLAN.json
+```
+
+Members start in list order, each on the first free slot with its own worker
+counts. The copy of the request under `root/requests` differs from the
+member's only in its placement, which is that slot. Each goes through the
+nested `dispatch` action, so the launcher admits it against its choice as it
+does any production request; a busy refusal is retried every minute for an
+hour. Before a member starts, the launcher's storage check runs with the
+projections of the members already running added to its own; the member waits
+for room, and fails if it does not fit alone. A slot is free again once the
+member's nested supervisor records that its whole job has exited; work that
+ends without a receipt, or a supervisor that ends without that record, fails
+the member. A failed member or a STOP file stops new starts, and running
+members finish. The optional post command runs after each member on one of
+the post CPUs at below-normal priority, so a trace overlaps the next member.
+Post CPUs are declared and share no physical core with a slot. In the command,
+`{name}`, `{report}` and `{request_root}` are replaced and other text, braces
+included, stays. A post command that fails, cannot start or outlives
+`post_timeout_seconds` also stops new starts. The tool writes `root/log.jsonl`
+and `root/summary.json` (every failure, the members not started, and each
+member's own and rewritten request pins) and exits nonzero unless every member
+completed.
+
 ## Host reservation on Linux
 
 `host_reservation_v1.py` also runs on Linux (for example a rented CPU pod)
