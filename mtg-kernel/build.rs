@@ -3514,6 +3514,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
         // Genuine FDN129 native Partial482.
+        "Fiend Artisan" => program("None", "MoveObject(ThisSource,Battlefield);whileBattlefield:printedAbilitiesActive:layer7c:plusControllerGraveyardCreatureCards;activation:sorcery:chooseManaX:u8:Mana(X,B/G),Tap,SacrificeOtherControlledCreature:originalSourceAndPaidX:maySearchCreatureMVAtMostXToBattlefieldUntappedThenShuffle", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Leyline Axe" => program("None", "openingHand:optional_actual_kept_source_to_battlefield_before_turn_one;MoveObject(ThisSource,Battlefield);equipped:+1/+1,doubleStrike,trample;equip:3", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Genuine FDN194 native Partial481.
         "Etali, Primal Storm" => program("None", "MoveObject(ThisSource,Battlefield);attacks:original_source_controller:each_player_simultaneous_top_library_to_public_exile:optional_nonland_free_casts_any_order_during_resolution:original_exile_incarnations:normal_targets_and_additional_costs:XZero:lands_stay_exiled", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -5123,6 +5124,12 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
+        }],
+        "Fiend Artisan" => &[ActivatedAbilityRecipe {
+            cost:&[AbilityCostRecipe::ManaCost("{X}{B/G}"),AbilityCostRecipe::Tap,AbilityCostRecipe::SacrificeOtherControlledCreatures(1)],
+            effect:AbilityEffectRecipe::Program{name:"fiend_artisan_paid_x_search_v1",effect:"EffectOp::FiendArtisanSearchV1"},
+            activation_zone:"Battlefield",sorcery_speed_only:true,target_spec:"None",
+            activation_target_filter:"TargetSpecOnly",max_activations_per_turn:None,
         }],
         "Axgard Cavalry" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Tap],

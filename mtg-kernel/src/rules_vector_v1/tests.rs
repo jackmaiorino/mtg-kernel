@@ -1181,6 +1181,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("effect/curator_v1.rs", "Curator of Destinies", "closed native entry/private-pile printing selector; frozen V1 Opaque"),
     ("event.rs", "Lathril, Blade of the Elves", "positive final combat damage capture; token root remains opaque in frozen v1"),
     ("effect.rs", "Elf Warrior Token", "private exact captured Lathril token batch; frozen v1 root opaque"),
+    ("effect.rs", "Fiend Artisan", "closed native chosen-X activation and BF-only layer7c count remain Opaque; no old consumer permission"),
     ("effect.rs", "Blasphemous Edict", "definition-owned APNAP simultaneous sacrifice root remains opaque in frozen V1; conditional mana cost is extracted"),
     ("effect.rs", "Consuming Aberration", "exact native revealed-mill answer-stage validation; reveal-until effect remains opaque"),
     ("engine.rs", "Consuming Aberration", "native all-zone layer7a CDA; exact opponent-graveyard cardinality remains opaque in frozen V1"),

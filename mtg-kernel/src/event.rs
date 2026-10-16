@@ -10010,7 +10010,7 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
 }
 
 fn unsupported_partial_token_v1(event: &ProposedEvent) -> bool {
-    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support() || crate::effect::fiend_artisan_v1::definition(t.token_def)))
+    matches!(event,ProposedEvent::CreateToken(t) if crate::card_def::CARD_DEFS.get(usize::from(t.token_def)).is_none_or(|d| d.is_token && !d.has_full_support()))
 }
 pub(crate) fn commit_kykar_spirit_owned_v1(
     state: &mut GameState,

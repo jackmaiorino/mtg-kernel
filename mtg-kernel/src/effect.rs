@@ -27854,175 +27854,176 @@ pub(crate) mod fiend_artisan_v1 {
         cfg!(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
-        )) && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
-            let card_def::CardDef {
-                name: _,
-                capability: _,
-                cost: _,
-                generic_cost_reduction: _,
-                ward_cost: _,
-                spell_cannot_be_countered: _,
-                records_mana_spent: _,
-                equipment: _,
-                types: _,
-                subtypes: _,
-                supertypes: _,
-                power: _,
-                toughness: _,
-                starting_loyalty: _,
-                enters_with_plus_one_counters: _,
-                controlled_counter_keyword: _,
-                game_outcome_protection_v1: _,
-                controlled_creature_grant: _,
-                is_land: _,
-                produces_mana: _,
-                colors: _,
-                target_spec: _,
-                keywords: _,
-                spell_effect: _,
-                mana_ability: _,
-                alt_cost: _,
-                kicker_cost: _,
-                additional_cost: _,
-                flashback: _,
-                activated_abilities: _,
-                plot_cost: _,
-                madness_cost: _,
-                mode2: _,
-                mode3: _,
-                additional_modes: _,
-                kicked_target_spec: _,
-                is_token: _,
-                escape: _,
-                mana_ability_choices: _,
-                enters_battlefield_tapped: _,
-                mana_ability_def: _,
-                minimum_blockers: _,
-                omen: _,
-                mana_value: _,
-                mana_ability_includes_chosen_color: _,
-                as_enters_choose_color_other_than: _,
-                additional_mana_abilities: _,
-                object_name: _,
-                enters_battlefield_tapped_unless: _,
-                attachment: _,
-                transform_face: _,
-                saga: _,
-                optional_additional_cost: _,
-                changeling: _,
-                bestow: _,
-                delve: _,
-                adventure: _,
-                cant_be_blocked_by_monarchs_creatures: _,
-                conditional_tap_yield: _,
-                enters_tapped_unless_controller: _,
-                additional_mana_ability_conditions: _,
-                restricted_mana_abilities: _,
-                animation: _,
-                activated_ability_generic_reductions: _,
-                combat_static_rules: _,
-                as_enters_color_choice_v1: _,
-                chosen_color_creature_boost_v1: _,
-                damage_replacement_v1: _,
-                token_counter_replacement_v48: _,
-                starting_life_self_bonuses_v1: _,
-                source_type_hexproof_v1: _,
-                other_controlled_nontoken_death_v1: _,
-                creature_type_entry_v1: _,
-            } = d;
-            d.name == "Fiend Artisan"
-                && d.capability == card_def::CardCapability::Partial
-                && d.cost
-                    == crate::mana::Cost {
-                        pips: &[
-                            crate::mana::Pip::Hybrid(
-                                crate::mana::ManaColor::B,
-                                crate::mana::ManaColor::G,
-                            ),
-                            crate::mana::Pip::Hybrid(
-                                crate::mana::ManaColor::B,
-                                crate::mana::ManaColor::G,
-                            ),
-                        ],
-                        generic: 0,
-                        x_count: 0,
-                    }
-                && d.generic_cost_reduction.is_none()
-                && d.ward_cost.is_none()
-                && !d.spell_cannot_be_countered
-                && !d.records_mana_spent
-                && d.equipment.is_none()
-                && d.types == [CardType::Creature]
-                && d.subtypes == [card_def::Subtype::Nightmare]
-                && d.supertypes.is_empty()
-                && d.power == Some(1)
-                && d.toughness == Some(1)
-                && d.starting_loyalty.is_none()
-                && d.enters_with_plus_one_counters.is_none()
-                && d.controlled_counter_keyword.is_none()
-                && d.game_outcome_protection_v1.is_none()
-                && d.controlled_creature_grant.is_none()
-                && !d.is_land
-                && d.produces_mana.is_empty()
-                && d.colors == [crate::mana::ManaColor::B, crate::mana::ManaColor::G]
-                && d.target_spec == card_def::TargetSpec::None
-                && d.keywords == Keywords::NONE
-                && (d.spell_effect)()
-                    == Some(EffectOp::MoveObject {
-                        object: ObjectRef::ThisSource,
-                        to_zone: Zone::Battlefield,
-                    })
-                && (d.mana_ability)().is_none()
-                && d.alt_cost.is_none()
-                && d.kicker_cost.is_none()
-                && d.additional_cost.is_none()
-                && d.flashback.is_none()
-                && d.activated_abilities.len() == 1
-                && ability(&d.activated_abilities[0])
-                && d.plot_cost.is_none()
-                && d.madness_cost.is_none()
-                && d.mode2.is_none()
-                && d.mode3.is_none()
-                && d.additional_modes.is_empty()
-                && d.kicked_target_spec.is_none()
-                && !d.is_token
-                && d.escape.is_none()
-                && d.mana_ability_choices.is_empty()
-                && !d.enters_battlefield_tapped
-                && d.mana_ability_def.is_none()
-                && d.minimum_blockers == 1
-                && d.omen.is_none()
-                && d.mana_value == 2
-                && !d.mana_ability_includes_chosen_color
-                && d.as_enters_choose_color_other_than.is_none()
-                && d.additional_mana_abilities.is_empty()
-                && d.object_name == d.name
-                && d.enters_battlefield_tapped_unless.is_none()
-                && d.attachment.is_none()
-                && d.transform_face.is_none()
-                && d.saga.is_none()
-                && d.optional_additional_cost.is_none()
-                && !d.changeling
-                && d.bestow.is_none()
-                && !d.delve
-                && d.adventure.is_none()
-                && !d.cant_be_blocked_by_monarchs_creatures
-                && d.conditional_tap_yield.is_none()
-                && d.enters_tapped_unless_controller.is_none()
-                && d.additional_mana_ability_conditions.is_empty()
-                && d.restricted_mana_abilities.is_empty()
-                && d.animation.is_none()
-                && d.activated_ability_generic_reductions.is_empty()
-                && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
-                && d.as_enters_color_choice_v1.is_none()
-                && d.chosen_color_creature_boost_v1.is_none()
-                && d.damage_replacement_v1.is_none()
-                && d.token_counter_replacement_v48.is_none()
-                && d.starting_life_self_bonuses_v1.is_empty()
-                && d.source_type_hexproof_v1.is_none()
-                && d.other_controlled_nontoken_death_v1.is_none()
-                && d.creature_type_entry_v1.is_none()
-        })
+        )) && id == 483
+            && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+                let card_def::CardDef {
+                    name: _,
+                    capability: _,
+                    cost: _,
+                    generic_cost_reduction: _,
+                    ward_cost: _,
+                    spell_cannot_be_countered: _,
+                    records_mana_spent: _,
+                    equipment: _,
+                    types: _,
+                    subtypes: _,
+                    supertypes: _,
+                    power: _,
+                    toughness: _,
+                    starting_loyalty: _,
+                    enters_with_plus_one_counters: _,
+                    controlled_counter_keyword: _,
+                    game_outcome_protection_v1: _,
+                    controlled_creature_grant: _,
+                    is_land: _,
+                    produces_mana: _,
+                    colors: _,
+                    target_spec: _,
+                    keywords: _,
+                    spell_effect: _,
+                    mana_ability: _,
+                    alt_cost: _,
+                    kicker_cost: _,
+                    additional_cost: _,
+                    flashback: _,
+                    activated_abilities: _,
+                    plot_cost: _,
+                    madness_cost: _,
+                    mode2: _,
+                    mode3: _,
+                    additional_modes: _,
+                    kicked_target_spec: _,
+                    is_token: _,
+                    escape: _,
+                    mana_ability_choices: _,
+                    enters_battlefield_tapped: _,
+                    mana_ability_def: _,
+                    minimum_blockers: _,
+                    omen: _,
+                    mana_value: _,
+                    mana_ability_includes_chosen_color: _,
+                    as_enters_choose_color_other_than: _,
+                    additional_mana_abilities: _,
+                    object_name: _,
+                    enters_battlefield_tapped_unless: _,
+                    attachment: _,
+                    transform_face: _,
+                    saga: _,
+                    optional_additional_cost: _,
+                    changeling: _,
+                    bestow: _,
+                    delve: _,
+                    adventure: _,
+                    cant_be_blocked_by_monarchs_creatures: _,
+                    conditional_tap_yield: _,
+                    enters_tapped_unless_controller: _,
+                    additional_mana_ability_conditions: _,
+                    restricted_mana_abilities: _,
+                    animation: _,
+                    activated_ability_generic_reductions: _,
+                    combat_static_rules: _,
+                    as_enters_color_choice_v1: _,
+                    chosen_color_creature_boost_v1: _,
+                    damage_replacement_v1: _,
+                    token_counter_replacement_v48: _,
+                    starting_life_self_bonuses_v1: _,
+                    source_type_hexproof_v1: _,
+                    other_controlled_nontoken_death_v1: _,
+                    creature_type_entry_v1: _,
+                } = d;
+                d.name == "Fiend Artisan"
+                    && d.capability == card_def::CardCapability::Partial
+                    && d.cost
+                        == crate::mana::Cost {
+                            pips: &[
+                                crate::mana::Pip::Hybrid(
+                                    crate::mana::ManaColor::B,
+                                    crate::mana::ManaColor::G,
+                                ),
+                                crate::mana::Pip::Hybrid(
+                                    crate::mana::ManaColor::B,
+                                    crate::mana::ManaColor::G,
+                                ),
+                            ],
+                            generic: 0,
+                            x_count: 0,
+                        }
+                    && d.generic_cost_reduction.is_none()
+                    && d.ward_cost.is_none()
+                    && !d.spell_cannot_be_countered
+                    && !d.records_mana_spent
+                    && d.equipment.is_none()
+                    && d.types == [CardType::Creature]
+                    && d.subtypes == [card_def::Subtype::Nightmare]
+                    && d.supertypes.is_empty()
+                    && d.power == Some(1)
+                    && d.toughness == Some(1)
+                    && d.starting_loyalty.is_none()
+                    && d.enters_with_plus_one_counters.is_none()
+                    && d.controlled_counter_keyword.is_none()
+                    && d.game_outcome_protection_v1.is_none()
+                    && d.controlled_creature_grant.is_none()
+                    && !d.is_land
+                    && d.produces_mana.is_empty()
+                    && d.colors == [crate::mana::ManaColor::B, crate::mana::ManaColor::G]
+                    && d.target_spec == card_def::TargetSpec::None
+                    && d.keywords == Keywords::NONE
+                    && (d.spell_effect)()
+                        == Some(EffectOp::MoveObject {
+                            object: ObjectRef::ThisSource,
+                            to_zone: Zone::Battlefield,
+                        })
+                    && (d.mana_ability)().is_none()
+                    && d.alt_cost.is_none()
+                    && d.kicker_cost.is_none()
+                    && d.additional_cost.is_none()
+                    && d.flashback.is_none()
+                    && d.activated_abilities.len() == 1
+                    && ability(&d.activated_abilities[0])
+                    && d.plot_cost.is_none()
+                    && d.madness_cost.is_none()
+                    && d.mode2.is_none()
+                    && d.mode3.is_none()
+                    && d.additional_modes.is_empty()
+                    && d.kicked_target_spec.is_none()
+                    && !d.is_token
+                    && d.escape.is_none()
+                    && d.mana_ability_choices.is_empty()
+                    && !d.enters_battlefield_tapped
+                    && d.mana_ability_def.is_none()
+                    && d.minimum_blockers == 1
+                    && d.omen.is_none()
+                    && d.mana_value == 2
+                    && !d.mana_ability_includes_chosen_color
+                    && d.as_enters_choose_color_other_than.is_none()
+                    && d.additional_mana_abilities.is_empty()
+                    && d.object_name == d.name
+                    && d.enters_battlefield_tapped_unless.is_none()
+                    && d.attachment.is_none()
+                    && d.transform_face.is_none()
+                    && d.saga.is_none()
+                    && d.optional_additional_cost.is_none()
+                    && !d.changeling
+                    && d.bestow.is_none()
+                    && !d.delve
+                    && d.adventure.is_none()
+                    && !d.cant_be_blocked_by_monarchs_creatures
+                    && d.conditional_tap_yield.is_none()
+                    && d.enters_tapped_unless_controller.is_none()
+                    && d.additional_mana_ability_conditions.is_empty()
+                    && d.restricted_mana_abilities.is_empty()
+                    && d.animation.is_none()
+                    && d.activated_ability_generic_reductions.is_empty()
+                    && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
+                    && d.as_enters_color_choice_v1.is_none()
+                    && d.chosen_color_creature_boost_v1.is_none()
+                    && d.damage_replacement_v1.is_none()
+                    && d.token_counter_replacement_v48.is_none()
+                    && d.starting_life_self_bonuses_v1.is_empty()
+                    && d.source_type_hexproof_v1.is_none()
+                    && d.other_controlled_nontoken_death_v1.is_none()
+                    && d.creature_type_entry_v1.is_none()
+            })
     }
 
     pub(crate) const COST: &[CostComponent] = &[
@@ -28298,6 +28299,9 @@ pub(crate) mod fiend_artisan_v1 {
         }
         crate::engine::validated_stack_item_target_spec(&p.resolving_item, state)?;
         paid_x(state, &p.resolving_item)?;
+        if state.stack.last() != Some(&p.resolving_item) {
+            return Err("Fiend resolving search is not its actual native stack top".into());
+        }
         if p.ctx != crystal_prevention_v1::context(&p.resolving_item) {
             return Err("Fiend full original context changed".into());
         }
@@ -28407,6 +28411,12 @@ pub(crate) mod fiend_artisan_v1 {
         {
             return Err("Fiend exact pre-pop continuation changed".into());
         }
-        drive_with_native_row_v1(state, &owner.owner)
+        let mut transaction = state.clone();
+        let result = drive_with_native_row_v1(&mut transaction, &owner.owner)?;
+        if transaction.engine.halted.is_some() {
+            return Err("Fiend final native search scene halted".into());
+        }
+        *state = transaction;
+        Ok(result)
     }
 }

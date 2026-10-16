@@ -13541,6 +13541,8 @@ pub(crate) fn validate_pending_activation(
     }
     if effect::fiend_artisan_v1::ability(ability) {
         if !effect::fiend_artisan_v1::definition(object.card_def)
+            || !sorcery_speed_timing_ok(pending.controller, state)
+            || state.priority_player != pending.controller
             || pending.cauldron_grant.0.is_some()
             || pending.ability_index != 0
             || (pending.mana_x_v1.is_none() && !pending.object_cost_chosen.is_empty())
@@ -23929,17 +23931,31 @@ fn finalize_activation(state: &mut GameState) {
                 .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
         })
         .flatten();
-    let fiend_input = match effect::fiend_artisan_v1::record_input(state, &pending, frozen.source) {
-        Ok(input) => input,
-        Err(_) => {
-            state.engine.halted = Some((
-                UnsupportedMechanic::InvalidEffectContinuation,
-                pending.source,
-            ));
-            return;
+    let paid = if effect::fiend_artisan_v1::ability(ability) {
+        // The new graveyard-count dependency can reject a final sacrifice
+        // scene. Stage this one complete native payment, including real mana
+        // abilities, before committing any mana, tap or sacrifice to the world.
+        let mut transaction = state.clone();
+        let input =
+            effect::fiend_artisan_v1::record_input(&mut transaction, &pending, frozen.source);
+        match input {
+            Ok(index)
+                if pay_cost_components_with_x(
+                    &mut transaction,
+                    pending.controller,
+                    pending.source,
+                    ability.cost,
+                    &object_cost_ids,
+                    x_value,
+                ) && transaction.engine.halted.is_none() =>
+            {
+                frozen.fiend_input = index;
+                *state = transaction;
+                true
+            }
+            _ => false,
         }
-    };
-    let paid = if let Some(owner) = fixed_payment_owner.as_ref() {
+    } else if let Some(owner) = fixed_payment_owner.as_ref() {
         if !pay_cost_components_with_x(
             state,
             pending.controller,
@@ -23976,6 +23992,9 @@ fn finalize_activation(state: &mut GameState) {
         )
     };
     if !paid {
+        if effect::fiend_artisan_v1::ability(ability) {
+            state.engine.pending_activation = Some(pending.clone());
+        }
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
         state.engine.halted = Some((
@@ -23984,7 +24003,6 @@ fn finalize_activation(state: &mut GameState) {
         ));
         return;
     }
-    frozen.fiend_input = fiend_input;
     let host = &card_def::CARD_DEFS[frozen.source.card_def as usize];
     if pending.cauldron_grant.0.is_none()
         && crate::standard_cards_v1::is_special_action(host, pending.ability_index)
@@ -31341,3 +31359,11 @@ mod checked_pt_tests;
 ))]
 #[path = "engine/progenitus_v1_tests.rs"]
 mod progenitus_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/fiend_artisan_v1_tests.rs"]
+mod fiend_artisan_v1_tests;
