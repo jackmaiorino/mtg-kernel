@@ -139,21 +139,11 @@ fn paid_banner_original_response_choice_scene_fellowship_boost_restore_and_forge
         );
         let counter = put(&mut countered, actor.opponent(), "Counterspell", Zone::Hand);
         engine::step(&mut countered, Action::CastSpell(counter)).unwrap();
-        let row_id = countered
-            .stack
-            .iter()
-            .find(|row| row.source == source)
-            .unwrap()
-            .v4
-            .stack_item_id;
+        assert!(countered.stack.iter().any(|row| row.source == source));
         assert!(
-            matches!(engine::advance_until_decision(&mut countered), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::StackItem(row_id)))
+            matches!(engine::advance_until_decision(&mut countered), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
         );
-        engine::step(
-            &mut countered,
-            Action::ChooseTarget(Target::StackItem(row_id)),
-        )
-        .unwrap();
+        engine::step(&mut countered, Action::ChooseTarget(Target::Object(source))).unwrap();
         assert!(
             matches!(engine::advance_until_decision(&mut countered), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
         );
