@@ -506,7 +506,10 @@ fn borrowed_common_complete_paid_amulet_and_restored_binding_parity_both_seats()
         session.ravenous_restore_v51(&snapshot).unwrap();
         assert_borrowed_common_parity(&session);
         let before = gameplay(&session);
-        let foreign = fixture(actor).0.snapshot_v1();
+        let mut foreign = fixture(actor).0.snapshot_v1();
+        // V51's raw backend binds snapshots to the episode, unlike the sealed
+        // Prepared owner. Exercise its actual foreign-episode contract.
+        foreign.0.episode_id += 1;
         assert!(session.ravenous_restore_v51(&foreign).is_err());
         assert_eq!(before, gameplay(&session));
     }
