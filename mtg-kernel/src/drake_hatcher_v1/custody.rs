@@ -936,8 +936,18 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         .engine
         .event_history
         .iter()
-        .filter_map(journal)
-        .collect::<Vec<_>>();
+        .enumerate()
+        .filter_map(|(position, event)| journal(event).map(|row| (position, row)))
+        .map(|(position, row)| {
+            // An identical appended row must not borrow the earlier record's
+            // index and enclosing range. Authenticate its physical position
+            // before normalization, relation checks, or enclosing replay.
+            if u64::try_from(position).ok() != Some(row.index) {
+                return Err("Drake record index differs from actual history position".to_string());
+            }
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     if rows.len() as u64 != state.engine.drake_ledger_v1.issued {
         return Err("Drake original journal was erased/replayed".into());
     }
