@@ -367,7 +367,7 @@ pub(crate) mod perforating_artist_v1 {
             && (actual[0].effect)() == raid()
     }
 
-    fn selected(item: &StackItem) -> bool {
+    pub(super) fn selected(item: &StackItem) -> bool {
         item.kind == StackItemKind::TriggeredAbility
             && item
                 .v4
@@ -375,8 +375,8 @@ pub(crate) mod perforating_artist_v1 {
                 .is_some_and(|source| definition(source.card_def))
     }
 
-    /// No pool contains Artist yet. Even a new-shaped forged tree does not
-    /// activate this selector until the real complete printing is registered.
+    /// Only the complete registered printing activates these native stages.
+    /// An absent printing cannot grant authority through a new-shaped tree.
     pub(super) fn requires_stage(pending: &EffectContinuation) -> bool {
         if !CARD_DEFS.iter().any(|card| !triggers(card).is_empty()) {
             return false;
@@ -431,9 +431,23 @@ pub(crate) mod perforating_artist_v1 {
             return Ok(());
         }
         validate_origin(state, &pending.resolving_item)?;
-        if pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
-            || pending.ctx.controller != pending.resolving_item.controller
-        {
+        let item = &pending.resolving_item;
+        let expected_ctx = ExecCtx {
+            stack_item_id: Some(item.v4.stack_item_id),
+            source: item.source,
+            controller: item.controller,
+            targets: item.targets.clone(),
+            target_contracts: item.v4.target_contracts.clone(),
+            discarded: item.discarded.clone(),
+            paid_cost_refs: item.v4.paid_cost_refs.clone(),
+            hidden_ability_source: item.v4.hidden_ability_source,
+            ability_source_contract: item.v4.ability_source_contract,
+            cauldron_grant: item.v4.cauldron_grant,
+            kicked: item.kicked,
+            optional_additional_cost_paid: item.v4.optional_additional_cost_paid,
+            x_value: item.v4.x_value,
+        };
+        if pending.ctx != expected_ctx {
             return Err("Artist execution changed the captured source/controller".into());
         }
         let root = validated_definition_owned_root_effect(state, pending)?;
@@ -626,6 +640,15 @@ pub(crate) mod perforating_artist_v1 {
         owner: RowOwnerV1,
     ) -> Result<ResumableProgress, String> {
         run_owned(state, owner, None)
+    }
+
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    mod tests {
+        include!("effect/perforating_artist_v1_tests.rs");
     }
 }
 
@@ -3918,7 +3941,8 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
-    if contains_nonland_sacrifice_payment_v1(op) {
+    if contains_nonland_sacrifice_payment_v1(op) || perforating_artist_v1::selected(&resolving_item)
+    {
         return Err("nonland sacrifice root requires its distinct native pre-removal owner".into());
     }
     begin_resumable_resolution_with_inspiration_owner(op, ctx, resolving_item, state, None)

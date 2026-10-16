@@ -1,13 +1,19 @@
 # Perforating Artist native preparation
 
-This checkpoint adds a reusable definition-owned optional non-target sacrifice
-of one nonland permanent. The unpaid program stays bound to its exact printed
-path. It does not register a card, reference deck, test module, public consumer,
-or model recipe. The inline `effect::perforating_artist_v1` module contains the
-printed Raid program, complete native definition predicate, closed public stage
-validator, definition-gated trigger dispatch, and separate consumed native row
-owner. Existing definitions and the 459-entry registry remain unchanged. The
-Artist selector is false while its complete printing is absent.
+This source checkpoint appends genuine Partial Perforating Artist460 after
+reviewed Valkyrie's Call459. There are 461 native definitions, 269 FDN rows,
+and frozen-pool counts245 Full,9 Partial,32 Missing. The286 frozen printing
+names and24 token dependencies are unchanged. No existing definition is
+renumbered or promoted. The reference deck remains rejected by Full-only
+preflight, and no public policy/model consumer gains Artist permission.
+
+The reusable definition-owned optional non-target sacrifice pays with one
+nonland permanent. Its unpaid program stays bound to the exact printed path.
+The inline `effect::perforating_artist_v1` module contains the printed Raid
+program, all72 native definition fields, closed public stage validator,
+definition-gated trigger dispatch, and separate consumed native row owner.
+The selector is false whenever the complete printing is absent. Call's effect
+variants retain their canonical order before the appended Artist variant.
 
 The input is frozen FDN124, Scryfall printing
 `72980409-53f0-43c1-965e-06f22e7bb608`, Oracle
@@ -57,21 +63,47 @@ for the unchanged full public resume validator and reducer. The entire loaned
 stack must remain unchanged; the original remaining stack is restored on both
 Ok and Err before returning. Spinner and Quandary ownership is unchanged.
 
-The later registration must first compose actual Valkyrie's Call459, then
-append Artist460. This checkpoint does not claim live Artist integration or
-paid coverage before actual printing registration.
+The actual prerequisite was normally merged from reviewed canonical
+`3e072cc25db3d4b13ca15e035b911fd3c91ab205` before appending Artist460. Independent
+primitive and closed-stage source checkpoints are `dc521ccee63499ff9ca236687ad10562f8c44dbb`
+and `720643dc8182e18fdc01e725ca21b6c1c7d481eb`. Artist initial raw begin also
+refuses a substituted empty program paired with a real Artist item. Every
+ExecCtx field, including X, must match its original complete item.
 
-Required registration coverage is genuine paid {1}{B}{R} casting and actual
-attack/end-step trigger capture, both seats, no attack, no eligible permanent,
-sacrifice, decline and discard, decline and life loss, exact native sacrifice
-and discard events, land-creature exclusion, noncreature inclusion,
-controller-versus-owner and non-target selection, captured trigger controller,
-source departure/reentry, prompt/answer/snapshot restore, and readonly refusal
-of forged payer, source, path, roster, candidate incarnation, and continuation.
-No genuine Artist paid test can run before actual printing registration. No
-existing test body changes in this checkpoint; it adds zero registered cases.
+Six registered source fixtures under
+`effect::perforating_artist_v1::tests` use genuine paid Artist casting and actual
+attack/end-step capture in both seats. Their suffixes are:
+
+- `genuine_paid_sacrifice_discard_decline_and_empty_rosters_restore_both_seats`
+- `genuine_non_target_nonland_roster_includes_hexproof_and_excludes_paid_animated_land_both_seats`
+- `genuine_paid_flash_control_response_keeps_captured_payer_and_allows_source_sacrifice_both_seats`
+- `genuine_no_attack_and_paid_source_departure_reentry_preserve_original_trigger_restore_both_seats`
+- `genuine_paid_restore_forgery_refusals_and_consumed_row_cleanup_both_seats`
+- `genuine_paid_fiery_sacrifice_replacement_and_discard_madness_keep_cost_paid_both_seats`
+
+Artist, Soulstone animation, the High Fae permission-enabled Employment
+response, Run Away Together, the returned Artist recast, and Fiery Annihilation
+pay genuine costs through native actions. Other represented battlefield/hand
+operands are explicitly setup fixtures. The response cases retain actual
+captured controller/row/incarnation and compare full restored native state.
+The last case checks actual sacrifice departure to Exile still pays, and actual
+Madness discard queues its own native offer after Artist completes. The named
+forgery case rejects arbitrary/empty/false frames, altered payer/context/X,
+unpaid payload, binding generation, duplicate/missing rows, wrong discard
+path and erased answer guards without mutation. Its explicitly invalid
+post-acquisition Raid input exercises row-loan cleanup on validation error.
+All prior paid test bodies remain unchanged. Two existing native registry
+assertions and count-derived Python assertions necessarily track the append.
+
+The metadata module has75 passing Python cases, including one new exact Artist
+printing/prefix/reference-deck refusal case. All151 current mixed model cases
+and their complete source bodies are unchanged. No Artist model recipe or
+owning session is added. Crystal's preexisting positive classification can
+still refuse unsupported mixed prevention compositions; this Partial source
+checkpoint does not widen that consumer or claim whole-pool qualification.
 
 Verification is pinned Rust 1.94.1 formatting, diff checks, and a lightweight
 source audit of enum-prefix, registry, existing-test-body, and identity-closure
-preservation. Rust compilation and execution were explicitly excluded. There
+preservation. All new and inherited Rust cases remain uncompiled and
+unexecuted in this lane. Rust compilation and execution were explicitly excluded. There
 is no runtime correctness, speed, native qualification, or admission claim.

@@ -4218,7 +4218,9 @@ fn keywords_for(card: &CardJson) -> String {
         "Surrak, Elusive Hunter" | "Etali, Primal Conqueror" | "Ashroot Animist" => {
             keywords.push("Keywords::TRAMPLE")
         }
-        "Preacher of the Schism" | "Gutless Plunderer" => keywords.push("Keywords::DEATHTOUCH"),
+        "Preacher of the Schism" | "Gutless Plunderer" | "Perforating Artist" => {
+            keywords.push("Keywords::DEATHTOUCH")
+        }
         "Vampire Token" => keywords.push("Keywords::LIFELINK"),
         "Knight Vigilance Token" | "Drake Hatcher" => keywords.push("Keywords::VIGILANCE"),
         "Drake Token" => keywords.push("Keywords::FLYING"),
@@ -7101,6 +7103,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Alesha, Who Laughs at Fate" => "source_attacks:plus_one_counter_exact_source:1;beginning_captured_controller_end_step:intervening_raid_declaration_this_turn:target_own_graveyard_creature_mana_value_at_most_original_source_current_power_or_lki:return_exact_target_graveyard_incarnation_to_owner_battlefield",
         "Nine-Lives Familiar" => "genuine_cast_entry_eight_revival_counters;dies_if_exact_departure_lki_revival_positive;death_trigger_resolution_schedules_one_future_any_end_step;return_exact_graveyard_incarnation_under_captured_ability_controller_with_one_fewer_revival_counter_and_entry_replacements_once",
         "Valkyrie's Call" => "controlled_nontoken_nonangel_effective_creature_dies:capture_source_controller_and_exact_departure:resolve_return_exact_graveyard_incarnation_under_physical_owner:plus_one_counter_replacements_once:additive_angel_and_flying_to_new_incarnation_until_zone_change",
+        "Perforating Artist" => "beginning_captured_controller_end_step:intervening_raid_actual_declaration_turn_history:resolution_recheck:opponent_non_target_exact_incarnation_controlled_nonland_sacrifice_otherwise_private_discard_otherwise_lose_life:3:definition_owned_branch_and_closed_stage:actual_sacrifice_and_discard_replacements",
         "Midnight Snack" => "beginning_original_controller_end_step:intervening_raid_actual_declaration_turn_history:capture_and_resolution_recheck:create_food_token_for_original_controller:1",
         "Restless Prairie" => "attacks:other_controlled_creatures_plus_one_one_eot",
         "Restless Vinestalk" => "attacks:up_to_one_other_creature_base_three_three_eot",
