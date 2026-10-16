@@ -118,6 +118,14 @@ pub fn producer_sha256_v1() -> String {
             ("state.rs", include_str!("state.rs")),
             ("spell_costs_v1.rs", include_str!("spell_costs_v1.rs")),
             (
+                "effect/sphinx_lore_v1.rs",
+                include_str!("effect/sphinx_lore_v1.rs"),
+            ),
+            (
+                "engine/sphinx_lore_cast_v1.rs",
+                include_str!("engine/sphinx_lore_cast_v1.rs"),
+            ),
+            (
                 "continuous_characteristics_v1.rs",
                 include_str!("continuous_characteristics_v1.rs"),
             ),

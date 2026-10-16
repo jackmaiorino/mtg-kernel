@@ -3513,6 +3513,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     Some(match name {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
+        "Sphinx of Forgotten Lore" => program("None", "MoveObject(ThisSource,Battlefield);attacks:targetOwnGraveyardInstantOrSorcery:flashbackAtCardManaCost:exactIncarnation:untilActualCleanup:printedAndGrantedRoutesDistinct", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Quilled Greatwurm" => program("None", "MoveObject(ThisSource,Battlefield);controlledCreature:ownTurn:finalCombatWaveSumByOriginalSource:plusOneCountersOnSameIncarnation;graveyardCast:distinctPermission:4GG:additionalSixCounterUnits:all17Kinds:atomicPayment", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Kykar, Zephyr Awakener" => program("None", "MoveObject(ThisSource,Battlefield);castNoncreature:modeBeforeTargets:exileAnotherControlledCreature:exactExileIncarnation:nextAnyEndStep:ownerControl:oneShot|createWhiteFlyingSpirit1/1:replacementBatch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Loot, Exuberant Explorer" => program("None", "MoveObject(ThisSource,Battlefield);effectiveActivePrintedSource:oneAdditionalLandOwnTurn:currentController:stackingAllowanceNoCountRefund;activated4GGT:privateTop6:optionalRevealCreatureMvAtMostResolutionControlledLandsToBattlefield:randomBottomRest", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -4467,6 +4468,7 @@ fn standard_keywords_for(name: &str) -> &'static [&'static str] {
         "Tersa Lightshatter" | "Emberheart Challenger" => &["Keywords::HASTE"],
         "Burnout Bashtronaut" => &["Keywords::MENACE"],
         "Nova Hellkite" => &["Keywords::FLYING", "Keywords::HASTE"],
+        "Sphinx of Forgotten Lore" => &["Keywords::FLASH", "Keywords::FLYING"],
         "Aloe Alchemist" | "Quilled Greatwurm" => &["Keywords::TRAMPLE"],
         "Axebane Ferox" => &["Keywords::DEATHTOUCH", "Keywords::HASTE"],
         "Chrome Host Seedshark" => &["Keywords::FLYING"],
@@ -7177,6 +7179,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Sphinx of Forgotten Lore" => "attacks:original_source_controller_and_incarnation:target_instant_or_sorcery_card_in_own_graveyard:until_actual_cleanup_flashback_equal_card_mana_cost:distinct_native_granted_cost_selection:normal_additional_costs_and_flashback_departure",
         "Quilled Greatwurm" => "controlled_creature_combat_damage_during_own_turn:actual_native_wave_completion:sum_final_positive_damage_by_original_creature:each_effective_observer:untargeted_same_incarnation_counters:current_recipient_controller_placement_replacements",
         "Lathril, Blade of the Elves" => "actual_positive_final_combat_damage_to_player:original_source_incarnation_controller:mandatory_untargeted:that_many_elf_warrior_tokens:single_original_batch_with_placement_replacements",
         "Consuming Aberration" => "controller_cast_spell:mandatory:untargeted_each_opponent:reveal_library_through_first_land_or_entire_remaining_library:owner_orders_revealed_cards_into_graveyard:original_source_controller_incarnation:copies_are_not_casts",

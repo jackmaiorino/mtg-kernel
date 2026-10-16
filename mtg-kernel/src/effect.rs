@@ -19,6 +19,7 @@ pub(crate) mod curator_v1;
 pub(crate) mod greatwurm_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
+pub(crate) mod sphinx_lore_v1;
 mod standard_ward;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
@@ -2727,6 +2728,10 @@ pub enum EffectOp {
         capture_history_index: u64,
         observer: u32,
     },
+    BindSphinxLoreV1,
+    SphinxLoreV1 {
+        attack_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4292,7 +4297,10 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
-    if greatwurm_v1::recipe(op)
+    if sphinx_lore_v1::recipe(op)
+        || sphinx_lore_v1::selected(state, &resolving_item)
+        || sphinx_lore_v1::waiting(state, ctx)
+        || greatwurm_v1::recipe(op)
         || greatwurm_v1::selected(state, &resolving_item)
         || greatwurm_v1::waiting(state, ctx)
     {
@@ -4531,7 +4539,10 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
-        greatwurm_v1::selected(state, &p.resolving_item) || greatwurm_v1::waiting(state, &p.ctx)
+        sphinx_lore_v1::selected(state, &p.resolving_item)
+            || sphinx_lore_v1::waiting(state, &p.ctx)
+            || greatwurm_v1::selected(state, &p.resolving_item)
+            || greatwurm_v1::waiting(state, &p.ctx)
     }) {
         return Err("Greatwurm atomic root has no public continuation".into());
     }
@@ -9979,6 +9990,14 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| sphinx_lore_v1::selected(state, &p.resolving_item))
+    {
+        return Err("Sphinx atomic grant cannot retain a continuation".into());
+    }
     if state
         .engine
         .pending_effect
@@ -18884,7 +18903,10 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
-    if (greatwurm_v1::recipe(op) || greatwurm_v1::waiting(state, ctx))
+    if (sphinx_lore_v1::recipe(op)
+        || sphinx_lore_v1::waiting(state, ctx)
+        || greatwurm_v1::recipe(op)
+        || greatwurm_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
         state.engine.halted = Some((
@@ -18913,6 +18935,16 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::BindSphinxLoreV1 | EffectOp::SphinxLoreV1 { .. } => {
+            if sphinx_lore_v1::execute(op, ctx, state, native_proof.expect("Sphinx native proof"))
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::BindGreatwurmCountersV1 | EffectOp::GreatwurmCountersV1 { .. } => {
             if greatwurm_v1::execute(
                 op,
@@ -25745,6 +25777,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if sphinx_lore_v1::waiting(state, ctx) {
+        return true;
+    }
     if greatwurm_v1::waiting(state, ctx) {
         return true;
     }

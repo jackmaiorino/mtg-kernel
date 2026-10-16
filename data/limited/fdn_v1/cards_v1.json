@@ -8517,6 +8517,38 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Sphinx of Forgotten Lore",
+      "mana_cost": "{2}{U}{U}",
+      "mana_value": 4,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Sphinx"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "mechanics": [
+        "flash",
+        "flying",
+        "attacks_grant_target_instant_sorcery_flashback_mana_cost_until_cleanup"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SphinxOfForgottenLore.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_sphinx_forgotten_lore_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

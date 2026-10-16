@@ -667,7 +667,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // This exact owned root only mills. Draw capture, source, target and
         // private begin/resume authority remain Tutelage-owned.
         EffectOp::SphinxsTutelageMillV1 { .. } => true,
-        EffectOp::BindGreatwurmCountersV1
+        EffectOp::BindSphinxLoreV1
+        | EffectOp::SphinxLoreV1 { .. }
+        | EffectOp::BindGreatwurmCountersV1
         | EffectOp::GreatwurmCountersV1 { .. }
         | EffectOp::KykarChooseModeV1
         | EffectOp::KykarExileV1

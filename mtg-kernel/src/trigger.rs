@@ -3619,6 +3619,10 @@ const HIGH_SOCIETY_HUNTER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         ..etb_trigger(crate::high_society_hunter_v1::death_program)
     },
 ];
+const SPHINX_LORE_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb_trigger(crate::effect::sphinx_lore_v1::marker)
+}];
 pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     static TABLE: std::sync::OnceLock<Box<[&'static [TriggeredAbilityDef]]>> =
         std::sync::OnceLock::new();
@@ -3636,6 +3640,11 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     };
     if !card.is_executable() {
         return &[];
+    }
+    if card.name == "Sphinx of Forgotten Lore"
+        && crate::effect::sphinx_lore_v1::definition(card_def)
+    {
+        return &SPHINX_LORE_TRIGGERS_V1;
     }
     if card.name == "Quilled Greatwurm" && crate::effect::greatwurm_v1::definition(card_def) {
         return &GREATWURM_TRIGGERS_V1;
@@ -4136,6 +4145,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        (EffectOp::BindSphinxLoreV1, EffectOp::SphinxLoreV1 { .. }) => true,
         (EffectOp::BindGreatwurmCountersV1, EffectOp::GreatwurmCountersV1 { .. }) => true,
         (EffectOp::BindLathrilCombatTokensV1, EffectOp::LathrilCombatTokensV1 { .. }) => true,
         // The actual row validator authenticates this capture's complete
@@ -4238,6 +4248,9 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
 }
 
 pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    if crate::effect::sphinx_lore_v1::definition(card_def) {
+        return crate::effect::sphinx_lore_v1::recipe(effect);
+    }
     if crate::effect::greatwurm_v1::definition(card_def) {
         return crate::effect::greatwurm_v1::recipe(effect);
     }
@@ -4390,6 +4403,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::effect::sphinx_lore_v1::definition(card_def) {
+        return crate::effect::sphinx_lore_v1::recipe(effect)
+            .then_some(crate::effect::sphinx_lore_v1::target_spec());
+    }
     if crate::effect::greatwurm_v1::definition(card_def) {
         return crate::effect::greatwurm_v1::recipe(effect).then_some(TargetSpec::None);
     }
@@ -5198,6 +5215,16 @@ fn triggers_from_events(
             return Vec::new();
         }
     }
+    match crate::effect::sphinx_lore_v1::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return vec![];
+        }
+    }
     match crate::effect::greatwurm_v1::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
@@ -5636,6 +5663,9 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if crate::effect::sphinx_lore_v1::definition(obj.card_def) {
+                    continue;
+                }
                 if crate::effect::curator_v1::definition(obj.card_def) {
                     continue;
                 }
