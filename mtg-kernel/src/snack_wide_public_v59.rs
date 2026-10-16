@@ -132,6 +132,9 @@ pub fn producer_sha256() -> String {
             include_str!("effect.rs"),
             include_str!("trigger.rs"),
             include_str!("state.rs"),
+            include_str!("standard_cast_convoke.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
         ] {
             h.update((input.len() as u64).to_le_bytes());
             h.update(input.as_bytes());

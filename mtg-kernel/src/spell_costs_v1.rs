@@ -243,7 +243,7 @@ impl SelectedSpellManaCostsV1 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn payment_plan_with_component_choices_v1(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         source: ObjectId,
         state: &GameState,
@@ -291,6 +291,9 @@ impl SelectedSpellManaCostsV1 {
         }
         let (increase, reduction) = generic_modifiers;
         self.payment_plan(x, player, state, increase, reduction, &reserved)
+            .filter(|payment| {
+                super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
+            })
     }
 
     /// Determine the payment without changing state. Freeze this result before
@@ -298,7 +301,7 @@ impl SelectedSpellManaCostsV1 {
     /// unavailable as mana sources or as Delve cards.
     pub(super) fn payment_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         increase: u32,
@@ -387,7 +390,7 @@ impl SelectedSpellManaCostsV1 {
 
     pub(super) fn live_mana_only_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
     ) -> Option<mana::PaymentPlan> {
@@ -414,7 +417,7 @@ impl SelectedSpellManaCostsV1 {
     /// payment planners and cannot silently fall back to this path.
     pub(super) fn mana_only_plan(
         &self,
-        x: u8,
+        x: u16,
         player: PlayerId,
         state: &GameState,
         increase: u32,
@@ -646,7 +649,38 @@ pub(super) fn selected_spell_quote_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
 ) -> Option<SpellManaPaymentV1> {
-    selected_spell_quote_with_grant_v1(
+    selected_spell_quote_wide_x_v59(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        u16::from(x),
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_wide_x_v59(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u16,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_with_grant_wide_x_v59(
         definition,
         source,
         origin_zone,
@@ -672,6 +706,39 @@ pub(super) fn selected_spell_quote_with_grant_v1(
     kicked: bool,
     mode: u8,
     x: u8,
+    targets: &[Target],
+    chosen_prefix: &[ObjectId],
+    player: PlayerId,
+    state: &GameState,
+    reserved_graveyard: &[ObjectId],
+    grant: Option<u64>,
+) -> Option<SpellManaPaymentV1> {
+    selected_spell_quote_with_grant_wide_x_v59(
+        definition,
+        source,
+        origin_zone,
+        method,
+        kicked,
+        mode,
+        u16::from(x),
+        targets,
+        chosen_prefix,
+        player,
+        state,
+        reserved_graveyard,
+        grant,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn selected_spell_quote_with_grant_wide_x_v59(
+    definition: &card_def::CardDef,
+    source: ObjectId,
+    origin_zone: crate::state::Zone,
+    method: CastMethodV4,
+    kicked: bool,
+    mode: u8,
+    x: u16,
     targets: &[Target],
     chosen_prefix: &[ObjectId],
     player: PlayerId,
@@ -728,14 +795,14 @@ pub(super) fn selected_spell_quote_with_grant_v1(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn selected_spell_quote_branch_v1(
+pub(super) fn selected_spell_quote_branch_wide_x_v59(
     definition: &card_def::CardDef,
     source: ObjectId,
     origin_zone: crate::state::Zone,
     method: CastMethodV4,
     kicked: bool,
     mode: u8,
-    x: u8,
+    x: u16,
     targets: &[Target],
     chosen_prefix: &[ObjectId],
     player: PlayerId,
@@ -769,7 +836,7 @@ fn selected_spell_quote_branch_grant_v1(
     method: CastMethodV4,
     kicked: bool,
     mode: u8,
-    x: u8,
+    x: u16,
     targets: &[Target],
     chosen_prefix: &[ObjectId],
     player: PlayerId,
@@ -904,15 +971,21 @@ fn selected_spell_quote_branch_grant_v1(
             .iter()
             .map(Vec::as_slice)
             .collect::<Vec<_>>();
-        selected.payment_plan_with_component_choices_v1(
-            x,
-            player,
-            source,
-            state,
-            modifiers,
-            &groups,
-            reserved_graveyard,
-        )
+        selected
+            .payment_plan_with_component_choices_v1(
+                x,
+                player,
+                source,
+                state,
+                modifiers,
+                &groups,
+                reserved_graveyard,
+            )
+            .filter(|payment| {
+                !definition.records_mana_spent
+                    || super::checked_spell_mana_plan_v59(state, player, &payment.mana)
+                        .is_some_and(|n| u16::try_from(n).is_ok())
+            })
     };
     let Some((needed, candidates)) = family else {
         return chosen_prefix.is_empty().then(|| quote(&[])).flatten();
@@ -968,7 +1041,7 @@ pub(super) struct PreparedSpellPaymentV1 {
 }
 
 impl SpellManaPaymentV1 {
-    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+    fn commit(&self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         for &object in &self.convoke_tapped {
             super::event::propose_and_commit(state, super::ProposedEvent::tap(object));
         }
@@ -976,7 +1049,11 @@ impl SpellManaPaymentV1 {
             state.objects.get_mut(source).v4.convoked_creatures_v1 =
                 u8::try_from(self.convoke_tapped.len()).unwrap_or(u8::MAX);
         }
-        let spent = super::pay_plan(state, player, &self.mana);
+        let spent = if super::spell_mana_needs_wide_commit_v59(state, player, &self.mana) {
+            super::pay_spell_plan_wide_v59(state, player, &self.mana)
+        } else {
+            u32::from(super::pay_plan(state, player, &self.mana))
+        };
         if !self.delve_exiled.is_empty() {
             super::commit_graveyard_exile(state, &self.delve_exiled);
         }
@@ -999,7 +1076,7 @@ impl PreparedSpellPaymentV1 {
     }
 
     /// Discards have already committed through the shared Madness-aware path.
-    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u16 {
+    pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         let spent = self.mana.commit(state, player, source);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
@@ -1107,6 +1184,19 @@ pub(super) fn prepare_final_spell_payment_v1(
         Some(projected)
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
+    let mana = selected.payment_plan_with_component_choices_v1(
+        pending.selected_x_v59().unwrap_or(0),
+        player,
+        source,
+        resources,
+        modifiers,
+        &group_choices,
+        optional_graveyard,
+    )?;
+    let spent = super::checked_spell_mana_plan_v59(resources, player, &mana.mana)?;
+    if definition.records_mana_spent && u16::try_from(spent).is_err() {
+        return None;
+    }
     let mut prepared = PreparedSpellPaymentV1 {
         greatwurm: if pending
             .greatwurm_v1
@@ -1117,15 +1207,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         } else {
             None
         },
-        mana: selected.payment_plan_with_component_choices_v1(
-            pending.x_value.unwrap_or(0),
-            player,
-            source,
-            resources,
-            modifiers,
-            &group_choices,
-            optional_graveyard,
-        )?,
+        mana,
         base: PreparedSpellNonmanaV1 {
             actions: Vec::new(),
         },

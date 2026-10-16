@@ -279,6 +279,9 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("legend_rule_v1.rs"),
         include_str!("doubling_season_v48.rs"),
         include_str!("rl.rs"),
+        include_str!("standard_cast_convoke.rs"),
+        include_str!("engine/mandatory_cast_cost_v1.rs"),
+        include_str!("rules_meaning_next_five_v59.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {

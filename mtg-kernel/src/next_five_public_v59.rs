@@ -481,7 +481,7 @@ fn capture_scoped(
                 original_controller: item.controller.into(),
                 is_copy: item.is_copy,
                 payment_pending: pending.is_some(),
-                x: pending.map_or(Some(item.v4.x_value), |p| p.x_value.map(u16::from)),
+                x: pending.map_or(Some(item.v4.x_value), |p| p.selected_x_v59()),
                 targets: targets.clone(),
             });
             // The native cast placeholder deliberately has no finalized targets.

@@ -1332,3 +1332,141 @@ fn v6_production_five_full_candidate_real_decks_paid_reset_and_restore_both_seat
         }
     }
 }
+
+#[test]
+fn v6_genuine_paid_goblin_x256_keeps_exact_width_payment_retry_and_restored_prompt_both_seats() {
+    use crate::next_five_public_v59::tests::{wide_x_scene_v59, WideXSceneV59};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (initial, spell, target, _) = wide_x_scene_v59(actor, WideXSceneV59::MixedFloating);
+        let mut reference = crate::rl_session::FastActorSessionV1::from_next_five_v59_fixture_state(
+            initial.clone(),
+        );
+        let mut wire = Wire::fixture(initial);
+        wire.native_step(|a| matches!(a, ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0));
+        wire.native_step(|a| matches!(a, ActionSemanticV1::ChooseTarget { target: crate::rl::TargetRefV1::Object { object }, .. } if object.arena_id == target.0));
+        // Replay the same actual original indices in an independent native stream.
+        for choose in [0, 1] {
+            let (observation, actions, _) = reference
+                .next_five_current_decision_input_v59(
+                    match reference.current_response() {
+                        crate::rl_session::FastActorResponseV1::Decision(d) => d,
+                        _ => panic!("native decision absent"),
+                    },
+                    actor.into(),
+                )
+                .unwrap();
+            assert_eq!(observation.next_five.viewer, actor.into());
+            let i = actions
+                .iter()
+                .position(|a| match (choose, a) {
+                    (0, ActionSemanticV1::CastSpell { source, .. }) => source.arena_id == spell.0,
+                    (
+                        1,
+                        ActionSemanticV1::ChooseTarget {
+                            target: crate::rl::TargetRefV1::Object { object },
+                            ..
+                        },
+                    ) => object.arena_id == target.0,
+                    _ => false,
+                })
+                .unwrap();
+            let expected = match reference.current_response() {
+                crate::rl_session::FastActorResponseV1::Decision(d) => d,
+                _ => unreachable!(),
+            };
+            reference
+                .step(
+                    expected.episode_id,
+                    expected.step,
+                    u32::try_from(i).unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(wire.state(), reference.next_five_fixture_state());
+        assert_eq!(
+            wire.server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .fixture_counts_v59(),
+            (
+                reference.policy_step_count(),
+                reference.physical_decision_count()
+            )
+        );
+        let saved = wire.snapshot();
+        let native_saved = reference.snapshot_v1();
+        let request = wire.request(|label| label.contains("X = 256,"));
+        let reply = wire.send(request.clone());
+        assert_eq!(reply["response_type"], "state");
+        let after = wire.bytes();
+        assert_eq!(wire.send(request.clone())["receipt"], reply["receipt"]);
+        assert_eq!(wire.bytes(), after);
+        let cast = wire.menu()["state"]["next_five"]["casts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["family"] == "Goblin")
+            .unwrap();
+        assert_eq!(cast["x"], 256);
+        assert_eq!(cast["payment_pending"], false);
+        let expected = match reference.current_response() {
+            crate::rl_session::FastActorResponseV1::Decision(d) => d,
+            _ => unreachable!(),
+        };
+        let (_, actions, _) = reference
+            .next_five_current_decision_input_v59(expected, actor.into())
+            .unwrap();
+        let index = actions
+            .iter()
+            .position(|a| {
+                matches!(
+                    a,
+                    ActionSemanticV1::ChooseEffectOption {
+                        option_index: 256,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        reference
+            .step(
+                expected.episode_id,
+                expected.step,
+                u32::try_from(index).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(wire.state(), reference.next_five_fixture_state());
+        assert_eq!(wire.state().players[actor.index()].mana_pool, [0; 6]);
+        wire.restore(saved);
+        reference.restore_v1(&native_saved);
+        wire.reject_unchanged(request, "stale_decision");
+        wire.step(|label| label.contains("X = 256,"));
+        let expected = match reference.current_response() {
+            crate::rl_session::FastActorResponseV1::Decision(d) => d,
+            _ => unreachable!(),
+        };
+        reference
+            .step(
+                expected.episode_id,
+                expected.step,
+                u32::try_from(index).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(wire.state(), reference.next_five_fixture_state());
+        assert_eq!(
+            wire.server
+                .active
+                .as_ref()
+                .unwrap()
+                .core
+                .fixture_counts_v59(),
+            (
+                reference.policy_step_count(),
+                reference.physical_decision_count()
+            )
+        );
+        assert_eq!(wire.bytes(), after);
+    }
+}

@@ -930,6 +930,9 @@ pub struct PendingCast {
     /// surface. Non-X spells are seeded to zero.
     #[serde(default)]
     pub x_value: Option<u8>,
+    /// Only selected values above the frozen u8 field, absent on every old cast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wide_x_value_v59: Option<u16>,
     /// Which branch of the generic controlled-creature-or-reveal-hand-card
     /// additional cost was selected. Cards without that cost keep `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -941,6 +944,24 @@ pub struct PendingCast {
     pub convoke_chosen: Vec<EffectObjectBinding>,
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub convoke_finished: bool,
+}
+impl PendingCast {
+    pub(crate) fn selected_x_v59(&self) -> Option<u16> {
+        self.wide_x_value_v59
+            .or_else(|| self.x_value.map(u16::from))
+    }
+    fn set_selected_x_v59(&mut self, value: u16) {
+        match u8::try_from(value) {
+            Ok(value) => {
+                self.x_value = Some(value);
+                self.wide_x_value_v59 = None;
+            }
+            Err(_) => {
+                self.x_value = None;
+                self.wide_x_value_v59 = Some(value);
+            }
+        }
+    }
 }
 impl std::hash::Hash for PendingCast {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -962,6 +983,10 @@ impl std::hash::Hash for PendingCast {
         std::hash::Hash::hash(&self.optional_additional_cost_chosen, state);
         std::hash::Hash::hash(&self.optional_additional_cost_selection_finished, state);
         std::hash::Hash::hash(&self.x_value, state);
+        if let Some(value) = self.wide_x_value_v59 {
+            std::hash::Hash::hash(&"pending_cast_wide_x/v59", state);
+            std::hash::Hash::hash(&value, state);
+        }
         std::hash::Hash::hash(&self.chosen_creature_cost_zone, state);
         std::hash::Hash::hash(&self.chosen_creature_cost, state);
         if let Some(choice) = self.mandatory_additional_cost {
@@ -1630,6 +1655,12 @@ pub enum Decision {
         player: PlayerId,
         entry_ordinal: u32,
         types: Vec<crate::creature_types_v60::CreatureTypeV60>,
+    },
+    /// Exactly X=0..65535. Existing u16 option counts cannot encode 65536.
+    /// The existing u16 ChooseEffectOption action still addresses every value.
+    ChooseFullRangeCastXValueV59 {
+        player: PlayerId,
+        spell: ObjectId,
     },
 }
 
@@ -5477,19 +5508,19 @@ pub(crate) fn x_target_is_payable(
             &projected,
             finalized_cast_method(pending, pending.source_contract.cast_method, def),
             pending.kicked == Some(true),
-            x,
+            u16::from(x),
             state,
         )
         .is_some();
     }
-    spell_costs_v1::selected_spell_quote_v1(
+    spell_costs_v1::selected_spell_quote_wide_x_v59(
         def,
         source,
         state.objects.get(source).zone,
         CastMethodV4::Normal,
         false,
         0,
-        x,
+        u16::from(x),
         &[target],
         &[],
         player,
@@ -8231,7 +8262,7 @@ fn pending_cast_quote_v1(
     pending: &PendingCast,
     method: CastMethodV4,
     kicked: bool,
-    x: u8,
+    x: u16,
     state: &GameState,
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
     let method = if pending.sphinx_lore_v1.is_some() && method == CastMethodV4::Normal {
@@ -8252,7 +8283,7 @@ fn pending_cast_quote_v1(
     } else {
         Vec::new()
     };
-    spell_costs_v1::selected_spell_quote_v1(
+    spell_costs_v1::selected_spell_quote_wide_x_v59(
         def,
         pending.spell,
         pending.origin_zone,
@@ -8297,12 +8328,73 @@ fn maximum_payable_x(
     def: &card_def::CardDef,
     pending: &PendingCast,
     state: &GameState,
-) -> Option<u8> {
+) -> Option<u16> {
     let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
-    (0..=u8::MAX).rev().find(|&x| {
+    let payable = |x| {
         pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), x, state)
             .is_some()
-    })
+    };
+    if crate::rules_meaning_next_five_v59::owns_definition(
+        crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
+        pending.source_contract.card_def,
+        def,
+    ) {
+        maximum_monotone_x_v59(u16::MAX, payable)
+    } else {
+        // Retain the frozen query domain and descending order for other roots.
+        (0..=u8::MAX).rev().map(u16::from).find(|&x| payable(x))
+    }
+}
+
+/// Once the form, targets and cost branches are fixed, X only adds a
+/// nonnegative generic total before fixed increases/reductions. Source and
+/// nonmana requirements do not become easier when that generic total rises.
+/// Query the same exact planner, without constructing 65536 speculative plans.
+fn maximum_monotone_x_v59(maximum: u16, mut payable: impl FnMut(u16) -> bool) -> Option<u16> {
+    if !payable(0) {
+        return None;
+    }
+    let (mut low, mut high) = (0_u32, u32::from(maximum));
+    while low < high {
+        let middle = low + (high - low).div_ceil(2);
+        if payable(u16::try_from(middle).expect("u16 search bound")) {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    Some(u16::try_from(low).expect("u16 search result"))
+}
+
+/// Authenticate the sole cast-X menu whose cardinality exceeds a u16 count.
+pub(crate) fn validate_full_range_cast_x_v59(
+    state: &GameState,
+    player: PlayerId,
+    spell: ObjectId,
+) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .ok_or("full-range X cast absent")?;
+    validate_pending_cast(state, pending)?;
+    if pending.controller != player
+        || pending.spell != spell
+        || pending_cast_action_stage(state, pending)? != PendingCastActionStage::ChooseXValue
+        || crate::standard_cards_v1::minimum_x(
+            &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)],
+            &pending.targets_chosen,
+            state,
+        ) != 0
+        || maximum_payable_x(
+            &card_def::CARD_DEFS[usize::from(pending.source_contract.card_def)],
+            pending,
+            state,
+        ) != Some(u16::MAX)
+    {
+        return Err("full-range X differs from its genuine pending cast".into());
+    }
+    Ok(())
 }
 
 /// Returns the one graveyard cast method this definition can expose through
@@ -10636,7 +10728,7 @@ fn remaining_cast_payment_is_payable(
     // projects the exact answered discard before any real card is moved.
     selected
         .payment_plan_with_component_choices_v1(
-            pending.x_value.unwrap_or(0),
+            pending.selected_x_v59().unwrap_or(0),
             pending.controller,
             pending.spell,
             state,
@@ -11592,6 +11684,14 @@ pub(crate) fn validate_pending_cast(
     state: &GameState,
     pending: &PendingCast,
 ) -> Result<(), String> {
+    if pending
+        .wide_x_value_v59
+        .is_some_and(|x| x <= u16::from(u8::MAX))
+        || pending.wide_x_value_v59.is_some() && pending.x_value.is_some()
+    {
+        return Err("pending wide X encoding is noncanonical".into());
+    }
+
     resolution_cast_v1::validate_pending_child(state, pending)?;
     mandatory_cast_cost_v1::validate_pending(state, pending)?;
     greatwurm_cast_v1::validate_pending(state, pending)?;
@@ -11604,6 +11704,15 @@ pub(crate) fn validate_pending_cast(
     let def = card_def::CARD_DEFS
         .get(source.card_def as usize)
         .ok_or("pending cast source definition is missing")?;
+    if pending.wide_x_value_v59.is_some()
+        && !crate::rules_meaning_next_five_v59::owns_definition(
+            crate::rules_meaning_next_five_v59::FamilyV59::Goblin,
+            pending.source_contract.card_def,
+            def,
+        )
+    {
+        return Err("wide cast X requires the exact Goblin recipe".into());
+    }
     if !def.is_executable() || !def.is_castable() {
         return Err("pending cast source is not an executable spell".to_string());
     }
@@ -12020,7 +12129,7 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    let expected_seed_x = if resolution_cast_v1::free_cast(state, pending.spell)
+    let expected_seed_x: Option<u8> = if resolution_cast_v1::free_cast(state, pending.spell)
         || (def.cost.x_count == 0
             && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0))
     {
@@ -12030,12 +12139,12 @@ pub(crate) fn validate_pending_cast(
     };
     if let Some(cost) = selected_cost {
         if cost.x_count == 0 {
-            if pending.x_value != Some(0) {
+            if pending.selected_x_v59() != Some(0) {
                 return Err("non-X cast carries a noncanonical X stage".to_string());
             }
         } else if cost.x_count != 1 {
             return Err("pending cast has an unsupported number of X symbols".to_string());
-        } else if let Some(x_value) = pending.x_value {
+        } else if let Some(x_value) = pending.selected_x_v59() {
             let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
             if pending_cast_quote_v1(
                 def,
@@ -12055,7 +12164,7 @@ pub(crate) fn validate_pending_cast(
                 return Err("pending cast chose X before modes and targets completed".to_string());
             }
         }
-    } else if pending.x_value != expected_seed_x {
+    } else if pending.selected_x_v59() != expected_seed_x.map(u16::from) {
         return Err("pending cast advanced X before choosing its spell form".to_string());
     }
 
@@ -12223,7 +12332,7 @@ pub(crate) fn validate_pending_cast(
             && !pending.optional_additional_cost_selection_finished
             && pending.chosen_creature_cost_zone.is_none()
             && pending.chosen_creature_cost.is_none()
-            && pending.x_value == expected_seed_x
+            && pending.selected_x_v59() == expected_seed_x.map(u16::from)
             && additional_is_at_seed
             && state.engine.pending_discard.is_none()
     };
@@ -12294,7 +12403,7 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast advanced past an incomplete chosen-creature cost".to_string());
     }
-    if pending.x_value.is_none()
+    if pending.selected_x_v59().is_none()
         && (!additional_is_at_seed || state.engine.pending_discard.is_some())
     {
         return Err("pending cast advanced past an unresolved X value".to_string());
@@ -13015,7 +13124,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if pending.x_value.is_none() {
+    if pending.selected_x_v59().is_none() {
         let Some(_) = pending_cast_selected_mana_cost(def, &pending, state) else {
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
@@ -13023,7 +13132,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             ));
             return None;
         };
-        let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
+        let minimum = u16::from(crate::standard_cards_v1::minimum_x(
+            def,
+            &pending.targets_chosen,
+            state,
+        ));
         let Some(maximum) =
             maximum_payable_x(def, &pending, state).filter(|&maximum| maximum >= minimum)
         else {
@@ -13033,14 +13146,26 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return None;
         };
         if maximum == minimum {
-            state.engine.pending_cast.as_mut().unwrap().x_value = Some(minimum);
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .set_selected_x_v59(minimum);
             return drain_pending_cast_or_decide(state);
         }
         // Option `i` announces X = `minimum + i`.
+        if minimum == 0 && maximum == u16::MAX {
+            return Some(Decision::ChooseFullRangeCastXValueV59 {
+                player: pending.controller,
+                spell: pending.spell,
+            });
+        }
         return Some(Decision::ChooseEffectOption {
             player: pending.controller,
             source: pending.spell,
-            option_count: u16::from(maximum - minimum) + 1,
+            option_count: u16::try_from(u32::from(maximum) - u32::from(minimum) + 1)
+                .expect("full-range X uses its appended decision"),
         });
     }
 
@@ -20268,7 +20393,7 @@ fn pending_cast_action_stage(
             return Ok(PendingCastActionStage::ChooseCostTarget);
         }
     }
-    if pending.x_value.is_none() {
+    if pending.selected_x_v59().is_none() {
         return Ok(PendingCastActionStage::ChooseXValue);
     }
     if standard_cast_convoke::active(state, pending) && !pending.convoke_finished {
@@ -20794,7 +20919,7 @@ pub(crate) fn step_without_linked_aura_v1(
             }
         }
         Action::ChooseEffectTarget(target) => {
-            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
+            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.selected_x_v59().is_some() && !p.convoke_finished) {
                 standard_cast_convoke::choose(state, target)
             } else if state.engine.pending_cast.is_some() {
                 apply_choose_collect_evidence_target(state, target)
@@ -20807,7 +20932,7 @@ pub(crate) fn step_without_linked_aura_v1(
             }
         }
         Action::FinishEffectSelection => {
-            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.x_value.is_some() && !p.convoke_finished) {
+            if state.engine.pending_cast.as_ref().is_some_and(|p| standard_cast_convoke::active(state, p) && p.selected_x_v59().is_some() && !p.convoke_finished) {
                 standard_cast_convoke::finish(state)
             } else if state.engine.pending_cast.is_some() {
                 finish_optional_cast_or_collect_evidence(state)
@@ -22981,11 +23106,14 @@ fn apply_pending_cast_effect_option(
                 .ok_or("pending X choice lost its selected spell form")?;
             let maximum = maximum_payable_x(def, &pending, state)
                 .ok_or("pending X choice has no payable value")?;
-            let minimum = crate::standard_cards_v1::minimum_x(def, &pending.targets_chosen, state);
-            let x_value = u8::try_from(option_index)
-                .ok()
-                .and_then(|index| index.checked_add(minimum))
-                .ok_or_else(|| "chosen X exceeds the supported u8 range".to_string())?;
+            let minimum = u16::from(crate::standard_cards_v1::minimum_x(
+                def,
+                &pending.targets_chosen,
+                state,
+            ));
+            let x_value = option_index
+                .checked_add(minimum)
+                .ok_or_else(|| "chosen X exceeds the native u16 range".to_string())?;
             if maximum <= minimum || x_value > maximum {
                 return Err("chosen X is outside the currently payable range".to_string());
             }
@@ -22994,7 +23122,7 @@ fn apply_pending_cast_effect_option(
                 .pending_cast
                 .as_mut()
                 .expect("validated cast remains pending")
-                .x_value = Some(x_value);
+                .set_selected_x_v59(x_value);
             Ok(())
         }
         _ => Err("pending cast is not awaiting an effect-option action".to_string()),
@@ -23415,6 +23543,7 @@ fn materialize_begin_cast_with_quote_v1(
         } else {
             None
         },
+        wide_x_value_v59: None,
         chosen_creature_cost_zone: None,
         chosen_creature_cost: None,
         convoke_chosen: Vec::new(),
@@ -23505,7 +23634,7 @@ fn finalize_owned_cast(
     payment: spell_costs_v1::PreparedSpellPaymentV1,
 ) -> Result<(), String> {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-    let x_value = pending.x_value.unwrap_or(0);
+    let x_value = pending.selected_x_v59().unwrap_or(0);
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
@@ -23614,7 +23743,7 @@ fn finalize_owned_cast(
         omniscience_cast_v1,
         sphinx_lore_cast_v1,
         greatwurm_payment_v1,
-        x_value: u16::from(x_value),
+        x_value: x_value,
         chosen_creature_cost,
         variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)
             .then_some(was_kicked),
@@ -23658,9 +23787,11 @@ fn finalize_owned_cast(
     }
     item.v4.paid_cost_refs = paid_cost_refs;
     item.v4.optional_additional_cost_paid = paid_optional_additional_cost;
-    item.v4.x_value = u16::from(x_value);
+    item.v4.x_value = x_value;
     if def.records_mana_spent {
-        item.v4.mana_spent = crate::state::ManaSpentV1(mana_spent);
+        item.v4.mana_spent = crate::state::ManaSpentV1(
+            u16::try_from(mana_spent).expect("prepared recorded mana spent fits u16"),
+        );
     }
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
@@ -24388,6 +24519,125 @@ fn move_to_stack(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     object
         .v4
         .reset_for_zone_change(object.card_def, Zone::Stack, turn);
+}
+
+/// Exact native final-pool/spent bounds, checked while a spell payment is
+/// still read-only. This is arithmetic validation, not payment authority.
+fn checked_spell_mana_plan_v59(
+    state: &GameState,
+    player: PlayerId,
+    plan: &mana::PaymentPlan,
+) -> Option<u32> {
+    let primary = u32::try_from(plan.taps.len()).ok()?;
+    let restricted = u32::try_from(plan.restricted_pool_used.len()).ok()?;
+    let spent = primary
+        .checked_add(restricted)?
+        .checked_add(plan.pool_used.iter().map(|&n| u32::from(n)).sum())?;
+    for (index, &floating) in state.players[player.index()].mana_pool.iter().enumerate() {
+        let final_pool = u16::from(floating)
+            .checked_add(u16::from(plan.surplus[index]))?
+            .checked_sub(u16::from(plan.pool_used[index]))?;
+        u8::try_from(final_pool).ok()?;
+    }
+    Some(spent)
+}
+fn spell_mana_needs_wide_commit_v59(
+    state: &GameState,
+    player: PlayerId,
+    plan: &mana::PaymentPlan,
+) -> bool {
+    let Some(spent) = checked_spell_mana_plan_v59(state, player, plan) else {
+        return true;
+    };
+    spent > u32::from(u16::MAX)
+        || (0..6).any(|index| {
+            let taps = plan
+                .taps
+                .iter()
+                .filter(|(_, color)| color.pool_index() == index)
+                .count();
+            usize::from(state.players[player.index()].mana_pool[index])
+                + taps
+                + usize::from(plan.surplus[index])
+                > usize::from(u8::MAX)
+        })
+}
+/// Private synchronous accounting for the same already-checked payment. This
+/// cursor does not change CR601.2g/h: mana abilities precede payment of costs.
+/// The admitted Tap/ManaAdded path has no pool observer, replacement, priority,
+/// SBA or trigger callback. Existing linked ownership retains only the complete
+/// outer operation; loss-empty Conqueror temporary captures are discarded.
+/// Preserve every original Tap/ManaAdded and surplus vector, then the exact
+/// final pool. Already representable plans use the unchanged pay_plan below.
+fn pay_spell_plan_wide_v59(
+    state: &mut GameState,
+    player: PlayerId,
+    plan: &mana::PaymentPlan,
+) -> u32 {
+    let spent = checked_spell_mana_plan_v59(state, player, plan)
+        .expect("prepared spell mana bounds remain valid");
+    crate::standard_cards_v1::remember_payment_sources(state, player, plan);
+    let mut remaining = [0_u16; 6];
+    for (index, initial) in state.players[player.index()]
+        .mana_pool
+        .into_iter()
+        .enumerate()
+    {
+        let now = initial.min(plan.pool_used[index]);
+        state.players[player.index()].mana_pool[index] -= now;
+        remaining[index] = u16::from(plan.pool_used[index] - now);
+    }
+    for &(id, color) in &plan.taps {
+        event::propose_and_commit(state, ProposedEvent::tap(id));
+        let index = color.pool_index();
+        // At a full lane, consume an indistinguishable existing unit first;
+        // the incoming primary unit replaces it rather than requiring 256 slots.
+        let spent_before_add = state.players[player.index()].mana_pool[index] == u8::MAX;
+        if spent_before_add {
+            state.players[player.index()].mana_pool[index] -= 1;
+        }
+        event::propose_and_commit(state, ProposedEvent::mana_add(player, vec![color]));
+        if !spent_before_add {
+            state.players[player.index()].mana_pool[index] -= 1;
+        }
+    }
+    for (index, &amount) in plan.surplus.iter().enumerate() {
+        if amount != 0 {
+            let sum = u16::from(state.players[player.index()].mana_pool[index]) + u16::from(amount);
+            let before_add = sum.saturating_sub(u16::from(u8::MAX));
+            assert!(
+                before_add <= remaining[index],
+                "checked final pool supplies surplus headroom"
+            );
+            state.players[player.index()].mana_pool[index] -=
+                u8::try_from(before_add).expect("u8 surplus headroom");
+            remaining[index] -= before_add;
+            event::propose_and_commit(
+                state,
+                ProposedEvent::mana_add(
+                    player,
+                    vec![mana::ManaColor::ALL[index]; usize::from(amount)],
+                ),
+            );
+        }
+        state.players[player.index()].mana_pool[index] -=
+            u8::try_from(remaining[index]).expect("checked remaining pool use");
+    }
+    for &index in plan.restricted_pool_used.iter().rev() {
+        state.players[player.index()]
+            .restricted_mana_pool
+            .0
+            .remove(index);
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    if plan.life_paid > 0 {
+        event::propose_and_commit(state, ProposedEvent::life_payment(player, plan.life_paid));
+    }
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        state.players[player.index()].life -= plan.life_paid;
+    }
+    spent
 }
 
 /// Commits one payment plan and returns the amount of mana it spent (each
@@ -31463,3 +31713,77 @@ mod fiend_artisan_v1_tests;
 ))]
 #[path = "engine/imprisoned_moon_v1_tests.rs"]
 mod imprisoned_moon_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod wide_cast_x_v59_tests {
+    use super::*;
+    #[test]
+    fn u16_x_boundary_primitive_keeps_65535_and_65536_choice_cardinality_without_casting_stress() {
+        // Arithmetic boundary operands, not a claim of a paid65535-mana cast.
+        for (budget, expected) in [
+            (2_u32, 0_u16),
+            (257, 255),
+            (258, 256),
+            (65536, 65534),
+            (65537, 65535),
+        ] {
+            assert_eq!(
+                maximum_monotone_x_v59(u16::MAX, |x| u32::from(x) + 2 <= budget),
+                Some(expected)
+            );
+        }
+        assert_eq!(maximum_monotone_x_v59(u16::MAX, |_| false), None);
+        assert_eq!(
+            maximum_monotone_x_v59(255, |x| u32::from(x) + 2 <= 300),
+            Some(255)
+        );
+        // A genuine older root keeps its frozen255 menu even when more
+        // mana is available. A forged wide field cannot widen that owner.
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            for _ in 0..260 {
+                crate::policy_observation_v6::tests::put(
+                    &mut state,
+                    actor,
+                    "Forest",
+                    Zone::Battlefield,
+                );
+            }
+            let spell = crate::policy_observation_v6::tests::put(
+                &mut state,
+                actor,
+                "Wildwood Scourge",
+                Zone::Hand,
+            );
+            step(&mut state, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(
+                advance_until_decision(&mut state),
+                Decision::ChooseEffectOption {
+                    option_count: 256,
+                    ..
+                }
+            ));
+            step(&mut state, Action::ChooseEffectOption(255)).unwrap();
+            assert_eq!(
+                state.engine.pending_cast.as_ref().unwrap().x_value,
+                Some(255)
+            );
+            state.engine.pending_cast.as_mut().unwrap().x_value = None;
+            state.engine.pending_cast.as_mut().unwrap().wide_x_value_v59 = Some(256);
+            let before = state.clone();
+            assert!(
+                validate_pending_cast(&state, state.engine.pending_cast.as_ref().unwrap()).is_err()
+            );
+            assert_eq!(state, before);
+        }
+        let count = u32::from(u16::MAX) + 1;
+        assert_eq!(count, 65536);
+        assert!(u16::try_from(count).is_err());
+        let action = Action::ChooseEffectOption(u16::MAX);
+        assert!(matches!(action, Action::ChooseEffectOption(65535)));
+    }
+}

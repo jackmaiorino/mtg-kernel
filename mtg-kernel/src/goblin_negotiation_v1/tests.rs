@@ -720,3 +720,116 @@ fn paid_flash_control_response_preserves_creature_target_and_excess_both_seats_r
         assert_eq!(s.state_hash(), after_control_restore.state_hash());
     }
 }
+
+#[test]
+fn paid_native_wide_x_preserves_legacy254_pool_headroom_auto300_copy_counter_and_restore_both_seats(
+) {
+    use crate::next_five_public_v59::tests::{wide_x_scene_v59, WideXSceneV59 as Scene};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for scene in [
+            Scene::Low1,
+            Scene::Legacy254,
+            Scene::Automatic300,
+            Scene::FloatingRed255,
+            Scene::MixedFloating,
+        ] {
+            let (mut s, spell, target, x) = wide_x_scene_v59(actor, scene);
+            let initially_tapped = tapped(&s, actor);
+            let initial_mana: usize = s.players[actor.index()]
+                .mana_pool
+                .iter()
+                .map(|&n| usize::from(n))
+                .sum();
+            let history = s.engine.event_history.len();
+            engine::step(&mut s, Action::CastSpell(spell)).unwrap();
+            assert!(matches!(next(&mut s), Decision::ChooseTargets { .. }));
+            engine::step(&mut s, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(
+                matches!(next(&mut s), Decision::ChooseEffectOption { option_count, .. } if option_count > x)
+            );
+            let saved = restore(&s);
+            engine::step(&mut s, Action::ChooseEffectOption(x)).unwrap();
+            let pending = s.engine.pending_cast.as_ref().unwrap();
+            assert_eq!(pending.selected_x_v59(), Some(x));
+            if x > 255 {
+                assert_eq!(pending.x_value, None);
+                assert_eq!(pending.wide_x_value_v59, Some(x));
+                for (low, wide) in [(Some(0), Some(256)), (None, Some(255))] {
+                    let mut forged = restore(&s);
+                    let p = forged.engine.pending_cast.as_mut().unwrap();
+                    p.x_value = low;
+                    p.wide_x_value_v59 = wide;
+                    let before = forged.clone();
+                    assert!(engine::validate_pending_cast(
+                        &forged,
+                        forged.engine.pending_cast.as_ref().unwrap()
+                    )
+                    .is_err());
+                    assert_eq!(forged, before);
+                }
+            } else {
+                assert_eq!(pending.x_value, Some(u8::try_from(x).unwrap()));
+                assert_eq!(pending.wide_x_value_v59, None);
+                assert!(!serde_json::to_string(pending)
+                    .unwrap()
+                    .contains("wide_x_value_v59"));
+            }
+            let selected = restore(&s);
+            assert_eq!(selected, s);
+            assert!(
+                matches!(next(&mut s), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            assert_eq!(s.players[actor.index()].mana_pool, [0; 6]);
+            assert_eq!(
+                tapped(&s, actor) - initially_tapped + initial_mana,
+                usize::from(x) + 2
+            );
+            let row = s.stack.iter().find(|r| r.source == spell).unwrap().clone();
+            assert_eq!(row.v4.x_value, x);
+            assert_eq!(row.targets, [Target::Object(target)]);
+            engine::validated_stack_item_target_spec(&row, &s).unwrap();
+            let taps = s.engine.event_history[history..]
+                .iter()
+                .filter(|e| matches!(e, CommittedEvent::Tap { .. }))
+                .count();
+            let adds = s.engine.event_history[history..]
+                .iter()
+                .filter(|e| matches!(e, CommittedEvent::ManaAdded { .. }))
+                .count();
+            assert_eq!(taps, usize::from(x) + 2 - initial_mana);
+            assert_eq!(adds, taps);
+            let paid = restore(&s);
+            let mut replay = saved;
+            engine::step(&mut replay, Action::ChooseEffectOption(x)).unwrap();
+            next(&mut replay);
+            assert_eq!(replay, paid);
+            assert_eq!(replay.state_hash(), paid.state_hash());
+            // Labelled native copy/counter primitives on the actual genuinely
+            // paid source row. These do not claim another paid copy printing.
+            engine::materialize_copy_snapshot(
+                &mut replay,
+                &row,
+                actor.opponent(),
+                row.targets.clone(),
+                row.v4.target_contracts.clone(),
+            )
+            .unwrap();
+            let copy = replay.stack.last().unwrap().clone();
+            assert!(copy.is_copy);
+            assert_eq!(copy.controller, actor.opponent());
+            assert_eq!(copy.v4.x_value, x);
+            engine::counter_stack_item_by_id(&mut replay, copy.v4.stack_item_id)
+                .unwrap()
+                .unwrap();
+            assert!(replay
+                .stack
+                .iter()
+                .any(|r| r.v4.stack_item_id == row.v4.stack_item_id));
+            settle(&mut replay);
+            assert_eq!(damage(&replay, spell, target), i32::from(x));
+            assert_eq!(replay.objects.get(target).zone, Zone::Battlefield);
+            assert_eq!(replay.objects.get(target).damage, i32::from(x));
+            assert!(goblins(&replay, actor).is_empty());
+        }
+    }
+}

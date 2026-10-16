@@ -627,3 +627,71 @@ fn actual_paid_replication_target_and_multi_host_aura_progress_restore() {
 
 #[path = "production_tests.rs"]
 pub(crate) mod production;
+
+/// Counter/initial-roster operands are explicit primitives. Every floating unit
+/// below is produced by the real printed basic-land mana ability before casting.
+#[derive(Clone, Copy)]
+pub(crate) enum WideXSceneV59 {
+    Low1,
+    Legacy254,
+    Automatic300,
+    FloatingRed255,
+    MixedFloating,
+}
+pub(crate) fn wide_x_scene_v59(
+    actor: PlayerId,
+    scene: WideXSceneV59,
+) -> (GameState, ObjectId, ObjectId, u16) {
+    let mut s = crate::extra_turn_v1::tests::ready(actor);
+    crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
+    for player in [actor, actor.opponent()] {
+        put(&mut s, player, "Forest", Zone::Hand);
+    }
+    let target = put(
+        &mut s,
+        actor.opponent(),
+        "Axgard Cavalry",
+        Zone::Battlefield,
+    );
+    // This target survives the genuine wide damage without hundreds of tokens.
+    s.objects.get_mut(target).counters.plus1_plus1 = 400;
+    let spell = put(&mut s, actor, "Goblin Negotiation", Zone::Hand);
+    let count = match scene {
+        WideXSceneV59::Low1 => 3,
+        WideXSceneV59::Legacy254 => 256,
+        WideXSceneV59::Automatic300 => 300,
+        _ => 258,
+    };
+    let mut lands = Vec::new();
+    for index in 0..count {
+        let name = if matches!(scene, WideXSceneV59::MixedFloating) && index >= 255 {
+            "Forest"
+        } else {
+            "Mountain"
+        };
+        lands.push(put(&mut s, actor, name, Zone::Battlefield));
+    }
+    let activate = match scene {
+        WideXSceneV59::FloatingRed255 => 255,
+        WideXSceneV59::MixedFloating => 258,
+        _ => 0,
+    };
+    for &land in &lands[..activate] {
+        engine::step(&mut s, Action::ActivateManaAbility(land)).unwrap();
+    }
+    let x = if matches!(scene, WideXSceneV59::Low1) {
+        1
+    } else if matches!(scene, WideXSceneV59::Legacy254) {
+        254
+    } else {
+        256
+    };
+    assert!(
+        matches!(next(&mut s), Decision::CastSpellOrPass { player, ref castable_spells, .. } if player == actor && castable_spells.contains(&spell))
+    );
+    assert_eq!(
+        s.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()],
+        if activate != 0 { 255 } else { 0 }
+    );
+    (s, spell, target, x)
+}

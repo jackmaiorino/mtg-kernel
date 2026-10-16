@@ -807,3 +807,59 @@ fn paid_graveyard_return_sources_refuse_older_session_step_and_terminal_restore_
         );
     }
 }
+
+#[test]
+fn paid_goblin_x256_sealed_owner_keeps_complete_paid_row_and_stale_restore_both_seats() {
+    use crate::next_five_public_v59::tests::{wide_x_scene_v59, WideXSceneV59};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (initial, spell, target, x) = wide_x_scene_v59(actor, WideXSceneV59::FloatingRed255);
+        let mut owner = own(initial);
+        act(
+            &mut owner,
+            |a| matches!(a, ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0),
+        );
+        act(
+            &mut owner,
+            |a| matches!(a, ActionSemanticV1::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == target.0),
+        );
+        let current = owner.decision_v59().unwrap();
+        let before_range_error = gameplay(&owner);
+        assert!(owner.step_v59(&current, 65536).is_err());
+        assert_eq!(gameplay(&owner), before_range_error);
+        let saved = owner.snapshot_v59();
+        let stale = owner.decision_v59().unwrap();
+        act(
+            &mut owner,
+            |a| matches!(a, ActionSemanticV1::ChooseEffectOption { option_index, .. } if *option_index == x),
+        );
+        let paid = gameplay(&owner);
+        let current = owner.decision_v59().unwrap();
+        assert_eq!(
+            current
+                .observation()
+                .next_five
+                .casts
+                .iter()
+                .find(|r| r.family == crate::rules_meaning_next_five_v59::FamilyV59::Goblin)
+                .unwrap()
+                .x,
+            Some(256)
+        );
+        assert_eq!(state(&owner).stack.last().unwrap().v4.x_value, 256);
+        assert_eq!(state(&owner).players[actor.index()].mana_pool, [0; 6]);
+        owner.restore_v59(&saved).unwrap();
+        let before = gameplay(&owner);
+        assert!(owner.step_v59(&stale, 256).is_err());
+        assert_eq!(gameplay(&owner), before);
+        act(&mut owner, |a| {
+            matches!(
+                a,
+                ActionSemanticV1::ChooseEffectOption {
+                    option_index: 256,
+                    ..
+                }
+            )
+        });
+        assert_eq!(gameplay(&owner), paid);
+    }
+}

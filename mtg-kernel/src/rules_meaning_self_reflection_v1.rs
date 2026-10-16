@@ -107,6 +107,18 @@ pub fn producer_sha256() -> String {
             ("mana.rs", include_str!("mana.rs")),
             ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
             ("rl.rs", include_str!("rl.rs")),
+            (
+                "standard_cast_convoke.rs",
+                include_str!("standard_cast_convoke.rs"),
+            ),
+            (
+                "engine/mandatory_cast_cost_v1.rs",
+                include_str!("engine/mandatory_cast_cost_v1.rs"),
+            ),
+            (
+                "rules_meaning_next_five_v59.rs",
+                include_str!("rules_meaning_next_five_v59.rs"),
+            ),
         ] {
             h.update(path.as_bytes());
             h.update([0]);

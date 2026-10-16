@@ -1443,6 +1443,7 @@ where
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+        | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
@@ -2738,6 +2739,31 @@ fn flat_validate_origin_decision_common_scoped_v42(
                 }
             }
         }
+        Decision::ChooseFullRangeCastXValueV59 { player, spell } => {
+            if !matches!(
+                scope,
+                crate::rl::CommonProjectionScopeV42::NextFiveV59
+                    | crate::rl::CommonProjectionScopeV42::GraveyardReturnV61
+                    | crate::rl::CommonProjectionScopeV42::CallV62
+            ) {
+                return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
+            }
+            crate::engine::validate_full_range_cast_x_v59(state, *player, *spell)
+                .map_err(|_| invalid())?;
+            let source = crate::rl::card_ref(state, *spell).map_err(|_| invalid())?;
+            if current.actor != *player || candidates.len() != usize::from(u16::MAX) + 1 {
+                return Err(invalid());
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                if !matches!((&candidate.semantic, &candidate.policy_action),
+                    (ActionSemanticV1::ChooseFullRangeCastXValueV59 { actor, source: actual, x_value },
+                    PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseEffectOption(chosen))))
+                    if actor_matches(*actor, *player) && actual == &source && usize::from(*x_value) == index && chosen == x_value)
+                {
+                    return Err(invalid());
+                }
+            }
+        }
         Decision::ChooseEffectOption {
             player,
             source,
@@ -3183,6 +3209,7 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseEntryColorV36 { .. }
             | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
+            | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),

@@ -323,6 +323,7 @@ pub fn feature_identity() -> String {
             include_str!("fiendish_panda_v1/custody.rs"),
             include_str!("life_gain_turn_v1.rs"),
             include_str!("legend_rule_v1.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());

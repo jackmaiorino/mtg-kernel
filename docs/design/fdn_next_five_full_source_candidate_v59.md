@@ -92,3 +92,39 @@ return, mana, token and refusal assertion. Hatcher's unrelated global catalog-si
 assertion changes452 to485 because this composed catalog has genuine appended
 Partial definitions; IDs448/449, Full/token preflight, frozen-vector refusal and
 counter-width checks remain intact. No V88 historical catalog/profile tuple changes.
+
+
+The subsequent Goblin paid-X prerequisite preserves the original optional u8
+selection for X<=255 and adds an absent-by-default native u16 selection for the
+exact Goblin definition. The pure quote uses u32 generic totals. A distinct
+appended decision and semantic represent the complete 65536-choice boundary;
+normal choices retain the old decision and indices. Real automatic-source plans
+that would overflow an intermediate u8 pool lane use private synchronous
+transaction accounting, preserving each Tap/ManaAdded event. This implements
+the same completed transaction, not literal partial payment before mana
+abilities: CR601.2g/h ordering remains the rules contract. The admitted
+Tap/ManaAdded path has no current-pool observer, replacement, priority, SBA or
+trigger callback. Relevant linked ownership suppresses nested event owners and
+retains only the complete outer operation. Conqueror's temporary before-world
+is discarded for these loss-empty events before any observer input is stored;
+Crystal validates existing roots/journals without retaining current pool state.
+No claim is made for a future mechanic that observes intermediate mana pools. Previously safe
+plans use the unchanged payment implementation. Final pool lanes and any stored
+u16 mana-spent field are checked before mutation; this does not widen that field.
+
+New unrun both-seat source groups exercise X254 with256 automatic Mountains,
+X256 with300 available Mountains,255 genuinely floated red plus3 automatic
+Mountains, and255 red plus3 green genuinely floated mana. Owner, numeric, Human
+and V6 groups retain independent native parity, stale bindings and restore. The
+65535-X/65536-choice test is explicitly an arithmetic boundary primitive, not a
+paid65535-mana stress run. The existing V6 closed cast grammar already transports
+u16 X; its Python mock boundary test does not prove native gameplay. Six Rust
+cases are added without changing prior assertions, except a required absent
+field in one preexisting PendingCast test literal. Old absent-field JSON/Hash
+operations and enum prefixes are preserved by static inverse checks.
+
+Wildwood's frozen u8 cast/consumer contract retains its original255 maximum and
+rejects forged wide selections. Its faithful successor remains separate issue110
+work. This Goblin repair does not claim every X printing has complete semantics,
+and it does not qualify the five-card Full candidate or supply its pending
+compiled catalog/profile tuple. All new Rust remains uncompiled and unrun.

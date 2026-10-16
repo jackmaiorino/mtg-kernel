@@ -1372,6 +1372,12 @@ pub enum ActionSemanticV1 {
         source: CardStableRefV1,
         selected_count: u64,
     },
+    /// Appended exact65536-choice cast-X boundary, never a u16 count sentinel.
+    ChooseFullRangeCastXValueV59 {
+        actor: PlayerSeatV1,
+        source: CardStableRefV1,
+        x_value: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -5898,6 +5904,35 @@ fn core_policy_action_candidates_next_five_scoped_v59(
     if accept_hunter {
         crate::high_society_hunter_custody_v45::validate(state).map_err(RlContractError)?;
     }
+    if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+        Decision::ChooseFullRangeCastXValueV59 { player, spell },
+    )) = decision
+    {
+        if !matches!(
+            scope,
+            CommonProjectionScopeV42::NextFiveV59
+                | CommonProjectionScopeV42::GraveyardReturnV61
+                | CommonProjectionScopeV42::CallV62
+        ) {
+            return Err(RlContractError(
+                "full-range cast X requires its current successor".into(),
+            ));
+        }
+        engine::validate_full_range_cast_x_v59(state, *player, *spell).map_err(RlContractError)?;
+        let source = card_ref(state, *spell)?;
+        return Ok((0..=u16::MAX)
+            .map(|x_value| CorePolicyActionCandidateV1 {
+                semantic: ActionSemanticV1::ChooseFullRangeCastXValueV59 {
+                    actor: (*player).into(),
+                    source: source.clone(),
+                    x_value,
+                },
+                policy_action: PolicyActionV5::Surface(SurfaceAction::Action(
+                    Action::ChooseEffectOption(x_value),
+                )),
+            })
+            .collect());
+    }
     let out: Vec<CorePolicyActionCandidateV1> = match decision {
         PolicyDecisionV5::Surface(surface_decision) => {
             core_surface_action_candidates_fake_scoped_v50(
@@ -5995,7 +6030,8 @@ fn validate_policy_action_semantic_v5(semantic: &ActionSemanticV1) -> Result<()>
 fn refuse_divine_semantic_in_frozen_transport(semantic: &ActionSemanticV1) -> Result<()> {
     if matches!(
         semantic,
-        ActionSemanticV1::ChooseDivineKickerV44 { .. }
+        ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
+            | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::FinishDivineTargetsV44 { .. }
     ) {
@@ -6285,7 +6321,8 @@ fn core_surface_action_candidates_fake_scoped_v50(
                     SurfaceAction::Action(Action::Pass),
                 )?;
             }
-            Decision::ChooseVariableCastTargets { .. }
+            Decision::ChooseFullRangeCastXValueV59 { .. }
+            | Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. }
             | Decision::ChooseEntryColorV36 { .. }
             | Decision::ChooseEntryCreatureTypeV1 { .. } => {
@@ -6892,6 +6929,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseSpellMode { player, .. }
             | Decision::ChooseTriggerMode { player, .. }
             | Decision::ChooseEffectOption { player, .. }
+            | Decision::ChooseFullRangeCastXValueV59 { player, .. }
             | Decision::ChooseEffectTargets { player, .. }
             | Decision::ChooseEffectBoolean { player, .. }
             | Decision::ChooseCombatDamageRange { player, .. }

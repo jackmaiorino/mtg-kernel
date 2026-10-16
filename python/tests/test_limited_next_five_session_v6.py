@@ -57,6 +57,19 @@ INJECT = r'''
 
 
 class LimitedNextFiveClientV6Test(unittest.TestCase):
+    def test_mock_goblin_paid_x_preserves_complete_native_u16_width(self):
+        from limited_next_five_session_v6 import CAST, _shape
+        # Closed DTO grammar only, not gameplay or a synthetic executable.
+        row = {"family":"Goblin", "source":ref("stack-goblin", "Goblin Negotiation", zone="Stack"),
+               "original_controller":"p0", "is_copy":False, "payment_pending":False,
+               "x":0, "targets":[{"Object":ref("target-cavalry", "Axgard Cavalry", owner="p1", controller="p1")}]}
+        for x in (0, 255, 256, 65535):
+            row["x"] = x
+            _shape(row, CAST, "cast")
+        for invalid in (-1, 65536, 256.0, True):
+            row["x"] = invalid
+            with self.assertRaises(LimitedSessionError): _shape(row, CAST, "cast")
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.engine=Path(self.temp.name)/"mock_engine.py"

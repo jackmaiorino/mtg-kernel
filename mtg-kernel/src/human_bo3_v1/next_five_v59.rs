@@ -1554,3 +1554,150 @@ mod production_tests {
         }
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod wide_x_tests {
+    use super::*;
+    use crate::{
+        ids::PlayerId,
+        next_five_public_v59::tests::{wide_x_scene_v59, WideXSceneV59},
+        rl::{ActionSemanticV1 as A, TargetRefV1},
+    };
+    #[test]
+    fn genuine_paid_goblin_x256_human_labels_opponent_callback_and_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for human in [actor, actor.opponent()] {
+                let (initial, spell, target, _) =
+                    wide_x_scene_v59(actor, WideXSceneV59::MixedFloating);
+                let mut reference =
+                    crate::rl_session::FastActorSessionV1::from_next_five_v59_fixture_state(
+                        initial.clone(),
+                    );
+                let mut session = HumanNextFiveSessionV59::from_session(
+                    crate::rl_session::FastActorSessionV1::from_next_five_v59_fixture_state(
+                        initial,
+                    ),
+                    human.into(),
+                )
+                .unwrap();
+                let mut projector = HumanNextFiveProjectorV59::new(human.into());
+                let mut saved = None;
+                let mut old_request = None;
+                let mut paid = None;
+                for phase in [0, 1, 2, 2] {
+                    if paid.is_some() {
+                        let (ours, native) = saved.as_ref().unwrap();
+                        session.restore_v59(ours).unwrap();
+                        reference.restore_v1(native);
+                        if let Some(request) = old_request.take() {
+                            let before = session.inner.fixture_state_v59().clone();
+                            assert!(projector.submit(&mut session, request).is_err());
+                            assert_eq!(session.inner.fixture_state_v59(), &before);
+                        }
+                        projector = HumanNextFiveProjectorV59::new(human.into());
+                    }
+                    let d = session.inner.decision_v59().unwrap();
+                    let expected = d.expected();
+                    let i = d
+                        .actions()
+                        .iter()
+                        .position(|a| match (phase, a) {
+                            (0, A::CastSpell { source, .. }) => source.arena_id == spell.0,
+                            (
+                                1,
+                                A::ChooseTarget {
+                                    target: TargetRefV1::Object { object },
+                                    ..
+                                },
+                            ) => object.arena_id == target.0,
+                            (
+                                2,
+                                A::ChooseEffectOption {
+                                    option_index: 256, ..
+                                },
+                            ) => true,
+                            _ => false,
+                        })
+                        .unwrap();
+                    if phase == 2 && saved.is_none() {
+                        saved = Some((session.snapshot_v59(), reference.snapshot_v1()));
+                    }
+                    if human == actor {
+                        let visible = projector.project_current(&session, expected).unwrap();
+                        let mapped = projector
+                            .pending
+                            .as_ref()
+                            .unwrap()
+                            .indexes
+                            .iter()
+                            .position(|n| usize::try_from(*n) == Ok(i))
+                            .unwrap();
+                        if phase == 2 {
+                            assert!(visible.actions[mapped].label.contains("X = 256"));
+                        }
+                        let request = HumanActionRequestV1 {
+                            prompt_seq: visible.prompt_seq,
+                            action_index: u32::try_from(mapped).unwrap(),
+                        };
+                        old_request = Some(request.clone());
+                        projector.submit(&mut session, request).unwrap();
+                    } else {
+                        session
+                            .step_opponent_with(expected, |observation, actions| {
+                                assert_eq!(observation, d.observation());
+                                assert_eq!(actions, d.actions());
+                                Ok(u32::try_from(i).unwrap())
+                            })
+                            .unwrap();
+                    }
+                    reference
+                        .step(
+                            expected.episode_id,
+                            expected.step,
+                            u32::try_from(i).unwrap(),
+                        )
+                        .unwrap();
+                    assert_eq!(session.current_response(), reference.current_response());
+                    assert_eq!(
+                        session.inner.fixture_state_v59(),
+                        reference.next_five_fixture_state()
+                    );
+                    assert_eq!(
+                        session.inner.fixture_counts_v59(),
+                        (
+                            reference.policy_step_count(),
+                            reference.physical_decision_count()
+                        )
+                    );
+                    if phase == 2 {
+                        assert_eq!(
+                            session
+                                .inner
+                                .fixture_state_v59()
+                                .stack
+                                .last()
+                                .unwrap()
+                                .v4
+                                .x_value,
+                            256
+                        );
+                        assert_eq!(
+                            session.inner.fixture_state_v59().players[actor.index()].mana_pool,
+                            [0; 6]
+                        );
+                        let bytes = serde_json::to_vec(session.inner.fixture_state_v59()).unwrap();
+                        if let Some(original) = &paid {
+                            assert_eq!(&bytes, original);
+                        } else {
+                            paid = Some(bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

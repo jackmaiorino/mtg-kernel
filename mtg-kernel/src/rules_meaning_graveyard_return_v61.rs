@@ -175,6 +175,9 @@ pub fn producer_sha256() -> String {
             include_str!("midnight_snack_v1.rs"),
             include_str!("legend_rule_v1.rs"),
             include_str!("rl.rs"),
+            include_str!("standard_cast_convoke.rs"),
+            include_str!("engine/mandatory_cast_cost_v1.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
         ] {
             hash.update((text.len() as u64).to_le_bytes());
             hash.update(text.as_bytes());

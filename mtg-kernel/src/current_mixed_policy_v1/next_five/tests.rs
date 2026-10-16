@@ -1090,3 +1090,114 @@ fn production_five_full_candidate_real_decks_numeric_paid_and_restore_both_seats
         }
     }
 }
+
+#[test]
+fn paid_goblin_x256_mixed_real_mana_numeric_binding_and_independent_native_restore_both_seats() {
+    use crate::next_five_public_v59::tests::{wide_x_scene_v59, WideXSceneV59};
+    fn paired(
+        owner: &mut NextFiveSession,
+        native: &mut FastActorSessionV1,
+        choose: impl Fn(&ActionSemanticV1) -> bool,
+    ) {
+        let d = owner.decision_v59().unwrap();
+        let i = d.actions().iter().position(choose).unwrap();
+        let expected = d.expected();
+        let reply = owner.apply(&d, u32::try_from(i).unwrap()).unwrap();
+        assert_eq!(
+            reply,
+            native
+                .step(
+                    expected.episode_id,
+                    expected.step,
+                    u32::try_from(i).unwrap()
+                )
+                .unwrap()
+        );
+        assert_eq!(owner.fixture_state(), native.next_five_fixture_state());
+        assert_eq!(
+            owner.fixture_counts(),
+            (native.policy_step_count(), native.physical_decision_count())
+        );
+    }
+    fn finish(owner: &mut NextFiveSession, native: &mut FastActorSessionV1) {
+        for _ in 0..32 {
+            if owner.fixture_state().stack.is_empty() {
+                return;
+            }
+            paired(owner, native, |a| {
+                matches!(a, ActionSemanticV1::Pass { .. })
+            });
+        }
+        panic!("wide paid source did not resolve");
+    }
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (initial, spell, target, x) = wide_x_scene_v59(actor, WideXSceneV59::MixedFloating);
+        let mut owner = own(initial.clone());
+        let mut reference = FastActorSessionV1::from_next_five_v59_fixture_state(initial);
+        paired(
+            &mut owner,
+            &mut reference,
+            |a| matches!(a, ActionSemanticV1::CastSpell { source, .. } if source.arena_id == spell.0),
+        );
+        paired(
+            &mut owner,
+            &mut reference,
+            |a| matches!(a, ActionSemanticV1::ChooseTarget { target: TargetRefV1::Object { object }, .. } if object.arena_id == target.0),
+        );
+        let stale = owner.decision_v59().unwrap();
+        let scores = NativeModel::deterministic_fixture()
+            .unwrap()
+            .forward(stale.packet())
+            .unwrap();
+        assert_eq!(scores.len(), stale.actions().len());
+        assert!(scores.iter().all(|n| n.is_finite()));
+        assert!(stale.actions().iter().any(|a| matches!(
+            a,
+            ActionSemanticV1::ChooseEffectOption {
+                option_index: 256,
+                ..
+            }
+        )));
+        let saved = owner.snapshot();
+        let native_saved = reference.snapshot_v1();
+        paired(
+            &mut owner,
+            &mut reference,
+            |a| matches!(a, ActionSemanticV1::ChooseEffectOption { option_index, .. } if *option_index == x),
+        );
+        assert_eq!(
+            owner.fixture_state().players[actor.index()].mana_pool,
+            [0; 6]
+        );
+        let current = owner.decision_v59().unwrap();
+        let cast = current
+            .observation()
+            .next_five
+            .casts
+            .iter()
+            .find(|r| r.family == crate::rules_meaning_next_five_v59::FamilyV59::Goblin)
+            .unwrap();
+        assert_eq!(cast.x, Some(256));
+        assert!(!cast.payment_pending);
+        assert_eq!(owner.fixture_state().stack.last().unwrap().v4.x_value, 256);
+        finish(&mut owner, &mut reference);
+        assert_eq!(owner.fixture_state().objects.get(target).damage, 256);
+        let completed = gameplay(&owner);
+        owner.restore(&saved).unwrap();
+        reference.restore_v1(&native_saved);
+        let before = gameplay(&owner);
+        assert!(owner.apply(&stale, 256).is_err());
+        assert_eq!(gameplay(&owner), before);
+        paired(&mut owner, &mut reference, |a| {
+            matches!(
+                a,
+                ActionSemanticV1::ChooseEffectOption {
+                    option_index: 256,
+                    ..
+                }
+            )
+        });
+        finish(&mut owner, &mut reference);
+        assert_eq!(gameplay(&owner), completed);
+    }
+}

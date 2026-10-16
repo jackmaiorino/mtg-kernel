@@ -463,6 +463,7 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseKicker { actor, .. }
         | A::ChooseSpellMode { actor, .. }
         | A::ChooseEffectOption { actor, .. }
+        | A::ChooseFullRangeCastXValueV59 { actor, .. }
         | A::ChooseEffectTarget { actor, .. }
         | A::FinishEffectSelection { actor, .. }
         | A::ChooseEffectColor { actor, .. }
@@ -826,6 +827,28 @@ fn label_parts_next_five(
                 "Choose {} as an Aura host for the Extravagant Replication copy",
                 handles.name(object)?
             ));
+        }
+        A::ChooseFullRangeCastXValueV59 {
+            actor,
+            source,
+            x_value,
+        } if *actor == human => {
+            let cast = facts
+                .casts
+                .iter()
+                .find(|row| row.family == FamilyV59::Goblin && ref_matches(source, &row.source))
+                .ok_or(Error::InvalidVisibleReference)?;
+            if !cast.payment_pending
+                || cast.original_controller != human
+                || cast.x.is_some()
+                || facts.goblin_ordering.is_some()
+            {
+                return Err(Error::InvalidVisibleReference);
+            }
+            let [TargetV59::Object(target)] = cast.targets.as_slice() else {
+                return Err(Error::InvalidVisibleReference);
+            };
+            return Ok(format!("Cast Goblin Negotiation with X = {x_value}, targeting {}; choose from the complete native range 0 through 65535", public_name(target)?));
         }
         A::ChooseEffectOption {
             actor,
@@ -1897,6 +1920,7 @@ fn label_common(
         | A::ChooseEntryColorV36 { .. }
         | A::ChooseDivineKickerV44 { .. }
         | A::ChooseDivineTargetV44 { .. }
+        | A::ChooseFullRangeCastXValueV59 { .. }
         | A::FinishDivineTargetsV44 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }

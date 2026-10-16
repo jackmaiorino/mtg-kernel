@@ -37,7 +37,9 @@ fn cost(state: &GameState, p: &PendingCast) -> Option<(Vec<mana::Pip>, u32, bool
     let generic = s
         .costs
         .iter()
-        .map(|c| u32::from(c.generic) + u32::from(c.x_count) * u32::from(p.x_value.unwrap_or(0)))
+        .map(|c| {
+            u32::from(c.generic) + u32::from(c.x_count) * u32::from(p.selected_x_v59().unwrap_or(0))
+        })
         .sum::<u32>()
         .saturating_add(increase)
         .saturating_sub(reduction.saturating_add(s.own_generic_reduction));
@@ -205,7 +207,7 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
         return Err("convoker changed incarnation or eligibility".into());
     }
     if (!p.convoke_chosen.is_empty() || p.convoke_finished)
-        && (p.x_value.is_none() || !can_complete(state, p, &p.convoke_chosen))
+        && (p.selected_x_v59().is_none() || !can_complete(state, p, &p.convoke_chosen))
     {
         return Err("convoke selection cannot complete".into());
     }
