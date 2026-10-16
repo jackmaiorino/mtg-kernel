@@ -132,23 +132,27 @@ fn pending_targets(state: &GameState) -> Result<Option<PendingCastTargetsV1>, Rl
     }))
 }
 pub fn producer_sha256_v1() -> String {
-    let mut hash = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("fiery_public_v1.rs"),
-        include_str!("fiery_annihilation_v1.rs"),
-        include_str!("rules_meaning_fiery_v1.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("engine.rs"),
-        include_str!("effect.rs"),
-        include_str!("card_def.rs"),
-        include_str!("../build.rs"),
-    ] {
-        hash.update([0]);
-        hash.update(source.as_bytes());
-    }
-    hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("fiery_public_v1.rs"),
+            include_str!("fiery_annihilation_v1.rs"),
+            include_str!("rules_meaning_fiery_v1.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("engine.rs"),
+            include_str!("effect.rs"),
+            include_str!("card_def.rs"),
+            include_str!("../build.rs"),
+        ] {
+            hash.update([0]);
+            hash.update(source.as_bytes());
+        }
+        hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 
 /// Fresh projection from validated original installations and real expiry.
