@@ -7,6 +7,7 @@ use crate::{
     state::{GameState, Zone},
 };
 mod crystal;
+mod divine;
 mod early_activation;
 mod eaten;
 mod enchantment_hunter;
@@ -593,4 +594,17 @@ fn fiery_paid_optional_equipment_death_replacement_restore_privacy_fake_both_sea
 #[test]
 fn fiery_paid_optional_equipment_death_replacement_restore_privacy_ravenous_both_seats() {
     paid_fiery::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_divine<O: Owner>() {
+    divine::paid::<O>();
+    divine::privacy::<O>();
+}
+#[test]
+fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_fake_both_seats() {
+    paid_divine::<FakeSession>();
+}
+#[test]
+fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_ravenous_both_seats() {
+    paid_divine::<RavenousSession>();
 }

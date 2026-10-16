@@ -745,3 +745,8 @@ fn kellan_paid_upgrades_combat_impulse_restore_privacy_preparedsession_both_seat
 fn fiery_paid_optional_equipment_death_replacement_restore_privacy_prepared_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<PreparedSession>();
 }
+
+#[test]
+fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_prepared_both_seats() {
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_divine::<PreparedSession>();
+}

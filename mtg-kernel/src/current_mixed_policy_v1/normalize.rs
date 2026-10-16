@@ -310,11 +310,12 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
         .enumerate()
         .map(|(index, time)| (time, index as u64))
         .collect();
-    let state = rewrite(
-        &json!({"observation":state,"baseline_printed_roots":meanings}),
-        &mut refs,
-        "",
-    )?;
+    let mut state = json!({"observation":state,"baseline_printed_roots":meanings});
+    // Canonical meaning booleans are not runtime raw-identity operands. This
+    // conversion validates each whole typed program before changing its exact
+    // private key spelling. The generic identity refusal below is unchanged.
+    super::canonical_semantic_booleans::prepare(&mut state)?;
+    let state = rewrite(&state, &mut refs, "")?;
     let actions = actions
         .iter()
         .map(|action| NumericTree::encode(&rewrite(action, &mut refs, "")?))

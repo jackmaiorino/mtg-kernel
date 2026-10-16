@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 
 #[path = "crystal_printing.rs"]
 pub(super) mod crystal_printing;
+#[path = "divine_printing.rs"]
+pub(super) mod divine_printing;
 #[path = "early_activation_printing.rs"]
 pub(super) mod early_activation_printing;
 #[path = "eaten_printing.rs"]
@@ -314,6 +316,9 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     let d = CARD_DEFS
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    if d.name == "Divine Resilience" {
+        return divine_printing::baseline(id, d);
+    }
     if d.name == "Fiery Annihilation" {
         return fiery_printing::baseline(id, d);
     }
@@ -672,6 +677,7 @@ pub(super) fn registered_spell_printing(id: u16) -> Result<Option<Value>> {
         .get(usize::from(id))
         .ok_or(Error::UnsupportedPrintedRoot(id))?;
     match d.name {
+        "Divine Resilience" => divine_printing::printing(id, d).map(Some),
         "Fiery Annihilation" => fiery_printing::printing(id, d).map(Some),
         "Faebloom Trick" => faebloom_printing::printing(id, d).map(Some),
         "Eaten Alive" => eaten_printing::printing(id, d).map(Some),
