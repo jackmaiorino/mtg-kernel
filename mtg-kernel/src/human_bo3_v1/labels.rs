@@ -2326,11 +2326,11 @@ mod next_five_native_label_tests {
     fn step_next_five(
         session: &mut crate::rl_session::NextFiveSessionV59,
         expected: crate::rl_session::FastActorDecisionV1,
-        index: usize,
+        index: u32,
     ) {
         let decision = session.decision_v59().unwrap();
         assert_eq!(decision.expected(), expected);
-        session.step_v59(&decision, index as u32).unwrap();
+        session.step_v59(&decision, index).unwrap();
     }
 
     fn quiet_actual_step(state: &mut crate::state::GameState, decision: crate::engine::Decision) {

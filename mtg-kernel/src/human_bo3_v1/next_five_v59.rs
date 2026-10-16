@@ -35,7 +35,6 @@ record!(HumanDecisionNextFiveV59 {
 });
 record!(HumanNextFiveActivationV59 {
     source: HumanCardRefV1,
-    ability_index: u8,
     kind: crate::rules_meaning_drake_hatcher_v53::CounterV53,
     count: u16,
     before: i32,
@@ -879,7 +878,6 @@ pub(super) fn project(
                 .map(|row| {
                     Ok(HumanNextFiveActivationV59 {
                         source: handles.get(&row.source)?.clone(),
-                        ability_index: row.ability_index,
                         kind: row.kind,
                         count: row.count,
                         before: row.before,
