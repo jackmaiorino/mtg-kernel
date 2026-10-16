@@ -18311,108 +18311,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     state,
                     state.active_player,
                 );
-            crate::standard_cards_v1::cleanup(state);
-            for player in &mut state.players {
-                player.poison_prevention_v1.0 = false;
-            }
-            // 514.1/514.2: reset damage, "until end of turn" effects end,
-            // then discard down to the maximum hand size, then reset the
-            // land-drop counter for the player whose turn just ended.
-            for (_, obj) in state.objects.iter_mut() {
-                obj.damage = 0;
-                obj.v4.deathtouch_damage = false;
-                obj.v4.temporary_base_pt_v1 = None;
-                obj.v4.skrelv_grants_v1 = None;
-                obj.v4.melira_protection_v1 = None;
-                // Only effects with an explicit duration expire at cleanup.
-                if card_def::CARD_DEFS[obj.card_def as usize]
-                    .animation
-                    .is_some_and(|animation| animation.until_end_of_turn)
-                {
-                    obj.v4.animation_timestamp = None;
-                }
-            }
-            crate::standard_creatures_v1::cleanup(state);
-            crate::sower_restriction_capture_v1::expire(state);
-            crate::effect::temporary_control_v1::expire_at_cleanup(state);
-            if effect::frenzied_goblin_resolution_v1::expire(state).is_err() {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            if expire_cleanup_effects_v1(state).is_err() {
                 return;
             }
-            if effect::expire_vampire_gourmand_restrictions(state).is_err()
-                || crate::ashroot_dispatch_v2::expire(state).is_err()
-            {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
-            }
-            if crate::ajani_full_v42::lifecycle::cleanup(state).is_err() {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
-            }
-            let fake_cleanup =
-                match crate::fake_your_own_death_v50::spell_custody::before_cleanup(state) {
-                    Ok(owner) => owner,
-                    Err(_) => {
-                        state.engine.halted =
-                            Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                        return;
-                    }
-                };
-            state.engine.until_end_of_turn.clear();
-            if crate::fake_your_own_death_v50::spell_custody::finish_cleanup(state, fake_cleanup)
-                .is_err()
-            {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
-            }
-            if let Err(source) = event::expire_exile_if_dies_replacements(state) {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, source));
-                return;
-            }
-            state.engine.active_replacements.retain(|replacement| {
-                !matches!(
-                    replacement.kind,
-                    event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
-                    | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
-                    | event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
-                )
-            });
             let p = state.active_player;
-            state.players[p.index()].lands_played_this_turn = 0;
-            if crate::effect::strongbox_permission_v1::cleanup(state).is_err() {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
-            }
-            // `EndOfTurn` permissions expire at the very next Cleanup,
-            // whoever's; `UntilHoldersNextTurn` only once it's the
-            // *holder's* own Cleanup, and only after their own Untap has
-            // already opened this "next turn" -- see
-            // `PlayPermissionExpiry`'s doc.
-            state
-                .engine
-                .exile_play_permissions
-                .retain(|perm| match perm.expiry {
-                    PlayPermissionExpiry::EndOfTurn => false,
-                    PlayPermissionExpiry::UntilHoldersNextTurn {
-                        holder_turn_started,
-                    } => !(perm.holder == p && holder_turn_started),
-                    PlayPermissionExpiry::LaterTurn { .. }
-                    | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
-                });
-            if crate::effect::sphinx_lore_v1::cleanup(state).is_err()
-                || crate::zul_ashur_v1::note_cleanup(state).is_err()
-                || crate::zul_ashur_v1::expire(state).is_err()
-            {
-                state.engine.halted =
-                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
-                return;
-            }
             let hand_size = state.players[p.index()].hand.len();
             if !niv_mizzet_no_max_hand_size && hand_size > 7 {
                 state.engine.pending_discard = Some(PendingDiscard {
@@ -18424,6 +18326,104 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
         }
         _ => {}
     }
+}
+
+/// CR 514.2 expiration, separated from the 514.1 discard obligation.
+/// The historical step-entry caller retains its original ordering; ending
+/// the turn can stage the discard first without copying the expiration work.
+fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
+    crate::standard_cards_v1::cleanup(state);
+    for player in &mut state.players {
+        player.poison_prevention_v1.0 = false;
+    }
+    // CR 514.2: damage is removed and effects with this duration end.
+    // The caller owns the separately ordered discard obligation.
+    for (_, obj) in state.objects.iter_mut() {
+        obj.damage = 0;
+        obj.v4.deathtouch_damage = false;
+        obj.v4.temporary_base_pt_v1 = None;
+        obj.v4.skrelv_grants_v1 = None;
+        obj.v4.melira_protection_v1 = None;
+        // Only effects with an explicit duration expire at cleanup.
+        if card_def::CARD_DEFS[obj.card_def as usize]
+            .animation
+            .is_some_and(|animation| animation.until_end_of_turn)
+        {
+            obj.v4.animation_timestamp = None;
+        }
+    }
+    crate::standard_creatures_v1::cleanup(state);
+    crate::sower_restriction_capture_v1::expire(state);
+    crate::effect::temporary_control_v1::expire_at_cleanup(state);
+    if effect::frenzied_goblin_resolution_v1::expire(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    if effect::expire_vampire_gourmand_restrictions(state).is_err()
+        || crate::ashroot_dispatch_v2::expire(state).is_err()
+    {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    if crate::ajani_full_v42::lifecycle::cleanup(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    let fake_cleanup = match crate::fake_your_own_death_v50::spell_custody::before_cleanup(state) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+            return Err(());
+        }
+    };
+    state.engine.until_end_of_turn.clear();
+    if crate::fake_your_own_death_v50::spell_custody::finish_cleanup(state, fake_cleanup).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    if let Err(source) = event::expire_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        return Err(());
+    }
+    state.engine.active_replacements.retain(|replacement| {
+        !matches!(
+            replacement.kind,
+            event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                | event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. }
+                | event::ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        )
+    });
+    let p = state.active_player;
+    state.players[p.index()].lands_played_this_turn = 0;
+    if crate::effect::strongbox_permission_v1::cleanup(state).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    // `EndOfTurn` permissions expire at the very next Cleanup,
+    // whoever's; `UntilHoldersNextTurn` only once it's the
+    // *holder's* own Cleanup, and only after their own Untap has
+    // already opened this "next turn" -- see
+    // `PlayPermissionExpiry`'s doc.
+    state
+        .engine
+        .exile_play_permissions
+        .retain(|perm| match perm.expiry {
+            PlayPermissionExpiry::EndOfTurn => false,
+            PlayPermissionExpiry::UntilHoldersNextTurn {
+                holder_turn_started,
+            } => !(perm.holder == p && holder_turn_started),
+            PlayPermissionExpiry::LaterTurn { .. }
+            | PlayPermissionExpiry::UntilHoldersNextEndStep => true,
+        });
+    if crate::effect::sphinx_lore_v1::cleanup(state).is_err()
+        || crate::zul_ashur_v1::note_cleanup(state).is_err()
+        || crate::zul_ashur_v1::expire(state).is_err()
+    {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return Err(());
+    }
+    Ok(())
 }
 
 // --------------------------------------------------------------- combat
