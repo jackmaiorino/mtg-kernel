@@ -1758,6 +1758,15 @@ pub enum EffectOp {
         target_index: u8,
         token_def: u16,
     },
+    /// Mark Alesha's Raid return as using its original source incarnation's
+    /// live power, with departure-time LKI as the fallback.
+    BindAleshaRaidReturn,
+    /// Return the selected creature card from its controller's graveyard to
+    /// the battlefield if the exact selected graveyard incarnation remains
+    /// legal under the original source incarnation's current power or LKI.
+    AleshaRaidReturn {
+        source_power_lki: i32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17661,6 +17670,32 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 event::ProposedEvent::zone_change(contract.source, Zone::Battlefield)
             };
             event::propose_and_commit(state, proposed);
+        }
+        EffectOp::AleshaRaidReturn { source_power_lki } => {
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            let target_spec =
+                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower;
+            if !crate::engine::effect_target_is_legal_from_ability_source_with_power_lki(
+                state,
+                source,
+                ctx.controller,
+                target_spec,
+                ctx.targets,
+                0,
+                Some(*source_power_lki),
+            ) || !ctx.target_incarnation_matches(0, state)
+            {
+                return;
+            }
+            let Some(crate::state::Target::Object(target)) = ctx.targets.get(0) else {
+                return;
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(*target, Zone::Battlefield),
+            );
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {

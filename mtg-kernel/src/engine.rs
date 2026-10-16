@@ -1796,6 +1796,7 @@ pub(crate) fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::PermanentCardInOwnGraveyard
         | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+        | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower
         | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
         | TargetSpec::SpellYouDontControl
         | TargetSpec::TargetOpponent
@@ -3147,6 +3148,9 @@ struct TargetingSource {
     card_def: u16,
     zone: Zone,
     zone_change_count: u32,
+    /// Power captured when the exact source incarnation left the battlefield.
+    /// Live power always takes precedence while that incarnation remains.
+    power_lki: Option<i32>,
     /// The creature "other than that creature" names, when a trigger's
     /// target must differ from an object other than its own source.
     other_than: Option<ObjectId>,
@@ -3160,6 +3164,7 @@ fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<Ta
         card_def: live.card_def,
         zone: live.zone,
         zone_change_count: live.zone_change_count,
+        power_lki: None,
         other_than: None,
         original_source_incarnation_only: false,
     })
@@ -3223,6 +3228,7 @@ fn triggered_ability_targeting_source(
             card_def: original.card_def,
             zone: original.zone,
             zone_change_count: original.zone_change_count,
+            power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
         });
@@ -3240,6 +3246,10 @@ fn triggered_ability_targeting_source(
         card_def: contract.card_def,
         zone: contract.zone,
         zone_change_count: contract.zone_change_count,
+        power_lki: match effect {
+            EffectOp::AleshaRaidReturn { source_power_lki } => Some(*source_power_lki),
+            _ => None,
+        },
         other_than,
         original_source_incarnation_only: matches!(
             effect,
@@ -3951,6 +3961,36 @@ fn legal_targets_for_controller_from_source(
         })
         .map(Target::Object)
         .collect(),
+        TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => {
+            let Some(source) = source else {
+                return Vec::new();
+            };
+            let source_power = state.objects.try_get(source.object).and_then(|live| {
+                (source.zone == Zone::Battlefield
+                    && live.zone == Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count)
+                    .then(|| effective_power(state, source.object))
+            }).or(source.power_lki).unwrap_or(-1);
+            if source_power < 0 {
+                Vec::new()
+            } else {
+                state.players[controller.index()]
+                    .graveyard
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        let object = state.objects.get(id);
+                        let definition = &card_def::CARD_DEFS[object.card_def as usize];
+                        object.owner == controller
+                            && object.zone == Zone::Graveyard
+                            && !object.v4.is_token
+                            && i32::from(definition.mana_value) <= source_power
+                            && definition.has_type(CardType::Creature)
+                    })
+                    .map(Target::Object)
+                    .collect()
+            }
+        }
         TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(maximum) => {
             // A historical source is required even after it has left. This
             // matches the pinned reference's AnotherPredicate physical-card
@@ -4222,6 +4262,20 @@ pub(crate) fn effect_target_is_legal_from_ability_source(
     targets: &[Target],
     index: usize,
 ) -> bool {
+    effect_target_is_legal_from_ability_source_with_power_lki(
+        state, source, controller, spec, targets, index, None,
+    )
+}
+
+pub(crate) fn effect_target_is_legal_from_ability_source_with_power_lki(
+    state: &GameState,
+    source: AbilitySourceContractV4,
+    controller: PlayerId,
+    spec: TargetSpec,
+    targets: &[Target],
+    index: usize,
+    power_lki: Option<i32>,
+) -> bool {
     targets.get(index).is_some_and(|target| {
         legal_targets_for_controller_from_source(
             spec,
@@ -4233,6 +4287,7 @@ pub(crate) fn effect_target_is_legal_from_ability_source(
                 card_def: source.card_def,
                 zone: source.zone,
                 zone_change_count: source.zone_change_count,
+                power_lki,
                 other_than: None,
                 original_source_incarnation_only: spec
                     == TargetSpec::AnotherControlledNonlandPermanent,
@@ -4449,6 +4504,7 @@ fn activation_legal_targets_with_source_lki(
                 || state.objects.get(source).zone_change_count,
                 |s| s.zone_change_count,
             ),
+            power_lki: None,
             other_than: None,
             original_source_incarnation_only: false,
         }),
@@ -14804,6 +14860,7 @@ pub(crate) fn stack_targets_still_legal(
                             card_def: state.objects.get(item.source).card_def,
                             zone: state.objects.get(item.source).zone,
                             zone_change_count: state.objects.get(item.source).zone_change_count,
+                            power_lki: None,
                             other_than: None,
                             original_source_incarnation_only: false,
                         }),

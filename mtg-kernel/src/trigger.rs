@@ -351,6 +351,14 @@ fn materialize_trigger_source_program(
                 },
             }
         }
+        EffectOp::BindAleshaRaidReturn => {
+            EffectOp::AleshaRaidReturn {
+                // This is replaced by last-known source power only if the
+                // original Alesha incarnation leaves. While it remains, the
+                // legal-target builder reads its live effective power.
+                source_power_lki: 0,
+            }
+        }
         EffectOp::BindWarpExileToTriggerSource => {
             let live = state.objects.get(source);
             EffectOp::WarpExileBoundObject {
@@ -405,6 +413,7 @@ fn contains_source_binding_template(effect: &EffectOp) -> bool {
         EffectOp::BindTemporaryBoostToTriggerSource { .. }
         | EffectOp::BindAshrootAttackBoostV1
         | EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+        | EffectOp::BindAleshaRaidReturn
         | EffectOp::BindDoublePlusOneCountersToTriggerSource
         | EffectOp::BindOilCounterToTriggerSource => true,
         EffectOp::Sequence(steps) => steps.iter().any(contains_source_binding_template),
@@ -3689,6 +3698,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
 
         "Searslicer Goblin" => &SEARSLICER_GOBLIN_TRIGGERS,
         "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
+        "Alesha, Who Laughs at Fate" => &crate::alesha_v1::TRIGGERS,
         "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -4075,6 +4085,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         (EffectOp::BindOilCounterToTriggerSource, EffectOp::PutOilCounterOnBoundObject { .. }) => {
             true
         }
+        (EffectOp::BindAleshaRaidReturn, EffectOp::AleshaRaidReturn { .. }) => true,
         (
             EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. },
@@ -4232,6 +4243,19 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Alesha, Who Laughs at Fate")
+    {
+        return match effect {
+            EffectOp::AleshaRaidReturn { .. } => Some(
+                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower,
+            ),
+            EffectOp::BindPlusOnePlusOneCounterToTriggerSource
+            | EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. } => Some(TargetSpec::None),
+            _ => None,
+        };
+    }
     if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
         return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
             .then_some(TargetSpec::None);
