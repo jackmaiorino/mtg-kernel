@@ -12,6 +12,7 @@ mod eaten;
 mod enchantment_hunter;
 mod entry_attack;
 mod faebloom;
+mod fiery;
 mod kellan;
 mod memorial_panda;
 mod rallier_bloom;
@@ -376,6 +377,13 @@ impl Owner for FakeSession {
             self.inner.fake_fixture_state(),
             reference.fake_fixture_state()
         );
+        assert_eq!(
+            self.counts(),
+            (
+                reference.policy_step_count(),
+                reference.physical_decision_count()
+            )
+        );
         Ok(())
     }
     fn snapshot(&self) -> Self::Snapshot {
@@ -452,6 +460,13 @@ impl Owner for RavenousSession {
         assert_eq!(
             self.inner.ravenous_fixture_state(),
             reference.ravenous_fixture_state()
+        );
+        assert_eq!(
+            self.counts(),
+            (
+                reference.policy_step_count(),
+                reference.physical_decision_count()
+            )
         );
         Ok(())
     }
@@ -565,4 +580,17 @@ fn kellan_paid_upgrades_combat_impulse_restore_privacy_fake_both_seats() {
 #[test]
 fn kellan_paid_upgrades_combat_impulse_restore_privacy_ravenous_both_seats() {
     paid_kellan::<RavenousSession>();
+}
+
+pub(in crate::current_mixed_policy_v1) fn paid_fiery<O: Owner>() {
+    fiery::paid::<O>();
+    fiery::privacy::<O>();
+}
+#[test]
+fn fiery_paid_optional_equipment_death_replacement_restore_privacy_fake_both_seats() {
+    paid_fiery::<FakeSession>();
+}
+#[test]
+fn fiery_paid_optional_equipment_death_replacement_restore_privacy_ravenous_both_seats() {
+    paid_fiery::<RavenousSession>();
 }

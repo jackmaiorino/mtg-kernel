@@ -1,6 +1,7 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
 mod elenda;
+mod fiery_public_operands;
 mod kellan_public_operands;
 mod network;
 mod normalize;
@@ -78,6 +79,11 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/eaten_printing.rs"),
             include_str!("current_mixed_policy_v1/enchantment_hunter_printing.rs"),
             include_str!("current_mixed_policy_v1/faebloom_printing.rs"),
+            include_str!("current_mixed_policy_v1/fiery_printing.rs"),
+            include_str!("current_mixed_policy_v1/fiery_public_operands.rs"),
+            include_str!("fiery_public_v1.rs"),
+            include_str!("fiery_observation_v1.rs"),
+            include_str!("fiery_annihilation_v1.rs"),
             include_str!("current_mixed_policy_v1/crystal_printing.rs"),
             include_str!("current_mixed_policy_v1/tyrant_herald_printing.rs"),
             include_str!("current_mixed_policy_v1/soulstone_printing.rs"),
