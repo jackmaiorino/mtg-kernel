@@ -22,6 +22,201 @@ use standard_look::ConvokeLookChoice;
 mod standard_copy;
 use standard_copy::CopyTargetChoice;
 mod discard_payment_v1;
+
+/// Native, non-target optional payment. Kept inline so existing source-identity
+/// closures over effect.rs include the entire validator and reducer.
+mod nonland_sacrifice_payment_v1 {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    pub struct ChoiceV1 {
+        pub player: PlayerId,
+        pub player_ref: PlayerRef,
+        pub unpaid: Box<EffectOp>,
+        pub permanents: Vec<EffectObjectBinding>,
+        pub path: Vec<u16>,
+    }
+
+    fn bind(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+        state
+            .objects
+            .iter()
+            .filter_map(|(object, live)| {
+                (live.zone == Zone::Battlefield
+                    && live.controller == player
+                    && !crate::engine::object_has_type(state, object, CardType::Land))
+                .then_some(EffectObjectBinding {
+                    object,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: live.zone_change_count,
+                })
+            })
+            .collect()
+    }
+
+    fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
+        let mut op = root;
+        let mut prefix = Vec::new();
+        let mut frames = Vec::new();
+        for &component in path {
+            op = match op {
+                EffectOp::Sequence(ops) => {
+                    let index = usize::from(component);
+                    let child = ops
+                        .get(index)
+                        .ok_or("nonland sacrifice payment path changed")?;
+                    for (ordinal, sibling) in ops.iter().enumerate().skip(index + 1).rev() {
+                        let mut path = prefix.clone();
+                        path.push(u16::try_from(ordinal).map_err(|_| "effect path overflow")?);
+                        frames.push(EffectFrame::Program {
+                            op: sibling.clone(),
+                            path,
+                        });
+                    }
+                    child
+                }
+                EffectOp::Conditional { then, else_, .. } => match component {
+                    0 => then,
+                    1 => else_,
+                    _ => return Err("nonland sacrifice payment branch changed".into()),
+                },
+                EffectOp::Choice { options, .. } => options
+                    .get(usize::from(component))
+                    .ok_or("nonland sacrifice payment option changed")?,
+                EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+                | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. }
+                    if component == 0 =>
+                {
+                    unpaid
+                }
+                _ => return Err("nonland sacrifice payment path is not definition-owned".into()),
+            };
+            prefix.push(component);
+        }
+        Ok(frames)
+    }
+
+    pub(super) fn validate_choice(
+        state: &GameState,
+        pending: &EffectContinuation,
+        choice: &ChoiceV1,
+    ) -> Result<(), String> {
+        let root = validated_definition_owned_root_effect(state, pending)?;
+        if effect_op_at_path(&root, &choice.path)
+            != Some(&EffectOp::MaySacrificeNonlandOtherwiseV1 {
+                player: choice.player_ref,
+                unpaid: choice.unpaid.clone(),
+            })
+            || pending.ctx.resolve_player(choice.player_ref, state) != choice.player
+            || pending.frames != remaining(&root, &choice.path)?
+            || choice.permanents.is_empty()
+            || choice.permanents != bind(state, choice.player)
+        {
+            return Err(
+                "nonland sacrifice lost its definition-owned payer, branch, frames or exact roster"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_selected(
+        choice: &ChoiceV1,
+        selected: &[EffectObjectBinding],
+    ) -> Result<(), String> {
+        if selected.len() > 1
+            || selected
+                .iter()
+                .any(|object| !choice.permanents.contains(object))
+        {
+            return Err("nonland sacrifice selected another permanent incarnation".into());
+        }
+        Ok(())
+    }
+
+    fn unpaid(pending: &mut EffectContinuation, op: EffectOp, mut path: Vec<u16>) {
+        path.push(0);
+        pending.frames.push(EffectFrame::Program { op, path });
+    }
+
+    pub(super) fn stage(
+        state: &GameState,
+        pending: &mut EffectContinuation,
+        player_ref: PlayerRef,
+        program: Box<EffectOp>,
+        path: Vec<u16>,
+    ) -> Result<bool, String> {
+        let player = pending.ctx.resolve_player(player_ref, state);
+        let root = validated_definition_owned_root_effect(state, pending)?;
+        if effect_op_at_path(&root, &path)
+            != Some(&EffectOp::MaySacrificeNonlandOtherwiseV1 {
+                player: player_ref,
+                unpaid: program.clone(),
+            })
+            || pending.frames != remaining(&root, &path)?
+        {
+            return Err("nonland sacrifice payment root or trailing instructions changed".into());
+        }
+        let permanents = bind(state, player);
+        if permanents.is_empty() {
+            unpaid(pending, *program, path);
+            return Ok(false);
+        }
+        let choice = ChoiceV1 {
+            player,
+            player_ref,
+            unpaid: program,
+            permanents,
+            path: path.clone(),
+        };
+        validate_choice(state, pending, &choice)?;
+        pending.choice = Some(PendingEffectChoice::SelectTargets {
+            player,
+            path,
+            selected: Vec::new(),
+            legal: choice
+                .permanents
+                .iter()
+                .copied()
+                .map(|binding| EffectTargetCandidate {
+                    target: Target::Object(binding.object),
+                    expected_object: Some(binding),
+                })
+                .collect(),
+            min_targets: 0,
+            max_targets: 1,
+            ordered: false,
+            purpose: EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice },
+        });
+        Ok(true)
+    }
+
+    pub(super) fn finish(
+        state: &mut GameState,
+        pending: &mut EffectContinuation,
+        choice: &ChoiceV1,
+        selected: &[EffectObjectBinding],
+    ) -> Result<(), String> {
+        validate_choice(state, pending, choice)?;
+        validate_selected(choice, selected)?;
+        if let Some(object) = selected.first() {
+            // This is a sacrifice, not destruction and not a target. The
+            // native batch owns replacements, departure LKI and death triggers.
+            crate::event::commit_sacrifice_death_group_v1(state, &[object.object]);
+            if state.engine.halted.is_some()
+                || state.objects.try_get(object.object).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.zone_change_count == object.expected_zone_change_count
+                })
+            {
+                return Err("nonland sacrifice did not consume the chosen incarnation".into());
+            }
+        } else {
+            unpaid(pending, (*choice.unpaid).clone(), choice.path.clone());
+        }
+        Ok(())
+    }
+}
 pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
@@ -1779,6 +1974,12 @@ pub enum EffectOp {
         graveyard: crate::state::ObjectLinkV4,
         revival_counters: i32,
     },
+    /// Optional exact-one non-target nonland sacrifice by this payer.
+    /// The unpaid subtree stays definition-owned at every suspended stage.
+    MaySacrificeNonlandOtherwiseV1 {
+        player: PlayerRef,
+        unpaid: Box<EffectOp>,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -2233,6 +2434,10 @@ pub enum EffectFrame {
         choice: discard_payment_v1::DiscardPaymentChoiceV1,
         selected: Vec<EffectObjectBinding>,
     },
+    NonlandSacrificePaymentV1 {
+        choice: nonland_sacrifice_payment_v1::ChoiceV1,
+        selected: Vec<EffectObjectBinding>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -2591,6 +2796,9 @@ pub enum EffectTargetSelectionPurpose {
     },
     AttachCopiedAuraV1 {
         choice: nonland_copy_v1::CopyChoiceV1,
+    },
+    NonlandSacrificePaymentV1 {
+        choice: nonland_sacrifice_payment_v1::ChoiceV1,
     },
 }
 
@@ -3154,6 +3362,25 @@ impl std::hash::Hash for ExecCtx {
     }
 }
 
+/// New native payment trees require a distinct consumer. Shape classification
+/// grants no executable authority; native definition/stage validation owns it.
+pub(crate) fn contains_nonland_sacrifice_payment_v1(op: &EffectOp) -> bool {
+    match op {
+        EffectOp::MaySacrificeNonlandOtherwiseV1 { .. } => true,
+        EffectOp::Sequence(ops) | EffectOp::Choice { options: ops, .. } => {
+            ops.iter().any(contains_nonland_sacrifice_payment_v1)
+        }
+        EffectOp::Conditional { then, else_, .. } => {
+            contains_nonland_sacrifice_payment_v1(then)
+                || contains_nonland_sacrifice_payment_v1(else_)
+        }
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => {
+            contains_nonland_sacrifice_payment_v1(unpaid)
+        }
+        _ => false,
+    }
+}
+
 /// Whether this program can yield a policy-visible choice anywhere in its
 /// tree. Existing Burn/Rally programs stay on their frozen synchronous/legacy
 /// continuation paths; explicit `Choice`, public partition ordering,
@@ -3208,6 +3435,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. }
         | EffectOp::CounterUnlessPaysLife { .. }
         | EffectOp::CounterUnlessDiscardsCard { .. }
@@ -4576,6 +4804,17 @@ fn complete_resumable_target_selection(
         }
         EffectTargetSelectionPurpose::CopyTarget { .. } => {
             unreachable!("handled target choices before object conversion")
+        }
+        EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice } => {
+            let frame = EffectFrame::NonlandSacrificePaymentV1 {
+                choice,
+                selected: objects,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
             let frame = EffectFrame::DiscardPaymentV1 {
@@ -6245,7 +6484,10 @@ pub(crate) fn effect_op_at_structural_path<'a>(
         EffectOp::Choice { options, .. } => options
             .get(usize::from(head))
             .and_then(|op| effect_op_at_structural_path(op, tail)),
-        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if head == 0 => {
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. }
+            if head == 0 =>
+        {
             effect_op_at_structural_path(unpaid, tail)
         }
         _ => None,
@@ -6653,7 +6895,12 @@ fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a Effec
                 _ => return None,
             },
             EffectOp::Choice { options, .. } => options.get(usize::from(component))?,
-            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } if component == 0 => unpaid,
+            EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+            | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. }
+                if component == 0 =>
+            {
+                unpaid
+            }
             _ => return None,
         };
     }
@@ -7641,6 +7888,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
+                        | EffectFrame::NonlandSacrificePaymentV1 { .. }
                         | EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterUnlessPaysLife { .. }
@@ -7660,6 +7908,12 @@ fn validate_answered_choice_guard(
             }
         }
         Some(EffectAnsweredChoiceGuard::StandardSelection { frame }) => {
+            if let EffectFrame::NonlandSacrificePaymentV1 { choice, selected } = frame.as_ref() {
+                let mut before_answer = pending.clone();
+                before_answer.frames.pop();
+                nonland_sacrifice_payment_v1::validate_choice(state, &before_answer, choice)?;
+                nonland_sacrifice_payment_v1::validate_selected(choice, selected)?;
+            }
             if let EffectFrame::DiscardPaymentV1 { choice, selected } = frame.as_ref() {
                 let mut before_answer = pending.clone();
                 before_answer.frames.pop();
@@ -7678,6 +7932,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExileBatchSelect { .. }
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
+                        | EffectFrame::NonlandSacrificePaymentV1 { .. }
                 )
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
@@ -8689,6 +8944,36 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice } => {
+                    nonland_sacrifice_payment_v1::validate_choice(state, pending, choice)?;
+                    if *chooser != choice.player
+                        || *path != choice.path
+                        || *ordered
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        || !selected.is_empty()
+                        || legal.len() != choice.permanents.len()
+                    {
+                        return Err("nonland sacrifice payment prompt shape changed".into());
+                    }
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            let binding = candidate
+                                .expected_object
+                                .ok_or("nonland sacrifice lost exact candidate binding")?;
+                            if candidate.target != Target::Object(binding.object) {
+                                return Err("nonland sacrifice candidate target changed");
+                            }
+                            Ok(binding)
+                        })
+                        .collect::<Result<Vec<_>, &str>>()?;
+                    validate_exact_binding_permutation(
+                        &choice.permanents,
+                        &actual,
+                        "nonland sacrifice candidates",
+                    )?;
                 }
                 EffectTargetSelectionPurpose::DiscardPaymentV1 { choice } => {
                     discard_payment_v1::validate_choice(state, pending, choice)?;
@@ -10421,7 +10706,10 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
                 validate_resumable_program(option)?;
             }
         }
-        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. } => validate_resumable_program(unpaid)?,
+        EffectOp::MayDiscardCardOtherwiseV1 { unpaid, .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { unpaid, .. } => {
+            validate_resumable_program(unpaid)?
+        }
         EffectOp::MayPayManaThen { then, .. }
         | EffectOp::MayExileFromPlayersGraveyardMatchingThen { then, .. }
         | EffectOp::LookAtTopMayRevealThen { then, .. } => validate_resumable_program(then)?,
@@ -10529,6 +10817,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 | EffectFrame::ExileBatchSelect { .. }
                 | EffectFrame::DiscardDraw { .. }
                 | EffectFrame::DiscardPaymentV1 { .. }
+                | EffectFrame::NonlandSacrificePaymentV1 { .. }
         ) && continuation.answered_choice_guard.take()
             != Some(EffectAnsweredChoiceGuard::StandardSelection {
                 frame: Box::new(frame.clone()),
@@ -10538,6 +10827,14 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::NonlandSacrificePaymentV1 { choice, selected } => {
+                    nonland_sacrifice_payment_v1::finish(
+                        state,
+                        &mut continuation,
+                        &choice,
+                        &selected,
+                    )?;
+                }
                 EffectFrame::DiscardPaymentV1 { choice, selected } => {
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
@@ -12600,6 +12897,12 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                 let answer = resolution_answer.take().ok_or("free land play has no typed answer")?;
                 crate::engine::resolution_cast_v1::stage(state, continuation, card, None, true, answer)?;
                 return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::MaySacrificeNonlandOtherwiseV1 { player, unpaid } => {
+                if nonland_sacrifice_payment_v1::stage(state, &mut continuation, player, unpaid, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
             }
             EffectOp::MayDiscardCardOtherwiseV1 { player, unpaid } => {
                 if discard_payment_v1::stage(state, &mut continuation, player, unpaid, path)? {
@@ -17543,6 +17846,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
+        | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }
         | EffectOp::ExileRandomGraveyardCardPlayableThisTurn { .. } => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

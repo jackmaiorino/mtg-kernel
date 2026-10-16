@@ -10368,6 +10368,23 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
     prepared_scope: Option<CommonProjectionScopeV42>,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PendingEffectSemanticV4> {
+    if pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .is_some_and(crate::effect::contains_nonland_sacrifice_payment_v1)
+        || pending.frames.iter().any(|frame| {
+            matches!(
+                frame,
+                crate::effect::EffectFrame::NonlandSacrificePaymentV1 { .. }
+            )
+        })
+    {
+        return Err(RlContractError(
+            "nonland sacrifice payment requires its distinct consumer".into(),
+        ));
+    }
+
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
@@ -10458,6 +10475,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                     ordered,
                     purpose,
                 } => {
+                    if matches!(purpose, crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. }) {
+                        return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                    }
                     let chooser_private = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard
@@ -10634,6 +10654,9 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. } => {
+                                return Err(RlContractError("nonland sacrifice payment requires its distinct consumer".into()));
+                            }
                             crate::effect::EffectTargetSelectionPurpose::ChooseNewlyExiledCard { .. }
                             | crate::effect::EffectTargetSelectionPurpose::ExileBatch { .. }
                             | crate::effect::EffectTargetSelectionPurpose::CopyTarget { .. }
