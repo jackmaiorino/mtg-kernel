@@ -4,7 +4,7 @@ use crate::{
     optional_trigger_public_v1 as public,
     rl::PlayerSeatV1,
     rules_meaning_midnight_snack_v58 as meaning,
-    state::{AbilitySourceContractV4, GameState, StackItemKind, Target, Zone},
+    state::{AbilitySourceContractV4, GameState, StackItemKind, Target},
 };
 use serde::{Deserialize, Serialize};
 pub const SCHEMA: &str = "mtg-kernel/midnight-snack-public/v58";

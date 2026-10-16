@@ -222,7 +222,6 @@ pub struct ReplacementInputV48 {
 }
 impl std::hash::Hash for ReplacementInputV48 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        use std::hash::Hash;
         self.controller.hash(state);
         self.seasons.hash(state);
         self.entry_controls_big.hash(state);

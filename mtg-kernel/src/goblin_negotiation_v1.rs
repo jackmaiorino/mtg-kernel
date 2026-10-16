@@ -41,7 +41,7 @@ pub(crate) fn preflight_resolution(state: &GameState, item: &StackItem) -> Resul
     };
     let lethal = lethal_threshold(state, ctx.source, target)?;
     let ProposedEvent::Damage(original_damage) =
-        crate::event::damage_from_exec_ctx_v1(ctx, Target::Object(target), i32::from(ctx.x_value))
+        crate::event::damage_from_exec_ctx_v1(&ctx, Target::Object(target), i32::from(ctx.x_value))
     else {
         unreachable!()
     };

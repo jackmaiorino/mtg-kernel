@@ -1,7 +1,7 @@
 //! Exact ordinary Aura support required by the expanded Replication path.
 //! Private validation covers every CardDef field; the descriptor is not executable.
 use super::{Error, Result};
-use crate::card_def::{CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec};
+use crate::card_def::{CardCapability, CardType, Keywords, Subtype, TargetSpec};
 use crate::effect::{EffectOp, ObjectRef};
 use crate::mana::{Cost, ManaColor, Pip};
 use serde_json::{json, Value};
