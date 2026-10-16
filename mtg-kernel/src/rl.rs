@@ -1894,6 +1894,7 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    refuse_chosen_type_mana_v60(state)?;
     crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
@@ -2200,6 +2201,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
+    refuse_chosen_type_mana_v60(state)?;
 
     if !matches!(
         text_mode,
@@ -2624,9 +2626,28 @@ fn public_foundations_combat_v1(state: &GameState) -> Result<Option<PublicFounda
         .transpose()
 }
 
+// Every predecessor counter/mana projection lacks the producing chosen type.
+// Inspect the actual public mana rule, never a concealed source printing.
+fn refuse_chosen_type_mana_v60(state: &GameState) -> Result<()> {
+    if state.players.iter().any(|player| {
+        player.restricted_mana_pool.0.iter().any(|unit| {
+            matches!(
+                unit.restriction,
+                crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(_)
+            )
+        })
+    }) {
+        return Err(RlContractError(
+            "chosen-type restricted mana requires a distinct complete consumer".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn public_restricted_mana_v1(
     state: &GameState,
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
+    refuse_chosen_type_mana_v60(state)?;
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
         for unit in &state.players[index].restricted_mana_pool.0 {

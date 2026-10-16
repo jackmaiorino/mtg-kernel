@@ -93,7 +93,7 @@ pub(super) fn payment(
         let (pips, generic) = remaining_cost;
         if i == chosen.len() {
             let spell = selected(state, p)?;
-            return mana::plan_spell_mana_total_with_restrictions_v1(
+            return mana::plan_spell_mana_total_with_restrictions_v1_typed_v60(
                 &pips,
                 generic,
                 p.controller,
@@ -103,6 +103,7 @@ pub(super) fn payment(
                 0,
                 spell.legendary_spell,
                 &spell.spell_subtypes,
+                spell.all_creature_types_v60,
             );
         }
         let colors = object_color_mask(state, chosen[i].object);

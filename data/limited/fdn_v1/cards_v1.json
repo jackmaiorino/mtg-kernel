@@ -8292,6 +8292,38 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BlasphemousEdict.java",
       "is_token": false
+    },
+    {
+      "name": "Secluded Courtyard",
+      "engine_capability": "partial",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Land"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": true,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [
+        "FDN_reference_secluded_courtyard_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "mana_ability",
+        "as_enters_choose_one_of_324_creature_types",
+        "tap_colorless_unrestricted",
+        "tap_any_color_only_chosen_type_creature_spell_or_creature_card_activation",
+        "floating_mana_retains_original_entry_choice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SecludedCourtyard.java",
+      "is_token": false
     }
   ]
 }

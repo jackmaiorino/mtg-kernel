@@ -10453,7 +10453,9 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(
             out,
             "        restricted_mana_abilities: {},",
-            standard.restricted_mana_abilities
+            if executable && c.name == "Secluded Courtyard" {
+                "&[RestrictedManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], restriction: ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) }]"
+            } else { standard.restricted_mana_abilities }
         )
         .unwrap();
         writeln!(out, "        animation: {},", standard.animation).unwrap();
@@ -10484,6 +10486,8 @@ fn codegen(cards: &[CardJson]) -> String {
             "        creature_type_entry_v1: {},",
             if executable && c.name == "Banner of Kinship" {
                 "Some(CreatureTypeEntryDefV1::FellowshipAndChosenTypeAnthem)"
+            } else if executable && c.name == "Secluded Courtyard" {
+                "Some(CreatureTypeEntryDefV1::ChosenTypeCreatureSpellOrAbilityMana)"
             } else {
                 "None"
             }
@@ -10790,6 +10794,9 @@ fn codegen(cards: &[CardJson]) -> String {
         {
             canon
                 .push_str("as_enters_color_choice_v1=AnyWubrg|chosen_color_creature_boost_v1=1,0|");
+        }
+        if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Secluded Courtyard" {
+            canon.push_str("creature_type_entry_v1=ChosenTypeCreatureSpellOrAbilityMana:domain324:original_entry_incarnation|tap:C_unrestricted_or_WUBRG_chosen_type_creature_spell_or_creature_card_activation|floating_restriction_retains_original_choice|");
         }
         if c.engine_capability != EngineCapabilityJson::NoEffect && c.name == "Banner of Kinship" {
             canon.push_str("creature_type_entry_v1=FellowshipAndChosenTypeAnthem:domain324:preentry_scene:checked_replacements:current_counter_controller_anthem|");

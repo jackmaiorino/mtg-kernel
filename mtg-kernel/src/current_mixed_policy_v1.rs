@@ -223,6 +223,7 @@ pub fn feature_identity() -> String {
             include_str!("card_def.rs"),
             include_str!("engine.rs"),
             include_str!("spell_costs_v1.rs"),
+            include_str!("standard_cast_convoke.rs"),
             include_str!("mana.rs"),
             include_str!("rl.rs"),
             include_str!("akroma_family_public_v40.rs"),

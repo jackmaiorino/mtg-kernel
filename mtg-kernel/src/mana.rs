@@ -245,21 +245,66 @@ impl std::hash::Hash for RestrictedManaPoolV1 {
     }
 }
 
+pub(crate) fn resolved_source_restriction_v60(
+    state: &GameState,
+    source: ObjectId,
+    restriction: crate::card_def::ManaSpendRestrictionDef,
+) -> Option<crate::card_def::ManaSpendRestrictionDef> {
+    match restriction {
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) => {
+            let object = state.objects.try_get(source)?;
+            if !crate::banner_of_kinship_v1::entry::owns_courtyard(object.card_def)
+                || object.zone != crate::state::Zone::Battlefield
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+                || !crate::standard_cards_v1::mana_abilities_active(
+                    state,
+                    source,
+                    &crate::card_def::CARD_DEFS[usize::from(object.card_def)],
+                )
+            {
+                return None;
+            }
+            let chosen =
+                crate::banner_of_kinship_v1::entry::authenticated_type(state, source).ok()?;
+            Some(crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen)))
+        }
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(_)) => None,
+        _ => Some(restriction),
+    }
+}
+fn authenticated_restricted_unit_v60(state: &GameState, unit: &RestrictedManaUnitV1) -> bool {
+    match unit.restriction {
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen)) => {
+            crate::banner_of_kinship_v1::entry::historical_courtyard_type(
+                state,
+                unit.source,
+                unit.source_card_def,
+            ) == Ok(chosen)
+        }
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) => false,
+        _ => true,
+    }
+}
+
 fn spell_floating_pool(
     state: &GameState,
     player: PlayerId,
     creature_spell: bool,
     legendary_spell: bool,
     spell_subtypes: &[u16],
+    all_creature_types: bool,
 ) -> [u8; 6] {
     let mut pool = state.players[player.index()].mana_pool;
     for unit in &state.players[player.index()].restricted_mana_pool.0 {
-        if restriction_permits(
-            unit.restriction,
-            creature_spell,
-            legendary_spell,
-            spell_subtypes,
-        ) {
+        if authenticated_restricted_unit_v60(state, unit)
+            && restriction_permits(
+                unit.restriction,
+                creature_spell,
+                legendary_spell,
+                spell_subtypes,
+                all_creature_types,
+            )
+        {
             pool[unit.color.pool_index()] = pool[unit.color.pool_index()].saturating_add(1);
         }
     }
@@ -273,6 +318,7 @@ fn separate_restricted_spending(
     creature_spell: bool,
     legendary_spell: bool,
     spell_subtypes: &[u16],
+    all_creature_types: bool,
 ) {
     {
         for (index, unit) in state.players[player.index()]
@@ -281,12 +327,15 @@ fn separate_restricted_spending(
             .iter()
             .enumerate()
         {
-            if !restriction_permits(
-                unit.restriction,
-                creature_spell,
-                legendary_spell,
-                spell_subtypes,
-            ) {
+            if !authenticated_restricted_unit_v60(state, unit)
+                || !restriction_permits(
+                    unit.restriction,
+                    creature_spell,
+                    legendary_spell,
+                    spell_subtypes,
+                    all_creature_types,
+                )
+            {
                 continue;
             }
             let used = &mut plan.pool_used[unit.color.pool_index()];
@@ -357,11 +406,11 @@ pub fn can_pay_spell(
     creature_spell: bool,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources_for_spell(player, state, creature_spell);
-    let pool = spell_floating_pool(state, player, creature_spell, false, &[]);
+    let pool = spell_floating_pool(state, player, creature_spell, false, &[], false);
     let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
         life_payment_affordable(plan.life_paid, state.players[player.index()].life)
     })?;
-    separate_restricted_spending(&mut plan, state, player, creature_spell, false, &[]);
+    separate_restricted_spending(&mut plan, state, player, creature_spell, false, &[], false);
     Some(plan)
 }
 
@@ -387,7 +436,7 @@ pub(crate) fn can_pay_owned_from_sources(
     state: &GameState,
     sources: &[ManaSource],
 ) -> Option<PaymentPlan> {
-    let pool = spell_floating_pool(state, player, false, false, &[]);
+    let pool = spell_floating_pool(state, player, false, false, &[], false);
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
@@ -402,7 +451,7 @@ pub(crate) fn can_pay_owned_from_sources(
     {
         return None;
     }
-    separate_restricted_spending(&mut plan, state, player, false, false, &[]);
+    separate_restricted_spending(&mut plan, state, player, false, false, &[], false);
     life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
@@ -508,6 +557,33 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
     legendary_spell: bool,
     spell_subtypes: &[u16],
 ) -> Option<PaymentPlan> {
+    plan_spell_mana_total_with_restrictions_v1_typed_v60(
+        pips,
+        generic,
+        player,
+        state,
+        creature_spell,
+        excluded,
+        additional_life,
+        legendary_spell,
+        spell_subtypes,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_restrictions_v1_typed_v60(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+    legendary_spell: bool,
+    spell_subtypes: &[u16],
+    all_creature_types: bool,
+) -> Option<PaymentPlan> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
         return None;
@@ -519,6 +595,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     )
     .into_iter()
     .filter(|source| !excluded.contains(&source.id))
@@ -529,6 +606,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     );
 
     let mut plan = PaymentPlan::default();
@@ -554,6 +632,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     );
     let total_life = i64::from(plan.life_paid) + i64::from(additional_life);
     (total_life == 0 || total_life <= i64::from(state.players[player.index()].life)).then_some(plan)
@@ -597,6 +676,33 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
     additional_life: u32,
     legendary_spell: bool,
     spell_subtypes: &[u16],
+) -> Option<(PaymentPlan, Vec<ObjectId>)> {
+    plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
+        pips,
+        generic,
+        player,
+        state,
+        creature_spell,
+        excluded,
+        additional_life,
+        legendary_spell,
+        spell_subtypes,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1_typed_v60(
+    pips: &[Pip],
+    generic: u32,
+    player: PlayerId,
+    state: &GameState,
+    creature_spell: bool,
+    excluded: &[ObjectId],
+    additional_life: u32,
+    legendary_spell: bool,
+    spell_subtypes: &[u16],
+    all_creature_types: bool,
 ) -> Option<(PaymentPlan, Vec<ObjectId>)> {
     let life = i64::from(state.players[player.index()].life);
     if additional_life != 0 && i64::from(additional_life) > life {
@@ -650,6 +756,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     ) {
         if excluded.contains(&source.id) {
             continue;
@@ -668,6 +775,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     );
     let mut used = vec![false; sources.len()];
     if !solve_pips_with_life_budget_v1(
@@ -701,6 +809,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_v1(
         creature_spell,
         legendary_spell,
         spell_subtypes,
+        all_creature_types,
     );
     Some((plan, convoked))
 }
@@ -793,7 +902,7 @@ pub fn gather_sources_for_spell(
     state: &GameState,
     creature_spell: bool,
 ) -> Vec<ManaSource> {
-    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, &[])
+    gather_sources_for_spell_restrictions_v1(player, state, creature_spell, false, &[], false)
 }
 
 fn restriction_permits(
@@ -801,6 +910,7 @@ fn restriction_permits(
     creature_spell: bool,
     legendary_spell: bool,
     spell_subtypes: &[u16],
+    all_creature_types: bool,
 ) -> bool {
     match restriction {
         crate::card_def::ManaSpendRestrictionDef::Unrestricted => true,
@@ -812,6 +922,16 @@ fn restriction_permits(
         crate::card_def::ManaSpendRestrictionDef::SpellWithSubtype(subtype) => {
             subtype.is_in_subtype_ids(spell_subtypes)
         }
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen)) => {
+            creature_spell
+                && (all_creature_types
+                    || spell_subtypes.iter().any(|id| {
+                        crate::card_def::Subtype::from_stable_id(*id)
+                            .and_then(crate::creature_types_v60::canonical_native_type)
+                            == Some(chosen)
+                    }))
+        }
+        crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None) => false,
     }
 }
 
@@ -821,6 +941,7 @@ fn gather_sources_for_spell_restrictions_v1(
     creature_spell: bool,
     legendary_spell: bool,
     spell_subtypes: &[u16],
+    all_creature_types: bool,
 ) -> Vec<ManaSource> {
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
@@ -856,11 +977,17 @@ fn gather_sources_for_spell_restrictions_v1(
         }
         {
             for restricted in def.restricted_mana_abilities {
+                let Some(restriction) =
+                    resolved_source_restriction_v60(state, id, restricted.restriction)
+                else {
+                    continue;
+                };
                 if !restriction_permits(
-                    restricted.restriction,
+                    restriction,
                     creature_spell,
                     legendary_spell,
                     spell_subtypes,
+                    all_creature_types,
                 ) {
                     continue;
                 }
@@ -899,11 +1026,11 @@ pub fn can_pay_excluding_sources(
     let mut plan = solve(
         cost,
         x_value,
-        spell_floating_pool(state, player, false, false, &[]),
+        spell_floating_pool(state, player, false, false, &[], false),
         &sources,
     )
     .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
-    separate_restricted_spending(&mut plan, state, player, false, false, &[]);
+    separate_restricted_spending(&mut plan, state, player, false, false, &[], false);
     Some(plan)
 }
 
@@ -1253,11 +1380,15 @@ pub(crate) fn plan_activation_mana_v1(
 ) -> Option<PaymentPlan> {
     let eligible =
         crate::engine::object_has_type(state, source, crate::card_def::CardType::Creature);
+    let has_courtyard = state.players[player.index()].battlefield.iter().any(|id| {
+        crate::banner_of_kinship_v1::entry::owns_courtyard(state.objects.get(*id).card_def)
+    });
     if !eligible
-        || state.players[player.index()]
+        || (state.players[player.index()]
             .restricted_mana_pool
             .0
             .is_empty()
+            && !has_courtyard)
     {
         return can_pay_excluding_sources(cost, x, player, state, excluded);
     }
@@ -1268,8 +1399,11 @@ pub(crate) fn plan_activation_mana_v1(
         .iter()
         .enumerate()
         .filter(|(_, unit)| {
-            unit.restriction
-                == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+            unit.restriction == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+                || matches!(unit.restriction,
+                    crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen))
+                    if authenticated_restricted_unit_v60(state, unit)
+                        && crate::creature_types_v60::matches_effective_creature(state, source, chosen) == Ok(true))
         })
         .map(|(index, unit)| (index, unit.color))
         .collect::<Vec<_>>();
@@ -1277,7 +1411,48 @@ pub(crate) fn plan_activation_mana_v1(
         projected.players[player.index()].mana_pool[color.pool_index()] =
             projected.players[player.index()].mana_pool[color.pool_index()].checked_add(1)?;
     }
-    let mut plan = can_pay_excluding_sources(cost, x, player, &projected, excluded)?;
+    let mut sources = gather_sources(player, &projected)
+        .into_iter()
+        .filter(|s| !excluded.contains(&s.id))
+        .collect::<Vec<_>>();
+    for mana_source in &mut sources {
+        let object = state.objects.get(mana_source.id);
+        if !crate::banner_of_kinship_v1::entry::owns_courtyard(object.card_def) {
+            continue;
+        }
+        let Some(crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen))) =
+            resolved_source_restriction_v60(
+                state,
+                mana_source.id,
+                crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(None),
+            )
+        else {
+            continue;
+        };
+        if crate::creature_types_v60::matches_effective_creature(state, source, chosen) != Ok(true)
+        {
+            continue;
+        }
+        for color in [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ] {
+            if !mana_source.choices.contains(&color) {
+                mana_source.choices.push(color);
+            }
+        }
+    }
+    let mut plan = solve(
+        cost,
+        x,
+        spell_floating_pool(&projected, player, false, false, &[], false),
+        &sources,
+    )
+    .filter(|p| life_payment_affordable(p.life_paid, projected.players[player.index()].life))?;
+    separate_restricted_spending(&mut plan, &projected, player, false, false, &[], false);
     for (index, color) in allowed {
         let used = &mut plan.pool_used[color.pool_index()];
         if *used > 0 {
@@ -1285,6 +1460,9 @@ pub(crate) fn plan_activation_mana_v1(
             plan.restricted_pool_used.push(index);
         }
     }
+    // The payment committer removes indices in reverse order. Preserve the
+    // original vector positions when eligible restrictions are interleaved.
+    plan.restricted_pool_used.sort_unstable();
     Some(plan)
 }
 
