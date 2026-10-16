@@ -116,6 +116,7 @@ fn draw(state: &mut GameState, source: ObjectId, controller: PlayerId, count: u3
         kicked: false,
         optional_additional_cost_paid: None,
         x_value: 0,
+        ..ExecCtx::no_targets(source, controller)
     };
     effect::execute(
         &EffectOp::DrawCards {

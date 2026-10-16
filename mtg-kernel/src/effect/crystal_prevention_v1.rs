@@ -431,6 +431,7 @@ impl OwnerV1 {
         path: &[u16],
     ) -> Option<(u32, StackItem)> {
         (ctx.same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, ctx)
             && effect_op_at_structural_path(&self.root, path) == Some(op)
             && state.engine.pending_effect.is_none()
             && !state
@@ -450,6 +451,7 @@ impl OwnerV1 {
             && before
                 .ctx
                 .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &before.ctx)
             && state.engine.pending_effect.as_ref() == Some(before)
             && state
                 .stack
@@ -505,6 +507,7 @@ impl OwnerV1 {
             && capture
                 .ctx
                 .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
             && batch_recipe(&capture.op) && events.iter().all(|event| {
             matches!(event, crate::event::ProposedEvent::Damage(damage)
@@ -544,6 +547,7 @@ impl OwnerV1 {
         capture
             .ctx
             .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
             && matches!(event, crate::event::ProposedEvent::Damage(d) if damage.as_ref() == Some(d))
             && !state
@@ -572,6 +576,7 @@ impl OwnerV1 {
             && capture
                 .ctx
                 .same_except_niv_damage_origin_v1(&context(&self.expected))
+            && niv_origin_matches_saved_item(state, &self.expected, &capture.ctx)
             && effect_op_at_structural_path(&self.root, &capture.path) == Some(&capture.op)
             && optional_discard_draw(&capture.op)
             && capture.hand.contains(&selected)
@@ -611,8 +616,17 @@ impl OwnerV1 {
     }
 }
 pub(crate) fn context(item: &StackItem) -> ExecCtx {
+    context_with_niv_damage_origin(item, None)
+}
+fn niv_origin_matches_saved_item(state: &GameState, item: &StackItem, ctx: &ExecCtx) -> bool {
+    ctx.niv_damage_origin_v1 == crate::event::niv_damage_origin_for_saved_item_v1(state, item)
+}
+fn context_with_niv_damage_origin(
+    item: &StackItem,
+    niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
+) -> ExecCtx {
     ExecCtx {
-        niv_damage_origin_v1: None,
+        niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
@@ -629,9 +643,15 @@ pub(crate) fn context(item: &StackItem) -> ExecCtx {
     }
 }
 fn probe(item: &StackItem) -> EffectContinuation {
+    probe_with_niv_damage_origin(item, None)
+}
+fn probe_with_niv_damage_origin(
+    item: &StackItem,
+    niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
+) -> EffectContinuation {
     EffectContinuation {
         resolving_item: item.clone(),
-        ctx: context(item),
+        ctx: context_with_niv_damage_origin(item, niv_damage_origin_v1),
         frames: Vec::new(),
         choice: None,
         answered_choice_guard: None,
@@ -900,6 +920,7 @@ fn owned_root(state: &GameState, pending: &EffectContinuation) -> Result<Box<Eff
     }
     let item = &pending.resolving_item;
     if !pending.ctx.same_except_niv_damage_origin_v1(&context(item))
+        || !niv_origin_matches_saved_item(state, item, &pending.ctx)
         || crate::engine::validated_stack_item_target_spec(item, state)?.is_some()
     {
         return Err("Crystal equipment damage lost actual historical grant/context".into());
@@ -952,7 +973,10 @@ pub(crate) fn source_power_payment_matches(
     };
     let mut original = item.clone();
     original.v4.crystal_prevention_started_v1 = CrystalPreventionStartedV1::default();
-    let mut initial = probe(item);
+    let mut initial = probe_with_niv_damage_origin(
+        item,
+        crate::event::niv_damage_origin_for_saved_item_v1(state, item),
+    );
     initial.frames.push(EffectFrame::Program {
         op: boundary.root.clone(),
         path: Vec::new(),
@@ -1465,7 +1489,8 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             }
         }
         if previous.is_none() {
-            let mut initial = probe(&b.item);
+            let expected_origin = crate::event::niv_damage_origin_for_saved_item_v1(state, &b.item);
+            let mut initial = probe_with_niv_damage_origin(&b.item, expected_origin);
             initial.frames.push(EffectFrame::Program {
                 op: b.root.clone(),
                 path: Vec::new(),
@@ -1537,6 +1562,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             }
             if p.resolving_item != *b.item
                 || !p.ctx.same_except_niv_damage_origin_v1(&context(&b.item))
+                || !niv_origin_matches_saved_item(state, &b.item, &p.ctx)
             {
                 return Err("Crystal boundary lost the complete captured context".into());
             }
@@ -1602,6 +1628,7 @@ pub(crate) fn begin_owned(
     if !owner.initial
         || *op != owner.root
         || !ctx.same_except_niv_damage_origin_v1(&context(&owner.original))
+        || !niv_origin_matches_saved_item(state, &owner.original, ctx)
         || state.engine.pending_effect.is_some()
         || state
             .stack
@@ -1610,7 +1637,7 @@ pub(crate) fn begin_owned(
     {
         return Err("Crystal removed-item loan changed".into());
     }
-    let mut p = probe(&owner.expected);
+    let mut p = probe_with_niv_damage_origin(&owner.expected, ctx.niv_damage_origin_v1);
     p.frames.push(EffectFrame::Program {
         op: op.clone(),
         path: Vec::new(),
@@ -1858,13 +1885,8 @@ fn drive_owned(state: &mut GameState, owner: &OwnerV1) -> Result<ResumableProgre
                 if let Some(damage) = capture.damage.as_ref() {
                     let occurrence = u32::try_from(state.engine.event_history.len())
                         .map_err(|_| "Crystal power capture exceeds u32")?;
-                    if offer_damage(
-                        state,
-                        &mut pending,
-                        damage.proposed_with_context(&pending.ctx),
-                        path,
-                        Some(occurrence),
-                    )? {
+                    let proposal = damage.proposed_with_context(&pending.ctx);
+                    if offer_damage(state, &mut pending, proposal, path, Some(occurrence))? {
                         step.offered_menu = pending.choice.clone();
                         step.creature_power_capture = Some(capture);
                         steps.push(step);
@@ -2063,6 +2085,7 @@ fn validate_damage_operations(state: &GameState) -> Result<(), String> {
             || !operation
                 .ctx
                 .same_except_niv_damage_origin_v1(&context(&execution.item))
+            || !niv_origin_matches_saved_item(state, &execution.item, &operation.ctx)
             || step.frame
                 != (EffectFrame::Program {
                     op: operation.op.clone(),
@@ -3077,7 +3100,9 @@ fn choice_original_damage(
         else {
             unreachable!()
         };
-        if !ctx.same_except_niv_damage_origin_v1(&context(&execution.item)) {
+        if !ctx.same_except_niv_damage_origin_v1(&context(&execution.item))
+            || !niv_origin_matches_saved_item(state, &execution.item, ctx)
+        {
             return Err("Crystal chosen power borrowed foreign stack incarnation".into());
         }
         return capture

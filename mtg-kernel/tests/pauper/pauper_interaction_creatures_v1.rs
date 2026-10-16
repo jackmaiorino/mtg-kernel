@@ -89,6 +89,7 @@ fn execute_trigger(state: &mut GameState, pending: &trigger::PendingTrigger) {
             kicked: false,
             optional_additional_cost_paid: None,
             x_value: 0,
+            ..ExecCtx::no_targets(pending.source, pending.controller)
         },
         state,
     );
@@ -179,6 +180,7 @@ fn cast_down_uses_the_nonlegendary_filter_and_shared_destroy_path() {
             kicked: false,
             optional_additional_cost_paid: None,
             x_value: 0,
+            ..ExecCtx::no_targets(cast_down, PlayerId::P0)
         },
         &mut state,
     );

@@ -151,6 +151,7 @@ fn place_counter(state: &mut GameState, object: ObjectId, player: PlayerId) {
         kicked: false,
         optional_additional_cost_paid: None,
         x_value: 0,
+        ..ExecCtx::no_targets(object, player)
     };
     effect::execute(
         &EffectOp::PutPlusOnePlusOneCounter {

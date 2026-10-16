@@ -93,6 +93,7 @@ fn execute_trigger(state: &mut GameState, source: ObjectId, controller: PlayerId
             kicked: false,
             optional_additional_cost_paid: None,
             x_value: 0,
+            ..ExecCtx::no_targets(source, controller)
         },
         state,
     );

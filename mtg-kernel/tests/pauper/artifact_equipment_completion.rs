@@ -126,6 +126,7 @@ fn execute_pending_trigger(state: &mut GameState, pending: &PendingTrigger) {
             hidden_ability_source: None,
             kicked: pending.kicked,
             x_value: 0,
+            ..ExecCtx::no_targets(pending.source, pending.controller)
         },
         state,
     );
@@ -602,6 +603,7 @@ fn unexpected_fangs_counters_are_permanent_lifelink_and_incarnation_bound() {
             hidden_ability_source: None,
             kicked: false,
             x_value: 0,
+            ..ExecCtx::no_targets(source, PlayerId::P0)
         },
         &mut stale,
     );
@@ -726,6 +728,7 @@ fn attach_effect_rejects_a_stale_target_incarnation_without_mutation() {
             hidden_ability_source: None,
             kicked: false,
             x_value: 0,
+            ..ExecCtx::no_targets(equipment, PlayerId::P0)
         },
         &mut state,
     );

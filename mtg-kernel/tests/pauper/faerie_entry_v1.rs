@@ -85,6 +85,7 @@ fn execute_trigger(state: &mut GameState, trigger: &trigger::PendingTrigger) {
             kicked: false,
             optional_additional_cost_paid: None,
             x_value: 0,
+            ..ExecCtx::no_targets(trigger.source, trigger.controller)
         },
         state,
     );
