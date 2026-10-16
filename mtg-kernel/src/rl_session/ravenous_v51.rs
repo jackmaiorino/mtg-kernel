@@ -451,25 +451,14 @@ pub(super) fn prepare_current(
     if session.flat_action_contract_mode == FlatActionContractModeV1::ElendaV52 {
         return super::elenda_v52::prepare_current(session, current);
     }
-    current.candidates = normalized_origin(session, current)?;
+    // The same immutable reconstruction already builds and validates the complete
+    // public parts. Candidate/cache updates below change none of its inputs.
+    let (candidates, _validated_public_parts) = normalized_origin_with_parts(session, current)?;
+    current.candidates = candidates;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
     current.flat_action_cache_v2 = None;
     current.flat_action_cache_error_v2 = None;
-    crate::ravenous_observation_v51::observe_v51(
-        &session.state,
-        &session.surface,
-        (current.actor, &current.origin_decision),
-        session.policy_step_count,
-        current.physical_decision_id,
-        (current.substep_index, current.substep_count),
-    )
-    .map_err(|_| {
-        diagnose_origin_error(
-            "ravenous_v51.prepare.observation",
-            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
-        )
-    })?;
     Ok(())
 }
 
