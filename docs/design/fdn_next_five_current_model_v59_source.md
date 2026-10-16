@@ -4,10 +4,10 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 `8a43c201cf18b9aaa310294a42642dee276313bb`, composed by normal merge with
 `41aea9c56747df05377d42810f93833cdd8d3f93` at `891af8e91`.
 Seven earlier Full registrations remain Full. The five appendices retain Partial
-IDs 452-456. A separate native Alesha appendix now retains Partial ID 457.
-Source inventory is 458 definitions and 266 FDN rows; frozen booster
-membership remains 286 names and 24 token dependencies (245 Full, 6 Partial,
-35 Missing). Full-only production deck reset still refuses each new appendix.
+IDs 452-456. Native Alesha and Nine-Lives Familiar appendices retain Partial IDs
+457 and 458. Source inventory is 459 definitions and 267 FDN rows; frozen booster
+membership remains 286 names and 24 token dependencies (245 Full, 7 Partial,
+34 Missing). Full-only production deck reset still refuses each new appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -113,11 +113,33 @@ the new exact-printing, frozen-prefix, 40-card and Full-only refusal check.
 Alesha's genuine native paid fixtures and departed-incarnation power receipt
 remain Rust source only. The existing native mutable-world LKI contract does
 not authenticate coordinated raw GameState edits; no V59 owner or model
-permission for Alesha is introduced. This integration passed pinned
+permission for Alesha is introduced.
+
+Reviewed Nine-Lives Familiar source through
+`d5f063062515e3e32460a670e0ff0ad40262fbaf` is composed at
+`10af6792c646645f5a7e942f90aedad176aa079e`. Genuine cast origin adds eight revival
+counters; reanimation adds none. Death captures the departing incarnation's
+counters and controller, and resolution schedules a one-shot future beginning
+of end step. Return uses the exact graveyard incarnation under the captured
+ability controller, with one fewer old counter before current entry replacements.
+Counter transfer includes revival counters. Existing consumer paths refuse
+unsupported nonzero revival counters; the legacy RL guard lives in `rl.rs`,
+already covered by the current feature identity. No Nine-Lives model or owning
+V59 permission is introduced. Paid fixtures cover both seats, Season, ordinary
+reanimation, control changes, stale graveyard incarnations, suppression and
+restore; all remain Rust source assertions. No paid effective-copy fixture is
+claimed. The composed source and guard identity received scoped read-only review.
+
+At exact composed source `10af6792c646645f5a7e942f90aedad176aa079e`, all 173
+affected Python cases across the same nine modules passed in 21.761 seconds,
+including the new exact-printing, frozen-prefix, deck and Full-only refusal case.
+The complete 151-case model subtree remains unchanged. This integration passed pinned
 1.94.1 formatting, diff checks, and lightweight static checks of source-case
-preservation, complete unique identity inputs, and unchanged catalog sources.
+preservation and feature identity coverage.
 All 151 Rust source cases at this composed head, binary and checker remain
 uncompiled/unrun; source counts are not runtime passes. Actual
-export/catalog/profile and runtime qualification remain root-owned after
-Native176 releases. No hash guess, profile waiver, Full promotion, trained
+export/catalog/profile and runtime qualification remain root-owned. Active
+Native177 qualifies the separate seven-printing source at
+`de373adff4e7d87835b5a7e428eb9da9c47b93f3`, excluding these Partial appendices.
+No hash guess, profile waiver, Full promotion, trained
 policy or strength claim is made here.
