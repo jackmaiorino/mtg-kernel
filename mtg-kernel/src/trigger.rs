@@ -5340,6 +5340,16 @@ fn triggers_from_events(
                 if !uses_leave_lki && (obj.zone != def.home_zone || !ability_active) {
                     continue;
                 }
+                // cease_to_exist keeps an inert arena object's last zone
+                // marker for historical source contracts. A new graveyard
+                // trigger needs actual current owner-zone membership, unlike
+                // a leave trigger already captured from its departing scene.
+                if !uses_leave_lki
+                    && def.home_zone == Zone::Graveyard
+                    && !state.players[obj.owner.index()].graveyard.contains(&id)
+                {
+                    continue;
+                }
                 // A `TriggeredAbilityDef` names one printed face's ability text
                 // (Delver of Secrets: the trigger prints on the front half only,
                 // Insectile Aberration carries none). `face_index` can only be
