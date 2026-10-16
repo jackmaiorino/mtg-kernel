@@ -16514,6 +16514,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     if let Some(owner) = edict_owner {
         return match effect::blasphemous_edict_v1::begin(state, owner, &ctx) {
             Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {
+                // A zero/one-card scene may complete without any prompt. It
+                // still owes the same ordinary spell departure as a resumed
+                // completion, including copied-spell and replacement handling.
+                if finish_resolved_stack_item(state, &item).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    return ResolutionProgress::Suspended;
+                }
                 ResolutionProgress::Complete
             }
             Ok(effect::ResumableProgress::Suspended) => {

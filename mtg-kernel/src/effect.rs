@@ -26073,19 +26073,21 @@ pub(crate) mod blasphemous_edict_v1 {
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.
         // Replacements and all departure observers remain one native batch.
+        let mut committed = state.clone();
         for b in &sacrificed {
-            event::log_sacrifice(state, b.object);
+            event::log_sacrifice(&mut committed, b.object);
         }
         event::propose_and_commit_batch(
-            state,
+            &mut committed,
             destinations
                 .into_iter()
                 .map(|b| event::ProposedEvent::zone_change(b.object, Zone::Graveyard))
                 .collect(),
         );
-        if state.engine.halted.is_some() {
+        if committed.engine.halted.is_some() {
             return Err("Edict native sacrifice batch halted".into());
         }
+        *state = committed;
         Ok(false)
     }
     pub(super) fn start(

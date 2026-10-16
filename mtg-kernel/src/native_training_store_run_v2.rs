@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 469);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 470);
         assert_eq!(
             partials,
             [
@@ -9032,6 +9032,7 @@ mod tests {
                 (466, "Sphinx's Tutelage"),
                 (467, "Consuming Aberration"),
                 (468, "Lathril, Blade of the Elves"),
+                (469, "Blasphemous Edict"),
             ]
         );
         let mut playable = Vec::new();

@@ -8262,6 +8262,36 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/l/LathrilBladeOfTheElves.java",
       "is_token": false
+    },
+    {
+      "name": "Blasphemous Edict",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{B}{B}",
+      "mana_value": 5,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_blasphemous_edict_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "optional_black_alternative_if_thirteen_effective_battlefield_creatures",
+        "apnap_each_player_chooses_thirteen_or_all_controlled_creatures",
+        "physical_owners_order_graveyard_destinations_then_simultaneous_sacrifice"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BlasphemousEdict.java",
+      "is_token": false
     }
   ]
 }
