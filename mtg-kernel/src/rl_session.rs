@@ -8514,12 +8514,13 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let surfaced = match {
+        let surface_result = {
             #[cfg(test)]
             let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceAdvance);
             self.surface
                 .next_decision_owned(&mut self.state, self.environment_revision)
-        } {
+        };
+        let surfaced = match surface_result {
             Ok(decision) => decision,
             Err(_) => {
                 self.terminal = Some(halted_terminal(

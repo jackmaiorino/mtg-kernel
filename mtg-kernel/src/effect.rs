@@ -4310,11 +4310,12 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
             || requires_printed_optional_trigger_stage(state, pending)
             || perforating_artist_v1::requires_stage(pending)
     }) {
-        validate_pending_effect_choice(state).map_err(|error| {
-            #[cfg(test)]
+        let validation = validate_pending_effect_choice(state);
+        #[cfg(test)]
+        if validation.is_err() {
             eprintln!("native_continuation::resume::required_choice_validation_rejected");
-            error
-        })?;
+        }
+        validation?;
     }
     validate_generic_resume_driver(state)?;
     drive_resumable(state)
