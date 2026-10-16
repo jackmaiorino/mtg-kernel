@@ -320,13 +320,10 @@ pub(crate) fn creature_types(state: &GameState, id: ObjectId) -> Option<(Vec<u16
         .effective_subtype_ids
         .iter()
         .copied()
+        // The frozen materialized changeling pool is not a classification of
+        // every native creature subtype. Preserve noncreature and unknown IDs.
         .filter(|value| {
-            // Scout is a known creature subtype even before the FDN catalog
-            // admits Kellan and extends its materialized changeling universe.
-            *value != Subtype::Scout.stable_id()
-                && !Subtype::CREATURE_TYPES
-                    .iter()
-                    .any(|subtype| subtype.stable_id() == *value)
+            !Subtype::from_stable_id(*value).is_some_and(Subtype::is_native_creature_type)
         })
         .collect();
     result.extend_from_slice(types);

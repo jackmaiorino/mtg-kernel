@@ -59,6 +59,10 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     for id in 0..=Subtype::Drake.stable_id() {
         let native = native_subtype(id).expect("all native IDs have explicit mappings");
         assert_eq!(native.stable_id(), id);
+        assert_eq!(
+            native.is_native_creature_type(),
+            canonical_native_type(native).is_some()
+        );
         if let Some(kind) = canonical_native_type(native) {
             canonical.insert(kind);
         } else {
@@ -69,6 +73,8 @@ fn every_native_subtype_preserves_its_id_and_canonical_case_alias() {
     assert_eq!(noncreature, 33);
     assert_eq!(canonical.len(), 115);
     assert!(native_subtype(154).is_none());
+    assert!(Subtype::from_stable_id(154).is_none());
+    assert!(Subtype::from_stable_id(u16::MAX).is_none());
     for (alias, normal, expected) in [
         (Subtype::BirdAllCaps, Subtype::Bird, CreatureTypeV60::Bird),
         (
@@ -287,6 +293,245 @@ fn later_creature_type_replacement_suppresses_printed_changeling() {
         matches_effective_creature(&state, source, CreatureTypeV60::TimeLord),
         Ok(false)
     );
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+#[test]
+fn genuine_omitted_creature_types_replace_exactly_and_later_additions_restore() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (name, native_kind, kind) in [
+            (
+                "Juggernaut",
+                Subtype::Juggernaut,
+                CreatureTypeV60::Juggernaut,
+            ),
+            (
+                "Gorehorn Raider",
+                Subtype::Minotaur,
+                CreatureTypeV60::Minotaur,
+            ),
+            ("Fiendish Panda", Subtype::Bear, CreatureTypeV60::Bear),
+        ] {
+            let mut state = crate::extra_turn_v1::tests::ready(actor);
+            let source = put(&mut state, actor, name, Zone::Battlefield);
+            assert!(crate::engine::has_effective_subtype(
+                &state,
+                source,
+                native_kind
+            ));
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(true));
+            let original = state.snapshot();
+            state.objects.get_mut(source).v4.creature_upgrade =
+                Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                    creature_types: Some((vec![Subtype::Human.stable_id()], 7)),
+                    ..Default::default()
+                });
+            assert_eq!(
+                crate::standard_creatures_v1::creature_types(&state, source),
+                Some((vec![Subtype::Human.stable_id()], 7))
+            );
+            assert_eq!(
+                crate::engine::effective_subtype_ids(&state, source),
+                vec![Subtype::Human.stable_id()]
+            );
+            assert!(!crate::engine::has_effective_subtype(
+                &state,
+                source,
+                native_kind
+            ));
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(false));
+            assert_eq!(
+                matches_effective_creature(&state, source, CreatureTypeV60::Human),
+                Ok(true)
+            );
+            assert_eq!(
+                matches_effective_creature(&state, source, CreatureTypeV60::TimeLord),
+                Ok(false)
+            );
+            let replaced = state.snapshot();
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(restored.state_hash(), state.state_hash());
+            assert_eq!(
+                matches_effective_creature(&restored, source, kind),
+                Ok(false)
+            );
+            state.objects.get_mut(source).v4.added_subtype_v1 = Some((native_kind, 6));
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(false));
+            state.objects.get_mut(source).v4.added_subtype_v1 = Some((native_kind, 8));
+            assert!(crate::engine::has_effective_subtype(
+                &state,
+                source,
+                native_kind
+            ));
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(true));
+            state.restore(&replaced);
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(false));
+            state.restore(&original);
+            assert!(crate::engine::has_effective_subtype(
+                &state,
+                source,
+                native_kind
+            ));
+            assert_eq!(matches_effective_creature(&state, source, kind), Ok(true));
+            assert_eq!(
+                matches_effective_creature(&state, source, CreatureTypeV60::Human),
+                Ok(false)
+            );
+        }
+    }
+}
+
+#[test]
+fn replacement_removes_both_native_case_aliases_preserves_noncreature_and_unknown_ids() {
+    // Typed native-state composition fixtures, not claims of paid card play.
+    for (alias, normal) in [
+        (Subtype::BirdAllCaps, Subtype::Bird),
+        (Subtype::FaerieAllCaps, Subtype::Faerie),
+        (Subtype::HumanAllCaps, Subtype::Human),
+        (Subtype::NinjaAllCaps, Subtype::Ninja),
+        (Subtype::RogueAllCaps, Subtype::Rogue),
+        (Subtype::WizardAllCaps, Subtype::Wizard),
+    ] {
+        let mut state = crate::extra_turn_v1::tests::ready(PlayerId::P0);
+        let source = put(
+            &mut state,
+            PlayerId::P0,
+            "Tolarian Terror",
+            Zone::Battlefield,
+        );
+        let object = state.objects.get_mut(source);
+        object.v4.effective_subtype_ids = vec![
+            alias.stable_id(),
+            normal.stable_id(),
+            Subtype::Equipment.stable_id(),
+            Subtype::Aura.stable_id(),
+            Subtype::Forest.stable_id(),
+        ];
+        object.v4.creature_upgrade = Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+            creature_types: Some((vec![Subtype::Goblin.stable_id()], 7)),
+            ..Default::default()
+        });
+        let expected = vec![
+            Subtype::Equipment.stable_id(),
+            Subtype::Aura.stable_id(),
+            Subtype::Forest.stable_id(),
+            Subtype::Goblin.stable_id(),
+        ];
+        assert_eq!(
+            crate::standard_creatures_v1::creature_types(&state, source),
+            Some((expected.clone(), 7))
+        );
+        assert!(!crate::engine::has_effective_subtype(&state, source, alias));
+        assert!(!crate::engine::has_effective_subtype(
+            &state, source, normal
+        ));
+        for noncreature in [Subtype::Equipment, Subtype::Aura, Subtype::Forest] {
+            assert!(crate::engine::has_effective_subtype(
+                &state,
+                source,
+                noncreature
+            ));
+        }
+        assert_eq!(
+            matches_effective_creature(&state, source, canonical_native_type(alias).unwrap()),
+            Ok(false)
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Goblin),
+            Ok(true)
+        );
+        state
+            .objects
+            .get_mut(source)
+            .v4
+            .effective_subtype_ids
+            .push(u16::MAX);
+        let mut with_unknown = expected;
+        with_unknown.insert(3, u16::MAX);
+        assert_eq!(
+            crate::standard_creatures_v1::creature_types(&state, source),
+            Some((with_unknown, 7))
+        );
+        let before = state.state_hash();
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Goblin),
+            Err(CreatureTypeMatchErrorV60::UnknownNativeSubtype(u16::MAX))
+        );
+        assert_eq!(state.state_hash(), before);
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(
+            matches_effective_creature(&restored, source, CreatureTypeV60::Goblin),
+            Err(CreatureTypeMatchErrorV60::UnknownNativeSubtype(u16::MAX))
+        );
+    }
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+#[test]
+fn newer_aura_override_supersedes_typed_replacement_and_older_override_does_not() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let source = put(&mut state, actor, "Juggernaut", Zone::Battlefield);
+        state.objects.get_mut(source).v4.creature_upgrade =
+            Some(crate::standard_creatures_v1::CreatureUpgradeV1 {
+                creature_types: Some((vec![Subtype::Human.stable_id()], 7)),
+                ..Default::default()
+            });
+        let aura = put(&mut state, actor, "Witness Protection", Zone::Battlefield);
+        let host = crate::state::ObjectLinkV4 {
+            object: source,
+            zone_change_count: state.objects.get(source).zone_change_count,
+        };
+        state.objects.get_mut(source).attachments.push(aura);
+        state.objects.get_mut(aura).v4.attached_to = Some(host);
+        state.objects.get_mut(aura).v4.layer_timestamp = Some(8);
+        assert!(crate::standard_creatures_v1::creature_types(&state, source).is_none());
+        assert_eq!(
+            crate::engine::effective_subtype_ids(&state, source),
+            vec![Subtype::Citizen.stable_id()]
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Citizen),
+            Ok(true)
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Human),
+            Ok(false)
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Juggernaut),
+            Ok(false)
+        );
+        let snapshot = state.snapshot();
+        state.objects.get_mut(aura).v4.layer_timestamp = Some(6);
+        assert_eq!(
+            crate::standard_creatures_v1::creature_types(&state, source),
+            Some((vec![Subtype::Human.stable_id()], 7))
+        );
+        assert_eq!(
+            crate::engine::effective_subtype_ids(&state, source),
+            vec![Subtype::Human.stable_id()]
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Human),
+            Ok(true)
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Citizen),
+            Ok(false)
+        );
+        state.restore(&snapshot);
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Citizen),
+            Ok(true)
+        );
+        assert_eq!(
+            matches_effective_creature(&state, source, CreatureTypeV60::Human),
+            Ok(false)
+        );
+    }
 }
 
 #[cfg(feature = "limited-fdn-fixtures")]

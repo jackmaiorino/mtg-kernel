@@ -27,11 +27,11 @@ def main():
     assert [(int(index), name) for _, index, name in generated] == [
         (entry["id"], entry["name"]) for entry in entries
     ]
-    native = (root / "mtg-kernel/src/card_def.rs").read_text(encoding="utf-8")
-    native = native.split("pub enum Subtype {", 1)[1].split("\n}", 1)[0]
+    native_source = (root / "mtg-kernel/src/card_def.rs").read_text(encoding="utf-8")
+    native = native_source.split("pub enum Subtype {", 1)[1].split("\n}", 1)[0]
     variants = re.findall(r"^    (\w+),$", native, re.M)
     assert len(variants) == 154
-    id_map = re.findall(r"^        (\d+) => Subtype::(\w+),$", source, re.M)
+    id_map = re.findall(r"^            (\d+) => Subtype::(\w+),$", native_source, re.M)
     assert id_map == [(str(index), name) for index, name in enumerate(variants)]
     mapping = re.findall(r"^        Subtype::(\w+) => (None|Some\(CreatureTypeV60::\w+\)),?$", source, re.M)
     assert [name for name, _ in mapping] == variants
@@ -42,6 +42,10 @@ def main():
     assert len(mapped) == 121 and len(set(mapped)) == 115
     assert sum(value == "None" for _, value in mapping) == 33
     aliases = dict(mapping)
+    classification = re.findall(r"^            Subtype::(\w+) => (true|false),$", native_source, re.M)
+    assert [name for name, _ in classification] == variants
+    assert all((value == "true") == (aliases[name] != "None") for name, value in classification)
+    assert "Subtype::from_stable_id(id)" in source
     for name in ("Bird", "Faerie", "Human", "Ninja", "Rogue", "Wizard"):
         assert aliases[name] == aliases[name + "AllCaps"]
     if args.rules_file:
