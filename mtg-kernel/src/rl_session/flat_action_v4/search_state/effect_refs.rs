@@ -52,6 +52,20 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
+            // These native owners have no hidden-source resampling contract.
+            BindLathrilCombatTokensV1
+            | LathrilCombatTokensV1 { .. }
+            | KykarChooseModeV1
+            | KykarExileV1
+            | KykarSpiritV1
+            | KykarReturnV1 { .. }
+            | BindGreatwurmCountersV1
+            | GreatwurmCountersV1 { .. }
+            | CreateTokenCopyOfSourceV1
+            | BindSphinxLoreV1
+            | SphinxLoreV1 { .. }
+            | HarvesterExileAndCopyV1
+            | FiendArtisanSearchV1 => true,
             BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
@@ -1207,6 +1221,52 @@ pub(super) fn conflicts(
     state.engine.event_log.iter().any(|event| {
         use crate::event::CommittedEvent::*;
         match event {
+            // Future native owning histories are not sampler permissions.
+            // Refuse them until their complete retained-reference walk exists.
+            LathrilCombatDamageV1 { .. }
+            | LathrilCombatCollectedV1 { .. }
+            | LathrilCombatPublishedV1 { .. }
+            | LathrilCombatResolvedV1 { .. }
+            | LathrilCombatCounteredV1 { .. }
+            | LathrilCombatObservedV1 { .. }
+            | CopiedTokenAbilitiesEnteredV1 { .. }
+            | CopiedTokenEndStepV1 { .. }
+            | CopiedTokenEndStepCollectedV1 { .. }
+            | CopiedTokenSacrificePublishedV1 { .. }
+            | CopiedTokenSacrificeFinishedV1 { .. }
+            | CuratorEnteredV1 { .. }
+            | CuratorCollectedV1 { .. }
+            | CuratorPublishedV1 { .. }
+            | CuratorFinishedV1 { .. }
+            | CuratorProgressV1 { .. }
+            | KykarExiledV1 { .. }
+            | KykarDelayedCollectedV1 { .. }
+            | GreatwurmCounterPaymentV1 { .. }
+            | GreatwurmCombatCaptureV1 { .. }
+            | GreatwurmCombatBoundV1 { .. }
+            | GreatwurmCollectedV1 { .. }
+            | GreatwurmPublishedV1 { .. }
+            | GreatwurmFinishedV1 { .. }
+            | GreatwurmCounterInputV1 { .. }
+            | SourceCopyDepartureV1 { .. }
+            | SphinxLoreV1 { .. }
+            | SphinxLoreCastOptionsV1 { .. }
+            | SphinxLoreCastSelectedV1 { .. }
+            | OmniscienceCastOptionsV1 { .. }
+            | OmniscienceCastSelectedV1 { .. }
+            | NightmareCopyEnteredV1 { .. }
+            | NightmareCopyLayerV1 { .. }
+            | HarvesterGraveyardEntryV1 { .. }
+            | HarvesterResolvedV1 { .. }
+            | HarvesterCastAnnouncedV1 { .. }
+            | HarvesterCastReversedV1 { .. }
+            | ProgenitusInputV1 { .. }
+            | ProgenitusShuffledV1 { .. }
+            | LeylineOpeningV1 { .. }
+            | FiendArtisanInputV1 { .. }
+            | FiendArtisanPaidV1 { .. }
+            | FiendArtisanSearchStartedV1 { .. }
+            | FiendArtisanSearchFinishedV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
             | ConquerorGainReplayBorrowV49 { .. }
