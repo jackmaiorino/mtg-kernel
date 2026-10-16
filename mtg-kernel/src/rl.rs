@@ -1896,6 +1896,7 @@ pub fn observe_v1(
 ) -> Result<ObservationV1> {
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::bloodthirsty_conqueror_v49::require_legacy_visible(state, Some(acting_player))
         .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(state, Some(acting_player))
@@ -2204,6 +2205,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     }
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
 
     if !matches!(
         text_mode,
@@ -2651,6 +2653,7 @@ fn public_restricted_mana_v1(
 ) -> Result<Option<[Vec<PublicRestrictedManaV1>; 2]>> {
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     let mut pools = [Vec::new(), Vec::new()];
     for (index, pool) in pools.iter_mut().enumerate() {
         for unit in &state.players[index].restricted_mana_pool.0 {
@@ -4969,6 +4972,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         proof.require_state(state)?;
     }
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
+    crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
 
     if !matches!(
         text_mode,
@@ -8858,6 +8862,14 @@ fn effect_target_ref_visible(
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
     if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
+    }) {
+        return Err(RlContractError(
+            "Curator private piles require a distinct complete consumer".into(),
+        ));
+    }
+    if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
     }) {
         return Err(RlContractError(
@@ -9182,6 +9194,14 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    if state.objects.try_get(id).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Curator of Destinies"
+    }) {
+        return Err(RlContractError(
+            "Curator private piles require a distinct complete consumer".into(),
+        ));
+    }
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none() && CARD_DEFS[usize::from(o.card_def)].name == "Electroduplicate"
     }) {
@@ -10844,6 +10864,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                             crate::effect::EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => { return Err(RlContractError("Blasphemous Edict requires a distinct complete consumer".into())); }
                             crate::effect::EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
                                 return Err(RlContractError("Tutelage mill requires its distinct complete consumer".into()));
@@ -10929,6 +10950,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
+                        crate::effect::EffectBooleanChoicePurpose::CuratorPileV1 { .. } => return Err(RlContractError("Curator requires its distinct complete consumer".into())),
                         crate::effect::EffectBooleanChoicePurpose::AleshaRaidReturnV1
                         | crate::effect::EffectBooleanChoicePurpose::ExilePlay { .. }
                         | crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {

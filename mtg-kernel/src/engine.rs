@@ -14228,6 +14228,14 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             .clone();
         event::publish_copied_token_trigger_v1(state, &item)?;
     }
+    if state
+        .stack
+        .last()
+        .is_some_and(|r| matches!(r.inline_effect, Some(EffectOp::CuratorDestiniesV1 { .. })))
+    {
+        let row = state.stack.last().unwrap().clone();
+        effect::curator_v1::publish(state, &row)?;
+    }
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -14607,6 +14615,10 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if effect::curator_v1::selected(state, item) {
+        effect::curator_v1::validate_trigger(state, item)?;
+        return Ok(None);
+    }
     if event::copied_token_item_selected_v1(state, item) {
         event::copied_token_trigger_v1(state, item)?;
         if state
@@ -15691,6 +15703,11 @@ pub(crate) fn counter_stack_item_by_id(
         crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
     let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
+    let curator_counter = if effect::curator_v1::selected(state, &item) {
+        Some(effect::curator_v1::validate_trigger(state, &item)?)
+    } else {
+        None
+    };
     let copied_counter = if event::copied_token_item_selected_v1(state, &item) {
         event::validate_published_copied_token_v1(state, &item)?;
         Some(item.v4.stack_item_id)
@@ -15707,6 +15724,14 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+    }
+    if let Some(entry_history_index) = curator_counter {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::CuratorFinishedV1 {
+                entry_history_index,
+            });
     }
     if let Some(stack_item_id) = copied_counter {
         state

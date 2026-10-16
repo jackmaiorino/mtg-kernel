@@ -8354,6 +8354,38 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Curator of Destinies",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{U}{U}",
+      "mana_value": 6,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Sphinx"
+      ],
+      "supertypes": [],
+      "power": 5,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "mechanics": [
+        "flying",
+        "cant_be_countered",
+        "etb_private_top_five_face_down_face_up_piles_opponent_chooses_hand_rest_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/CuratorOfDestinies.java",
+      "decks": [
+        "FDN_reference_curator_of_destinies_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

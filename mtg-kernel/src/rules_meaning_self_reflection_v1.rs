@@ -81,6 +81,7 @@ pub fn producer_sha256() -> String {
             ),
             ("engine.rs", include_str!("engine.rs")),
             ("effect.rs", include_str!("effect.rs")),
+            ("effect/curator_v1.rs", include_str!("effect/curator_v1.rs")),
             ("event.rs", include_str!("event.rs")),
             ("state.rs", include_str!("state.rs")),
             (

@@ -594,6 +594,13 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
     }
 }
 fn potential_operation(state: &GameState) -> bool {
+    if state
+        .stack
+        .iter()
+        .any(|row| crate::effect::curator_v1::selected(state, row))
+    {
+        return true;
+    }
     crate::effect::needs_electroduplicate_entry_owner_v1(state)
         || crate::drake_hatcher_v1::custody::relevant(state)
         || potentially_returns_aura(state)

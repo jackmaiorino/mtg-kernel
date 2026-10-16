@@ -1834,6 +1834,24 @@ pub enum CommittedEvent {
     CopiedTokenSacrificeFinishedV1 {
         stack_item_id: crate::ids::StackItemId,
     },
+    CuratorEnteredV1 {
+        entry_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+    },
+    CuratorCollectedV1 {
+        entry_history_index: u64,
+    },
+    CuratorPublishedV1 {
+        entry_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    CuratorFinishedV1 {
+        entry_history_index: u64,
+    },
+    CuratorProgressV1 {
+        entry_history_index: u64,
+        choice: Box<crate::effect::curator_v1::ChoiceV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4088,6 +4106,7 @@ fn commit_with_entry_batch_and_source_color(
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
     record_copied_token_entry_v1(state, entry_history_index);
+    crate::effect::curator_v1::record_entry(state, entry_history_index);
     if !tutelage_observers.is_empty()
         && matches!(
             state.engine.event_history.get(entry_history_index),

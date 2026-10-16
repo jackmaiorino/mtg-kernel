@@ -52,7 +52,7 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
+            BindCuratorDestiniesV1 | CuratorDestiniesV1 { .. } | ElectroduplicateCopyV1 | CopiedTokenEndStepSacrificeV1 { .. }
             | BlasphemousEdictV1 | BindSphinxsTutelageMillV1
             | SphinxsTutelageMillV1 { .. }
             | MaySacrificeNonlandOtherwiseV1 { .. }
@@ -330,7 +330,8 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            BlasphemousEdictV1 { .. }
+            CuratorV1 { .. }
+            | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | AleshaRaidAnswerV1 { .. }
             | SphinxsTutelageMillV1 { .. } => true,
@@ -586,7 +587,8 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
-            BlasphemousEdictV1 { .. }
+            CuratorCardsV1 { .. }
+            | BlasphemousEdictV1 { .. }
             | NonlandSacrificePaymentV1 { .. }
             | SphinxsTutelageMillOrderV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
@@ -822,7 +824,7 @@ impl Scan<'_> {
             PendingEffectChoice::ChooseBoolean { purpose, .. } => {
                 use EffectBooleanChoicePurpose::*;
                 match purpose {
-                    AleshaRaidReturnV1 => true,
+                    CuratorPileV1 { .. } | AleshaRaidReturnV1 => true,
                     ExilePlay { choice } => {
                         choice.card.is_some_and(|b| self.b(&b))
                             || self.bs(&choice.rejected)

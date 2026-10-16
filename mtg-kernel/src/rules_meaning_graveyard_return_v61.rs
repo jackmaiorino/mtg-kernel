@@ -130,6 +130,8 @@ pub fn producer_sha256() -> String {
             include_str!("engine.rs"),
             include_str!("event.rs"),
             include_str!("effect.rs"),
+            include_str!("effect/curator_v1.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
             include_str!("state.rs"),
             include_str!("trigger.rs"),
             include_str!("card_def.rs"),

@@ -667,7 +667,9 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // This exact owned root only mills. Draw capture, source, target and
         // private begin/resume authority remain Tutelage-owned.
         EffectOp::SphinxsTutelageMillV1 { .. } => true,
-        EffectOp::BlasphemousEdictV1 => true,
+        EffectOp::BindCuratorDestiniesV1
+        | EffectOp::CuratorDestiniesV1 { .. }
+        | EffectOp::BlasphemousEdictV1 => true,
         // Authenticated native copying/sacrifice only; this classification
         // supplies no public/owning admission for the printing or its tokens.
         EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. } => true,
