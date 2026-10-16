@@ -8769,14 +8769,30 @@ fn effect_target_ref_visible(
     })
 }
 
+/// Frozen RL card rows have no revival-counter field. Refuse before projecting
+/// any card carrying one through those older shapes. Keep this guard in `rl.rs`
+/// so the existing RL source-identity closure covers the behavior.
+fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.counters.revival != 0)
+    {
+        Err(RlContractError(
+            "legacy public counter schema cannot represent revival counters".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn public_card(state: &GameState, id: ObjectId) -> Result<CardPublicV1> {
     crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     let object = state
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    crate::nine_lives_familiar_v1::require_legacy_public_counter_schema(state, id)
-        .map_err(RlContractError)?;
+    require_legacy_public_counter_schema(state, id)?;
     if object.counters.soul != 0 {
         return Err(RlContractError(
             "public counter schema cannot represent soul counters".into(),
@@ -8919,8 +8935,7 @@ fn public_card_v2_non_soul_fields(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    crate::nine_lives_familiar_v1::require_legacy_public_counter_schema(state, id)
-        .map_err(RlContractError)?;
+    require_legacy_public_counter_schema(state, id)?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
         card_name: if object.v4.face_down_v1.is_some() {
