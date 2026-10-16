@@ -646,7 +646,20 @@ impl FastActorSessionV1 {
         human_seat: PlayerSeatV1,
         binding: &FakeDecisionBindingV50,
     ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-        let (_, _, current) = self.fake_current_decision_input_v50(expected, human_seat)?;
+        self.fake_validated_current_input_v50(expected, human_seat, binding)
+            .map(|_| ())
+    }
+
+    /// Return only public parts after the original complete private comparison,
+    /// for normalization in the owning model's unchanged pre-mutation frame.
+    pub(crate) fn fake_validated_current_input_v50(
+        &self,
+        expected: FastActorDecisionV1,
+        human_seat: PlayerSeatV1,
+        binding: &FakeDecisionBindingV50,
+    ) -> Result<(FakeObservationV50, Vec<ActionSemanticV1>), FlatActionDecisionSliceErrorV1> {
+        let (observation, actions, current) =
+            self.fake_current_decision_input_v50(expected, human_seat)?;
         if current.expected != binding.expected
             || current.candidates != binding.candidates
             || current.observation != binding.observation
@@ -654,6 +667,6 @@ impl FastActorSessionV1 {
         {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        Ok(())
+        Ok((observation, actions))
     }
 }
