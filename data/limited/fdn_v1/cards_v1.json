@@ -7974,6 +7974,26 @@
       "mechanics": ["eight_revival_counters_if_cast", "death_returns_next_end_step_with_one_fewer"],
       "java_file": "Mage.Sets/src/mage/cards/n/NineLivesFamiliar.java",
       "is_token": false
+    },
+    {
+      "name": "Valkyrie's Call",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{W}{W}",
+      "mana_value": 5,
+      "colors": ["W"],
+      "types": ["Enchantment"],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": ["FDN_reference_valkyries_call_partial.dck"],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": ["controlled_nontoken_nonangel_creature_death_returns_to_owner_with_counter_angel_and_flying"],
+      "java_file": "Mage.Sets/src/mage/cards/v/ValkyriesCall.java",
+      "is_token": false
     }
   ]
 }

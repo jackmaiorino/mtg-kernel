@@ -278,6 +278,9 @@ pub enum TriggerCondition {
     /// Nine-Lives Familiar dies with positive counters in its exact departure LKI.
     /// Appended to preserve the serialized discriminants of existing conditions.
     DiesWithRevivalCounterV1,
+    /// A controlled nontoken creature other than the source dies without the
+    /// named effective subtype, captured before the death batch.
+    OtherControlledNontokenCreatureDiesWithoutSubtypeV1(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -3703,6 +3706,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Midnight Snack" => &MIDNIGHT_SNACK_TRIGGERS,
         "Alesha, Who Laughs at Fate" => &crate::alesha_v1::TRIGGERS,
         "Nine-Lives Familiar" => &crate::nine_lives_familiar_v1::TRIGGERS,
+        "Valkyrie's Call" => &crate::valkyries_call_v1::TRIGGERS,
         "Infernal Vessel" => &crate::infernal_vessel_v1::TRIGGERS,
         "Authority of the Consuls" => &AUTHORITY_OF_THE_CONSULS_TRIGGERS,
         "Ruby, Daring Tracker" => &RUBY_DARING_TRACKER_TRIGGERS,
@@ -4090,6 +4094,9 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
             true
         }
         (EffectOp::BindAleshaRaidReturn, EffectOp::AleshaRaidReturn { .. }) => true,
+        (EffectOp::BindValkyriesCallDeathV1, EffectOp::ReturnValkyriesCallCreatureV1 { .. }) => {
+            true
+        }
         (
             EffectOp::BindPlusOnePlusOneCounterToTriggerSource,
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. },
@@ -4152,6 +4159,14 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
             EffectOp::BindNineLivesFamiliarReturnV1
                 | EffectOp::ScheduleNineLivesFamiliarReturnV1 { .. }
                 | EffectOp::ReturnNineLivesFamiliarV1 { .. }
+        )
+    {
+        return true;
+    }
+    if card.name == "Valkyrie's Call"
+        && matches!(
+            effect,
+            EffectOp::BindValkyriesCallDeathV1 | EffectOp::ReturnValkyriesCallCreatureV1 { .. }
         )
     {
         return true;
@@ -4267,6 +4282,13 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                 | EffectOp::ReturnNineLivesFamiliarV1 { .. }
         )
         .then_some(TargetSpec::None);
+    }
+    if crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.name == "Valkyrie's Call")
+    {
+        return matches!(effect, EffectOp::ReturnValkyriesCallCreatureV1 { .. })
+            .then_some(TargetSpec::None);
     }
     if crate::card_def::CARD_DEFS
         .get(usize::from(card_def))
@@ -5438,6 +5460,7 @@ fn triggers_from_events(
                         | TriggerCondition::DiesUnlessSubtype(_)
                         | TriggerCondition::OtherNontokenCreatureDies
                         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
+                        | TriggerCondition::OtherControlledNontokenCreatureDiesWithoutSubtypeV1(_)
                         | TriggerCondition::OpponentLosesLifeBatchV49
                         | TriggerCondition::AnotherControlledNonHydraCreatureGetsPlusOneCounters
                 ) {

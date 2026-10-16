@@ -14211,6 +14211,30 @@ fn validate_bound_trigger_source_objects(
                 );
             }
         }
+        EffectOp::BindValkyriesCallDeathV1 => {
+            return Err("unmaterialized Valkyrie's Call death trigger".into());
+        }
+        EffectOp::ReturnValkyriesCallCreatureV1 { graveyard, owner } => {
+            let Some(contract) = source_contract else {
+                return Err("Valkyrie's Call return lost its source contract".into());
+            };
+            if contract.source != source
+                || contract.zone != Zone::Battlefield
+                || !card_def::CARD_DEFS
+                    .get(usize::from(contract.card_def))
+                    .is_some_and(|definition| definition.name == "Valkyrie's Call")
+                || graveyard.zone_change_count == 0
+                || state
+                    .objects
+                    .try_get(graveyard.object)
+                    .is_none_or(|object| {
+                        object.owner != *owner
+                            || object.zone_change_count < graveyard.zone_change_count
+                    })
+            {
+                return Err("Valkyrie's Call return changed its captured source or owner".into());
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -17929,9 +17953,8 @@ fn live_plus_one_counter_characteristics(
 /// models: the card's own static `Keywords`, `static_self_boost_for`'s
 /// conditional self-grant (Goblin Tomb Raider's haste), and any active
 /// `UntilEndOfTurnEffect::ResolvedSetEffect` naming it (Goblin Bushwhacker's/
-/// Rally at the Hornburg's granted haste). Only `Keywords::HASTE` has a
-/// granted source to fold in this pool -- `Flying`/`Reach`/etc. still just
-/// read the card's own static bit, same as before this function existed.
+/// Rally at the Hornburg's granted haste), plus incarnation-local permanent
+/// grants stored in `CreatureUpgradeV1` (including Valkyrie's Call flying).
 /// Both boost sources route through this same query path (per external
 /// review: not a parallel mechanism) -- there is no combat- or SBA-specific
 /// shortcut anywhere else that reads power/toughness/keywords directly.

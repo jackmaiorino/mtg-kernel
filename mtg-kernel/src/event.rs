@@ -134,6 +134,13 @@ pub struct ZoneChangeProposed {
     /// Kept last so the existing serialized field prefix remains stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub battlefield_revival_v1: Option<i32>,
+    /// Installs a resolving-entry flying grant on the new incarnation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub battlefield_grant_flying_v1: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +244,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -255,6 +263,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -273,6 +282,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -294,6 +304,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -325,6 +336,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -359,6 +371,7 @@ impl ProposedEvent {
             battlefield_x_v48: None,
             battlefield_added_subtype_v1: None,
             battlefield_revival_v1: None,
+            battlefield_grant_flying_v1: false,
             touched_by: Vec::new(),
         })
     }
@@ -2952,6 +2965,19 @@ fn commit_with_entry_batch_and_source_color(
                 }
                 entry.1.added_subtype_v1 = Some(subtype);
             }
+            if change.battlefield_grant_flying_v1 {
+                let entry = entry_context
+                    .0
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        change.object,
+                    ));
+                    return;
+                }
+                entry.1.grant_flying_v1 = true;
+            }
         }
     }
     let counter_input =
@@ -4792,6 +4818,9 @@ fn commit_zone_change(
         .then(|| entering_characteristics.and_then(|entry| entry.added_subtype_v1))
         .flatten()
         .map(|subtype| (subtype, crate::engine::next_timestamp(state)));
+    let entry_flying_grant_timestamp = (to_zone == Zone::Battlefield
+        && entering_characteristics.is_some_and(|entry| entry.grant_flying_v1))
+    .then(|| crate::engine::next_timestamp(state));
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
@@ -4828,6 +4857,13 @@ fn commit_zone_change(
         // CR 611.2e: this resolving entry effect belongs to the new incarnation
         // before entry statics, counter replacements, and committed observers.
         obj.v4.added_subtype_v1 = entry_added_subtype;
+        if let Some(timestamp) = entry_flying_grant_timestamp {
+            obj.v4
+                .creature_upgrade
+                .get_or_insert_with(Default::default)
+                .keyword_grants
+                .push((crate::card_def::Keywords::FLYING, timestamp));
+        }
         // 707.10f: a resolving permanent spell copy becomes a token. This
         // is a zone entry, not token creation, so no creation replacement applies.
         if from_zone == Zone::Stack
