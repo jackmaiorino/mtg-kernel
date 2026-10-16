@@ -21,3 +21,18 @@ through two later equal-valued native end steps, then explicitly deletes only
 that marker in a separate restored world and requires readonly collection refusal.
 The original ten fixture bodies remain unchanged; all eleven Rust source groups
 remain uncompiled and unrun.
+
+
+Genuine Self-Reflection and Electroduplicate copies of the white 1/1 flying
+Spirit use a distinct lexical native-copy permit. Its original cast or native
+spell-copy row, complete context, exact target incarnation, closed Spirit
+blueprint and complete single-token proposal are authenticated before the
+existing replacement/entry batch. Season applies once to the request, and
+inherited copiable haste/end-step abilities remain attached to each resulting
+token. Raw Partial-token creation and Kykar's separate mode-only permit keep
+their existing refusal/authority boundaries. No registry, world/schema or
+consumer admission changes are made. Four added genuine paid/native both-seat
+source groups cover copy-of-copy, Season, restore, target removal, private
+permit/context/proposal and copy-ancestry corruption, plus independently
+initialized hidden worlds. Native spell copying and target removal are labelled
+primitives, not paid card routes. These Rust fixtures are uncompiled and unrun.

@@ -857,3 +857,326 @@ fn paid_countered_return_missing_marker_cannot_reuse_equal_later_end_steps_both_
             })));
     }
 }
+
+fn paid_spirit_copy_scene(s: &mut GameState, p: PlayerId) -> ObjectId {
+    let k = paid(s, p);
+    start(s, p, k);
+    choose(s, p, 1, None);
+    finish(s);
+    let spirit = s
+        .objects
+        .iter()
+        .find_map(|(id, o)| {
+            (o.zone == Zone::Battlefield && o.controller == p && token_definition(o.card_def))
+                .then_some(id)
+        })
+        .unwrap();
+    // Native departure primitive removes unrelated future cast triggers. The
+    // Spirit itself was created by the genuinely paid Kykar/cast/mode route.
+    event::propose_and_commit(s, event::ProposedEvent::zone_change(k, Zone::Hand));
+    assert_eq!(s.objects.get(k).zone, Zone::Hand);
+    spirit
+}
+fn spirit_objects(s: &GameState, p: PlayerId) -> Vec<ObjectId> {
+    s.objects
+        .iter()
+        .filter_map(|(id, o)| {
+            (o.zone == Zone::Battlefield && o.controller == p && token_definition(o.card_def))
+                .then_some(id)
+        })
+        .collect()
+}
+#[test]
+fn paid_spirit_self_reflection_electroduplicate_copy_of_copy_and_season_restore_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for season in [false, true] {
+            let mut s = ready(p);
+            if season {
+                cast(&mut s, p, "Doubling Season", &[], 5);
+                finish(&mut s);
+            }
+            let spirit = paid_spirit_copy_scene(&mut s, p);
+            let multiplier = if season { 2 } else { 1 };
+            let before = spirit_objects(&s, p).len();
+            cast(&mut s, p, "Self-Reflection", &[Target::Object(spirit)], 6);
+            let mut replay = restore(&s);
+            finish(&mut s);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            assert_eq!(spirit_objects(&s, p).len(), before + multiplier);
+            let before = spirit_objects(&s, p);
+            cast(&mut s, p, "Electroduplicate", &[Target::Object(spirit)], 3);
+            let mut replay = restore(&s);
+            finish(&mut s);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            let copies = spirit_objects(&s, p)
+                .into_iter()
+                .filter(|id| !before.contains(id))
+                .collect::<Vec<_>>();
+            assert_eq!(copies.len(), multiplier);
+            for id in &copies {
+                assert_eq!(event::copiable_token_abilities_v1(&s, *id).unwrap(), 1);
+                assert!(engine::has_effective_keyword(&s, *id, Keywords::HASTE));
+            }
+            let before = spirit_objects(&s, p);
+            cast(
+                &mut s,
+                p,
+                "Self-Reflection",
+                &[Target::Object(copies[0])],
+                6,
+            );
+            let mut replay = restore(&s);
+            finish(&mut s);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            let inherited = spirit_objects(&s, p)
+                .into_iter()
+                .filter(|id| !before.contains(id))
+                .collect::<Vec<_>>();
+            assert_eq!(inherited.len(), multiplier);
+            for id in inherited.iter().chain(copies.iter()) {
+                let o = s.objects.get(*id);
+                assert!(o.v4.is_token);
+                assert_eq!(o.owner, p);
+                assert_eq!(engine::checked_effective_pt(&s, *id).unwrap(), (1, 1));
+                assert_eq!(
+                    card_def::CARD_DEFS[o.card_def as usize].colors,
+                    [crate::mana::ManaColor::W]
+                );
+                assert!(engine::has_effective_keyword(&s, *id, Keywords::FLYING));
+                assert_eq!(event::copiable_token_abilities_v1(&s, *id).unwrap(), 1);
+            }
+            // Real pass progression publishes and resolves each inherited
+            // sacrifice ability; the original ordinary Spirits survive.
+            for _ in 0..200 {
+                let d = next(&mut s);
+                if inherited
+                    .iter()
+                    .chain(copies.iter())
+                    .all(|id| s.objects.get(*id).zone != Zone::Battlefield)
+                {
+                    break;
+                }
+                pass(&mut s, d);
+            }
+            assert!(inherited
+                .iter()
+                .chain(copies.iter())
+                .all(|id| s.objects.get(*id).zone != Zone::Battlefield));
+            assert_eq!(s.objects.get(spirit).zone, Zone::Battlefield);
+            assert!(refuse_legacy(&s).is_err());
+        }
+    }
+}
+#[test]
+fn paid_spirit_copy_stale_target_and_generic_or_forged_copy_authority_refuse_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for name in ["Self-Reflection", "Electroduplicate"] {
+            let mut s = ready(p);
+            let spirit = paid_spirit_copy_scene(&mut s, p);
+            cast(
+                &mut s,
+                p,
+                name,
+                &[Target::Object(spirit)],
+                if name == "Self-Reflection" { 6 } else { 3 },
+            );
+            let item = s.stack.last().unwrap().clone();
+            let ctx = crystal_prevention_v1::context(&item);
+            let op = if name == "Self-Reflection" {
+                EffectOp::CreateControlledCreatureTargetCopyV1
+            } else {
+                EffectOp::ElectroduplicateCopyV1
+            };
+            let mut raw = s.clone();
+            event::propose_and_commit(
+                &mut raw,
+                event::ProposedEvent::create_token(id("Kykar Spirit Token"), p),
+            );
+            assert!(raw.engine.halted.is_some());
+            assert_eq!(raw.objects, s.objects);
+            let mut raw = s.clone();
+            super::super::execute(&op, &ctx, &mut raw);
+            assert!(raw.engine.halted.is_some());
+            assert_eq!(raw.objects, s.objects);
+            let mut raw = s.clone();
+            assert!(
+                super::super::begin_resumable_resolution(&op, &ctx, item.clone(), &mut raw)
+                    .is_err()
+            );
+            assert_eq!(raw, s);
+            // An actual paid row supplies the private owner. Only its exact
+            // proposal/context/target are eligible, never caller-supplied flags.
+            let owner = super::super::acquire_native_execution_owner_v1(&s, &item)
+                .unwrap()
+                .unwrap();
+            let mut input = s.clone();
+            input.stack.pop();
+            let proof = NativeExecutionProofV1 {
+                owner: &owner,
+                ctx: &ctx,
+            };
+            let proposal = spirit_copy_proposal_v1(&input, &proof).unwrap().unwrap();
+            let good = SpiritCopyPermitV1 {
+                proof: &proof,
+                proposal: proposal.clone(),
+            };
+            assert!(good.allows(&input, &good.events()));
+            let mut stale = input.clone();
+            event::propose_and_commit(
+                &mut stale,
+                event::ProposedEvent::zone_change(spirit, Zone::Hand),
+            );
+            assert!(!good.allows(&stale, &good.events()));
+            let stale_before = stale.clone();
+            assert!(event::commit_spirit_copy_owned_v1(&mut stale, good).is_err());
+            assert_eq!(stale, stale_before);
+            let mut changed = proposal.clone();
+            if let event::ProposedEvent::CreateToken(t) = &mut changed {
+                t.controller = p.opponent();
+            }
+            let bad = SpiritCopyPermitV1 {
+                proof: &proof,
+                proposal: changed,
+            };
+            assert!(!bad.allows(&input, &bad.events()));
+            let mut foreign = ctx.clone();
+            foreign.controller = p.opponent();
+            let foreign_proof = NativeExecutionProofV1 {
+                owner: &owner,
+                ctx: &foreign,
+            };
+            assert!(spirit_copy_proposal_v1(&input, &foreign_proof).is_err());
+            let mut changed = proposal;
+            if let event::ProposedEvent::CreateToken(t) = &mut changed {
+                t.initialization_v48
+                    .as_mut()
+                    .unwrap()
+                    .copied_end_step_sacrifices_v1 += 1;
+            }
+            let bad = SpiritCopyPermitV1 {
+                proof: &proof,
+                proposal: changed,
+            };
+            assert!(!bad.allows(&input, &bad.events()));
+            let before = input.clone();
+            assert!(event::commit_spirit_copy_owned_v1(&mut input, bad).is_err());
+            assert_eq!(input, before);
+            // Explicit native target-removal primitive after genuine payment.
+            let before = spirit_objects(&s, p).len();
+            event::propose_and_commit(
+                &mut s,
+                event::ProposedEvent::zone_change(spirit, Zone::Hand),
+            );
+            let mut replay = restore(&s);
+            finish(&mut s);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            assert_eq!(spirit_objects(&s, p).len(), before - 1);
+        }
+    }
+}
+#[test]
+fn independent_hidden_worlds_keep_genuine_paid_spirit_copy_results_equal_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut a = ready_hidden(p, "Forest");
+        let mut b = ready_hidden(p, "Island");
+        let sa = paid_spirit_copy_scene(&mut a, p);
+        let sb = paid_spirit_copy_scene(&mut b, p);
+        assert_eq!(sa, sb);
+        for name in ["Self-Reflection", "Electroduplicate"] {
+            cast(
+                &mut a,
+                p,
+                name,
+                &[Target::Object(sa)],
+                if name == "Self-Reflection" { 6 } else { 3 },
+            );
+            cast(
+                &mut b,
+                p,
+                name,
+                &[Target::Object(sb)],
+                if name == "Self-Reflection" { 6 } else { 3 },
+            );
+            assert_eq!(a.stack, b.stack);
+            finish(&mut a);
+            finish(&mut b);
+            let ids = spirit_objects(&a, p);
+            assert_eq!(ids, spirit_objects(&b, p));
+            for id in ids {
+                assert_eq!(a.objects.get(id), b.objects.get(id));
+            }
+        }
+    }
+}
+
+#[test]
+fn genuine_native_spell_copies_of_paid_spirit_copy_spells_keep_ancestry_and_restore_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for season in [false, true] {
+            for name in ["Self-Reflection", "Electroduplicate"] {
+                let mut s = ready(p);
+                if season {
+                    cast(&mut s, p, "Doubling Season", &[], 5);
+                    finish(&mut s);
+                }
+                let spirit = paid_spirit_copy_scene(&mut s, p);
+                let before = spirit_objects(&s, p).len();
+                let original = cast(
+                    &mut s,
+                    p,
+                    name,
+                    &[Target::Object(spirit)],
+                    if name == "Self-Reflection" { 6 } else { 3 },
+                );
+                // Existing native spell-copy primitive, not a paid copy-spell
+                // producer claim. It inherits the genuine chosen target and
+                // creates the actual arena/parent/source contract ancestry.
+                let (copy, stack_id) = engine::copy_spell_for(&mut s, original, p).unwrap();
+                let row = s
+                    .stack
+                    .iter()
+                    .find(|r| r.v4.stack_item_id == stack_id)
+                    .unwrap()
+                    .clone();
+                assert!(row.is_copy);
+                assert!(!row.is_flashback);
+                assert_eq!(row.targets, [Target::Object(spirit)]);
+                assert!(s.objects.get(copy).spell_copy_origin.is_some());
+                engine::validated_stack_item_target_spec(&row, &s).unwrap();
+                let mut bad = restore(&s);
+                bad.objects.get_mut(copy).spell_copy_origin = None;
+                let corrupt = bad.clone();
+                assert!(engine::step(&mut bad, Action::Pass).is_err());
+                assert_eq!(bad, corrupt);
+                let mut replay = restore(&s);
+                finish(&mut s);
+                finish(&mut replay);
+                assert_eq!(s, replay);
+                assert_eq!(
+                    spirit_objects(&s, p).len(),
+                    before + 2 * if season { 2 } else { 1 }
+                );
+                let expected = usize::from(name == "Electroduplicate") as u32;
+                assert_eq!(
+                    spirit_objects(&s, p)
+                        .iter()
+                        .filter(
+                            |id| event::copiable_token_abilities_v1(&s, **id).unwrap() == expected
+                        )
+                        .count(),
+                    if expected == 0 {
+                        spirit_objects(&s, p).len()
+                    } else {
+                        2 * if season { 2 } else { 1 }
+                    }
+                );
+                assert!(!s.stack.iter().any(|r| r.source == copy));
+                assert_eq!(s.objects.get(original).zone, Zone::Graveyard);
+            }
+        }
+    }
+}

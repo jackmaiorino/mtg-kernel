@@ -18951,7 +18951,7 @@ fn execute_with_native_row_v1(
         }
         EffectOp::ElectroduplicateCopyV1 => {
             if let Err(_error) =
-                execute_electroduplicate_v1(state, ctx, native_row.expect("checked native proof"))
+                execute_electroduplicate_v1(state, ctx, native_proof.expect("checked native proof"))
             {
                 #[cfg(test)]
                 eprintln!("Electroduplicate native copy rejected: {_error}");
@@ -22090,7 +22090,19 @@ fn execute_with_native_row_v1(
             ));
         }
         EffectOp::CreateControlledCreatureTargetCopyV1 => {
-            crate::self_reflection_v1::execute(state, ctx);
+            if spirit_copy_target_v1(state, ctx) {
+                let result = native_proof
+                    .ok_or_else(|| "Spirit copy requires its native spell owner".to_string())
+                    .and_then(|proof| execute_spirit_copy_v1(state, proof));
+                if result.is_err() {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+            } else {
+                crate::self_reflection_v1::execute(state, ctx);
+            }
         }
         EffectOp::DoubleTargetPowerUntilEndOfTurn { target_index } => {
             let index = usize::from(*target_index);
@@ -25755,7 +25767,7 @@ fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
         return true;
     }
     state.stack.iter().any(|item| {
-        electroduplicate_item_v1(state, item)
+        (electroduplicate_item_v1(state, item) || spirit_copy_item_v1(state, item))
             && (item.source == ctx.source
                 || (item.v4.ability_source_contract.is_some()
                     && item.v4.ability_source_contract == ctx.ability_source_contract))
@@ -26882,8 +26894,9 @@ fn electroduplicate_proposal_v1(
 fn execute_electroduplicate_v1(
     state: &mut GameState,
     ctx: &ExecCtx,
-    owner: &NativeExecutionOwnerV1,
+    proof: &NativeExecutionProofV1<'_>,
 ) -> Result<(), String> {
+    let owner = proof.owner;
     if owner.ctx != *ctx
         || *owner.root != EffectOp::ElectroduplicateCopyV1
         || owner.item.kind != StackItemKind::Spell
@@ -26894,6 +26907,9 @@ fn execute_electroduplicate_v1(
             .is_none_or(|c| !electroduplicate_definition_v1(c.card_def))
     {
         return Err("Electroduplicate changed its original native spell/controller/context".into());
+    }
+    if spirit_copy_target_v1(state, ctx) {
+        return execute_spirit_copy_v1(state, proof);
     }
     if let Some(proposal) = electroduplicate_proposal_v1(state, ctx)? {
         event::propose_and_commit_batch(state, vec![proposal]);
@@ -26971,3 +26987,154 @@ pub(crate) fn needs_electroduplicate_entry_owner_v1(state: &GameState) -> bool {
 ))]
 #[path = "effect/electroduplicate_v1_tests.rs"]
 mod electroduplicate_v1_tests;
+
+// This copy permit never confers Kykar's separate printed token-creation mode.
+// Its original removed cast or native spell-copy row is borrowed for one batch.
+pub(crate) struct SpiritCopyPermitV1<'a, 'b> {
+    proof: &'a NativeExecutionProofV1<'b>,
+    proposal: event::ProposedEvent,
+}
+impl SpiritCopyPermitV1<'_, '_> {
+    pub(crate) fn events(&self) -> Vec<event::ProposedEvent> {
+        vec![self.proposal.clone()]
+    }
+    pub(crate) fn allows(&self, state: &GameState, events: &[event::ProposedEvent]) -> bool {
+        self.proof
+            .owner
+            .validate_entry(
+                state,
+                &self.proof.owner.item,
+                self.proof.ctx,
+                &self.proof.owner.root,
+            )
+            .is_ok()
+            && self.proof.owner.ctx == *self.proof.ctx
+            && spirit_copy_proposal_v1(state, self.proof)
+                .is_ok_and(|p| p == Some(self.proposal.clone()))
+            && events == self.events()
+    }
+}
+fn spirit_copy_target_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    ctx.target_contracts.iter().any(|c| {
+        matches!(c,
+        StackTargetContractV4::Object { card_def, .. } if kykar_v1::token_definition(*card_def))
+    }) || ctx.targets.iter().any(|t| {
+        matches!(t, Target::Object(id)
+            if state.objects.try_get(*id).is_some_and(|o|
+                o.v4.face_down_v1.is_none() && kykar_v1::token_definition(o.card_def)))
+    })
+}
+fn spirit_copy_item_v1(state: &GameState, item: &StackItem) -> bool {
+    item.v4.source_contract.is_some_and(|source| {
+        card_def::CARD_DEFS
+            .get(usize::from(source.card_def))
+            .is_some_and(|d| {
+                d.name == "Self-Reflection"
+                    && (d.spell_effect)() == Some(EffectOp::CreateControlledCreatureTargetCopyV1)
+            })
+    }) && spirit_copy_target_v1(state, &crystal_prevention_v1::context(item))
+}
+fn spirit_copy_proposal_v1(
+    state: &GameState,
+    proof: &NativeExecutionProofV1<'_>,
+) -> Result<Option<event::ProposedEvent>, String> {
+    let owner = proof.owner;
+    let ctx = proof.ctx;
+    let source = owner
+        .item
+        .v4
+        .source_contract
+        .ok_or("copy spell source absent")?;
+    // This validates native copy ancestry as well as physical cast provenance.
+    // Neither the copy flag nor a caller-provided copy-origin payload suffices.
+    crate::engine::validated_stack_item_target_spec(&owner.item, state)?;
+    if owner.ctx != *ctx
+        || owner.item.kind != StackItemKind::Spell
+        || owner.item.source != ctx.source
+        || owner.item.controller != ctx.controller
+        || owner.item.inline_effect.is_some()
+        || owner.item.targets != ctx.targets
+        || owner.item.v4.target_contracts != ctx.target_contracts
+    {
+        return Err("Spirit copy lost its original native spell/context".into());
+    }
+    let extra = match owner.root.as_ref() {
+        EffectOp::ElectroduplicateCopyV1 if electroduplicate_definition_v1(source.card_def) => 1,
+        EffectOp::CreateControlledCreatureTargetCopyV1
+            if spirit_copy_item_v1(state, &owner.item) =>
+        {
+            0
+        }
+        _ => return Err("Spirit copy has no selected printed root".into()),
+    };
+    let ([target @ Target::Object(object)], [contract]) =
+        (ctx.targets.as_slice(), ctx.target_contracts.as_slice())
+    else {
+        return Err("Spirit copy lost its single original target".into());
+    };
+    if !crate::self_reflection_v1::target_matches_live(state, *target, *contract)
+        || !crate::engine::effect_target_is_legal(
+            state,
+            ctx.source,
+            ctx.controller,
+            card_def::TargetSpec::ControlledCreature,
+            &ctx.targets,
+            0,
+        )
+    {
+        return Ok(None);
+    }
+    let live = state.objects.get(*object);
+    if !live.v4.is_token
+        || live.zone != Zone::Battlefield
+        || live.v4.face_down_v1.is_some()
+        || live.v4.face_index != 0
+        || !kykar_v1::token_definition(live.card_def)
+    {
+        return Err("Spirit copy requires the exact visible white flying blueprint".into());
+    }
+    let count = event::copiable_token_abilities_v1(state, *object)?
+        .checked_add(extra)
+        .ok_or("copiable Spirit ability count overflow")?;
+    let mut proposal = event::ProposedEvent::create_token(live.card_def, ctx.controller);
+    if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+        token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+            copied: true,
+            copied_end_step_sacrifices_v1: count,
+            ..Default::default()
+        });
+    }
+    Ok(Some(proposal))
+}
+fn execute_spirit_copy_v1(
+    state: &mut GameState,
+    proof: &NativeExecutionProofV1<'_>,
+) -> Result<(), String> {
+    proof
+        .owner
+        .validate_entry(state, &proof.owner.item, proof.ctx, &proof.owner.root)?;
+    // A former Spirit can have different current copiable values. Keep the
+    // original neutral face-down and ordinary-definition copy behavior; this
+    // path supplies no permission to materialize the Partial Spirit blueprint.
+    if proof.ctx.targets.first().is_some_and(|target| {
+        matches!(target, Target::Object(id) if state.objects.try_get(*id).is_some_and(|live|
+            live.v4.face_down_v1.is_some() || !kykar_v1::token_definition(live.card_def)))
+    }) {
+        match proof.owner.root.as_ref() {
+            EffectOp::CreateControlledCreatureTargetCopyV1 => {
+                crate::self_reflection_v1::execute(state, proof.ctx);
+            }
+            EffectOp::ElectroduplicateCopyV1 => {
+                if let Some(proposal) = electroduplicate_proposal_v1(state, proof.ctx)? {
+                    event::propose_and_commit_batch(state, vec![proposal]);
+                }
+            }
+            _ => return Err("Spirit copy lost its original printed root".into()),
+        }
+        return Ok(());
+    }
+    if let Some(proposal) = spirit_copy_proposal_v1(state, proof)? {
+        event::commit_spirit_copy_owned_v1(state, SpiritCopyPermitV1 { proof, proposal })?;
+    }
+    Ok(())
+}
