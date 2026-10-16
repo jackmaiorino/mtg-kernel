@@ -1910,6 +1910,14 @@ pub enum CommittedEvent {
         source: crate::state::StackSourceContractV4,
         stack_item_id: crate::ids::StackItemId,
     },
+    ProgenitusInputV1 {
+        input: Box<crate::progenitus_v1::InputV1>,
+    },
+    ProgenitusShuffledV1 {
+        input_history_index: u64,
+        move_history_index: Option<u64>,
+        source: crate::state::AbilitySourceContractV4,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2623,6 +2631,10 @@ pub fn apply_replacements(
                 return None;
             }
         }
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, &proposed, None) {
+        halt_zone_pt_v1(state, source);
+        return None;
     }
     if let ProposedEvent::ZoneChange(change) = &mut proposed {
         if change.to_zone == Zone::Graveyard
@@ -3977,6 +3989,28 @@ fn commit_with_entry_batch_and_source_color(
         .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
         .flatten();
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
+    let progenitus_plan = match crate::progenitus_v1::plan(state, &event, abilities_removed_before)
+    {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
+    if progenitus_plan
+        .as_ref()
+        .is_some_and(|plan| plan.same_library())
+    {
+        let plan = progenitus_plan.expect("private same-library plan");
+        let input = plan.record_input(state);
+        if let Err(source) = plan.finish(state, input, None) {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = progenitus_plan
+        .as_ref()
+        .map_or(event, |plan| plan.rewritten());
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
     // capture is published. Unrelated direct commits retain their old path.
@@ -4120,6 +4154,9 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    let progenitus_input = progenitus_plan
+        .as_ref()
+        .map(|plan| plan.record_input(state));
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4477,6 +4514,15 @@ fn commit_with_entry_batch_and_source_color(
             add_lore_counters(state, source, 1).expect("new Saga counters fit");
         }
     }
+    if let Some(plan) = progenitus_plan {
+        if let Err(source) = plan.finish(
+            state,
+            progenitus_input.expect("private Progenitus input"),
+            Some(entry_history_index),
+        ) {
+            halt_zone_pt_v1(state, source);
+        }
+    }
 }
 
 fn initialize_materialized_entry_v1(
@@ -4580,6 +4626,8 @@ impl FinalZonePtPlanV1 {
         if events.len() != counter_inputs.len() {
             return Err(ObjectId(0));
         }
+        let progenitus_preview = crate::progenitus_v1::preview(original, events)?;
+        let events = progenitus_preview.as_deref().unwrap_or(events);
         let mut plan = Self {
             departures: Vec::new(),
         };
@@ -4606,6 +4654,10 @@ impl FinalZonePtPlanV1 {
         // members exist before the one layer-7 query.
         let mut scene = original.clone();
         for (event, input) in events.iter().zip(counter_inputs) {
+            if matches!(event,ProposedEvent::ZoneChange(z)if z.to_zone==Zone::Library && original.objects.get(z.object).zone==Zone::Library && crate::progenitus_v1::definition(original.objects.get(z.object).card_def))
+            {
+                continue;
+            }
             let mut entry = characteristics;
             prepare_zone_entry_characteristics_v1(event, &mut entry)?;
             let season = crate::doubling_season_v48::requires_successor(original)
@@ -4770,6 +4822,7 @@ fn direct_zone_pt_plan_v1(
     state: &GameState,
     events: &[ProposedEvent],
 ) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
+    crate::progenitus_v1::preview(state, events)?;
     if !needs_final_zone_pt_plan_v1(state, events) {
         return Ok(None);
     }
@@ -5384,6 +5437,10 @@ struct MaterializedEventV1 {
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if let Err(source) = crate::progenitus_v1::preview(state, &events) {
+        halt_zone_pt_v1(state, source);
+        return;
+    }
     if events.iter().any(unsupported_partial_token_v1) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -9777,6 +9834,7 @@ pub(crate) fn copiable_token_abilities_v1(
 }
 
 pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    crate::progenitus_v1::validate(state)?;
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }

@@ -255,6 +255,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("planeswalker_v1.rs"),
         include_str!("engine/omniscience_cast_v1.rs"),
         include_str!("resolution_cast_v1.rs"),
+        include_str!("progenitus_v1.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {

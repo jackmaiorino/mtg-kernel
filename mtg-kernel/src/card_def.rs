@@ -1565,6 +1565,8 @@ impl Keywords {
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
     /// This permanent cannot be targeted by any player (702.18).
     pub const SHROUD: Keywords = Keywords(1 << 18);
+    /// Protection from every object (702.16j), not a color-quality shortcut.
+    pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0

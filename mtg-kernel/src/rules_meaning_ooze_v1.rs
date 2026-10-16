@@ -87,6 +87,7 @@ pub fn source_sha256() -> String {
             "resolution_cast_v1.rs",
             include_str!("resolution_cast_v1.rs"),
         ),
+        ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
     ] {
         digest.update(path.as_bytes());
         digest.update([0]);

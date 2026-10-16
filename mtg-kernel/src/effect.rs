@@ -8197,6 +8197,11 @@ fn returning_aura_hosts_in_zone(
         .iter()
         .filter_map(|(object, live)| {
             (live.zone == Zone::Battlefield
+                && !crate::engine::has_effective_keyword(
+                    state,
+                    object,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
+                )
                 && crate::engine::object_has_type(
                     state,
                     object,
