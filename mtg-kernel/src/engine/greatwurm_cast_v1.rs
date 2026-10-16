@@ -69,11 +69,9 @@ pub(super) fn options(state: &GameState, p: &PendingCast) -> Result<u16, String>
         .map_err(|_| "counter menu width exceeded".into())
 }
 pub(super) fn validate_pending(state: &GameState, p: &PendingCast) -> Result<(), String> {
-    let origin = p
-        .source_contract
-        .spell_cast_origin
-        .ok_or("cast origin absent")?;
-    let printed = matches!(origin.route, SpellCastRouteV4::GreatwurmGraveyardV1 { .. });
+    let printed = p.source_contract.spell_cast_origin.is_some_and(|origin| {
+        matches!(origin.route, SpellCastRouteV4::GreatwurmGraveyardV1 { .. })
+    });
     let Some(c) = &p.greatwurm_v1 else {
         return if printed {
             Err("Greatwurm stage erased".into())
@@ -81,6 +79,10 @@ pub(super) fn validate_pending(state: &GameState, p: &PendingCast) -> Result<(),
             Ok(())
         };
     };
+    let origin = p
+        .source_contract
+        .spell_cast_origin
+        .ok_or("cast origin absent")?;
     if !native::definition(p.source_contract.card_def)
         || p.origin_zone != Zone::Graveyard
         || origin.origin_zone != Zone::Graveyard

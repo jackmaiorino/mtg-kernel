@@ -745,18 +745,11 @@ fn paid_counterspell_keeps_six_removed_counters_and_all_mana_paid_both_seats() {
             pick_unit(&mut s, p, donor, CounterKindV1::Charge);
         }
         publish_graveyard(&mut s, p, w, before);
-        let stack_id = s
-            .stack
-            .iter()
-            .find(|r| r.source == w)
-            .unwrap()
-            .v4
-            .stack_item_id;
         let counter = cast(
             &mut s,
             p.opponent(),
             "Counterspell",
-            &[Target::StackItem(stack_id)],
+            &[Target::Object(w)],
             2,
         );
         let mut replay = restore(&s);
