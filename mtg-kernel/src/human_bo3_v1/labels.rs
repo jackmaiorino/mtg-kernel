@@ -2569,49 +2569,85 @@ mod next_five_native_label_tests {
 
     fn paid_giada_entry(actor: PlayerId) -> crate::state::GameState {
         use crate::engine::{self, Action, Decision};
+        use crate::state::Step;
         let mut state = ready(actor);
-        for _ in 0..4 {
+        for _ in 0..10 {
             put(&mut state, actor, "Plains", Zone::Battlefield);
         }
         put(&mut state, actor, "Serra Angel", Zone::Battlefield);
         put(&mut state, actor, "Doubling Season", Zone::Battlefield);
         let giada = put(&mut state, actor, "Giada, Font of Hope", Zone::Hand);
-        let tapped_before = state.players[actor.index()]
-            .battlefield
-            .iter()
-            .filter(|id| state.objects.get(**id).tapped)
-            .count();
-        let mut resolved = false;
-        for _ in 0..96 {
+        let later_angel = put(&mut state, actor, "Serra Angel", Zone::Hand);
+
+        fn paid_cast(
+            state: &mut crate::state::GameState,
+            actor: PlayerId,
+            spell: crate::ids::ObjectId,
+        ) {
+            use crate::engine::{self, Action, Decision};
+            let mana_value = crate::card_def::CARD_DEFS
+                [usize::from(state.objects.get(spell).card_def)]
+            .mana_value;
+            let tapped_before = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            let mut resolved = false;
+            for _ in 0..96 {
+                let decision = engine::advance_until_decision(state);
+                if state.objects.get(spell).zone == Zone::Battlefield
+                    && state.stack.is_empty()
+                    && state.engine.pending_cast.is_none()
+                    && state.engine.pending_effect.is_none()
+                    && state.engine.pending_triggers.is_empty()
+                {
+                    resolved = true;
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass {
+                        player,
+                        castable_spells,
+                        ..
+                    } if player == actor && castable_spells.contains(&spell) => {
+                        engine::step(state, Action::CastSpell(spell)).unwrap();
+                    }
+                    other => quiet_actual_step(state, other),
+                }
+            }
+            assert!(resolved, "paid Angel spell did not enter the battlefield");
+            let tapped_after = state.players[actor.index()]
+                .battlefield
+                .iter()
+                .filter(|id| state.objects.get(**id).tapped)
+                .count();
+            assert_eq!(tapped_after - tapped_before, usize::from(mana_value));
+        }
+
+        paid_cast(&mut state, actor, giada);
+        assert_eq!(state.objects.get(giada).counters.plus1_plus1, 0);
+        paid_cast(&mut state, actor, later_angel);
+        assert_eq!(state.objects.get(later_angel).counters.plus1_plus1, 4);
+
+        // Giada cannot use a tap mana ability on the turn she entered. Advance
+        // through native empty combat/priority decisions until her next turn.
+        let mut ready_to_tap = false;
+        for _ in 0..512 {
             let decision = engine::advance_until_decision(&mut state);
-            if state.objects.get(giada).zone == Zone::Battlefield
-                && state.stack.is_empty()
-                && state.engine.pending_cast.is_none()
-                && state.engine.pending_effect.is_none()
-                && state.engine.pending_triggers.is_empty()
+            if state.active_player == actor
+                && state.step == Step::Main1
+                && !state.objects.get(giada).summoning_sick
             {
-                resolved = true;
+                ready_to_tap = true;
                 break;
             }
-            match decision {
-                Decision::CastSpellOrPass {
-                    player,
-                    castable_spells,
-                    ..
-                } if player == actor && castable_spells.contains(&giada) => {
-                    engine::step(&mut state, Action::CastSpell(giada)).unwrap();
-                }
-                other => quiet_actual_step(&mut state, other),
-            }
+            quiet_actual_step(&mut state, decision);
         }
-        assert!(resolved, "paid Giada spell did not enter the battlefield");
-        let tapped_after = state.players[actor.index()]
-            .battlefield
-            .iter()
-            .filter(|id| state.objects.get(**id).tapped)
-            .count();
-        assert_eq!(tapped_after - tapped_before, 2);
-        assert!(state.objects.get(giada).counters.plus1_plus1 >= 2);
+        assert!(
+            ready_to_tap,
+            "native turn progression clears Giada sickness"
+        );
         state
     }
 
@@ -3268,7 +3304,7 @@ mod next_five_native_label_tests {
                 .iter()
                 .find(|row| row.source.name == "Giada, Font of Hope")
                 .expect("Giada's public entry roster");
-            assert_eq!(angel_row.current_angels.len(), 2);
+            assert_eq!(angel_row.current_angels.len(), 3);
             assert!(angel_row
                 .current_angels
                 .iter()
@@ -3277,18 +3313,40 @@ mod next_five_native_label_tests {
                 .current_angels
                 .iter()
                 .any(|angel| angel.name == "Giada, Font of Hope"));
+            assert_eq!(
+                angel_row
+                    .current_angels
+                    .iter()
+                    .filter(|angel| angel.name == "Serra Angel")
+                    .count(),
+                2
+            );
             let mana = visible
                 .actions
                 .iter()
                 .find(|row| row.label.contains("only to cast Angel spells"))
                 .expect("native restricted Giada mana action");
             assert!(mana.label.contains("add {W}"));
+            let mana_index = mana.action_index;
             let saved = session.snapshot_v59();
-            submit_owned(&mut session, &mut projector, &visible, mana.action_index);
+            submit_owned(&mut session, &mut projector, &visible, mana_index);
             session.restore_v59(&saved).unwrap();
             let (_, restored) = owned_human_prompt(&mut session, &mut projector, actor);
             assert!(restored.actions.iter().any(|row| row.label == mana.label));
-            assert!(restored.state.next_five.angel_mana[actor.index()]
+            assert!(restored.state.next_five.angel_mana[actor.index()].is_empty());
+            let restored_mana = restored
+                .actions
+                .iter()
+                .find(|row| row.label == mana.label)
+                .expect("restored native Giada mana ability");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored,
+                restored_mana.action_index,
+            );
+            let (_, after_mana) = owned_human_prompt(&mut session, &mut projector, actor);
+            assert!(after_mana.state.next_five.angel_mana[actor.index()]
                 .iter()
                 .any(|row| row
                     .current_original_source
@@ -3386,7 +3444,10 @@ mod next_five_native_label_tests {
             let target_action = target
                 .actions
                 .iter()
-                .find(|row| row.label.contains("creature target for Goblin Negotiation"))
+                .find(|row| {
+                    row.label.contains("creature target for Goblin Negotiation")
+                        && row.label.contains("Axgard Cavalry")
+                })
                 .expect("native Goblin creature target action");
             submit_owned(
                 &mut session,
@@ -3456,14 +3517,16 @@ mod next_five_native_label_tests {
             let target_action = visible
                 .actions
                 .iter()
-                .find(|row| {
-                    row.label.contains("another nonland permanent")
-                        && row.label.contains("Extravagant Replication")
-                })
+                .find(|row| row.label.contains("Bind the Monster"))
                 .expect("actual paid Replication upkeep target");
-            assert!(target_action.label.contains("Bind the Monster"));
-            assert!(visible.state.next_five.casts.iter().any(|row| {
-                row.source.name == "Extravagant Replication" && !row.payment_pending
+            assert!(target_action.label.contains("another nonland permanent"));
+            assert!(visible.state.next_five.current.iter().any(|row| {
+                row.family == crate::rules_meaning_next_five_v59::FamilyV59::Replication
+                    && row.source.name == "Extravagant Replication"
+            }));
+            assert!(visible.state.next_five.triggers.iter().any(|row| {
+                row.family == crate::rules_meaning_next_five_v59::FamilyV59::Replication
+                    && row.source.original_source.name == "Extravagant Replication"
             }));
             let saved = session.snapshot_v59();
             submit_owned(
