@@ -1492,8 +1492,12 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
-    /// Canonical pre-departure power for one exact Alesha battlefield incarnation.
-    /// The matching ZoneChange is committed immediately before this receipt.
+    /// Engine-produced pre-departure power for one exact Alesha battlefield
+    /// incarnation. Structural validation binds this receipt to the matching
+    /// immediately preceding ZoneChange and effect payload. Because native
+    /// GameState/event history is mutable, coordinated edits to both receipt
+    /// and payload are outside this check; owning consumers must preserve the
+    /// state/snapshot trust boundary before admitting this route.
     AleshaPowerLkiV1 {
         source: ObjectId,
         card_def: u16,

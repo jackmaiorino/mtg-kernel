@@ -3261,9 +3261,12 @@ fn triggered_ability_targeting_source(
     })
 }
 
-/// Resolve Alesha's exact source incarnation to current power or a canonical
-/// departure receipt. The mutable effect payload is never the authority for
-/// a departed source; it is checked against this committed event-history row.
+/// Resolve Alesha's exact source incarnation to current power or its
+/// engine-produced departure receipt. This structurally checks the receipt
+/// against the departure row and the mutable effect payload. It does not
+/// authenticate coordinated edits to raw GameState/event history; callers
+/// that expose this route must keep state and snapshots behind their owning
+/// trust boundary.
 pub(crate) fn alesha_raid_source_power(
     state: &GameState,
     source: AbilitySourceContractV4,
@@ -14148,7 +14151,7 @@ fn validate_bound_trigger_source_objects(
                     && alesha_raid_source_power(state, contract) != Some(*source_power_lki))
             {
                 return Err(
-                    "Alesha Raid source power lacks its canonical exact-incarnation authority"
+                    "Alesha Raid source power lacks its engine-produced exact-incarnation receipt"
                         .into(),
                 );
             }

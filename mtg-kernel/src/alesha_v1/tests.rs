@@ -349,7 +349,7 @@ fn paid_raid_uses_original_source_lki_after_its_own_death_return_both_seats() {
                 && *power == 3)
         }));
 
-        // A forged stack payload cannot replace the canonical receipt.
+        // An effect-only edit cannot replace the engine-produced receipt.
         let source_contract = state.stack[raid_index].v4.ability_source_contract.unwrap();
         assert_eq!(
             engine::alesha_raid_source_power(&state, source_contract),
