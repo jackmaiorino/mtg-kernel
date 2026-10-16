@@ -739,11 +739,11 @@ pub mod spinner_public_v54;
 pub mod alesha_v1;
 pub mod giada_v1;
 pub mod graveyard_return_public_v61;
-pub mod rules_meaning_graveyard_return_v61;
 pub mod infernal_vessel_v1;
 pub mod midnight_snack_v1;
 pub mod nine_lives_familiar_v1;
 pub mod prepared_observation_v57;
+pub mod rules_meaning_graveyard_return_v61;
 pub mod valkyries_call_v1;
 
 #[cfg(all(
