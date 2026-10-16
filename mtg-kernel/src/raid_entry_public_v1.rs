@@ -70,6 +70,11 @@ pub fn producer_sha256_v1() -> String {
         include_str!("effect/harvester_v1.rs"),
         include_str!("life_loss_turn_v1.rs"),
         include_str!("soul_shackled_zombie_v1.rs"),
+        include_str!("progenitus_v1.rs"),
+        include_str!("controlled_creature_grants_v1.rs"),
+        include_str!("effect/nonland_copy_v1.rs"),
+        include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+        include_str!("effect/inspiration_resolution_v1.rs"),
     ] {
         h.update([0]);
         h.update(s.as_bytes());

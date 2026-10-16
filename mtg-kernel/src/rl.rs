@@ -9088,7 +9088,8 @@ fn effect_target_ref_visible(
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && (crate::effect::harvester_v1::definition(o.card_def)
+            && (crate::progenitus_v1::definition(o.card_def)
+                || crate::effect::harvester_v1::definition(o.card_def)
                 || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
@@ -9478,7 +9479,8 @@ fn private_card(
 ) -> Result<CardPrivateV1> {
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
-            && (crate::effect::harvester_v1::definition(o.card_def)
+            && (crate::progenitus_v1::definition(o.card_def)
+                || crate::effect::harvester_v1::definition(o.card_def)
                 || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
                 || crate::effect::greatwurm_v1::definition(o.card_def)
@@ -11106,6 +11108,7 @@ fn pending_effect_semantic_v4_akroma_inner_fake_v50(
                         },
                         ordered: *ordered,
                         purpose: match purpose {
+                            crate::effect::EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 { .. } => return Err(RlContractError("Progenitus mill ordering needs a complete successor".into())),
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: Some(_), .. } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::SurveilLibraryMany { graveyard_order: None, .. }
                             | crate::effect::EffectTargetSelectionPurpose::SurveilLibraryOne { .. }

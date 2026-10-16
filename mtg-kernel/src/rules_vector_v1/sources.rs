@@ -1113,6 +1113,15 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if def
+        .keywords
+        .has(crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING)
+    {
+        walk.opaque.push(
+            "all-source protection and mandatory graveyard replacement require a native successor",
+        );
+        walk.ability(CtxF::Static, |out| out.atoms.push(Atom::Opaque));
+    }
     if crate::engine::consuming_aberration_cda_for_v1(name) {
         walk.rec("native_all_zone_cda", json!({"power_and_toughness": "all_opponents_graveyard_physical_cards", "layer": "7a", "native_width": "checked_i32"}));
         walk.opaque

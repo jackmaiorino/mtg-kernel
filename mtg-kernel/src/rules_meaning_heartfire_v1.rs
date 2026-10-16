@@ -97,6 +97,23 @@ pub fn source_sha256() -> String {
             "soul_shackled_zombie_v1.rs",
             include_str!("soul_shackled_zombie_v1.rs"),
         ),
+        ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
+        (
+            "controlled_creature_grants_v1.rs",
+            include_str!("controlled_creature_grants_v1.rs"),
+        ),
+        (
+            "effect/nonland_copy_v1.rs",
+            include_str!("effect/nonland_copy_v1.rs"),
+        ),
+        (
+            "rl_session/flat_action_v4/search_state/effect_refs.rs",
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+        ),
+        (
+            "effect/inspiration_resolution_v1.rs",
+            include_str!("effect/inspiration_resolution_v1.rs"),
+        ),
     ] {
         hash.update(path.as_bytes());
         hash.update([0]);

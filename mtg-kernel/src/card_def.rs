@@ -1565,6 +1565,8 @@ impl Keywords {
     pub const TOXIC_1: Keywords = Keywords(1 << 17);
     /// This permanent cannot be targeted by any player (702.18).
     pub const SHROUD: Keywords = Keywords(1 << 18);
+    /// Protection from every object (702.16j), not a color-quality shortcut.
+    pub const PROTECTION_FROM_EVERYTHING: Keywords = Keywords(1 << 19);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -3129,11 +3131,11 @@ mod tests {
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience and Abyssal Harvester Partial registrations at 457-479.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, Curator of Destinies, Loot, Kykar, its distinct Spirit, Quilled Greatwurm, Sphinx of Forgotten Lore, Omniscience, Abyssal Harvester and Progenitus Partial registrations at 457-480.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                480
+                481
             } else {
                 192
             }
@@ -3613,6 +3615,7 @@ mod tests {
                 (477, "Sphinx of Forgotten Lore"),
                 (478, "Omniscience"),
                 (479, "Abyssal Harvester"),
+                (480, "Progenitus"),
             ]
         } else {
             &[]

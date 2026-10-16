@@ -166,6 +166,11 @@ fn hosts(state: &GameState, t: &CopyTemplateV1) -> Result<Vec<EffectObjectBindin
         .filter_map(|(id, live)| {
             (live.zone == Zone::Battlefield
                 && crate::engine::object_has_type(state, id, attachment.enchanted_type())
+                && !crate::engine::has_effective_keyword(
+                    state,
+                    id,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
+                )
                 && !(monocolored
                     && crate::engine::has_effective_keyword(
                         state,

@@ -4321,7 +4321,8 @@ fn legal_targets_for_controller_from_source(
         };
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
-            || (!has_effective_keyword(state, object, Keywords::SHROUD)
+            || (!has_effective_keyword(state, object, Keywords::PROTECTION_FROM_EVERYTHING)
+                && !has_effective_keyword(state, object, Keywords::SHROUD)
                 && (live.controller == controller
                     || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
@@ -9828,8 +9829,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
                 return false;
             }
-            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, id)
+            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, id))
             {
                 return false;
             }
@@ -18453,8 +18455,9 @@ pub fn damage_is_prevented_by_protection(
     };
     state.objects.try_get(target).is_some_and(|object| {
         object.zone == Zone::Battlefield
-            && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, source))
+            && (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, source))
                 || crate::controlled_creature_grants_v1::protects_from_colors(
                     state,
                     target,
@@ -31195,3 +31198,11 @@ mod crystal_native95_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod checked_pt_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/progenitus_v1_tests.rs"]
+mod progenitus_v1_tests;

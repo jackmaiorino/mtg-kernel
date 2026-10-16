@@ -87,6 +87,7 @@ pub mod panda_observation_v47;
 pub mod panda_public_v47;
 pub mod phoenix_public_v56;
 pub mod planeswalker_v1;
+pub(crate) mod progenitus_v1;
 pub mod rules_meaning_elenda_v52;
 pub mod rules_meaning_embercleave_v65;
 pub mod rules_meaning_fake_your_own_death_v50;

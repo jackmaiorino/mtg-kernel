@@ -278,6 +278,7 @@ fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String
     crate::effect::curator_v1::refuse_legacy(state)?;
     crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
     crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
+    crate::progenitus_v1::refuse_legacy(state)?;
     crate::effect::greatwurm_v1::refuse_legacy(state)?;
     crate::effect::kykar_v1::refuse_legacy(state)?;
     crate::effect::loot_v1::refuse_legacy(state)?;

@@ -435,6 +435,10 @@ pub(crate) fn protected(
             && (crate::engine::has_effective_keyword(
                 state,
                 target,
+                crate::card_def::Keywords::PROTECTION_FROM_EVERYTHING,
+            ) || crate::engine::has_effective_keyword(
+                state,
+                target,
                 crate::card_def::Keywords::PROTECTION_FROM_MONOCOLORED,
             ) && (facts.color_mask & 0x1f).count_ones() == 1
                 || crate::controlled_creature_grants_v1::protects_from_colors(

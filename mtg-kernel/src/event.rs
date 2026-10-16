@@ -1929,6 +1929,14 @@ pub enum CommittedEvent {
         announcement: u64,
         restored: crate::effect::EffectObjectBinding,
     },
+    ProgenitusInputV1 {
+        input: Box<crate::progenitus_v1::InputV1>,
+    },
+    ProgenitusShuffledV1 {
+        input_history_index: u64,
+        move_history_index: Option<u64>,
+        source: crate::state::AbilitySourceContractV4,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -2642,6 +2650,10 @@ pub fn apply_replacements(
                 return None;
             }
         }
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, &proposed, None) {
+        halt_zone_pt_v1(state, source);
+        return None;
     }
     if let ProposedEvent::ZoneChange(change) = &mut proposed {
         if change.to_zone == Zone::Graveyard
@@ -3599,6 +3611,7 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
             None,
             (None, None),
             ((None, false), None, input, None, Some(&plan)),
+            None,
         );
         if state.engine.halted.is_none() {
             if let Some((player, amount)) = lifelink_gain {
@@ -3786,6 +3799,7 @@ fn commit_with_ability_lki_and_entry_batch(
         authority_batch,
         entry_batches,
         (entry_context, None, None, None, None),
+        None,
     );
 }
 
@@ -3869,6 +3883,7 @@ fn commit_with_entry_batch_and_source_color(
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
     ),
     entry_context: EntryContextWithSourceColorV1<'_>,
+    mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
 ) {
     let (
         mut entry_context,
@@ -3996,6 +4011,30 @@ fn commit_with_entry_batch_and_source_color(
         .then(|| crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state))
         .flatten();
     let (mut garruk_batch, mut arahbo_batch) = entry_batches;
+    let progenitus_plan = match crate::progenitus_v1::plan(state, &event, abilities_removed_before)
+    {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
+    if progenitus_plan
+        .as_ref()
+        .is_some_and(|plan| plan.same_library())
+    {
+        let plan = progenitus_plan.expect("private same-library plan");
+        let input = plan.record_input(state);
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(plan, input, None));
+        } else if let Err(source) = plan.finish(state, input, None) {
+            halt_zone_pt_v1(state, source);
+        }
+        return;
+    }
+    let event = progenitus_plan
+        .as_ref()
+        .map_or(event, |plan| plan.rewritten());
     // Direct commits are also used for simultaneous state-based deaths. Apply
     // an installed Fiery shield before any zone bookkeeping or frozen death
     // capture is published. Unrelated direct commits retain their old path.
@@ -4139,6 +4178,9 @@ fn commit_with_entry_batch_and_source_color(
         }
         _ => None,
     };
+    let progenitus_input = progenitus_plan
+        .as_ref()
+        .map(|plan| plan.record_input(state));
     let Some(MaterializedEventV1 {
         committed,
         alesha_power_departure,
@@ -4498,6 +4540,18 @@ fn commit_with_entry_batch_and_source_color(
             add_lore_counters(state, source, 1).expect("new Saga counters fit");
         }
     }
+    if let Some(plan) = progenitus_plan {
+        let input = progenitus_input.expect("private Progenitus input");
+        if let Some(queue) = progenitus_completions.as_mut() {
+            queue.push(crate::progenitus_v1::CompletionV1::new(
+                plan,
+                input,
+                Some(entry_history_index),
+            ));
+        } else if let Err(source) = plan.finish(state, input, Some(entry_history_index)) {
+            halt_zone_pt_v1(state, source);
+        }
+    }
 }
 
 fn initialize_materialized_entry_v1(
@@ -4601,6 +4655,8 @@ impl FinalZonePtPlanV1 {
         if events.len() != counter_inputs.len() {
             return Err(ObjectId(0));
         }
+        let progenitus_preview = crate::progenitus_v1::preview(original, events)?;
+        let events = progenitus_preview.as_deref().unwrap_or(events);
         let mut plan = Self {
             departures: Vec::new(),
         };
@@ -4627,6 +4683,10 @@ impl FinalZonePtPlanV1 {
         // members exist before the one layer-7 query.
         let mut scene = original.clone();
         for (event, input) in events.iter().zip(counter_inputs) {
+            if matches!(event,ProposedEvent::ZoneChange(z)if z.to_zone==Zone::Library && original.objects.get(z.object).zone==Zone::Library && crate::progenitus_v1::definition(original.objects.get(z.object).card_def))
+            {
+                continue;
+            }
             let mut entry = characteristics;
             prepare_zone_entry_characteristics_v1(event, &mut entry)?;
             let season = crate::doubling_season_v48::requires_successor(original)
@@ -4791,6 +4851,7 @@ fn direct_zone_pt_plan_v1(
     state: &GameState,
     events: &[ProposedEvent],
 ) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
+    crate::progenitus_v1::preview(state, events)?;
     if !needs_final_zone_pt_plan_v1(state, events) {
         return Ok(None);
     }
@@ -5422,6 +5483,10 @@ struct MaterializedEventV1 {
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if let Err(source) = crate::progenitus_v1::preview(state, &events) {
+        halt_zone_pt_v1(state, source);
+        return;
+    }
     if events.iter().any(unsupported_partial_token_v1) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -5892,6 +5957,7 @@ fn commit_batch_survivors(
         }
     };
     let greatwurm_history_start = state.engine.event_history.len();
+    let mut progenitus_completions = Vec::new();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
@@ -5930,6 +5996,7 @@ fn commit_batch_survivors(
                     token_input_index,
                     zone_plan.as_ref(),
                 ),
+                Some(&mut progenitus_completions),
             );
         }
     } else {
@@ -5956,10 +6023,17 @@ fn commit_batch_survivors(
                     token_input_index,
                     zone_plan.as_ref(),
                 ),
+                Some(&mut progenitus_completions),
             );
         }
     }
 
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    }
     if greatwurm_wave
         .finish(state, greatwurm_history_start)
         .is_err()
@@ -6044,6 +6118,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             return;
         }
     };
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = chosen
+        .iter()
+        .filter_map(|id| {
+            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
+                (
+                    *id,
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
         &chosen
@@ -6096,15 +6182,25 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
+            let progenitus_ability_removed = match &event {
+                ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+                _ => None,
+            };
             commit_with_entry_batch_and_source_color(
                 state,
                 event,
-                None,
+                progenitus_ability_removed,
                 Some(captures),
                 None,
                 (None, None),
                 ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                Some(&mut progenitus_completions),
             );
+        }
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
         }
     }
 }
@@ -6124,6 +6220,18 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
     };
     crate::linked_aura_operation_v1::begin_batch(state);
+    let mut progenitus_completions = Vec::new();
+    let progenitus_removed = dying
+        .iter()
+        .filter_map(|id| {
+            crate::progenitus_v1::definition(state.objects.get(*id).card_def).then(|| {
+                (
+                    *id,
+                    !crate::continuous_characteristics_v1::printed_abilities_active(state, *id),
+                )
+            })
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
         &dying
@@ -6155,17 +6263,24 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         for id in dying {
             let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
             if frozen_color.is_some() || zone_plan.is_some() {
+                let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
                     ProposedEvent::zone_change(id, Zone::Graveyard),
-                    None,
+                    progenitus_ability_removed,
                     None,
                     None,
                     (None, None),
                     ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+                    Some(&mut progenitus_completions),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+            }
+        }
+        if state.engine.halted.is_none() {
+            if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+                halt_zone_pt_v1(state, source);
             }
         }
         crate::linked_aura_operation_v1::end_batch(state);
@@ -6191,15 +6306,25 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     };
     for (event, captures) in events.into_iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        let progenitus_ability_removed = match &event {
+            ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
+            _ => None,
+        };
         commit_with_entry_batch_and_source_color(
             state,
             event,
-            None,
+            progenitus_ability_removed,
             Some(captures),
             None,
             (None, None),
             ((None, false), frozen_color, None, None, zone_plan.as_ref()),
+            Some(&mut progenitus_completions),
         );
+    }
+    if state.engine.halted.is_none() {
+        if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
+            halt_zone_pt_v1(state, source);
+        }
     }
     crate::linked_aura_operation_v1::end_batch(state);
 }
@@ -9818,6 +9943,7 @@ pub(crate) fn validate_copied_token_abilities_v1(state: &GameState) -> Result<()
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Ok(());
     }
+    crate::progenitus_v1::validate(state)?;
     crate::effect::harvester_v1::validate_state(state)?;
     for (_, object) in state.objects.iter() {
         if object.zone != Zone::Battlefield && object.v4.copied_end_step_sacrifices_v1 != 0 {

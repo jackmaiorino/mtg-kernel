@@ -1009,6 +1009,11 @@ pub(crate) fn preflight_token_initialization(
             if live.zone != Zone::Battlefield
                 || live.zone_change_count != host.zone_change_count
                 || !crate::engine::object_has_type(state, host.object, attachment.enchanted_type())
+                || crate::engine::has_effective_keyword(
+                    state,
+                    host.object,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
+                )
                 || (def.colors.len() == 1
                     && crate::engine::has_effective_keyword(
                         state,
