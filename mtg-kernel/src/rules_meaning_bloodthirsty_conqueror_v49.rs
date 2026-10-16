@@ -27,40 +27,44 @@ pub struct MeaningV49 {
     pub frozen_public_model_sampler_admitted: bool,
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("rules_meaning_bloodthirsty_conqueror_v49.rs"),
-        include_str!("bloodthirsty_conqueror_v49.rs"),
-        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
-        include_str!("event.rs"),
-        include_str!("trigger.rs"),
-        include_str!("effect.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("card_def.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("effect/crystal_prevention_v1.rs"),
-        include_str!("life_gain_turn_v1.rs"),
-        include_str!("fiendish_panda_v1.rs"),
-        include_str!("fiendish_panda_v1/custody.rs"),
-        include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
-        include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
-        include_str!("../build.rs"),
-        include_str!("counter_target_effects_v1.rs"),
-        include_str!("zimone_paradox_sculptor_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("planeswalker_v1.rs"),
-    ] {
-        h.update([0]);
-        h.update(text.as_bytes());
-    }
-    h.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("rules_meaning_bloodthirsty_conqueror_v49.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("event.rs"),
+            include_str!("trigger.rs"),
+            include_str!("effect.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("card_def.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+            include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
+            include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
+        ] {
+            h.update([0]);
+            h.update(text.as_bytes());
+        }
+        h.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 pub fn live_selector() -> Result<SelectorV49, String> {
     if !cfg!(all(

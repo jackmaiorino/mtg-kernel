@@ -49,33 +49,37 @@ fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("rules_meaning_doubling_season_v48.rs"),
-        include_str!("doubling_season_v48.rs"),
-        include_str!("card_def.rs"),
-        include_str!("event.rs"),
-        include_str!("trigger.rs"),
-        include_str!("engine.rs"),
-        include_str!("state.rs"),
-        include_str!("fdn_raid_v1.rs"),
-        include_str!("garruks_uprising_v1.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("standard_statics_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("effect.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("../build.rs"),
-        include_str!("counter_target_effects_v1.rs"),
-        include_str!("zimone_paradox_sculptor_v1.rs"),
-    ] {
-        h.update((source.len() as u64).to_le_bytes());
-        h.update(source.as_bytes());
-    }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("rules_meaning_doubling_season_v48.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("card_def.rs"),
+            include_str!("event.rs"),
+            include_str!("trigger.rs"),
+            include_str!("engine.rs"),
+            include_str!("state.rs"),
+            include_str!("fdn_raid_v1.rs"),
+            include_str!("garruks_uprising_v1.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("effect.rs"),
+            include_str!("planeswalker_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+        ] {
+            h.update((source.len() as u64).to_le_bytes());
+            h.update(source.as_bytes());
+        }
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    })
+    .clone()
 }
 pub fn printed_meaning(card_id: u16, root: RootV48) -> Result<MeaningV48, String> {
     if !crate::doubling_season_v48::owns_definition(card_id) {

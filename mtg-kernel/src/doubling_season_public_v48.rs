@@ -81,33 +81,37 @@ fn original_source(source: AbilitySourceContractV4) -> CardStableRefV1 {
     }
 }
 pub fn producer_sha256() -> String {
-    let mut h = Sha256::new();
-    for source in [
-        SCHEMA,
-        include_str!("doubling_season_public_v48.rs"),
-        include_str!("doubling_season_v48.rs"),
-        include_str!("linked_aura_operation_v1.rs"),
-        include_str!("season_token_attachment_v48.rs"),
-        include_str!("event.rs"),
-        include_str!("state.rs"),
-        include_str!("engine.rs"),
-        include_str!("continuous_characteristics_v1.rs"),
-        include_str!("standard_creatures_v1.rs"),
-        include_str!("standard_cards_v1.rs"),
-        include_str!("planeswalker_v1.rs"),
-        include_str!("rules_meaning_doubling_season_v48.rs"),
-        include_str!("card_def.rs"),
-        include_str!("counter_target_effects_v1.rs"),
-        include_str!("zimone_paradox_sculptor_v1.rs"),
-    ] {
-        h.update((source.len() as u64).to_le_bytes());
-        h.update(source.as_bytes());
-    }
-    h.update(crate::rules_meaning_doubling_season_v48::producer_sha256().as_bytes());
-    h.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut h = Sha256::new();
+        for source in [
+            SCHEMA,
+            include_str!("doubling_season_public_v48.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
+            include_str!("season_token_attachment_v48.rs"),
+            include_str!("event.rs"),
+            include_str!("state.rs"),
+            include_str!("engine.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
+            include_str!("rules_meaning_doubling_season_v48.rs"),
+            include_str!("card_def.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+        ] {
+            h.update((source.len() as u64).to_le_bytes());
+            h.update(source.as_bytes());
+        }
+        h.update(crate::rules_meaning_doubling_season_v48::producer_sha256().as_bytes());
+        h.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 pub fn meanings(
 ) -> Result<Vec<crate::rules_meaning_doubling_season_v48::MeaningV48>, RlContractError> {
