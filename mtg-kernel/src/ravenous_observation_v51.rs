@@ -443,13 +443,7 @@ fn observe_parts_complete_current_scope(
         .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
     let mut parts = crate::akroma_family_public_v40::build_for_scope(
-        state,
-        surface,
-        actor,
-        step,
-        physical,
-        substep,
-        scope,
+        state, surface, actor, step, physical, substep, scope,
     )
     .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
     base.projection =
