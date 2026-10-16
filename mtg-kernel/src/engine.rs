@@ -23183,6 +23183,7 @@ fn materialize_begin_cast_with_quote_v1(
         },
     });
 
+    crate::effect::harvester_v1::record_cast(state, source_contract);
     state.engine.pending_cast = Some(PendingCast {
         omniscience_v1: omniscience_choice,
         sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
@@ -23628,6 +23629,7 @@ fn materialize_aborted_cast_v1(
     pending: &PendingCast,
     cast_method: CastMethodV4,
 ) -> AbortedCastSceneV1 {
+    let harvester_rollback = crate::effect::harvester_v1::rollback_input(state, pending);
     let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
     debug_assert!(
@@ -23685,6 +23687,7 @@ fn materialize_aborted_cast_v1(
             object.v4.on_adventure = true;
         }
     }
+    crate::effect::harvester_v1::record_rollback(state, pending, harvester_rollback);
     AbortedCastSceneV1 {
         was_face_down,
         owner,

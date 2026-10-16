@@ -689,6 +689,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::OpponentArtifactOrCreature | S::UpToTwoControlledArtifactsOrCreatures => ObjF::Permanent,
         S::ControlledArtifact => typed(CardType::Artifact),
         S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
+        S::CreatureCardPutIntoGraveyardThisTurnV1 => creature(),
         S::AnotherNonlegendaryControlledCreature
         | S::UpToOneCreature
         | S::TappedOpponentCreature
@@ -704,7 +705,9 @@ pub(super) fn standard_target_origin(
     use crate::standard_cards_v1::StandardTargetV1 as S;
     match filter {
         S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
-        S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
+        S::CardInAGraveyard | S::CreatureCardPutIntoGraveyardThisTurnV1 => {
+            (Some(ZoneF::Graveyard), None)
+        }
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
         | S::UpToTwoControlledCreatures
@@ -729,6 +732,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
     let (zone, relation) = standard_target_origin(filter);
     let zone = zone.expect("every Standard object target has a zone");
     match filter {
+        S::CreatureCardPutIntoGraveyardThisTurnV1 => {
+            object(out, creature(), relation, zone);
+            // Exact current-turn entry and physical incarnation need a successor.
+            out.atoms.push(Atom::Opaque);
+        }
         S::UpToTwoControlledCreatures | S::UpToTwoControlledArtifactsOrCreatures => {
             // Preserve the native payload without admitting these new target
             // programs through the frozen v1 facet vocabulary.
