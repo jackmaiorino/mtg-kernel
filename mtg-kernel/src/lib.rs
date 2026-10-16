@@ -55,6 +55,7 @@ pub mod combat_damage_v1;
 pub(crate) mod continuous_characteristics_v1;
 mod creature_death_capture_v1;
 mod creature_stats_lki_v1;
+pub mod creature_types_v60;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
 pub mod fake_your_own_death_v50;
