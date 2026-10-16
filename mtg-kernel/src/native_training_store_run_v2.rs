@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 478);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 479);
         assert_eq!(
             partials,
             [
@@ -9041,6 +9041,7 @@ mod tests {
                 (475, "Kykar Spirit Token"),
                 (476, "Quilled Greatwurm"),
                 (477, "Sphinx of Forgotten Lore"),
+                (478, "Omniscience"),
             ]
         );
         let mut playable = Vec::new();

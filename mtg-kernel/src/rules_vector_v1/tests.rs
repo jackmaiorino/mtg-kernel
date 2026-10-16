@@ -1168,6 +1168,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("effect/harvester_v1.rs", "Abyssal Harvester", "unregistered native prerequisites; put-into-graveyard turn evidence and copiable Nightmare remain unsupported by old consumers"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
+    ("engine/omniscience_cast_v1.rs", "Omniscience", "native optional Hand-only free base cost with exact source/choice; no old cost/permission meaning"),
     ("effect/sphinx_lore_v1.rs", "Sphinx of Forgotten Lore", "captured attack/target and installed flashback with separate native cost route remain Opaque"),
     ("effect/greatwurm_v1.rs", "Quilled Greatwurm", "final native combat wave counter capture remains opaque; no old permission"),
     ("effect/kykar_v1.rs", "Kykar, Zephyr Awakener", "cast noncreature mode at announcement; exact exile and one-shot owner return remain Opaque"),
@@ -1472,6 +1473,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
     (
         "engine/sphinx_lore_cast_v1.rs",
         include_str!("../engine/sphinx_lore_cast_v1.rs"),
+    ),
+    (
+        "engine/omniscience_cast_v1.rs",
+        include_str!("../engine/omniscience_cast_v1.rs"),
     ),
     (
         "effect/curator_v1.rs",

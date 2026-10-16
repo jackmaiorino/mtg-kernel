@@ -1902,6 +1902,14 @@ pub enum CommittedEvent {
         source: crate::state::StackSourceContractV4,
         stack_item_id: crate::ids::StackItemId,
     },
+    OmniscienceCastOptionsV1 {
+        options: crate::engine::omniscience_cast_v1::OptionsV1,
+    },
+    OmniscienceCastSelectedV1 {
+        choice: crate::engine::omniscience_cast_v1::ChoiceV1,
+        source: crate::state::StackSourceContractV4,
+        stack_item_id: crate::ids::StackItemId,
+    },
     NightmareCopyEnteredV1 {
         entry: crate::effect::harvester_v1::NightmareV1,
     },

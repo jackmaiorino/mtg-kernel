@@ -242,6 +242,8 @@ pub fn producer_sha256() -> String {
             include_str!("planeswalker_v1.rs"),
             include_str!("human_bo3_v1/next_five_v59.rs"),
             include_str!("../../python/tools/limited_next_five_session_v6.py"),
+            include_str!("engine/omniscience_cast_v1.rs"),
+            include_str!("resolution_cast_v1.rs"),
         ] {
             h.update((part.len() as u64).to_le_bytes());
             h.update(part.as_bytes());

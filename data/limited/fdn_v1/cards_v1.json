@@ -8549,6 +8549,34 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Omniscience",
+      "mana_cost": "{7}{U}{U}{U}",
+      "mana_value": 10,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "may_cast_nonland_from_own_hand_without_mana_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/Omniscience.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_omniscience_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }
