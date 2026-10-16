@@ -4,6 +4,7 @@ mod canonical_semantic_booleans;
 mod elenda;
 mod fiery_public_operands;
 mod fishing_public_operands;
+mod graveyard_return;
 mod kellan_public_operands;
 mod network;
 mod next_five;
@@ -17,6 +18,9 @@ use crate::rl_session::{
     FastActorDecisionV1, FastActorResponseV1, FastActorSessionSnapshotV1, FastActorSessionV1,
 };
 pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
+pub use graveyard_return::{
+    GraveyardReturnDecision, GraveyardReturnSession, GraveyardReturnSnapshot,
+};
 pub use network::{ModelConfig, NativeModel};
 pub use next_five::{NextFiveDecision, NextFiveSession, NextFiveSnapshot};
 pub use numeric::NumericTree;
@@ -53,6 +57,7 @@ pub enum Source {
     ElendaV52,
     PreparedV57,
     NextFiveV59,
+    GraveyardReturnV61,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -238,6 +243,14 @@ pub fn feature_identity() -> String {
             include_str!("state.rs"),
             include_str!("banner_of_kinship_v1.rs"),
             include_str!("banner_of_kinship_v1/entry.rs"),
+            include_str!("current_mixed_policy_v1/graveyard_return.rs"),
+            include_str!("graveyard_return_candidates_v61.rs"),
+            include_str!("graveyard_return_observation_v61.rs"),
+            include_str!("graveyard_return_public_v61.rs"),
+            include_str!("rules_meaning_graveyard_return_v61.rs"),
+            include_str!("alesha_v1.rs"),
+            include_str!("nine_lives_familiar_v1.rs"),
+            include_str!("rl_session/graveyard_return_v61.rs"),
             include_str!("linked_aura_operation_v1.rs"),
             include_str!("heraldic_banner_v1.rs"),
             include_str!("creature_types_v60.rs"),

@@ -95,11 +95,20 @@ fn expand(value: &mut Value, covered: &mut BTreeSet<u16>, source: Source) -> Res
             }
         }
         Value::Object(values) => {
-            if source == Source::NextFiveV59 && super::next_five::typed_meaning(values, covered)? {
+            if source == Source::GraveyardReturnV61
+                && super::graveyard_return::typed_meaning(values, covered)?
+            {
                 return Ok(());
             }
-            if matches!(source, Source::PreparedV57 | Source::NextFiveV59)
-                && super::prepared::typed_meaning(values, covered)?
+            if matches!(source, Source::NextFiveV59 | Source::GraveyardReturnV61)
+                && super::next_five::typed_meaning(values, covered)?
+            {
+                return Ok(());
+            }
+            if matches!(
+                source,
+                Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61
+            ) && super::prepared::typed_meaning(values, covered)?
             {
                 return Ok(());
             }
@@ -256,13 +265,30 @@ fn rewrite(value: &Value, refs: &mut References, key: &str) -> Result<Value> {
     })
 }
 
-pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> Result<Packet> {
-    super::public_projection_operands::prepare(&mut state)?;
+pub(super) fn encode(source: Source, mut state: Value, mut actions: Vec<Value>) -> Result<Packet> {
+    if source == Source::GraveyardReturnV61 {
+        let observation = state
+            .get_mut("observation")
+            .ok_or_else(|| Error::UnsupportedOperand("graveyard_return_observation".into()))?;
+        super::public_projection_operands::prepare(observation)?;
+    } else {
+        super::public_projection_operands::prepare(&mut state)?;
+    }
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     super::fishing_public_operands::prepare(&mut state)?;
-    if matches!(source, Source::PreparedV57 | Source::NextFiveV59) {
+    if matches!(
+        source,
+        Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61
+    ) {
         super::prepared::references(&mut state)?;
+    }
+    if source == Source::GraveyardReturnV61 {
+        // V61 actions carry the complete typed candidate annotations, including
+        // their public references, in addition to the ordinary action semantic.
+        for action in &mut actions {
+            super::prepared::references(action)?;
+        }
     }
     let mut covered = BTreeSet::new();
     expand(&mut state, &mut covered, source)?;
@@ -273,11 +299,19 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     }
     let mut meanings = Vec::new();
     for id in cards.difference(&covered) {
-        if source == Source::NextFiveV59 && super::next_five::printing(*id)?.is_some() {
+        if source == Source::GraveyardReturnV61 && super::graveyard_return::printing(*id)?.is_some()
+        {
             continue;
         }
-        if matches!(source, Source::PreparedV57 | Source::NextFiveV59)
-            && super::prepared::printing(*id)?.is_some()
+        if matches!(source, Source::NextFiveV59 | Source::GraveyardReturnV61)
+            && super::next_five::printing(*id)?.is_some()
+        {
+            continue;
+        }
+        if matches!(
+            source,
+            Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61
+        ) && super::prepared::printing(*id)?.is_some()
         {
             continue;
         }
@@ -297,16 +331,26 @@ pub(super) fn encode(source: Source, mut state: Value, actions: Vec<Value>) -> R
     // V52's existing typed meaning covers the static rules. Preserve its
     // complete ordered body and add the immutable ordinary spell route only
     // for an actually actor-authorized referenced printing.
-    if matches!(source, Source::PreparedV57 | Source::NextFiveV59) {
+    if matches!(
+        source,
+        Source::PreparedV57 | Source::NextFiveV59 | Source::GraveyardReturnV61
+    ) {
         for id in &cards {
             if let Some(printing) = super::prepared::printing(*id)? {
                 meanings.push(printing);
             }
         }
     }
-    if source == Source::NextFiveV59 {
+    if matches!(source, Source::NextFiveV59 | Source::GraveyardReturnV61) {
         for id in &cards {
             if let Some(printing) = super::next_five::printing(*id)? {
+                meanings.push(printing);
+            }
+        }
+    }
+    if source == Source::GraveyardReturnV61 {
+        for id in &cards {
+            if let Some(printing) = super::graveyard_return::printing(*id)? {
                 meanings.push(printing);
             }
         }

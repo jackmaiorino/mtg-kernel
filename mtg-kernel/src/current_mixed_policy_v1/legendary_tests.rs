@@ -71,6 +71,9 @@ impl Owner {
             Source::ElendaV52 => Self::Elenda(ElendaSession::from_session(raw).unwrap()),
             Source::PreparedV57 => Self::Prepared(PreparedSession::from_session(raw).unwrap()),
             Source::NextFiveV59 => Self::NextFive(NextFiveSession::from_session(raw).unwrap()),
+            Source::GraveyardReturnV61 => {
+                unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
         }
     }
     fn current(&self) -> FastActorResponseV1 {
@@ -161,6 +164,9 @@ impl Harness {
             Source::ElendaV52 => FastActorSessionV1::from_elenda_v52_fixture_state(state),
             Source::PreparedV57 => FastActorSessionV1::from_prepared_v57_fixture_state(state),
             Source::NextFiveV59 => FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            Source::GraveyardReturnV61 => {
+                unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
         };
         Self {
             source,
@@ -193,6 +199,9 @@ impl Harness {
             Source::ElendaV52 => input!(elenda_current_decision_input_v52),
             Source::PreparedV57 => input!(prepared_current_decision_input_v57),
             Source::NextFiveV59 => input!(next_five_current_decision_input_v59),
+            Source::GraveyardReturnV61 => {
+                unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
         }
     }
     fn packet(&self) -> Packet {
@@ -272,6 +281,9 @@ impl Harness {
             Source::ElendaV52 => self.native.elenda_fixture_state(),
             Source::PreparedV57 => self.native.prepared_fixture_state(),
             Source::NextFiveV59 => self.native.next_five_fixture_state(),
+            Source::GraveyardReturnV61 => {
+                unreachable!("V61 uses its separate typed-candidate owner fixture")
+            }
         };
         (
             serde_json::to_vec(state).unwrap(),
