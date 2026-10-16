@@ -85,6 +85,7 @@ pub(super) fn printing(id: u16) -> Result<Option<Value>> {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     if d.object_name != d.name
         || d.capability != CardCapability::Full
@@ -174,7 +175,7 @@ pub(super) fn printing(id: u16) -> Result<Option<Value>> {
         || d.token_counter_replacement_v48.is_some()
         || !d.starting_life_self_bonuses_v1.is_empty()
         || d.source_type_hexproof_v1.is_some()
-        || d.other_controlled_nontoken_death_v1.is_some()
+        || (d.other_controlled_nontoken_death_v1.is_some() || d.creature_type_entry_v1.is_some())
     {
         return Err(Error::UnsupportedPrintedRoot(id));
     }

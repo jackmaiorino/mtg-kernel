@@ -128,6 +128,7 @@ pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
         && d.damage_replacement_v1.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
         && activation_is_exact(d)
         && d.token_counter_replacement_v48.is_none()

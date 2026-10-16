@@ -225,6 +225,7 @@ mod fdn {
                     || def.damage_replacement_v1.is_some()
                     || def.game_outcome_protection_v1.is_some()
                     || def.as_enters_color_choice_v1.is_some()
+                    || def.creature_type_entry_v1.is_some()
                     || def.chosen_color_creature_boost_v1.is_some()
                     || def.keywords.has(crate::card_def::Keywords::SHROUD)
             })

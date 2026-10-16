@@ -257,6 +257,7 @@ pub(crate) fn selected_definition(d: &CardDef, card_id: u16) -> bool {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
     d.name == "Flamewake Phoenix"
         && d.object_name == d.name
@@ -341,6 +342,7 @@ pub(crate) fn selected_definition(d: &CardDef, card_id: u16) -> bool {
         && d.keywords == Keywords(Keywords::FLYING.0 | Keywords::HASTE.0)
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
 }
 

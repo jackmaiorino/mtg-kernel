@@ -6023,7 +6023,8 @@ fn core_surface_action_candidates_fake_scoped_v50(
             }
             Decision::ChooseVariableCastTargets { .. }
             | Decision::ChooseVariableCastKicker { .. }
-            | Decision::ChooseEntryColorV36 { .. } => {
+            | Decision::ChooseEntryColorV36 { .. }
+            | Decision::ChooseEntryCreatureTypeV1 { .. } => {
                 return Err(RlContractError(
                     "variable cast targeting requires its legal-action successor".into(),
                 ))
@@ -6637,6 +6638,7 @@ pub fn acting_player_for_surface_decision(
             | Decision::ChooseVariableCastTargets { player, .. }
             | Decision::ChooseVariableCastKicker { player, .. }
             | Decision::ChooseEntryColorV36 { player, .. }
+            | Decision::ChooseEntryCreatureTypeV1 { player, .. }
             | Decision::ChooseOptionalCost { player, .. }
             | Decision::ChooseSpellCopyPayment { player, .. }
             | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -8830,6 +8832,16 @@ fn effect_target_ref_visible(
 /// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state.objects.try_get(object).is_some_and(|live| {
+        live.v4.kinship_type_v1.is_some()
+            || CARD_DEFS
+                .get(usize::from(live.card_def))
+                .is_some_and(|d| d.creature_type_entry_v1.is_some())
+    }) {
+        return Err(RlContractError(
+            "creature type entry requires its native-only successor".into(),
+        ));
+    }
     if state
         .objects
         .try_get(object)
@@ -9111,6 +9123,16 @@ fn private_card(
     id: ObjectId,
     text_mode: ObservationTextModeV2,
 ) -> Result<CardPrivateV1> {
+    if state.objects.try_get(id).is_some_and(|live| {
+        live.v4.kinship_type_v1.is_some()
+            || CARD_DEFS
+                .get(usize::from(live.card_def))
+                .is_some_and(|d| d.creature_type_entry_v1.is_some())
+    }) {
+        return Err(RlContractError(
+            "creature type entry requires its native-only successor".into(),
+        ));
+    }
     // Callers have already selected an actor-authorized identity: own hand,
     // known hand/library, or a visible choice. Do not scan concealed zones.
     if !matches!(

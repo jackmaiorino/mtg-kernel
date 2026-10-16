@@ -36,6 +36,40 @@ fn sparse_fellowship_preserves_empty_counter_bytes_and_full_width_roundtrip() {
     }
 }
 
+#[test]
+fn sparse_chosen_type_and_pending_storage_retain_absent_wire_and_hash_input() {
+    let mut state = crate::policy_observation_v6::tests::ready_state();
+    let source = crate::policy_observation_v6::tests::put(
+        &mut state,
+        PlayerId::P0,
+        "Forest",
+        Zone::Battlefield,
+    );
+    let object = &state.objects.get(source).v4;
+    let old = serde_json::to_value(object).unwrap();
+    assert!(old.get("kinship_type_v1").is_none());
+    let restored: crate::state::ObjectStateV4 = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(), old);
+    let mut original = HashBytes::default();
+    object.hash(&mut original);
+    let mut changed = restored;
+    changed.kinship_type_v1 = Some(CreatureTypeV60::TimeLord);
+    let mut appended = HashBytes::default();
+    changed.hash(&mut appended);
+    assert!(appended.0.starts_with(&original.0));
+    assert_ne!(appended.0, original.0);
+    assert_eq!(
+        serde_json::from_slice::<crate::state::ObjectStateV4>(
+            &serde_json::to_vec(&changed).unwrap()
+        )
+        .unwrap(),
+        changed
+    );
+    let pending = serde_json::to_value(&state.engine.linked_aura_operation_v1).unwrap();
+    assert_eq!(pending, serde_json::json!({"pending":null}));
+    assert!(pending.get("pending_kinship_v1").is_none());
+}
+
 #[cfg(all(
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
@@ -203,7 +237,19 @@ mod native_primitives {
             );
             state.objects.get_mut(source).zone_change_count += 1;
             assert!(quote_controlled_boost(&state, link, CreatureTypeV60::Elf, target).is_err());
-            assert!(CARD_DEFS.iter().all(|d| d.name != "Banner of Kinship"));
+            let id = crate::card_def::card_id_by_name("Banner of Kinship").unwrap();
+            assert_eq!(id, 463);
+            assert_eq!(
+                CARD_DEFS[usize::from(id)].capability,
+                crate::card_def::CardCapability::Partial
+            );
+            assert!(crate::card_def::preflight_fully_supported_deck(&[id]).is_err());
         }
     }
 }
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod printed;

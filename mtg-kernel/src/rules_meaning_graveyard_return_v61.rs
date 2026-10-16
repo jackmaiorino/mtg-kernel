@@ -428,6 +428,7 @@ fn closed_fields(d: &CardDef) {
         starting_life_self_bonuses_v1: _,
         source_type_hexproof_v1: _,
         other_controlled_nontoken_death_v1: _,
+        creature_type_entry_v1: _,
     } = d;
 }
 fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
@@ -486,6 +487,7 @@ fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
         && d.damage_replacement_v1.is_none()
         && d.starting_life_self_bonuses_v1.is_empty()
         && d.source_type_hexproof_v1.is_none()
+        && d.creature_type_entry_v1.is_none()
         && d.other_controlled_nontoken_death_v1.is_none()
         && d.produces_mana.is_empty()
         && d.restricted_mana_abilities.is_empty()

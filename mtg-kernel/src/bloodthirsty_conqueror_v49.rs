@@ -137,6 +137,7 @@ pub(crate) fn owns_definition(id: u16) -> bool {
             && d.token_counter_replacement_v48.is_none()
             && d.starting_life_self_bonuses_v1.is_empty()
             && d.source_type_hexproof_v1.is_none()
+            && d.creature_type_entry_v1.is_none()
             && d.other_controlled_nontoken_death_v1.is_none()
             && {
                 let roots = crate::trigger::triggers_for(id);

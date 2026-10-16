@@ -8066,6 +8066,34 @@
       "mechanics": ["flash", "generic_reduction_current_controlled_attacking_creatures", "etb_attach_exact_source_to_controlled_creature", "equipped_plus_one_double_strike_trample", "equip_three"],
       "java_file": "Mage.Sets/src/mage/cards/e/Embercleave.java",
       "is_token": false
+    },
+    {
+      "name": "Banner of Kinship",
+      "engine_capability": "partial",
+      "mana_cost": "{5}",
+      "mana_value": 5,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_banner_of_kinship_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "as_enters_choose_creature_type",
+        "enters_with_fellowship_for_preentry_controlled_chosen_type",
+        "chosen_type_anthem_current_fellowship"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BannerOfKinship.java",
+      "is_token": false
     }
   ]
 }

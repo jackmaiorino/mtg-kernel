@@ -1,9 +1,9 @@
-//! Unregistered Banner of Kinship prerequisites, not an entry driver.
+//! Banner of Kinship native Partial printing and checked counter primitives.
 //!
-//! These read-only calculations neither install an ability nor commit an entry.
-//! Registration still needs a definition-owned pre-entry operation stage and
-//! an incarnation-bound chosen-type record. In particular, an EntryChoice is
-//! not an engine pending choice or a permission to mutate a restored world.
+//! The private entry module integrates its definition-owned pre-entry choice,
+//! exact operation replay and incarnation-local anthem. The public read-only
+//! EntryChoice helper remains a quote, never an entry installer or owner permit.
+//! Predecessor observations and owners do not gain execution admission.
 use crate::{
     card_def::{CardType, CARD_DEFS},
     creature_types_v60::{self, CreatureTypeV60},
@@ -183,6 +183,8 @@ pub fn quote_controlled_boost(
     let amount = i128::from(object.counters.fellowship);
     Ok((amount, amount))
 }
+
+pub(crate) mod entry;
 
 #[cfg(test)]
 mod tests;

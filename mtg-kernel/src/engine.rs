@@ -1596,6 +1596,13 @@ pub enum Decision {
         entry_ordinal: u32,
         colors: [ManaColor; 5],
     },
+    /// Native definition-owned as-enters type choice. Earlier action DTOs
+    /// refuse this successor; the current native owner accepts one legal index.
+    ChooseEntryCreatureTypeV1 {
+        player: PlayerId,
+        entry_ordinal: u32,
+        types: Vec<crate::creature_types_v60::CreatureTypeV60>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18044,6 +18051,9 @@ fn checked_effective_stat(
     add(select(crate::heraldic_banner_v1::controlled_boost(
         state, id,
     )))?;
+    add(select(
+        crate::banner_of_kinship_v1::entry::controlled_boost(state, id)?,
+    ))?;
     let life = crate::starting_life_statics_v1::self_bonus(state, id);
     add(i128::from(if toughness {
         life.toughness

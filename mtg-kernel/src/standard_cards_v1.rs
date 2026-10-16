@@ -1259,7 +1259,10 @@ pub(crate) fn create_token_copy(
     controller: PlayerId,
 ) -> Option<ObjectId> {
     if !crate::linked_aura_operation_v1::locally_owned(state)
-        && crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+        && (crate::heraldic_banner_v1::owns_definition(state.objects.get(original).card_def)
+            || crate::banner_of_kinship_v1::entry::owns_definition(
+                state.objects.get(original).card_def,
+            ))
     {
         if state.objects.get(original).zone != Zone::Battlefield
             || state.objects.get(original).v4.face_down_v1.is_some()
@@ -1270,7 +1273,14 @@ pub(crate) fn create_token_copy(
         let history_start = state.engine.event_history.len();
         crate::linked_aura_operation_v1::event(
             state,
-            crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller },
+            if crate::banner_of_kinship_v1::entry::owns_definition(source.card_def) {
+                crate::linked_aura_operation_v1::OperationV1::CopyTokenKinshipV1 {
+                    source,
+                    controller,
+                }
+            } else {
+                crate::linked_aura_operation_v1::OperationV1::CopyTokenV36 { source, controller }
+            },
         );
         return state.engine.event_history[history_start..]
             .iter()

@@ -1,9 +1,11 @@
-# Banner of Kinship unregistered prerequisites
+# Banner of Kinship native Partial source
 
-Source checkpoint only. No definition, ID, registry entry, profile, consumer,
-model, transport or Full admission is added. All Rust fixtures are unrun.
+The selected definition appends ID463, Banner of Kinship, as Partial after
+Embercleave462. This is source implementation, with all Rust fixtures unrun.
+No model, Human, transport, sealed owner, profile, sampling, training or Full
+admission is added. Full-only deck resolution still refuses this printing.
 
-The frozen pool selects FDN 127, Scryfall
+The frozen pool selects FDN127, Scryfall
 `a14c16c0-4053-46b0-8fa6-be8b4a7a1c8a`, Oracle
 `8c220dbd-6572-4715-aae6-dd09a4252d68`. The pinned Mage implementation is
 `Mage.Sets/src/mage/cards/b/BannerOfKinship.java` at
@@ -16,63 +18,72 @@ for each current fellowship counter. The count before entry and the later
 current counter amount are separate values. Losing creatures later does not
 remove counters, and adding creatures later does not add entry counters.
 
-Implemented prerequisites:
+The definition-owned descriptor is distinct from Heraldic Banner's color
+choice. The native immediate-operation runner captures the complete original
+GameState and operation, actual stack, source/proposal/controller, all324 type
+counts, and pre-entry Talent and Season replacement inputs. It records all
+simultaneous entrants before asking choices, in joint APNAP order with the
+existing color-entry family. A distinct native decision offers all324 V60
+types, regardless of whether a type occurs in a visible or hidden pool. Native
+answers rerun that exact original operation with confirmed typed answers;
+changed checkpoints and operands fail full reconstruction before mutation.
 
-- Sparse, full i32 fellowship-counter storage, appended tagged hashing, native
-  counter transfer with replacements and checked overflow, and departure LKI.
-  Zero/absent storage retains predecessor bytes and hash input.
-- Read-only capture of an actual proposed battlefield entry, its original
-  scene, source incarnation and intended controller. Its answer quotes a
-  pre-entry count and applies native entry-counter replacements. It offers
-  all 324 V60 types and rejects changed input and unsupported V60 animation
-  or unknown-subtype composition. It does not publish a native decision.
-- Read-only current-counter anthem arithmetic, with exact live source
-  incarnation, current controller, printed-ability suppression, effective
-  creature-type matching and checked counter validity. Calling this helper
-  does not grant an ability or install a continuous effect.
-- Existing RL, optional-trigger, Drake, V61 and Standard Human counter shapes
-  reject fellowship values they cannot represent. V61's mandatory 16-counter
-  shape is unchanged; it refuses this seventeenth counter kind.
+The allocator/move resets the new incarnation, then installs its chosen type
+and checked fellowship amount before entry observers. Private history receipts
+bind the choice to the actual physical entry and exact new source incarnation;
+no private receipt enters the public event log. Copies choose afresh and
+recount the original pre-entry scene. Simultaneous token replacement members
+receive separate choices; counters and type choices are not copied. Current
+native characteristics consult the current fellowship amount, controller and
+effective type, with printed-ability suppression and checked native PT limits.
+The V60 query refuses unknown subtype and unsupported animation provenance.
 
-The genuine paid fixture uses Llanowar Elves, Doubling Season when selected,
-and Heraldic Banner's actual WUBRG pre-entry stage. Forests pay their actual
-costs. Generic creature-type calculations against that captured entry remain
-read-only, and native Heraldic entry still commits only its printed chosen
-color with zero fellowship. This is primitive coverage, not paid Banner of
-Kinship coverage. Other tests explicitly exercise native counter primitives.
+Fellowship has full i32 native storage, checked placement and transfer,
+departure LKI, and a tagged hash append. Zero/absent counter, chosen-type and
+checkpoint fields retain predecessor serialization and hash inputs. Existing
+variant prefixes and definition IDs remain in their original order. Earlier
+CardDef consumers explicitly refuse the new descriptor; frozen72-field models
+are not retagged as if they expressed the new mechanic. Old RL, optional,
+Drake, V61 and Standard Human counter shapes continue to refuse fellowship.
+V61's mandatory16-counter shape is unchanged and refuses this seventeenth kind.
 
-Follow-up Standard fixtures pay for real Innkeeper's Talent casts and level
-activations using Forests, for both seats. A fellowship-only Elf receives the
-actual level-two ward trigger after an opposing paid Lightning Bolt targets
-it; zero and negative fellowship retain the predicate's earlier semantics.
-Without Season, level-three Talent doubles ordinary fellowship amounts, and
-both native transfer and entry quotes refuse overflow rather than saturating.
-The entry overflow fixture uses 31 genuinely paid, levelled Talents and a
-genuinely paid Gingerbrute entry proposal. The fellowship values remain native
-storage/quote primitives, not fabricated printed abilities. The new counter
-kind always uses checked arithmetic; older counter-kind arithmetic is unchanged.
+Six new pure Limited printed fixtures cover both seats:
 
-Remaining registration boundary:
+- Genuine paid Banner after a genuine paid Elf, all324 actual answers, zero
+  and positive counts, real response window/payment, serialized checkpoint
+  restore, current native PT, bounds and predecessor refusal.
+- Read-only refusal of altered source generation, original world, proposal
+  controller, pre-entry count/replacements, physical stack and receipt binding.
+- Genuine paid Season and Banner, then explicitly labeled native control,
+  suppression, current-count, effective-type and reentry primitives. The
+  selected Limited registry has no paid artifact-control, suppression or
+  blink producer; these are not claimed as casts of such cards. Departure
+  LKI retains the actual fellowship amount; the reentered incarnation chooses
+  independently and the old source link is stale.
+- Genuine paid Banner with a native setup roster of two or31 actual Season
+  definitions, checked positive placement or unchanged refusal at2^31, and
+  legal zero-count choice. This does not claim31 paid Season casts.
+- Native simultaneous mixed Heraldic/Kinship entry following a genuine paid
+  Banner, APNAP ordering, no mid-menu entry and restore after the first answer.
+- Genuine paid Replication copying a genuinely paid Banner at its actual next
+  upkeep, separate fresh choices/counts, optional genuinely paid Season's
+  two-token batch, and actual checkpoint restore.
 
-1. Add a distinct creature-type entry checkpoint to the existing immediate
-   operation runner, retaining its authentic original operation, full stack,
-   APNAP pre-entry batch roster, answers and replay validator. The current
-   WUBRG checkpoint cannot be retagged as a 324-choice creature-type stage.
-2. Store the chosen type with the exact entering incarnation before entry
-   observers run. Apply the quoted fellowship amount in the entry-counter
-   commit path, including copies, batches, replacement redirection and errors.
-   Wire the current-counter anthem into the checked native characteristic
-   calculation only for its complete selected definition.
-3. After source review, register the exact printing and add genuine paid
-   Banner accept/entry/copy/control/suppression/reentry and Season fixtures.
-   No fabricated definition or ignored future-printing test substitutes for
-   this registration-dependent coverage.
-4. Include this new semantic module and its consumed V60/native replacement
-   inputs in each future observer's source identity. No current observer calls
-   these quote helpers or obtains a new permission from them.
+Prior primitive fixtures remain: genuine Elf/Season/Heraldic payments with
+read-only generic entry quotes, sparse wire/fullwidth counters, and counter
+transfer/replacement/LKI negatives. Standard fixtures genuinely pay Innkeeper's
+Talent and level activations; pure fellowship grants its real level-two Ward1,
+while zero and negative counts preserve earlier predicate semantics. Without
+Season, level-three Talent doubles ordinary fellowship entry/transfer amounts
+and refuses overflow. The31-Talent overflow fixture genuinely pays and levels
+all Classes, then quotes a genuine Gingerbrute entry. These Standard fixtures
+are native primitives, not casts of a fabricated Banner definition in that
+separate selected catalog. Older counter arithmetic is unchanged.
 
-The existing V60 legal domain is pinned to Wizards' 2026-09-25 CR 205.3m.
-The integration must preserve CR 614.12 pre-entry replacement processing,
-613.4c additive power/toughness modification and 122 counter identity. Native
-mutable-world inputs retain their existing trust boundary; these read-only
-calculations are not sealed snapshot authority.
+The legal type domain remains pinned to Wizards'2026-09-25 CR205.3m. The native
+integration follows pre-entry replacement processing, layer7c additive PT and
+counter identity. Native mutable-world inputs retain their existing trust
+boundary: structural receipts and replay consistency do not authenticate
+coordinated arbitrary edits to an entire raw GameState. Any future owning
+consumer must preserve its own sealed stream/snapshot authority and explicitly
+propagate the new type and counter before admission.

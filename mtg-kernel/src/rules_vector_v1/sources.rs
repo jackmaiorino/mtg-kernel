@@ -515,6 +515,7 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         combat_static_rules,
         as_enters_color_choice_v1,
         chosen_color_creature_boost_v1,
+        creature_type_entry_v1,
         damage_replacement_v1,
         token_counter_replacement_v48,
         starting_life_self_bonuses_v1,
@@ -544,6 +545,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
         "damage multiplier requires its exact successor"
     );
     let mut printed = Vec::new();
+    assert!(
+        creature_type_entry_v1.is_none(),
+        "creature type entry and fellowship anthem require their precise successor"
+    );
     assert!(
         game_outcome_protection_v1.is_none(),
         "game-outcome prohibition requires its precise successor"

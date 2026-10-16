@@ -1026,7 +1026,8 @@ pub(super) fn conflicts(
     if state.engine.event_history.iter().any(|event| {
         matches!(
             event,
-            crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+            crate::event::CommittedEvent::KinshipEntryV1 { .. }
+                | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
@@ -1194,7 +1195,8 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            BannerEntryOperationStartedV1 { .. }
+            KinshipEntryV1 { .. }
+            | BannerEntryOperationStartedV1 { .. }
             | BannerEntryColorCapturedV1 { .. }
             | BannerEntryColorChosenV1 { .. }
             | BannerEntryColorCommittedV1 { .. }
