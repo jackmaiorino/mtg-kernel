@@ -990,6 +990,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Campus Guide",
     "Cat Token",
     "Celestial Armor",
+    "Embercleave",
     "Cenote Scout",
     "Chrome Host Seedshark",
     "Clinquant Skymage",

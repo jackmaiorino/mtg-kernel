@@ -7412,6 +7412,19 @@ fn normal_cast_reduction_count(
         card_def::DynamicCountDef::CreaturesAttackedThisTurn => {
             state.creatures_attacked_this_turn_v1()
         }
+        card_def::DynamicCountDef::ControllerAttackingCreatures => state
+            .engine
+            .combat
+            .attackers
+            .iter()
+            .filter(|&&id| {
+                state.objects.try_get(id).is_some_and(|object| {
+                    object.zone == Zone::Battlefield
+                        && object.controller == player
+                        && object_has_type(state, id, CardType::Creature)
+                })
+            })
+            .fold(0_u32, |count, _| count.saturating_add(1)),
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
         }
@@ -7479,6 +7492,14 @@ fn normal_cast_reduction_count(
         }
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "embercleave_v1_tests.rs"]
+mod embercleave_v1_tests;
 
 fn normal_cast_cost_depends_on_targets(def: &card_def::CardDef) -> bool {
     def.generic_cost_reduction.is_some_and(|reducer| {
