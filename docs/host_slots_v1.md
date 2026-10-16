@@ -1,6 +1,6 @@
 # Core slots on reserved hosts
 
-`python/tools/host_slots_v1.py` lets untimed work use the cores that timed work leaves idle. It works alongside the whole-host reservation (`python/tools/host_reservation_v1.py`) and does not replace it. The tool is mirrored byte-identical from spellbench `python/tools/host_slots_v1.py`; change it there first and copy it here.
+`python/tools/host_slots_v1.py` lets untimed work use the cores that timed work leaves idle. It works alongside the whole-host reservation (`python/tools/host_reservation_v1.py`) and does not replace it. The tool is kept byte-identical with spellbench `python/tools/host_slots_v1.py`; change both together.
 
 The v1 lock at `C:/mtg-node/host-lock/<HOST>.lock` keeps its exact meaning. This tool never writes it, and existing launchers, rated runs and CI pause hooks need no change. Slot records live beside it, in `<HOST>.slots/`.
 
@@ -33,7 +33,13 @@ host_reservation_v1.py supervise --token T -- python host_slots_v1.py timed --co
 
 `timed` checks that `MTG_HOST_RESERVATION_TOKEN` holds the lock and declares the cores. It waits for any claim on those cores to suspend; if one does not within 60 s, it refuses with exit 6. It then pins `COMMAND` to those cores and removes the declaration when the command's tree ends. Untimed claims may then use the rest of the host.
 
-A held lock with no declaration still reserves the whole host, which covers every launcher written before this tool.
+Between `acquire` and the `timed` declaration, a lock with no recorded cores reserves the whole host, so every claim pauses for a few seconds even when the declaration will cover other cores. To avoid that, record the cores when acquiring:
+
+```
+host_reservation_v1.py acquire --lane L --work-id W --release-condition TEXT --cores 0-7
+```
+
+The lock then reserves only those cores from the moment it exists, and again after `timed` ends while the lock is still held. A live `timed` declaration takes precedence while it runs. A held lock with neither recorded cores nor a live declaration still reserves the whole host, which covers every launcher written before this tool.
 
 Declaring is a change to a run's execution. For a rated run, qualify throughput with the same declaration and the same background load before the commitment names it. Launchers whose busy refusal matches process names (for example `java`) also see suspended claim processes.
 
