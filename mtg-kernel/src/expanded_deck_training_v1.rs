@@ -98,6 +98,7 @@ mod fresh_registry_transfer_source;
 mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
+mod loaded_source_cache_v1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 mod registry_transfer_source;
 #[cfg(test)]
@@ -1320,6 +1321,9 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
+    if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {
+        return Ok((policy, state, None));
+    }
     let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
     if probe.get("schema").and_then(Value::as_str) == Some(registry_transfer_source::SOURCE_SCHEMA)
     {
@@ -1346,7 +1350,7 @@ fn initialize_from_source_bytes_v1(
     // clone retains every bit and derived transpose without rebuilding a
     // deterministic template and converting/installing all parameters again.
     let model = policy.training_model_v3();
-    let state = if let Some(pin) = &source.checkpoint {
+    let (state, saved) = if let Some(pin) = &source.checkpoint {
         let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
@@ -1355,11 +1359,22 @@ fn initialize_from_source_bytes_v1(
                 saved.value_coefficient_bits,
             )?;
         }
-        restore_checkpoint_state_v1(&saved, &mut policy, model)?
+        (
+            restore_checkpoint_state_v1(&saved, &mut policy, model)?,
+            Some(saved),
+        )
     } else {
         ensure(inputs.is_none(), "update requires checkpoint")?;
-        NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?
+        (
+            NativePolicyValueTrainStateV1::new_v1(model).map_err(err)?,
+            None,
+        )
     };
+    if probe.get("schema").and_then(Value::as_str)
+        == Some(fresh_initialization_source::SOURCE_SCHEMA)
+    {
+        loaded_source_cache_v1::remember_v1(source, bytes, &policy, &state, saved.as_ref());
+    }
     Ok((policy, state, None))
 }
 
