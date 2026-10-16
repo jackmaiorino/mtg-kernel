@@ -136,6 +136,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::LoseLife { .. }
         | EffectOp::DrawCards { .. }
         | EffectOp::DrawCardsDynamic { .. }
+        | EffectOp::NivMizzetVisionaryDrawV1 { .. }
         | EffectOp::RevealTopAndPartitionByType { .. }
         | EffectOp::DiscardCards { .. }
         | EffectOp::DiscardBasicLandOrCards { .. }

@@ -104,6 +104,7 @@ fn proposed(choice: &ChoiceV1) -> DamageProposed {
         touched_by: choice.touched.clone(),
         is_combat: true,
         historical_source: None,
+        niv_damage_origin_v1: None,
     }
 }
 fn publication(state: &GameState, index: u32) -> Result<&PublicationV38, String> {
@@ -334,6 +335,7 @@ fn survivors(outcomes: &[BatchOutcomeV2]) -> Result<Vec<ProposedEvent>, String> 
                 touched_by: d.touched.clone(),
                 is_combat: true,
                 historical_source: None,
+                niv_damage_origin_v1: None,
             }))),
         })
         .collect()

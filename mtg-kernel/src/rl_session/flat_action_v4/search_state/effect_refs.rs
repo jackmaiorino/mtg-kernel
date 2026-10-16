@@ -207,6 +207,7 @@ impl Scan<'_> {
             | LookTopSelectByTypeToHandBottomRest { .. }
             | LookTopPickToHandBottomRest { .. }
             | DrawCardsDynamic { .. }
+            | NivMizzetVisionaryDrawV1 { .. }
             | DiscardBasicLandOrCards { .. }
             | LookTopMayTakeCreatureManaValueAtMostToHandBottomRest { .. }
             | GainLifeEqualToPaidCostManaValue { .. }

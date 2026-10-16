@@ -13995,6 +13995,32 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             ..StackStateV4::default()
         },
     });
+    if matches!(
+        state
+            .stack
+            .last()
+            .and_then(|item| item.inline_effect.as_ref()),
+        Some(EffectOp::NivMizzetVisionaryDrawV1 { .. })
+    ) {
+        let item = state.stack.last().expect("just published Niv trigger");
+        let observer = item
+            .v4
+            .ability_source_contract
+            .expect("validated Niv source");
+        let EffectOp::NivMizzetVisionaryDrawV1 {
+            damage_history_index,
+        } = item.inline_effect.as_ref().expect("matched inline effect")
+        else {
+            unreachable!("matched Niv draw variant")
+        };
+        let (stack_item_id, damage_history_index) = (item.v4.stack_item_id, *damage_history_index);
+        crate::event::publish_niv_mizzet_visionary_trigger_v1(
+            state,
+            stack_item_id,
+            observer,
+            damage_history_index,
+        );
+    }
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -14379,6 +14405,48 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if card_def::CARD_DEFS
+        .get(usize::from(source_card_def))
+        .is_some_and(|definition| definition.name == "Niv-Mizzet, Visionary")
+    {
+        let damage_history_index = crate::event::validate_niv_mizzet_visionary_pending_v1(
+            state,
+            item.source,
+            item.controller,
+            inline_effect,
+            ability_source_contract,
+        )?;
+        let published = state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+                crate::event::CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
+                    stack_item_id,
+                    observer,
+                    damage_history_index: found_index,
+                } if *stack_item_id == item.v4.stack_item_id
+                    && Some(*observer) == ability_source_contract
+                    && *found_index == damage_history_index)
+            })
+            .count();
+        let any_binding_for_item = state.engine.event_history.iter().any(|entry| {
+            matches!(entry,
+            crate::event::CommittedEvent::NivMizzetVisionaryTriggerStackedV1 {
+                stack_item_id,
+                ..
+            } if *stack_item_id == item.v4.stack_item_id)
+        });
+        if item.v4.stack_item_id.0 == 0 {
+            if any_binding_for_item {
+                return Err("unpublished Niv-Mizzet trigger already has a stack binding".into());
+            }
+        } else if published != 1 || !any_binding_for_item {
+            return Err("Niv-Mizzet trigger lost its exact stack-item binding".into());
+        }
+        return Ok(None);
+    }
     if crate::fake_your_own_death_v50::death_custody::validate_trigger_identity(state, item)? {
         return Ok(None);
     }
@@ -15906,6 +15974,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Suspended;
     }
     let current = state.stack.last().expect("resolving item exists").clone();
+    // Capture this only from the unique real top item while it is still on
+    // the public stack. Ordinary resolution removes the row before executing
+    // the effect, so later damage cannot re-authenticate by searching it.
+    let niv_damage_origin_v1 =
+        crate::event::niv_damage_origin_for_resolving_item_v1(state, &current);
     let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
     {
         Ok(owner) => owner,
@@ -16195,6 +16268,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // previous resolution. See `EngineState::pending_kicked_source`'s doc.
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
     let ctx = ExecCtx {
+        niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
@@ -17235,6 +17309,15 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             collect_and_queue_triggers(state);
         }
         Step::Cleanup => {
+            // 514.1 discard happens before 514.2 cleanup effects expire. The
+            // source engine's shared cleanup path currently performs its
+            // expiration work before the final discard check, so snapshot
+            // this static exception at entry without changing no-Niv games.
+            let niv_mizzet_no_max_hand_size =
+                crate::event::niv_mizzet_visionary_removes_hand_limit_v1(
+                    state,
+                    state.active_player,
+                );
             crate::standard_cards_v1::cleanup(state);
             for player in &mut state.players {
                 player.poison_prevention_v1.0 = false;
@@ -17337,7 +17420,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 return;
             }
             let hand_size = state.players[p.index()].hand.len();
-            if hand_size > 7 {
+            if !niv_mizzet_no_max_hand_size && hand_size > 7 {
                 state.engine.pending_discard = Some(PendingDiscard {
                     player: p,
                     count: (hand_size - 7) as u32,

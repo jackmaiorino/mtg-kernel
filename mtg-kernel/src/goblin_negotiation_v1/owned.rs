@@ -246,7 +246,9 @@ fn validate_capture(c: &CaptureV1, item: &StackItem, ctx: &ExecCtx) -> Result<()
                 && *spell_copy_origin == c.target.spell_copy_origin);
     let remaining = (i64::from(c.toughness) - i64::from(c.target.damage)).max(0);
     if c.ctx != *ctx
-        || c.ctx != crystal_prevention_v1::context(item)
+        || !c
+            .ctx
+            .same_except_niv_damage_origin_v1(&crystal_prevention_v1::context(item))
         || c.source.zone != Zone::Stack
         || c.source.controller != ctx.controller
         || !same_incarnation

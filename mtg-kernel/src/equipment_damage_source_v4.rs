@@ -121,6 +121,7 @@ fn metadata(state: &GameState, item: &StackItem) -> Result<(), String> {
 }
 pub(crate) fn context(item: &StackItem) -> ExecCtx {
     ExecCtx {
+        niv_damage_origin_v1: None,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
@@ -480,7 +481,7 @@ pub(crate) fn prepare_owned(
     ctx: &ExecCtx,
     op: &EffectOp,
 ) -> Result<(), String> {
-    if *ctx != context(&owner.item)
+    if !ctx.same_except_niv_damage_origin_v1(&context(&owner.item))
         || *op != printed_root(&owner.item)?
         || state
             .stack
@@ -534,7 +535,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparationV4, String
     let source = p.item.v4.ability_source_contract.unwrap();
     if r.index as usize != *index
         || r.index <= p.index
-        || r.ctx != context(&p.item)
+        || !r.ctx.same_except_niv_damage_origin_v1(&context(&p.item))
         || r.facts.source.source != source.source
         || r.facts.source.owner != source.owner
         || r.facts.source.zone_change_count != source.zone_change_count
@@ -654,7 +655,7 @@ fn close(
             item,
             &publication(state, item.v4.stack_item_id)?.item,
         )
-        || context(item) != context(&owner.item)
+        || !context(item).same_except_niv_damage_origin_v1(&context(&owner.item))
         || closed_count(state, item.v4.stack_item_id) != 0
     {
         return Err("equipment completion lost genuine removed owner".into());
