@@ -7454,7 +7454,7 @@ fn spell_cost_generic_modifiers_v1(
     (increase, reduction)
 }
 
-fn printed_normal_cast_cost_with_targets(
+pub(crate) fn printed_normal_cast_cost_with_targets(
     def: &card_def::CardDef,
     player: PlayerId,
     targets: &[Target],
@@ -7475,7 +7475,7 @@ fn printed_normal_cast_cost_with_targets(
     cost
 }
 
-fn normal_cast_reduction_count(
+pub(crate) fn normal_cast_reduction_count(
     count: card_def::DynamicCountDef,
     player: PlayerId,
     targets: &[Target],
@@ -18971,6 +18971,10 @@ pub(crate) fn attached_equipment_profiles(
             let equipment_object = state.objects.try_get(equipment_id)?;
             if equipment_object.zone != Zone::Battlefield
                 || equipment_object.v4.attached_to != host_link
+                || !crate::continuous_characteristics_v1::printed_abilities_active(
+                    state,
+                    equipment_id,
+                )
             {
                 return None;
             }

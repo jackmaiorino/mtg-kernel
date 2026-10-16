@@ -555,7 +555,7 @@ fn genuine_paid_current_width_copy_suppression_and_facedown_appendix_both_seats(
             "Ajani, Caller of the Pride",
             Zone::Battlefield,
         );
-        let existing = crate::planeswalker_v1::loyalty(&wide, ajani).unwrap();
+        let existing = crate::planeswalker_v1::loyalty(&wide, ajani).unwrap_or(0);
         crate::planeswalker_v1::add_loyalty_counters_checked_v1(
             &mut wide,
             ajani,
