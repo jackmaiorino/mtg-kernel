@@ -1,6 +1,7 @@
 //! Public Panda occurrences. Original replay worlds and executable owners remain private.
 use crate::effect::EffectOp;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::fiendish_panda_v1::{
     self as panda,
     custody::{JournalV1, RemovalV1},
@@ -292,6 +293,10 @@ fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
     let captures = state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::FiendishPandaDeathCaptureV1,
+            EventKindV1::FiendishPandaLifeGainCaptureV1,
+        ])
         .iter()
         .enumerate()
         .filter_map(|(at, entry)| {
@@ -350,6 +355,7 @@ fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
         let final_phase = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
             .iter()
             .enumerate()
             .find_map(|(at, entry)| match entry {
@@ -370,25 +376,25 @@ fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
                 JournalV1::Published { item, .. } => {
                     row.phase = PhaseV47::Published;
                     row.original_target = original_target(&item.v4.target_contracts)?;
-                    let removal =
-                        state
-                            .engine
-                            .event_history
-                            .iter()
-                            .enumerate()
-                            .find_map(|(at, entry)| match entry {
-                                CommittedEvent::FiendishPandaJournalV1 { journal } => {
-                                    match journal.as_ref() {
-                                        JournalV1::Removed {
-                                            publication: original,
-                                            kind,
-                                            ..
-                                        } if *original == publication => Some((at as u64, *kind)),
-                                        _ => None,
-                                    }
+                    let removal = state
+                        .engine
+                        .event_history
+                        .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
+                        .iter()
+                        .enumerate()
+                        .find_map(|(at, entry)| match entry {
+                            CommittedEvent::FiendishPandaJournalV1 { journal } => {
+                                match journal.as_ref() {
+                                    JournalV1::Removed {
+                                        publication: original,
+                                        kind,
+                                        ..
+                                    } if *original == publication => Some((at as u64, *kind)),
+                                    _ => None,
                                 }
-                                _ => None,
-                            });
+                            }
+                            _ => None,
+                        });
                     if let Some((removal, kind)) = removal {
                         row.phase = match kind {
                             RemovalV1::Resolved => PhaseV47::Resolved,
@@ -398,6 +404,7 @@ fn capture_ordinary(state: &GameState) -> Result<FactsV47, RlContractError> {
                         let operation = state
                             .engine
                             .event_history
+                            .scan_for_v1(&[EventKindV1::FiendishPandaJournalV1])
                             .iter()
                             .find_map(|entry| match entry {
                                 CommittedEvent::FiendishPandaJournalV1 { journal } => {

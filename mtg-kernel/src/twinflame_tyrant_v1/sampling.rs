@@ -3,6 +3,7 @@
 use crate::card_def::{CardType, DynamicValueDef};
 use crate::effect::{EffectOp, ExecCtx, TargetRef};
 use crate::event::{CommittedEvent as E, DamageProposed};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{GameObject, GameState, StackItem, Zone};
 use serde::{Deserialize, Serialize};
@@ -224,14 +225,19 @@ fn lookup<'a>(
     op: &EffectOp,
     path: &[u16],
 ) -> Result<Option<&'a SampleV38>, String> {
-    let mut rows = state.engine.event_history.iter().filter_map(|e| match e {
-        E::TwinflameDynamicDamageSampleV38 { sample }
-            if sample.ctx == *ctx && sample.op == *op && sample.path == path =>
-        {
-            Some(sample.as_ref())
-        }
-        _ => None,
-    });
+    let mut rows = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameDynamicDamageSampleV38])
+        .iter()
+        .filter_map(|e| match e {
+            E::TwinflameDynamicDamageSampleV38 { sample }
+                if sample.ctx == *ctx && sample.op == *op && sample.path == path =>
+            {
+                Some(sample.as_ref())
+            }
+            _ => None,
+        });
     let found = rows.next();
     if rows.next().is_some() {
         return Err("duplicate original dynamic damage sample".into());
@@ -266,7 +272,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     {
         return Err("private dynamic damage sampling appeared in public event log".into());
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameDynamicDamageSampleV38])
+        .iter()
+        .enumerate()
+    {
         let E::TwinflameDynamicDamageSampleV38 { sample } = event else {
             continue;
         };
@@ -308,6 +320,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         let owners: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
             .iter()
             .filter_map(|e| match e {
                 E::CrystalExecutionV1 { execution }

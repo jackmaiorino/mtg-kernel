@@ -1,6 +1,7 @@
 //! Definition-owned live damage replacement. No saved state on absent paths.
 use crate::card_def::{DamageReplacementDefV1, CARD_DEFS};
 use crate::event::{DamageProposed, ProposedEvent, ReplacementEffectKind};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, Target, Zone};
 
@@ -80,20 +81,35 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                     .is_some_and(|def| def.damage_replacement_v1.is_some())
             })
         })
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
-                    | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::TwinflameCombatInputV38,
+                EventKindV1::TwinflameCombatOperationV38,
+                EventKindV1::TwinflameCombatPublishedV38,
+                EventKindV1::TwinflameDamagePreparationV38,
+                EventKindV1::TwinflameDynamicDamageSampleV38,
+                EventKindV1::TwinflameFieryCaptureV38,
+                EventKindV1::TwinflameFieryFinishedV38,
+                EventKindV1::TwinflameReplacementInputV38,
+                EventKindV1::TwinflameReplacementOperationV38,
+            ])
+            .iter()
+            .any(|e| {
+                matches!(
+                    e,
+                    crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
+                )
+            })
 }
 
 pub(crate) fn sources(state: &GameState, damage: &DamageProposed) -> Result<Vec<ObjectId>, String> {
@@ -282,6 +298,7 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("effect/thousand_year_storm_v1.rs"),
         include_str!("effect/standard_copy.rs"),
         include_str!("standard_spell_copy.rs"),
+        include_str!("event_history_v1.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {

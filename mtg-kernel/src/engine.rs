@@ -52,6 +52,7 @@ use crate::effect::{
     self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, StormCopyBindingV1, TargetRef,
 };
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{self, Cost, ManaColor, ManaColorSetV1};
 use crate::state::{
@@ -182,7 +183,7 @@ pub struct EngineState {
     /// `event_log` would otherwise make unobservable after the fact (game
     /// replay / RL trace logging / the acceptance tests' event-log
     /// assertions all read this instead).
-    pub event_history: Vec<CommittedEvent>,
+    pub event_history: crate::event_history_v1::EventHistoryV1,
     pub active_replacements: Vec<ActiveReplacement>,
     pub next_replacement_id: u32,
     /// Exact historical links created by effects such as Mesmeric Fiend.
@@ -10180,6 +10181,7 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         let source = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CerberusCaptureV1 { capture } => Some(capture.source.source),

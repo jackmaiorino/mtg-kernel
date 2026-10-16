@@ -2,6 +2,7 @@
 use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::{AbilitySourceContractV4, GameState, Target, Zone};
@@ -326,6 +327,11 @@ pub(crate) fn collect(
     let indices = state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::FiendishPandaDeathCaptureV1,
+            EventKindV1::FiendishPandaLifeGainCaptureV1,
+            EventKindV1::FiendishPandaWideGainCaptureV59,
+        ])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {
@@ -342,7 +348,7 @@ pub(crate) fn collect(
     let mut consumed = Vec::new();
     for index in indices {
         let (source, effect, spec) = root_at(state, index).map_err(|_| ObjectId(0))?;
-        let prior = state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index } if *capture_history_index == index as u64)).count();
+        let prior = state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaCaptureCollectedV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index } if *capture_history_index == index as u64)).count();
         let current = events
             .iter()
             .filter(|e| *e == &state.engine.event_history[index])
@@ -401,7 +407,7 @@ fn execute_core(state: &mut GameState, ctx: &ExecCtx, effect: &EffectOp) -> Resu
     let (source, expected, spec) = root_at(state, index)?;
     if expected != *effect || ctx.source != source.source || ctx.controller != source.controller
         || ctx.ability_source_contract != Some(source)
-        || state.engine.event_history.iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index } if *capture_history_index == index as u64)).count() != 1
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::FiendishPandaCaptureCollectedV1]).iter().filter(|e| matches!(e, CommittedEvent::FiendishPandaCaptureCollectedV1 { capture_history_index } if *capture_history_index == index as u64)).count() != 1
     { return Err("Panda root lost its collected original source".into()); }
     match effect {
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. } => {
@@ -448,16 +454,27 @@ pub(crate) fn require_legacy_supported(
     actor: Option<PlayerId>,
 ) -> Result<(), String> {
     crate::bloodthirsty_conqueror_v49::require_legacy_consumer(state)?;
-    let retained = state.engine.event_history.iter().any(|e| {
-        matches!(
-            e,
-            CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
-                | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
-                | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
-                | CommittedEvent::FiendishPandaCaptureCollectedV1 { .. }
-                | CommittedEvent::FiendishPandaJournalV1 { .. }
-        )
-    });
+    let retained = state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::FiendishPandaLifeGainCaptureV1,
+            EventKindV1::FiendishPandaWideGainCaptureV59,
+            EventKindV1::FiendishPandaDeathCaptureV1,
+            EventKindV1::FiendishPandaCaptureCollectedV1,
+            EventKindV1::FiendishPandaJournalV1,
+        ])
+        .iter()
+        .any(|e| {
+            matches!(
+                e,
+                CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+                    | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
+                    | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
+                    | CommittedEvent::FiendishPandaCaptureCollectedV1 { .. }
+                    | CommittedEvent::FiendishPandaJournalV1 { .. }
+            )
+        });
     if retained {
         return Err("Fiendish Panda historical roots require their consumer successor".into());
     }
@@ -481,7 +498,18 @@ pub(crate) fn require_legacy_supported(
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::FiendishPandaCaptureCollectedV1,
+            EventKindV1::FiendishPandaDeathCaptureV1,
+            EventKindV1::FiendishPandaLifeGainCaptureV1,
+            EventKindV1::FiendishPandaWideGainCaptureV59,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
             | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }

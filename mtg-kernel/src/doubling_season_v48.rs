@@ -1,4 +1,5 @@
 //! Shared replacement inputs. No registry entry or consumer admission.
+use crate::event_history_v1::EventKindV1;
 use crate::{
     card_def::{
         CardCapability, CardType, Keywords, TargetSpec, TokenCounterReplacementDefV48, CARD_DEFS,
@@ -487,33 +488,53 @@ pub(crate) fn require_legacy_supported(state: &GameState) -> Result<(), String> 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
     state.objects.iter().any(|(_, o)| {
         o.zone == Zone::Battlefield && o.v4.face_down_v1.is_none() && owns_definition(o.card_def)
-    }) || state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
-                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
-                | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
-                | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
-                | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
-                | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
-                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
-        )
-    }) || state.engine.event_history.iter().any(|event| {
-        matches!(event,
+    }) || state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::BaitTransferAppliedV48,
+            EventKindV1::BaitTransferInputV48,
+            EventKindV1::PlusCounterInputV48,
+            EventKindV1::PlusCounterReplacementV48,
+            EventKindV1::TokenAttachmentJournalV48,
+            EventKindV1::TokenCreationInputV48,
+            EventKindV1::TokenCreationReplacementV48,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                    | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                    | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
+                    | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+                    | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+                    | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                    | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+            )
+        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::PlusOneCountersAdded])
+            .iter()
+            .any(|event| {
+                matches!(event,
         crate::event::CommittedEvent::PlusOneCountersAdded { replacement_input_v48, .. }
         if !replacement_input_v48.is_none())
-    }) || state.engine.event_history.iter().any(|event| {
-        matches!(event,
+            })
+        || state.engine.event_history.iter().any(|event| {
+            matches!(event,
         crate::event::CommittedEvent::CreateToken { replacement_input_v48, .. }
         if !replacement_input_v48.is_none())
-    }) || state.stack.iter().any(|item| {
-        item.v4
-            .source_contract
-            .is_some_and(|source| source.zone == Zone::Stack && owns_definition(source.card_def))
-            || state.objects.try_get(item.source).is_some_and(|object| {
+        })
+        || state.stack.iter().any(|item| {
+            item.v4.source_contract.is_some_and(|source| {
+                source.zone == Zone::Stack && owns_definition(source.card_def)
+            }) || state.objects.try_get(item.source).is_some_and(|object| {
                 object.zone == Zone::Stack && owns_definition(object.card_def)
             })
-    })
+        })
 }
 
 /// Original low-level effect input for the previously omitted bait family.
@@ -649,10 +670,19 @@ pub(crate) fn bait_transfer_balance(
     Ok(Some((input.recipient, placement.before, placement.after)))
 }
 fn validate_bait_transfers(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::BaitTransferAppliedV48,
+            EventKindV1::BaitTransferInputV48,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             crate::event::CommittedEvent::BaitTransferInputV48 {input} => {
-                if input.index!=at as u64 || state.engine.event_history.iter().filter(|event|matches!(event,crate::event::CommittedEvent::BaitTransferAppliedV48 {placement} if placement.input==at as u64)).count()!=1 {
+                if input.index!=at as u64 || state.engine.event_history.scan_for_v1(&[EventKindV1::BaitTransferAppliedV48]).iter().filter(|event|matches!(event,crate::event::CommittedEvent::BaitTransferAppliedV48 {placement} if placement.input==at as u64)).count()!=1 {
                     return Err("bait transfer input lost unique actual placement".into());
                 }
             }
@@ -896,6 +926,7 @@ pub(crate) fn expected_plus_at(
     let matches = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::PlusCounterReplacementV48])
         .iter()
         .filter_map(|event| match event {
             crate::event::CommittedEvent::PlusCounterReplacementV48 { placement: p }
@@ -1124,11 +1155,17 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
     }) {
         return Err("private replacement replayed as trigger input".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TokenCreationInputV48])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::TokenCreationInputV48 { input } = event else {
             continue;
         };
-        let closures = state.engine.event_history.iter().filter(|event| matches!(event,
+        let closures = state.engine.event_history.scan_for_v1(&[EventKindV1::TokenCreationReplacementV48]).iter().filter(|event| matches!(event,
             CommittedEvent::TokenCreationReplacementV48 {creation} if creation.input == index as u64)).count();
         if input.index != index as u64
             || input.requests.is_empty()
@@ -1139,7 +1176,13 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             return Err("token creation lost unique original-world input/completion".into());
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::PlusOneCountersAdded])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::PlusOneCountersAdded {
             replacement_input_v48: CounterInputRefV48(Some(input_index)),
             ..
@@ -1153,6 +1196,7 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             || state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::PlusCounterReplacementV48])
                 .iter()
                 .filter(|event| {
                     matches!(event,
@@ -1165,19 +1209,31 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             return Err("issued replaced counter lost original input/completion".into());
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::PlusCounterInputV48])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::PlusCounterInputV48 { input } = event else {
             continue;
         };
         if input.index != index as u64 || input.original <= 0
             || !input.world.engine.event_history.is_empty() || !input.world.engine.event_log.is_empty()
-            || state.engine.event_history.iter().filter(|event| matches!(event,
+            || state.engine.event_history.scan_for_v1(&[EventKindV1::PlusCounterReplacementV48]).iter().filter(|event| matches!(event,
                 CommittedEvent::PlusCounterReplacementV48 { placement } if placement.input == input.index)).count() != 1 {
             return Err("counter placement lost its unique original world/completion".into());
         }
     }
     let mut counter_events = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::PlusCounterReplacementV48])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::PlusCounterReplacementV48 { placement: p } = event else {
             continue;
         };
@@ -1231,7 +1287,13 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
         }
         counter_events.push(p.counter_event);
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CreateToken])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::CreateToken {
             replacement_input_v48: TokenInputRefV48(Some(input_index)),
             ..
@@ -1245,6 +1307,7 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
             || state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::TokenCreationReplacementV48])
                 .iter()
                 .filter(|event| {
                     matches!(event,
@@ -1258,7 +1321,13 @@ pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
         }
     }
     let mut all_created = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TokenCreationReplacementV48])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::TokenCreationReplacementV48 { creation: c } = event else {
             continue;
         };

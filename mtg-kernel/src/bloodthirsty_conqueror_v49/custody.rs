@@ -1,6 +1,7 @@
 //! Conqueror-specific mandatory occurrence and actual gain/removal ownership.
 use super::*;
 use crate::effect::{EffectOp, ExecCtx};
+use crate::event_history_v1::EventKindV1;
 use crate::state::{StackItem, StackItemKind, StackStateV4};
 use crate::trigger::PendingTrigger;
 
@@ -65,7 +66,7 @@ impl WorldV49 {
         if !original.engine.event_history.is_empty() {
             return Err("Conqueror recursive input history".into());
         }
-        original.engine.event_history = prefix.to_vec();
+        original.engine.event_history = prefix.to_vec().into();
         Ok(original)
     }
 }
@@ -177,7 +178,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
         return Ok(());
     };
     item_matches(state, item, capture)?;
-    if !unique_live(state, item) || state.engine.event_history.iter().any(|event| matches!(event,
+    if !unique_live(state, item) || state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().any(|event| matches!(event,
         CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Published { capture: old, .. } if *old == capture))) {
         return Err("Conqueror publication lost or duplicated genuine full row".into());
     }
@@ -223,7 +224,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     if !unique_live(state, item) {
         return Err("Conqueror loan requires unique actual live item".into());
     }
-    let publications = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| match event {
+    let publications = state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().enumerate().filter_map(|(at, event)| match event {
         CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Published { capture: c, item: original, .. } if *c == capture && original.as_ref() == item) => Some(at as u64),
         _ => None,
     }).collect::<Vec<_>>();
@@ -250,7 +251,7 @@ fn removed(
     {
         return Err("Conqueror genuine private removal owner changed".into());
     }
-    if state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::ConquerorJournalV49 { journal }
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().any(|event| matches!(event, CommittedEvent::ConquerorJournalV49 { journal }
         if matches!(journal.as_ref(), JournalV49::Removed { publication, .. } if *publication == owner.publication))) {
         return Err("Conqueror removal replayed".into());
     }
@@ -512,6 +513,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let captures = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ConquerorCapturedV49])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| {
@@ -519,14 +521,23 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         })
         .collect::<Vec<_>>();
     if captures.is_empty()
-        && !state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                CommittedEvent::ConquerorJournalV49 { .. }
-                    | CommittedEvent::ConquerorCollectedV49 { .. }
-                    | CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
-            )
-        })
+        && !state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::ConquerorCollectedV49,
+                EventKindV1::ConquerorJournalV49,
+                EventKindV1::ConquerorGainReplayBorrowV49,
+            ])
+            .iter()
+            .any(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::ConquerorJournalV49 { .. }
+                        | CommittedEvent::ConquerorCollectedV49 { .. }
+                        | CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
+                )
+            })
         && !waiting
             .clone()
             .any(|pending| binding(&pending.effect).is_some())
@@ -543,12 +554,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|event| **event == state.engine.event_history[*capture as usize])
             .count();
-        let collected = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| matches!(event, CommittedEvent::ConquerorCollectedV49 { capture_history_index } if capture_history_index == capture).then_some(at as u64)).collect::<Vec<_>>();
+        let collected = state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorCollectedV49]).iter().enumerate().filter_map(|(at, event)| matches!(event, CommittedEvent::ConquerorCollectedV49 { capture_history_index } if capture_history_index == capture).then_some(at as u64)).collect::<Vec<_>>();
         let held = waiting
             .iter()
             .filter(|pending| binding(&pending.effect) == Some(*capture))
             .collect::<Vec<_>>();
-        let publications = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| match event {
+        let publications = state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().enumerate().filter_map(|(at, event)| match event {
             CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Published { capture: original, .. } if original == capture) => Some(at as u64), _ => None,
         }).collect::<Vec<_>>();
         if collected.is_empty() {
@@ -578,7 +589,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
             .collect::<Vec<_>>();
-        let removals = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| match event {
+        let removals = state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().enumerate().filter_map(|(at, event)| match event {
             CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Removed { publication, .. } if publication == published) => Some(at as u64), _ => None,
         }).collect::<Vec<_>>();
         if removals.is_empty() {
@@ -597,6 +608,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         let closures = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::ConquerorJournalV49])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {

@@ -110,6 +110,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("effect/thousand_year_storm_v1.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update([0]);
             h.update(source.as_bytes());

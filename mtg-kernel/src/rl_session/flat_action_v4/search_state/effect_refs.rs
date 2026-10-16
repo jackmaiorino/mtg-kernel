@@ -1,6 +1,7 @@
 //! Typed admission walk for suspended interpreter references.
 use super::*;
 use crate::effect::*;
+use crate::event_history_v1::EventKindV1;
 use crate::state::AbilitySourceContractV4;
 
 struct Scan<'a> {
@@ -1064,6 +1065,7 @@ pub(super) fn conflicts(
     if state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FaebloomJournalV43])
         .iter()
         .any(|e| matches!(e, crate::event::CommittedEvent::FaebloomJournalV43 { .. }))
     {
@@ -1074,84 +1076,164 @@ pub(super) fn conflicts(
     }
     // This sampler has no qualified migration for the independently retained
     // payment, removal and completion ownership of a Librarian activation.
-    if state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
-                | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
-                | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
-                | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
-                | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
-                | crate::event::CommittedEvent::KinshipEntryV1 { .. }
-                | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
-                | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
-                | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
-                | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
-                | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
-                | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
-                | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
-                | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
-                | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
-                | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
-                | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
-                | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
-                | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
-                | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
-                | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
-                | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
-                | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
-                | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
-                | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
-                | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
-                | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
-                | crate::event::CommittedEvent::GorehornOperationV1 { .. }
-                | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
-                | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
-                | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
-                | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
-                | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
-                | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
-                | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
-                | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
-                | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
-                | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
-                | crate::event::CommittedEvent::FakeJournalV50 { .. }
-                | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
-                | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
-                | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
-                | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
-                | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
-                | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
-                | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
-                | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
-                | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
-                | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
-                | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
-                | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
-                | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
-                | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
-                | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
-                | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
-                | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
-                | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
-                | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
-                | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
-                | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
-                | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
-        )
-    }) {
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::SphinxsTutelageDrawV1,
+            EventKindV1::SphinxsTutelageCollectedV1,
+            EventKindV1::SphinxsTutelagePublishedV1,
+            EventKindV1::SphinxsTutelageMillStartedV1,
+            EventKindV1::SphinxsTutelageMillBatchV1,
+            EventKindV1::KinshipEntryV1,
+            EventKindV1::BannerEntryOperationStartedV1,
+            EventKindV1::BannerEntryColorCapturedV1,
+            EventKindV1::BannerEntryColorChosenV1,
+            EventKindV1::BannerEntryColorCommittedV1,
+            EventKindV1::BannerEntryOperationCompletedV1,
+            EventKindV1::LibrarianActivationCommittedV1,
+            EventKindV1::LibrarianActivationCounterRemovalV1,
+            EventKindV1::LibrarianActivationOperationV1,
+            EventKindV1::LibrarianActivationFinishedV1,
+            EventKindV1::VampireGourmandResolutionBoundaryV1,
+            EventKindV1::VampireGourmandCostOperationV2,
+            EventKindV1::VampireGourmandCleanupV2,
+            EventKindV1::VampireGourmandExpiredV2,
+            EventKindV1::VampireGourmandAttackCaptureV2,
+            EventKindV1::VampireGourmandCollectedV2,
+            EventKindV1::VampireGourmandPublishedV2,
+            EventKindV1::VampireGourmandCounterRemovedV2,
+            EventKindV1::VampireGourmandCounterClosedV2,
+            EventKindV1::RaidEntryCaptureV1,
+            EventKindV1::RaidEntryPublishedV1,
+            EventKindV1::RaidEntryDroppedV1,
+            EventKindV1::RaidEntryCounteredV1,
+            EventKindV1::RaidEntryStartedV1,
+            EventKindV1::GorehornDepartureV1,
+            EventKindV1::GorehornPublishedV1,
+            EventKindV1::GorehornPreparedV1,
+            EventKindV1::GorehornDamageOperationV1,
+            EventKindV1::GorehornOperationV1,
+            EventKindV1::GorehornCrystalBeginV1,
+            EventKindV1::GorehornCrystalCompletionV1,
+            EventKindV1::EquipmentDamagePublishedV4,
+            EventKindV1::EquipmentDamageDepartureV4,
+            EventKindV1::EquipmentDamagePreparedV4,
+            EventKindV1::EquipmentDamageClosedV4,
+            EventKindV1::EquipmentDamageCounterRemovalV4,
+            EventKindV1::ProtectionSourceColorDepartureV1,
+            EventKindV1::ZulAshurPublishedV1,
+            EventKindV1::ZulAshurRemovedV1,
+            EventKindV1::ZulAshurInstalledV1,
+            EventKindV1::ZulAshurCleanupEnteredV1,
+            EventKindV1::ZulAshurCleanupV1,
+            EventKindV1::ZulAshurExpiredV1,
+            EventKindV1::ZulAshurRemovalInputV1,
+            EventKindV1::FaebloomJournalV43,
+            EventKindV1::FakeJournalV50,
+            EventKindV1::InspirationResolutionBoundaryV1,
+            EventKindV1::TwinflameReplacementInputV38,
+            EventKindV1::TwinflameReplacementOperationV38,
+            EventKindV1::TwinflameDamagePreparationV38,
+            EventKindV1::TwinflameCombatPublishedV38,
+            EventKindV1::TwinflameCombatInputV38,
+            EventKindV1::TwinflameCombatOperationV38,
+            EventKindV1::TwinflameDynamicDamageSampleV38,
+            EventKindV1::TwinflameFieryCaptureV38,
+            EventKindV1::TwinflameFieryFinishedV38,
+            EventKindV1::InspirationResolutionInputV1,
+            EventKindV1::InspirationResolutionOperationV1,
+            EventKindV1::InspirationEngineDepartureV1,
+            EventKindV1::MandatoryCastPaymentV1,
+            EventKindV1::MandatoryCastPaymentInputV1,
+            EventKindV1::TokenCreationReplacementV48,
+            EventKindV1::PlusCounterReplacementV48,
+            EventKindV1::TokenCreationInputV48,
+            EventKindV1::TokenAttachmentJournalV48,
+            EventKindV1::BaitTransferInputV48,
+            EventKindV1::BaitTransferAppliedV48,
+            EventKindV1::PlusCounterInputV48,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
+                    | crate::event::CommittedEvent::KinshipEntryV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryColorCommittedV1 { .. }
+                    | crate::event::CommittedEvent::BannerEntryOperationCompletedV1 { .. }
+                    | crate::event::CommittedEvent::LibrarianActivationCommittedV1 { .. }
+                    | crate::event::CommittedEvent::LibrarianActivationCounterRemovalV1 { .. }
+                    | crate::event::CommittedEvent::LibrarianActivationOperationV1 { .. }
+                    | crate::event::CommittedEvent::LibrarianActivationFinishedV1 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandResolutionBoundaryV1 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandCostOperationV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandCleanupV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandExpiredV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandAttackCaptureV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandCollectedV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandPublishedV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandCounterRemovedV2 { .. }
+                    | crate::event::CommittedEvent::VampireGourmandCounterClosedV2 { .. }
+                    | crate::event::CommittedEvent::RaidEntryCaptureV1 { .. }
+                    | crate::event::CommittedEvent::RaidEntryPublishedV1 { .. }
+                    | crate::event::CommittedEvent::RaidEntryDroppedV1 { .. }
+                    | crate::event::CommittedEvent::RaidEntryCounteredV1 { .. }
+                    | crate::event::CommittedEvent::RaidEntryStartedV1 { .. }
+                    | crate::event::CommittedEvent::GorehornDepartureV1 { .. }
+                    | crate::event::CommittedEvent::GorehornPublishedV1 { .. }
+                    | crate::event::CommittedEvent::GorehornPreparedV1 { .. }
+                    | crate::event::CommittedEvent::GorehornDamageOperationV1 { .. }
+                    | crate::event::CommittedEvent::GorehornOperationV1 { .. }
+                    | crate::event::CommittedEvent::GorehornCrystalBeginV1 { .. }
+                    | crate::event::CommittedEvent::GorehornCrystalCompletionV1 { .. }
+                    | crate::event::CommittedEvent::EquipmentDamagePublishedV4 { .. }
+                    | crate::event::CommittedEvent::EquipmentDamageDepartureV4 { .. }
+                    | crate::event::CommittedEvent::EquipmentDamagePreparedV4 { .. }
+                    | crate::event::CommittedEvent::EquipmentDamageClosedV4 { .. }
+                    | crate::event::CommittedEvent::EquipmentDamageCounterRemovalV4 { .. }
+                    | crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurPublishedV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurRemovedV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurInstalledV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurCleanupV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurExpiredV1 { .. }
+                    | crate::event::CommittedEvent::ZulAshurRemovalInputV1 { .. }
+                    | crate::event::CommittedEvent::FaebloomJournalV43 { .. }
+                    | crate::event::CommittedEvent::FakeJournalV50 { .. }
+                    | crate::event::CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+                    | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
+                    | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
+                    | crate::event::CommittedEvent::InspirationResolutionInputV1 { .. }
+                    | crate::event::CommittedEvent::InspirationResolutionOperationV1 { .. }
+                    | crate::event::CommittedEvent::InspirationEngineDepartureV1 { .. }
+                    | crate::event::CommittedEvent::MandatoryCastPaymentV1 { .. }
+                    | crate::event::CommittedEvent::MandatoryCastPaymentInputV1 { .. }
+                    | crate::event::CommittedEvent::TokenCreationReplacementV48 { .. }
+                    | crate::event::CommittedEvent::PlusCounterReplacementV48 { .. }
+                    | crate::event::CommittedEvent::TokenCreationInputV48 { .. }
+                    | crate::event::CommittedEvent::TokenAttachmentJournalV48 { .. }
+                    | crate::event::CommittedEvent::BaitTransferInputV48 { .. }
+                    | crate::event::CommittedEvent::BaitTransferAppliedV48 { .. }
+                    | crate::event::CommittedEvent::PlusCounterInputV48 { .. }
+            )
+        })
+    {
         return true;
     }
     // Crystal execution captures whole historical item/context authority.
@@ -1177,12 +1259,18 @@ pub(super) fn conflicts(
         return true;
     }
     let s = Scan { state, pool };
-    if state.engine.event_history.iter().any(|e| {
-        matches!(
-            e,
-            crate::event::CommittedEvent::StromkirkEndStepObserversV1 { .. }
-        )
-    }) {
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkEndStepObserversV1])
+        .iter()
+        .any(|e| {
+            matches!(
+                e,
+                crate::event::CommittedEvent::StromkirkEndStepObserversV1 { .. }
+            )
+        })
+    {
         return true;
     }
     if let Some(crate::engine::PendingDiscard {

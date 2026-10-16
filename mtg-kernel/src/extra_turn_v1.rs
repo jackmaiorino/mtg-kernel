@@ -2,6 +2,7 @@
 use crate::card_def::{self, TargetSpec};
 use crate::effect::EffectOp;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{PlayerId, StackItemId};
 use crate::state::{GameState, StackItem, StackItemKind, Step};
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,7 @@ fn publication(state: &GameState, item: &StackItem) -> Result<usize, String> {
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ExtraTurnOwnerPublishedV1])
         .iter()
         .enumerate()
         .filter_map(|(i, event)| {
@@ -177,11 +179,16 @@ fn acquire_live(
             .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
             .count()
             != 1
-        || state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::ExtraTurnScheduledV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::ExtraTurnScheduledV1 { item: prior }
                 if prior.v4.stack_item_id == item.v4.stack_item_id)
-        })
+            })
     {
         return Err("extra turn lost its unique finalized printed spell owner".into());
     }
@@ -344,7 +351,17 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }) {
         return Err("extra turn history authority cannot enter the public event log".into());
     }
-    for (history_index, event) in state.engine.event_history.iter().enumerate() {
+    for (history_index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ExtraTurnBeganV1,
+            EventKindV1::ExtraTurnScheduledV1,
+            EventKindV1::ExtraTurnStartedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::ExtraTurnStartedV1 {
                 initial,
@@ -374,6 +391,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let operations: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ExtraTurnOwnerRemovedV1])
                     .iter()
                     .enumerate()
                     .filter_map(|(i, event)| {
@@ -435,7 +453,17 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             _ => {}
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ExtraTurnOwnerPublishedV1,
+            EventKindV1::ExtraTurnOwnerRemovedV1,
+            EventKindV1::ExtraTurnVirtualCeasedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::ExtraTurnOwnerPublishedV1 { item } => {
                 if publication(state, item)? != index {
@@ -444,6 +472,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let removals: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ExtraTurnOwnerRemovedV1])
                     .iter()
                     .enumerate()
                     .filter_map(|(i, event)| {
@@ -469,7 +498,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     [(i, original, outcome)]
                         if index < *i && original.as_ref() == item.as_ref() && live.is_empty() =>
                     {
-                        let schedules=state.engine.event_history.iter().filter(|event|matches!(event,
+                        let schedules=state.engine.event_history.scan_for_v1(&[EventKindV1::ExtraTurnScheduledV1]).iter().filter(|event|matches!(event,
                             CommittedEvent::ExtraTurnScheduledV1 {item:scheduled} if scheduled.v4.stack_item_id==item.v4.stack_item_id)).count();
                         if schedules != usize::from(**outcome == RemovalV1::Resolved) {
                             return Err(
@@ -477,7 +506,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                                     .into(),
                             );
                         }
-                        let scheduled_at = state.engine.event_history.iter().position(|event| matches!(event,
+                        let scheduled_at = state.engine.event_history.scan_for_v1(&[EventKindV1::ExtraTurnScheduledV1]).iter().position(|event| matches!(event,
                             CommittedEvent::ExtraTurnScheduledV1 {item:scheduled} if scheduled.v4.stack_item_id==item.v4.stack_item_id));
                         // A subsequent publication of this same physical card bounds
                         // the departure occurrence to the original spell incarnation.
@@ -515,6 +544,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let owners: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ExtraTurnOwnerPublishedV1])
                     .iter()
                     .enumerate()
                     .filter_map(|(at, event)| {
@@ -526,7 +556,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     })
                     .collect();
                 if !matches!(owners.as_slice(),[(at,item)] if *at<index && item.is_copy && item.v4.source_contract==Some(*source))
-                    || state.engine.event_history.iter().filter(|event|matches!(event,CommittedEvent::ExtraTurnVirtualCeasedV1 {stack_item_id:id,..} if id==stack_item_id)).count()!=1
+                    || state.engine.event_history.scan_for_v1(&[EventKindV1::ExtraTurnVirtualCeasedV1]).iter().filter(|event|matches!(event,CommittedEvent::ExtraTurnVirtualCeasedV1 {stack_item_id:id,..} if id==stack_item_id)).count()!=1
                     || state.stack.iter().any(|item|item.v4.stack_item_id==*stack_item_id)
                 {
                     return Err(

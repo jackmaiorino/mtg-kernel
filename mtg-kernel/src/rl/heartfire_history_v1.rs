@@ -1,5 +1,6 @@
 //! History-only common storage producer, independent of frozen constructors.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 use crate::heartfire_history_v1::HeartfireHistoryObservationV1;
 use crate::heartfire_public_v1::HeartfireSavedDamageV1;
 use crate::policy_observation_v8::{
@@ -821,6 +822,7 @@ fn saved_damage(
         let power = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::SourcePowerActivationCommittedV1 {

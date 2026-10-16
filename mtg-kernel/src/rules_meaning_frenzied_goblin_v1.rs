@@ -111,6 +111,7 @@ pub fn producer_sha256() -> String {
                 "standard_spell_copy.rs",
                 include_str!("standard_spell_copy.rs"),
             ),
+            ("event_history_v1.rs", include_str!("event_history_v1.rs")),
         ] {
             h.update([0]);
             h.update(path.as_bytes());

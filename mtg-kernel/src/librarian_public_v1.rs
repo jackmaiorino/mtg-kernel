@@ -1,5 +1,6 @@
 //! Distinct Librarian transport from the actual shared typed public producer.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -137,6 +138,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("effect/thousand_year_storm_v1.rs"),
         include_str!("effect/standard_copy.rs"),
         include_str!("standard_spell_copy.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -202,7 +204,7 @@ impl LibrarianObservationV1 {
 }
 pub(crate) fn activations(state: &GameState) -> Result<Vec<ActivationV1>, RlContractError> {
     crate::librarian_activation_v1::validate_state(state).map_err(RlContractError)?;
-    state.engine.event_history.iter().filter_map(|event| {
+    state.engine.event_history.scan_for_v1(&[EventKindV1::LibrarianActivationCommittedV1]).iter().filter_map(|event| {
         let CommittedEvent::LibrarianActivationCommittedV1 { item } = event else { return None; };
         Some((|| {
             let source = item.v4.ability_source_contract.ok_or_else(|| RlContractError("paid source absent".into()))?;

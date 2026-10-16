@@ -1,6 +1,7 @@
 //! Public soul counts and paid Amulet outcomes. Private worlds and executable
 //! history references are consumed internally, never serialized in these DTOs.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ravenous_amulet_v1::{OperationV1, PaidV1};
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::rules_meaning_ravenous_amulet_v51::{self as meaning, RootV51};
@@ -107,6 +108,7 @@ pub fn producer_sha256() -> String {
             include_str!("effect/thousand_year_storm_v1.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());
@@ -143,6 +145,7 @@ fn outcome(state: &GameState, paid: &PaidV1) -> Result<OutcomeV51, RlContractErr
     let removed = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RavenousRemovedV1])
         .iter()
         .find_map(|event| match event {
             CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index => {
@@ -156,6 +159,7 @@ fn outcome(state: &GameState, paid: &PaidV1) -> Result<OutcomeV51, RlContractErr
     let completed = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RavenousCompletedV1])
         .iter()
         .find_map(|event| match event {
             CommittedEvent::RavenousCompletedV1 { completed }
@@ -256,7 +260,11 @@ pub fn capture(state: &GameState) -> Result<FactsV51, RlContractError> {
         ));
     }
     let mut activations = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::RavenousPaymentV1])
+    {
         let CommittedEvent::RavenousPaymentV1 { paid } = event else {
             continue;
         };

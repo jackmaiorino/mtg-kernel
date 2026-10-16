@@ -3,6 +3,7 @@
 use crate::card_def::{CardType, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx};
 use crate::event::{self, CommittedEvent, HistoricalDamageSourceV1, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, StackItem, StackItemKind, Target, Zone};
@@ -97,6 +98,7 @@ pub(crate) fn record_paid(state: &mut GameState, id: StackItemId) {
     let damage_source = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourceDamageBeforeLeavingV1])
         .iter()
         .find_map(|event| match event {
             CommittedEvent::SourceDamageBeforeLeavingV1 { damage_source }
@@ -142,11 +144,16 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     crate::fixed_source_damage_v3::validate_item(state, item)?;
     if !is_program(item.inline_effect.as_ref()) {
         if selected_definition_uses_program(item)
-            || state.engine.event_history.iter().any(|event| {
-                matches!(event,
+            || state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
+                .iter()
+                .any(|event| {
+                    matches!(event,
                 CommittedEvent::SourcePowerActivationCommittedV1 { item: saved, .. }
                 if saved.v4.stack_item_id == item.v4.stack_item_id)
-            })
+                })
         {
             return Err(
                 "source-power activation changed its selected definition-owned program".into(),
@@ -154,7 +161,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         }
         return Ok(());
     }
-    if state.engine.event_history.iter().any(|event|matches!(event,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::SourcePowerActivationFinishedV1]).iter().any(|event|matches!(event,
         CommittedEvent::SourcePowerActivationFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)) {
         return Err("source-power activation was already finished".into());
     }
@@ -172,6 +179,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let mut receipts = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::SourcePowerActivationCommittedV1 {
@@ -208,6 +216,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let captures = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourceDamageBeforeLeavingV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::SourceDamageBeforeLeavingV1 {
@@ -287,7 +296,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         return Err("historical activation authority appeared in transient event log".into());
     }
     let mut seen = Vec::new();
-    for (receipt_index, event) in state.engine.event_history.iter().enumerate() {
+    for (receipt_index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::SourcePowerActivationCommittedV1 { item, .. } = event else {
             continue;
         };
@@ -299,6 +314,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let finishes = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::SourcePowerActivationFinishedV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -325,7 +341,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             _ => return Err("source-power activation ownership was erased or replayed".into()),
         }
     }
-    if state.engine.event_history.iter().any(|event|matches!(event,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::SourcePowerActivationFinishedV1]).iter().any(|event|matches!(event,
         CommittedEvent::SourcePowerActivationFinishedV1 {stack_item_id} if !seen.contains(stack_item_id))) {
         return Err("source-power completion has no committed payment".into());
     }
@@ -348,22 +364,22 @@ pub(crate) fn damage_source(
     if crate::fixed_source_damage_v3::has_payment(state, id) {
         return crate::fixed_source_damage_v3::damage_source(state, source, id);
     }
-    let mut receipts =
-        state
-            .engine
-            .event_history
-            .iter()
-            .enumerate()
-            .filter_map(|(index, event)| match event {
-                CommittedEvent::SourcePowerActivationCommittedV1 {
-                    item,
-                    damage_source,
-                    ..
-                } if item.v4.stack_item_id == id && item.source == source => {
-                    Some((index, *damage_source))
-                }
-                _ => None,
-            });
+    let mut receipts = state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            CommittedEvent::SourcePowerActivationCommittedV1 {
+                item,
+                damage_source,
+                ..
+            } if item.v4.stack_item_id == id && item.source == source => {
+                Some((index, *damage_source))
+            }
+            _ => None,
+        });
     let (receipt_index, facts) = receipts
         .next()
         .ok_or("historical damage lost its committed activation")?;
@@ -373,6 +389,7 @@ pub(crate) fn damage_source(
     let captures = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourceDamageBeforeLeavingV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -472,6 +489,7 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
     let power = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SourcePowerActivationCommittedV1])
         .iter()
         .find_map(|event| match event {
             CommittedEvent::SourcePowerActivationCommittedV1 { item, power, .. }

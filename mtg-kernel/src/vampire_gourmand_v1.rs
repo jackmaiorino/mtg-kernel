@@ -5,6 +5,7 @@ use crate::effect::{
 };
 use crate::engine::{EffectDuration, UntilEndOfTurnEffect};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 
@@ -36,6 +37,7 @@ pub(crate) fn validate_source(
     let latest = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::DeclaredAttacker])
         .iter()
         .rev()
         .find_map(|e| match e {

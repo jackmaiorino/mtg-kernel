@@ -1526,6 +1526,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
         include_str!("../combat_damage_v1.rs"),
     ),
     ("legend_rule_v1.rs", include_str!("../legend_rule_v1.rs")),
+    (
+        "event_history_v1.rs",
+        include_str!("../event_history_v1.rs"),
+    ),
 ];
 
 /// Lines of non-test code: drops comment lines and the item following each

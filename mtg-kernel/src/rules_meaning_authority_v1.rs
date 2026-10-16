@@ -130,6 +130,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("effect/thousand_year_storm_v1.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             digest.update([0]);
             digest.update(source.as_bytes());

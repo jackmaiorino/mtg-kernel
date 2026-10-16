@@ -1,4 +1,5 @@
 //! Separate event-time Garruk transport. This is not V8/V9 or model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -170,6 +171,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("effect/thousand_year_storm_v1.rs"),
         include_str!("effect/standard_copy.rs"),
         include_str!("standard_spell_copy.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -248,7 +250,11 @@ pub(crate) fn facts(
     let mut entry_occurrences = Vec::new();
     let mut event_order = 0;
     let mut previous_entry = None;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::GarrukDrawCaptureV1])
+    {
         let crate::event::CommittedEvent::GarrukDrawCaptureV1 { capture } = event else {
             continue;
         };
@@ -290,6 +296,7 @@ pub(crate) fn facts(
         let completed = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::GarrukDrawCompletedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::GarrukDrawCompletedV1 {
@@ -586,7 +593,11 @@ fn confirmed_linked_attachments(
 ) -> Result<Vec<crate::banishing_public_v1::ConfirmedAttachmentV1>, RlContractError> {
     crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
     let mut confirmed = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::BanishingAuraHostChosenV1])
+    {
         let crate::event::CommittedEvent::BanishingAuraHostChosenV1 {
             capture_history_index,
             host,

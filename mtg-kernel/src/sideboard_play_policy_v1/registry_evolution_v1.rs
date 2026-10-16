@@ -439,6 +439,7 @@ impl FrozenPlayPolicyV1 {
             sampler: FastCategoricalScratch::default(),
             collection_sampler: None,
             fast_search_forward: false,
+            training_math: crate::training_math_v1::TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
             inference_probe: None,

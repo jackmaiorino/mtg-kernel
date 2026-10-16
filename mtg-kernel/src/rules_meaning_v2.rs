@@ -141,6 +141,7 @@ pub fn producer_sha256_v2() -> String {
             "standard_spell_copy.rs",
             include_str!("standard_spell_copy.rs"),
         ),
+        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

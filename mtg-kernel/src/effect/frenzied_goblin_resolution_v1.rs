@@ -1,6 +1,7 @@
 //! Definition-owned Frenzied attack optional-payment and restriction lifecycle.
 //! Predecessor programs emit no receipts and retain their existing behavior.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 
 use crate::event::CommittedEvent;
 use crate::state::{AbilitySourceContractV4, FrenziedGoblinStartedBindingV1};
@@ -166,7 +167,13 @@ pub(super) fn tracked(state: &GameState) -> Result<bool, String> {
 
 fn history(state: &GameState) -> Result<Vec<&FrenziedGoblinResolutionReceiptV1>, String> {
     let mut receipts: Vec<&FrenziedGoblinResolutionReceiptV1> = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FrenziedGoblinResolutionBoundaryV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::FrenziedGoblinResolutionBoundaryV1 { receipt } = event else {
             continue;
         };
@@ -606,6 +613,7 @@ fn published_at(
         || state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::Targeted])
             .iter()
             .filter(|event| {
                 matches!(event, CommittedEvent::Targeted { targeting_stack_item, .. }
@@ -643,13 +651,14 @@ pub(crate) fn publish(state: &mut GameState) -> Result<(), String> {
     };
     let source = item.v4.ability_source_contract.unwrap();
     crate::frenzied_goblin_v1::validate_source(state, source.card_def, Some(source))?;
-    let declaration = state.engine.event_history.iter().rposition(|event|
+    let declaration = state.engine.event_history.scan_for_v1(&[EventKindV1::DeclaredAttacker]).iter().rposition(|event|
         matches!(event, CommittedEvent::DeclaredAttacker { source: attacker, source_zone_change_count, controller }
             if *attacker == source.source && *source_zone_change_count == source.zone_change_count
                 && *controller == source.controller)).ok_or("Frenzied actual attack absent")?;
     let targeting = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::Targeted])
         .iter()
         .rposition(|event| {
             matches!(event, CommittedEvent::Targeted { targeting_stack_item, .. }
@@ -706,11 +715,16 @@ pub(crate) fn complete_unstarted(
             .stack
             .iter()
             .any(|live| live.v4.stack_item_id == item.v4.stack_item_id)
-        || state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinCompletedV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::FrenziedGoblinCompletedV1 { publication_history_index,.. }
                 if *publication_history_index == publication)
-        })
+            })
     {
         return Err("Frenzied unstarted closure changed its actual removal".into());
     }
@@ -756,11 +770,17 @@ pub(crate) fn record_payment(state: &mut GameState, ctx: &ExecCtx) -> Result<(),
         return Err("Frenzied payment has no authenticated accepted answer".into());
     }
     let publication = publication_for(state, &pending.resolving_item)?.history_index;
-    if state.engine.event_history.iter().any(|event| {
-        matches!(event,
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1])
+        .iter()
+        .any(|event| {
+            matches!(event,
         CommittedEvent::FrenziedGoblinPaymentV1 { publication_history_index }
             if *publication_history_index == publication)
-    }) {
+        })
+    {
         return Err("Frenzied paid twice".into());
     }
     state
@@ -799,6 +819,7 @@ pub(crate) fn install(
         || state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -872,7 +893,17 @@ pub(crate) fn expire(state: &mut GameState) -> Result<(), String> {
 pub(crate) fn active(state: &GameState) -> Result<Vec<&FrenziedGoblinRestrictionV1>, String> {
     let mut installs: Vec<&FrenziedGoblinRestrictionV1> = Vec::new();
     let mut expired = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::FrenziedGoblinCleanupV1,
+            EventKindV1::FrenziedGoblinExpiredV1,
+            EventKindV1::FrenziedGoblinInstalledV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::FrenziedGoblinInstalledV1 { capture } => {
                 let publication = published_at(state, capture.publication_history_index)?;
@@ -889,7 +920,7 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<&FrenziedGoblinRestriction
                 else {
                     return Err("Frenzied install target contract changed".into());
                 };
-                let payments:Vec<_>=state.engine.event_history.iter().enumerate().filter_map(|(ordinal,event)|
+                let payments:Vec<_>=state.engine.event_history.scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1]).iter().enumerate().filter_map(|(ordinal,event)|
                     matches!(event,CommittedEvent::FrenziedGoblinPaymentV1 {publication_history_index}
                         if *publication_history_index == capture.publication_history_index).then_some(ordinal)).collect();
                 if payments.len() != 1
@@ -1021,7 +1052,13 @@ fn validate_publications_with_owner(
     }) {
         return Err("Frenzied journal replayed into dispatch log".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FrenziedGoblinPublishedV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::FrenziedGoblinPublishedV1 { publication } = event else {
             continue;
         };
@@ -1037,6 +1074,7 @@ fn validate_publications_with_owner(
         let completed: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinCompletedV1])
             .iter()
             .enumerate()
             .filter_map(|(ordinal, event)| match event {
@@ -1052,6 +1090,7 @@ fn validate_publications_with_owner(
         let payments: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1])
             .iter()
             .enumerate()
             .filter_map(|(ordinal, event)| {
@@ -1063,6 +1102,7 @@ fn validate_publications_with_owner(
         let removals: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinRemovalV1])
             .iter()
             .enumerate()
             .filter_map(|(ordinal, event)| match event {
@@ -1096,6 +1136,7 @@ fn validate_publications_with_owner(
         let installations: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::FrenziedGoblinInstalledV1])
             .iter()
             .enumerate()
             .filter_map(|(ordinal, event)| {
@@ -1189,7 +1230,7 @@ fn record_completion(
         .as_ref()
         .ok_or("Frenzied completion already closed")?;
     let publication = publication_for(state, &pending.resolving_item)?.history_index;
-    let paid=state.engine.event_history.iter().any(|event|matches!(event,
+    let paid=state.engine.event_history.scan_for_v1(&[EventKindV1::FrenziedGoblinPaymentV1]).iter().any(|event|matches!(event,
         CommittedEvent::FrenziedGoblinPaymentV1 {publication_history_index} if *publication_history_index==publication));
     let outcome = if paid {
         FrenziedGoblinOutcomeV1::Paid

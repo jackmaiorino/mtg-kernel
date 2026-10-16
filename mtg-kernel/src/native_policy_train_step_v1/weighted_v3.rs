@@ -176,6 +176,7 @@ impl NativePolicyValueTrainStateV1 {
         backward_execution: BackwardExecutionV1,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.require_platform_math_v1("weighted loss")?;
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -209,7 +210,12 @@ impl NativePolicyValueTrainStateV1 {
                 let NativePolicyForwardInputV1::Encoded(encoded) = &substep.forward else {
                     unreachable!("canonical input checked before forward");
                 };
-                let recomputed = Box::new(forward_with_tape(&parameters, input_config, **encoded)?);
+                let recomputed = Box::new(forward_with_tape(
+                    &parameters,
+                    input_config,
+                    **encoded,
+                    TrainingMathV1::PlatformLibm,
+                )?);
                 validate_forward_output_bits_v1(
                     &recomputed,
                     substep,
@@ -356,8 +362,11 @@ impl NativePolicyValueTrainStateV1 {
                     finite_scalar("weighted_value_coefficient", index, d_value)?;
                     coefficients.push((d_joint_log_probability, d_value));
                 }
-                let gauge_accumulator =
-                    observe_scorer_bias_gauge_v1(&unweighted_groups, &coefficients)?;
+                let gauge_accumulator = observe_scorer_bias_gauge_v1(
+                    &unweighted_groups,
+                    &coefficients,
+                    TrainingMathV1::PlatformLibm,
+                )?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
                 let gradients = fixed_partition_backward_gradients_v1(
                     &parameters,
@@ -366,6 +375,7 @@ impl NativePolicyValueTrainStateV1 {
                     worker_limit,
                     zero_gradients(&parameters),
                     &execution_context,
+                    TrainingMathV1::PlatformLibm,
                 )?;
                 (gradients, gauge_accumulator)
             }
@@ -383,6 +393,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             next_step,
             learning_rate,
+            self.training_math,
         )?;
         next_parameters[SCORER_SECOND_BIAS].values[0] =
             f32::from_bits(self.scorer_bias_anchor_bits);

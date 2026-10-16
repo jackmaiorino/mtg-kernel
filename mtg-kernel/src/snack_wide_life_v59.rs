@@ -207,8 +207,8 @@ impl ObserverInputV59 {
         if !original.engine.event_history.is_empty() || !observed.engine.event_history.is_empty() {
             return Err("Conqueror recursive original input history".into());
         }
-        original.engine.event_history = state.engine.event_history[..start].to_vec();
-        observed.engine.event_history = state.engine.event_history[..end].to_vec();
+        original.engine.event_history = state.engine.event_history[..start].to_vec().into();
+        observed.engine.event_history = state.engine.event_history[..end].to_vec().into();
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player
             || original.step != observed.step

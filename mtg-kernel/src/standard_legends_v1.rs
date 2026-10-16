@@ -2,6 +2,7 @@
 //! exact battlefield incarnations; continuously changing bonuses read the board.
 use crate::card_def::{CardType, Keywords, Supertype, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{GameState, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -251,6 +252,7 @@ pub(crate) fn execute(op: LegendEffectV1, ctx: &ExecCtx, state: &mut GameState) 
                         state
                             .engine
                             .event_history
+                            .scan_for_v1(&[EventKindV1::PowerBeforeLeavingBattlefield])
                             .iter()
                             .rev()
                             .find_map(|event| match event {

@@ -69,6 +69,7 @@ fn failed_parses_are_not_kept() {
         Some(CollectionTrajectoryFieldsV1 {
             episode: json!({"id": "x"}),
             learner_sampler: None,
+            training_math: None,
         })
     );
     assert!(take_trajectory_v1(key, &not_a_trajectory).is_none());
@@ -106,6 +107,7 @@ fn a_queued_parse_is_left_to_its_reader_and_a_running_one_is_awaited() {
             Some(ParsedV1::CollectionFields(CollectionTrajectoryFieldsV1 {
                 episode: Value::Null,
                 learner_sampler: None,
+                training_math: None,
             })),
         );
         shared.changed.notify_all();

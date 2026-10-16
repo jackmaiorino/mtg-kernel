@@ -1,5 +1,6 @@
 //! Mandatory actual-attack ownership before optional resolution payment.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, Zone};
 use crate::trigger::PendingTrigger;
@@ -19,6 +20,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandAttackCaptureV2])
         .iter()
         .any(|e| matches!(e, CommittedEvent::VampireGourmandAttackCaptureV2 { .. }))
         || state.stack.iter().any(selected)
@@ -84,6 +86,7 @@ fn captures(state: &GameState) -> Vec<u32> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandAttackCaptureV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| {
@@ -110,7 +113,7 @@ fn validate_open_turn(state: &GameState, capture: u32) -> Result<(), String> {
     Ok(())
 }
 fn collections(state: &GameState, capture: u32) -> Vec<usize> {
-    state.engine.event_history.iter().enumerate().filter_map(|(at,e)| matches!(e,
+    state.engine.event_history.scan_for_v1(&[EventKindV1::VampireGourmandCollectedV2]).iter().enumerate().filter_map(|(at,e)| matches!(e,
         CommittedEvent::VampireGourmandCollectedV2 { capture_history_index } if *capture_history_index == capture).then_some(at)).collect()
 }
 pub(crate) fn collect(
@@ -170,6 +173,7 @@ fn publications(state: &GameState, capture: u32) -> Vec<(usize, &StackItem)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandPublishedV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| {
@@ -337,6 +341,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                 let cost_closed: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::VampireGourmandResolutionBoundaryV1])
                     .iter()
                     .filter_map(|e| {
                         if let CommittedEvent::VampireGourmandResolutionBoundaryV1 { receipt } = e {
@@ -351,6 +356,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                 let counter_removed: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::VampireGourmandCounterRemovedV2])
                     .iter()
                     .enumerate()
                     .filter_map(|(at, e)| {
@@ -369,6 +375,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                 let counter_closed: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::VampireGourmandCounterClosedV2])
                     .iter()
                     .enumerate()
                     .filter_map(|(at, e)| {
@@ -410,6 +417,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
                         let begin = state
                             .engine
                             .event_history
+                            .scan_for_v1(&[EventKindV1::VampireGourmandResolutionBoundaryV1])
                             .iter()
                             .find_map(|e| {
                                 if let CommittedEvent::VampireGourmandResolutionBoundaryV1 {
@@ -445,7 +453,12 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
             _ => return Err("Gourmand attack lost pending owner or repeated publication".into()),
         }
     }
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::VampireGourmandCollectedV2,
+        EventKindV1::VampireGourmandCounterClosedV2,
+        EventKindV1::VampireGourmandCounterRemovedV2,
+        EventKindV1::VampireGourmandPublishedV2,
+    ]) {
         match event {
             CommittedEvent::VampireGourmandCollectedV2 {
                 capture_history_index,
@@ -477,7 +490,7 @@ pub(crate) fn validate(state: &GameState, removed: Option<&StackItem>) -> Result
         }
     }
     for item in &state.stack {
-        if selected(item) && !state.engine.event_history.iter().any(|e| matches!(e,
+        if selected(item) && !state.engine.event_history.scan_for_v1(&[EventKindV1::VampireGourmandPublishedV2]).iter().any(|e| matches!(e,
             CommittedEvent::VampireGourmandPublishedV2 { item:original,.. } if original.v4.stack_item_id == item.v4.stack_item_id)) {
             return Err("Gourmand live root erased original publication".into());
         }
@@ -499,7 +512,7 @@ pub(crate) fn acquire_counter(
     if !item.v4.vampire_gourmand_started_v1.is_empty() {
         return Err("suspended Gourmand cost cannot be countered as an unstarted row".into());
     }
-    let publication=state.engine.event_history.iter().enumerate().find_map(|(at,e)|
+    let publication=state.engine.event_history.scan_for_v1(&[EventKindV1::VampireGourmandPublishedV2]).iter().enumerate().find_map(|(at,e)|
         matches!(e,CommittedEvent::VampireGourmandPublishedV2 {item:original,..} if original.as_ref()==item).then_some(at as u32))
         .ok_or("Gourmand counter lost unique actual publication")?;
     Ok(Some(CounterOwnerV2 {

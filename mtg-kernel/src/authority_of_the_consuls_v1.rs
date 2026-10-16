@@ -2,6 +2,7 @@
 use crate::card_def::{CardType, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{self, CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition};
@@ -254,13 +255,18 @@ pub(crate) fn collect(
     let mut used = std::collections::BTreeSet::new();
     // A mutable collection log cannot silently omit an outstanding committed
     // capture. Collection receipts authenticate each completed dispatch once.
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
+    {
         let CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
         };
         let collected = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1])
             .iter()
             .filter(|event| {
                 matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index }
@@ -279,7 +285,7 @@ pub(crate) fn collect(
         let authority = capture_at(state, capture.history_index).map_err(|_| invalid())?;
         if authority != capture
             || !used.insert(capture.history_index)
-            || state.engine.event_history.iter().any(|event| {
+            || state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1]).iter().any(|event| {
                 matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index }
                     if *capture_history_index == capture.history_index)
             })
@@ -330,10 +336,10 @@ pub(crate) fn validate_source(
         _ => return Ok(()),
     };
     let capture = capture_at(state, index)?;
-    if source != Some(capture.source) || state.engine.event_history.iter().filter(|event| {
+    if source != Some(capture.source) || state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1]).iter().filter(|event| {
         matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index } if *capture_history_index == index)
     }).count() != 1 { return Err("opponent entry trigger changed its captured source or collection".into()); }
-    if state.engine.event_history.iter().any(|event| matches!(event,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryCompletedV1]).iter().any(|event| matches!(event,
         CommittedEvent::AuthorityEntryCompletedV1 { capture_history_index, .. } if *capture_history_index == index)) {
         return Err("completed opponent entry trigger was replayed".into());
     }
@@ -347,6 +353,7 @@ fn publication(
     let publications: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -393,7 +400,7 @@ pub(crate) fn publish(state: &mut GameState, item: &crate::state::StackItem) -> 
         return Ok(());
     };
     validate_source(state, effect, item.v4.ability_source_contract)?;
-    if state.engine.event_history.iter().any(|event| matches!(event,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1]).iter().any(|event| matches!(event,
         CommittedEvent::AuthorityEntryPublishedV1 { capture_history_index: index, .. } if index == capture_history_index)) {
         return Err("opponent entry trigger was published twice".into());
     }
@@ -433,6 +440,7 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
     let operations: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryOperationV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| {
@@ -569,7 +577,7 @@ fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
     };
     let capture = capture_at(state, *capture_history_index)?;
     let (published_index, published) = publication(state, *capture_history_index)?;
-    let collections: Vec<_> = state.engine.event_history.iter().enumerate().filter_map(|(index, event)| {
+    let collections: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1]).iter().enumerate().filter_map(|(index, event)| {
         matches!(event, CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index: capture }
             if capture == capture_history_index).then_some(index)
     }).collect();
@@ -641,7 +649,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::authority_public_capture_v1::validate_facts(state)?;
     validate_observed_entries(state)
         .map_err(|_| "opponent entry observer authority is incomplete")?;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
+    {
         let CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
         };
@@ -651,6 +663,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let collected = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -674,6 +687,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let completed = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryCompletedV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -684,6 +698,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let operations = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryOperationV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -710,6 +725,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let publications = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1])
             .iter()
             .filter(|event| {
                 matches!(event,
@@ -825,7 +841,13 @@ fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
     {
         return Err(ObjectId(0));
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryObserversV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::AuthorityEntryObserversV1 {
             entry_history_index,
             entrant,
@@ -861,6 +883,7 @@ fn validate_observed_entries(state: &GameState) -> Result<(), ObjectId> {
             let captures: Vec<_> = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
                 .iter()
                 .filter_map(|event| match event {
                     CommittedEvent::AuthorityEntryCaptureV1 { capture }

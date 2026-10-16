@@ -1,4 +1,5 @@
 //! Separate event-time Authority transport. This is not V8/V9 or model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -145,6 +146,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("effect/thousand_year_storm_v1.rs"),
         include_str!("effect/standard_copy.rs"),
         include_str!("standard_spell_copy.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -303,7 +305,11 @@ pub(crate) fn parts_for_common_scope_with_common(
     let mut entry_occurrences = Vec::new();
     let mut event_order = 0;
     let mut previous_entry = None;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
+    {
         let crate::event::CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
         };
@@ -334,19 +340,19 @@ pub(crate) fn parts_for_common_scope_with_common(
             .map(u32::try_from)
             .transpose()
             .map_err(|_| RlContractError("public trigger ordinal overflow".into()))?;
-        let lifecycle = if let Some(kind) =
-            state
-                .engine
-                .event_history
-                .iter()
-                .find_map(|event| match event {
-                    crate::event::CommittedEvent::AuthorityEntryOperationV1 {
-                        capture_history_index,
-                        kind,
-                        ..
-                    } if *capture_history_index == index => Some(kind),
-                    _ => None,
-                }) {
+        let lifecycle = if let Some(kind) = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryOperationV1])
+            .iter()
+            .find_map(|event| match event {
+                crate::event::CommittedEvent::AuthorityEntryOperationV1 {
+                    capture_history_index,
+                    kind,
+                    ..
+                } if *capture_history_index == index => Some(kind),
+                _ => None,
+            }) {
             match kind { crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::GainCommitted { .. } => EntryLifecycleV1::Gained,
                 crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::CounterCommitted => EntryLifecycleV1::Countered }
         } else if stack_index.is_some() {
@@ -479,7 +485,11 @@ pub fn observe_v1(
     let mut entry_occurrences = Vec::new();
     let mut event_order = 0;
     let mut previous_entry = None;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
+    {
         let crate::event::CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
         };
@@ -510,19 +520,19 @@ pub fn observe_v1(
             .map(u32::try_from)
             .transpose()
             .map_err(|_| RlContractError("public trigger ordinal overflow".into()))?;
-        let lifecycle = if let Some(kind) =
-            state
-                .engine
-                .event_history
-                .iter()
-                .find_map(|event| match event {
-                    crate::event::CommittedEvent::AuthorityEntryOperationV1 {
-                        capture_history_index,
-                        kind,
-                        ..
-                    } if *capture_history_index == index => Some(kind),
-                    _ => None,
-                }) {
+        let lifecycle = if let Some(kind) = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::AuthorityEntryOperationV1])
+            .iter()
+            .find_map(|event| match event {
+                crate::event::CommittedEvent::AuthorityEntryOperationV1 {
+                    capture_history_index,
+                    kind,
+                    ..
+                } if *capture_history_index == index => Some(kind),
+                _ => None,
+            }) {
             match kind { crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::GainCommitted { .. } => EntryLifecycleV1::Gained,
                 crate::authority_of_the_consuls_v1::AuthorityEntryOperationKindV1::CounterCommitted => EntryLifecycleV1::Countered }
         } else if stack_index.is_some() {

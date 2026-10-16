@@ -4,6 +4,7 @@ use crate::engine::{CombatState, Decision};
 use crate::event::{
     ActiveReplacement, CommittedEvent as E, DamageProposed, ProposedEvent, ReplacementEffectKind,
 };
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameObject, GameState, Step, Target};
 use serde::{Deserialize, Serialize};
@@ -650,7 +651,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         return Err("combat private operation moved into public mutable log".into());
     }
     let mut open = None;
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TwinflameCombatPublishedV38])
+        .iter()
+        .enumerate()
+    {
         let E::TwinflameCombatPublishedV38 {
             publication: original,
         } = event
@@ -765,7 +772,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::TwinflameCombatInputV38,
+        EventKindV1::TwinflameCombatOperationV38,
+    ]) {
         match event {
             E::TwinflameCombatInputV38 { input } => {
                 publication(state, input.before.publication)?;

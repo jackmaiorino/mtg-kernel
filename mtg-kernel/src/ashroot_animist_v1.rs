@@ -6,6 +6,7 @@ use crate::card_def::CARD_DEFS;
 use crate::effect::EffectObjectBinding;
 use crate::effect::EffectOp;
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 
@@ -111,7 +112,7 @@ pub(crate) fn before_batch_departures(state: &mut GameState, events: &[ProposedE
     }
 }
 fn record(state: &mut GameState, source: ObjectLinkV4, owner: PlayerId, power: i32) {
-    if state.engine.event_history.iter().any(|event| matches!(event,CommittedEvent::AshrootPowerBeforeDepartureV1 { source: old,.. } if *old == source)) { return; }
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootPowerBeforeDepartureV1]).iter().any(|event| matches!(event,CommittedEvent::AshrootPowerBeforeDepartureV1 { source: old,.. } if *old == source)) { return; }
     state
         .engine
         .event_history
@@ -168,6 +169,7 @@ pub(crate) fn sample_power(
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AshrootPowerBeforeDepartureV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -260,14 +262,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     {
         return Err("Ashroot private power entered public trigger log".into());
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AshrootPowerBeforeDepartureV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::AshrootPowerBeforeDepartureV1 { source, owner, .. } = event else {
             continue;
         };
         let Some(live) = state.objects.try_get(source.object) else {
             return Err("Ashroot departed physical object is missing".into());
         };
-        if live.owner != *owner || state.engine.event_history.iter().filter(|e| matches!(e,CommittedEvent::AshrootPowerBeforeDepartureV1 {source:other,..} if other==source)).count()!=1 {
+        if live.owner != *owner || state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootPowerBeforeDepartureV1]).iter().filter(|e| matches!(e,CommittedEvent::AshrootPowerBeforeDepartureV1 {source:other,..} if other==source)).count()!=1 {
             return Err("Ashroot departure snapshot is duplicated or changed owner".into());
         }
         let changes = state.engine.event_history[index + 1..]
