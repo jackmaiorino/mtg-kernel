@@ -1,5 +1,11 @@
 # Next-five typed rules and public facts V59
 
+Current source also includes the distinct sealed V59 owner, current numeric
+model, fixed-seat Human and V6 consumers. Their complete 73-field definition
+closure and strict Partial/Full reset checks remain. The later wide-life
+checkpoint sections below supersede the original public-only description;
+all Rust execution and five-card production Full admission remain unverified.
+
 Source parent `89ed84be22e739d13eb36607625d1e982e402a96`; the separately authored Goblin owned-ordering dependency is retained with an attributed cherry-pick. This is a public projection prerequisite for actual Partial printings Midnight Snack 452, Extravagant Replication 453, Infernal Vessel 454, Giada 455 and Goblin Negotiation 456. Data, IDs, capabilities, profiles, frozen schemas and V57/V58 APIs are unchanged. No actual catalog identity is guessed.
 
 `rules_meaning_next_five_v59::printed_meaning(FamilyV59)` checks the immutable 72-field printing shape and real trigger registry before producing ordered, closed typed ordinary casting, characteristics, entry, trigger, replacement and mana rules. Snack and Food reuse the existing complete V58 meaning. Goblin includes the exact existing Full Goblin blueprint. The other rules retain captured controller versus physical return owner, non-Demon prebatch death, exact graveyard successor, two replacement-aware entry counters and Demon addition; controller upkeep and another controlled nonland original target; current copy face, anonymous concealed copy, and independent host choice for each Season-expanded Aura; Giada prebatch other-Angel count and white mana restricted to Angel spells. There are no public executable programs or hash-as-rules operands. Engine admission follows actual capability; model and sampler admission remain false.
@@ -76,3 +82,34 @@ clears that local runtime. It preserves complete downstream event equality
 without inventing a nested Hatcher Event wrapper. Frozen V49/Panda world types
 are not changed. A fifth genuinely paid Hatcher coexistence/restore source
 group exercises this boundary; it remains uncompiled and unrun.
+
+
+The following consumer-source checkpoint adds mandatory
+`snack_wide_public_v59::FactsV59` to the distinct NextFive facts. It retains
+exact u32 public loss/gain amounts, public operation/occurrence ordinals,
+original captured controllers and public incarnations, actual Conqueror gain,
+Panda counter output and APNAP ordering positions. Native replay worlds,
+history indices and row programs never enter this DTO. Closed ordered rules
+state one occurrence, native final-life checks and the unchanged trigger
+semantics. Artifact shape checks are supplemental to full native recapture.
+
+Only `CommonProjectionScopeV42::NextFiveV59` uses the complete successor path.
+Its ordinary V49/Panda subfacts keep their existing types and are accompanied
+by the mandatory distinct wide facts; no wide i32 amount is retagged or
+silently discarded. Original public V49/Panda and other common scopes refuse
+wide history. All original inherited validators still run. The sealed owner
+and numeric packet equality include the entire new typed value automatically;
+model normalization keeps full-width amounts and original source/incarnation
+pairing. Fixed-seat Human and V6 expose matching closed facts with Human
+handles. V6 validates exact rules, width, loss/gain relationships, occurrence
+and ordering relations. Generic Full deck admission remains unchanged.
+
+Five additional Rust source groups cover independent pre-paid hidden worlds,
+public restore/forgery refusal, real paid wide owner/model execution against
+its independent native pair after every action, fixed-seat Human/opponent
+callbacks with native indices/retry/restore, and schema-6 native wire facts and
+restore. Setup life/protection operands remain explicitly labelled. The new
+numeric group increases the whole current-model source inventory by one;
+all original model and owner fixture bodies are retained. All Rust remains
+uncompiled/unrun, the five capabilities remain Partial, and genuine five-card
+production Full reset/export/profile checks remain separate unfinished work.

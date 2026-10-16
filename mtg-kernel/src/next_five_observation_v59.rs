@@ -55,6 +55,9 @@ pub fn producer_sha256() -> String {
             ELENDA_COMPAT_SCHEMA,
             include_str!("next_five_observation_v59.rs"),
             include_str!("next_five_public_v59.rs"),
+            include_str!("snack_wide_public_v59.rs"),
+            include_str!("panda_public_v47.rs"),
+            include_str!("conqueror_public_v49.rs"),
             include_str!("rules_meaning_next_five_v59.rs"),
             include_str!("goblin_negotiation_v1/owned.rs"),
             include_str!("prepared_observation_v57.rs"),
@@ -137,9 +140,22 @@ pub fn commitment(value: &NextFiveObservationV59) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::drake_hatcher_v1::custody::with_validation_replay_keys(state, validate_state_in_frame)
+}
+fn validate_state_in_frame(state: &GameState) -> Result<(), String> {
     // Reuse every inherited authority validator, without treating its old DTO
     // as a current artifact or inheriting executable authority from that DTO.
-    crate::prepared_observation_v57::validate_state(state)?;
+    crate::engine::validate_battlefield_pt(state)
+        .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
+    crate::ravenous_observation_v51::validate_state_complete_next_five_v59(state)?;
+    crate::graveyard_return_public_v61::require_legacy_visible(state, None)?;
+    crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
+    crate::drake_public_v53::capture(state).map_err(|e| e.0)?;
+    crate::spinner_public_v54::capture(state)?;
+    for viewer in [PlayerId::P0, PlayerId::P1] {
+        crate::quandary_public_v55::capture(state, viewer)?;
+    }
+    crate::phoenix_public_v56::capture(state).map_err(|e| e.0)?;
     for viewer in [PlayerId::P0, PlayerId::P1] {
         crate::next_five_public_v59::capture(state, viewer)?;
     }
@@ -257,6 +273,9 @@ pub(crate) fn stack_source_reference(
     state: &GameState,
     item: &crate::state::StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if let Some(source) = crate::snack_wide_public_v59::stack_source_reference(state, item)? {
+        return Ok(Some(source));
+    }
     let source = if let Some(source) = item.v4.ability_source_contract {
         source
     } else if let Some(source) = item.v4.source_contract {
@@ -305,6 +324,9 @@ pub(crate) fn pending_source_reference(
     state: &GameState,
     pending: &crate::trigger::PendingTrigger,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    if let Some(source) = crate::snack_wide_public_v59::pending_source_reference(state, pending)? {
+        return Ok(Some(source));
+    }
     let Some(source) = pending.source_contract else {
         return Ok(None);
     };
@@ -397,6 +419,7 @@ pub(crate) fn observe_parts_v59(
 /// complete private binding authorizes an action or snapshot restore.
 pub fn validate_artifact(value: &NextFiveObservationV59) -> Result<(), RlContractError> {
     let inherited = &value.common.common;
+    crate::snack_wide_public_v59::validate_artifact(&value.next_five.wide_life)?;
     let meanings = crate::rules_meaning_next_five_v59::FamilyV59::ALL
         .into_iter()
         .map(crate::rules_meaning_next_five_v59::printed_meaning)
