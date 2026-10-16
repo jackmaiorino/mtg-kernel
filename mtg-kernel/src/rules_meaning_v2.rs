@@ -130,6 +130,36 @@ pub fn producer_sha256_v2() -> String {
             "resolution_cast_v1.rs",
             include_str!("resolution_cast_v1.rs"),
         ),
+        (
+            "effect/harvester_v1.rs",
+            include_str!("effect/harvester_v1.rs"),
+        ),
+        ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
+        (
+            "soul_shackled_zombie_v1.rs",
+            include_str!("soul_shackled_zombie_v1.rs"),
+        ),
+        ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
+        (
+            "controlled_creature_grants_v1.rs",
+            include_str!("controlled_creature_grants_v1.rs"),
+        ),
+        (
+            "source_power_activation_v1.rs",
+            include_str!("source_power_activation_v1.rs"),
+        ),
+        (
+            "effect/nonland_copy_v1.rs",
+            include_str!("effect/nonland_copy_v1.rs"),
+        ),
+        (
+            "rl_session/flat_action_v4/search_state/effect_refs.rs",
+            include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
+        ),
+        (
+            "effect/inspiration_resolution_v1.rs",
+            include_str!("effect/inspiration_resolution_v1.rs"),
+        ),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

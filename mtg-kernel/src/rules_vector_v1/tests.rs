@@ -1165,6 +1165,8 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("progenitus_v1.rs", "Progenitus", "native all-source protection and mandatory original-zone reveal/shuffle remain Opaque"),
+    ("effect/harvester_v1.rs", "Abyssal Harvester", "native tap activation with exact turn/incarnation target, copiable Nightmare and token-only cleanup remains Opaque"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
     ("engine/omniscience_cast_v1.rs", "Omniscience", "native optional Hand-only free base cost with exact source/choice; no old cost/permission meaning"),
@@ -1447,6 +1449,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    ("progenitus_v1.rs", include_str!("../progenitus_v1.rs")),
+    (
+        "effect/harvester_v1.rs",
+        include_str!("../effect/harvester_v1.rs"),
+    ),
     (
         "effect/source_token_copy_v1.rs",
         include_str!("../effect/source_token_copy_v1.rs"),

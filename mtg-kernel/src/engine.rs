@@ -4321,7 +4321,8 @@ fn legal_targets_for_controller_from_source(
         };
         let live = state.objects.get(object);
         live.zone != Zone::Battlefield
-            || (!has_effective_keyword(state, object, Keywords::SHROUD)
+            || (!has_effective_keyword(state, object, Keywords::PROTECTION_FROM_EVERYTHING)
+                && !has_effective_keyword(state, object, Keywords::SHROUD)
                 && (live.controller == controller
                     || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
@@ -9828,8 +9829,9 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             if crate::standard_legends_v1::katilda_protected_from(state, attacker, id) {
                 return false;
             }
-            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, id)
+            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, id))
             {
                 return false;
             }
@@ -18464,8 +18466,9 @@ pub fn damage_is_prevented_by_protection(
     };
     state.objects.try_get(target).is_some_and(|object| {
         object.zone == Zone::Battlefield
-            && ((has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
-                && object_is_monocolored(state, source))
+            && (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_EVERYTHING)
+                || (has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
+                    && object_is_monocolored(state, source))
                 || crate::controlled_creature_grants_v1::protects_from_colors(
                     state,
                     target,
@@ -23191,6 +23194,7 @@ fn materialize_begin_cast_with_quote_v1(
         },
     });
 
+    crate::effect::harvester_v1::record_cast(state, source_contract);
     state.engine.pending_cast = Some(PendingCast {
         omniscience_v1: omniscience_choice,
         sphinx_lore_v1: sphinx_lore_choice.map(|(c, _)| c),
@@ -23636,6 +23640,7 @@ fn materialize_aborted_cast_v1(
     pending: &PendingCast,
     cast_method: CastMethodV4,
 ) -> AbortedCastSceneV1 {
+    let harvester_rollback = crate::effect::harvester_v1::rollback_input(state, pending);
     let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
     debug_assert!(
@@ -23693,6 +23698,7 @@ fn materialize_aborted_cast_v1(
             object.v4.on_adventure = true;
         }
     }
+    crate::effect::harvester_v1::record_rollback(state, pending, harvester_rollback);
     AbortedCastSceneV1 {
         was_face_down,
         owner,
@@ -31203,3 +31209,11 @@ mod crystal_native95_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod checked_pt_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/progenitus_v1_tests.rs"]
+mod progenitus_v1_tests;

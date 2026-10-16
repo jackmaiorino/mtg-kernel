@@ -125,7 +125,7 @@ pub struct StandardStateV1 {
 
 /// One Assimilation Aegis copy effect: the Aegis and the creature, per exact
 /// battlefield incarnation, and the creature's values from before it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AegisCopyV1 {
     aegis: (ObjectId, u32),
@@ -136,8 +136,32 @@ struct AegisCopyV1 {
     color_mask: u8,
     subtype_ids: Vec<u16>,
     ward_generic: u16,
+    #[serde(default, skip_serializing_if = "nightmare_false_v1")]
+    copied_nightmare_v1: bool,
     #[serde(default)]
     attachment_timestamp: u64,
+}
+
+fn nightmare_false_v1(value: &bool) -> bool {
+    !*value
+}
+impl std::hash::Hash for AegisCopyV1 {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        use std::hash::Hash;
+        self.aegis.hash(h);
+        self.host.hash(h);
+        self.card_def.hash(h);
+        self.name.hash(h);
+        self.face_index.hash(h);
+        self.color_mask.hash(h);
+        self.subtype_ids.hash(h);
+        self.ward_generic.hash(h);
+        self.attachment_timestamp.hash(h);
+        if self.copied_nightmare_v1 {
+            "copied-nightmare/v1".hash(h);
+            self.copied_nightmare_v1.hash(h);
+        }
+    }
 }
 
 /// The doors of one Room permanent incarnation: bit 0 is the left door,
@@ -184,6 +208,8 @@ pub enum StandardTargetV1 {
     UpToTwoControlledCreatures,
     /// Zero to two distinct artifacts and/or creatures that player controls.
     UpToTwoControlledArtifactsOrCreatures,
+    /// One physical creature card put into any graveyard during this turn.
+    CreatureCardPutIntoGraveyardThisTurnV1,
 }
 
 impl StandardTargetV1 {
@@ -204,7 +230,9 @@ impl StandardTargetV1 {
     fn in_graveyard(self) -> bool {
         matches!(
             self,
-            Self::InstantOrSorceryCardInOwnGraveyard | Self::CardInAGraveyard
+            Self::InstantOrSorceryCardInOwnGraveyard
+                | Self::CardInAGraveyard
+                | Self::CreatureCardPutIntoGraveyardThisTurnV1
         )
     }
 }
@@ -247,7 +275,11 @@ pub(crate) fn legal_targets(
             .filter(|candidate| !prefix.contains(candidate))
             .collect();
     }
-    let candidates: Vec<ObjectId> = if target == StandardTargetV1::CardInAGraveyard {
+    let candidates: Vec<ObjectId> = if matches!(
+        target,
+        StandardTargetV1::CardInAGraveyard
+            | StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1
+    ) {
         [PlayerId::P0, PlayerId::P1]
             .iter()
             .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
@@ -306,6 +338,9 @@ pub(crate) fn target_matches(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
+    if target == StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 {
+        return crate::effect::harvester_v1::eligible(state, object);
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -351,7 +386,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::TappedOpponentCreature => {
             live.controller != controller && live.tapped && has(CardType::Creature)
         }
-        StandardTargetV1::CardInAGraveyard => false,
+        StandardTargetV1::CardInAGraveyard
+        | StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1 => false,
         StandardTargetV1::AnotherNonlegendaryControlledCreature => {
             live.controller == controller
                 && has(CardType::Creature)
@@ -1266,11 +1302,17 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 let source = ctx.ability_source_contract.unwrap_or_else(|| {
                     crate::state::AbilitySourceContractV4::capture(state, ctx.source)
                 });
+                let copied_nightmare =
+                    match crate::effect::harvester_v1::copiable_nightmare(state, object) {
+                        Ok(value) => value,
+                        Err(_) => return,
+                    };
                 let mut proposal = ProposedEvent::create_token(definition, ctx.controller);
                 if let ProposedEvent::CreateToken(token) = &mut proposal {
                     token.entry_face_index = (face != 0).then_some(face);
                     token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                         copied: true,
+                        copied_nightmare_v1: copied_nightmare,
                         haste_until_end_of_turn: true,
                         sacrifice_at_end_step: Some(source),
                         copied_end_step_sacrifices_v1: match event::copiable_token_abilities_v1(
@@ -1409,7 +1451,11 @@ pub(crate) fn create_token_copy_without_banner_owner(
     let live = state.objects.get(original);
     let (card_def, face) = (live.card_def, live.v4.face_index);
     let copied_abilities = event::copiable_token_abilities_v1(state, original).ok()?;
-    if crate::doubling_season_v48::requires_successor(state) || copied_abilities != 0 {
+    let copied_nightmare = crate::effect::harvester_v1::copiable_nightmare(state, original).ok()?;
+    if crate::doubling_season_v48::requires_successor(state)
+        || copied_abilities != 0
+        || copied_nightmare
+    {
         let (card_def, face) = if live.v4.face_down_v1.is_some() {
             let anonymous =
                 crate::card_def::card_id_by_name(crate::self_reflection_v1::ANONYMOUS_BLUEPRINT)?;
@@ -1426,6 +1472,7 @@ pub(crate) fn create_token_copy_without_banner_owner(
             token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                 copied: true,
                 copied_end_step_sacrifices_v1: copied_abilities,
+                copied_nightmare_v1: copied_nightmare,
                 ..Default::default()
             });
         }
@@ -4052,7 +4099,9 @@ pub(crate) fn apply_aegis_copy(
         color_mask: live.v4.effective_color_mask,
         subtype_ids: std::mem::take(&mut live.v4.effective_subtype_ids),
         ward_generic: live.v4.ward_generic,
+        copied_nightmare_v1: live.v4.copied_nightmare_v1,
     };
+    let record_nightmare = record.copied_nightmare_v1;
     let had = [record.card_def, copied].map(|def| (host.object, host.zone_change_count, def));
     let base = crate::state::ObjectStateV4::from_card_def(copied);
     live.card_def = copied;
@@ -4061,6 +4110,7 @@ pub(crate) fn apply_aegis_copy(
     live.v4.effective_color_mask = base.effective_color_mask;
     live.v4.effective_subtype_ids = base.effective_subtype_ids;
     live.v4.ward_generic = base.ward_generic;
+    live.v4.copied_nightmare_v1 = false;
     let standard = state.standard_v1.get_or_insert_with(Default::default);
     standard.aegis_copies.push(record);
     for entry in had {
@@ -4068,6 +4118,7 @@ pub(crate) fn apply_aegis_copy(
             standard.copied_card_defs.push(entry);
         }
     }
+    crate::effect::harvester_v1::record_layer(state, host.object, record_nightmare);
 }
 
 /// Whether `object`'s battlefield incarnation `zone_change_count` was ever
@@ -4088,6 +4139,9 @@ pub(crate) fn had_card_def(
 /// Ends the copy at `index`: a later copy of the same creature inherits the
 /// values it saved; otherwise the creature gets them back.
 fn end_aegis_copy(state: &mut GameState, index: usize) {
+    end_aegis_copy_inner(state, index, true);
+}
+fn end_aegis_copy_inner(state: &mut GameState, index: usize, record_layer: bool) {
     let Some(standard) = state.standard_v1.as_mut() else {
         return;
     };
@@ -4102,6 +4156,7 @@ fn end_aegis_copy(state: &mut GameState, index: usize) {
         later.color_mask = record.color_mask;
         later.subtype_ids = record.subtype_ids;
         later.ward_generic = record.ward_generic;
+        later.copied_nightmare_v1 = record.copied_nightmare_v1;
         return;
     }
     if state
@@ -4117,7 +4172,12 @@ fn end_aegis_copy(state: &mut GameState, index: usize) {
     live.v4.face_index = record.face_index;
     live.v4.effective_color_mask = record.color_mask;
     live.v4.effective_subtype_ids = record.subtype_ids;
+    let prior_nightmare = live.v4.copied_nightmare_v1;
     live.v4.ward_generic = record.ward_generic;
+    live.v4.copied_nightmare_v1 = record.copied_nightmare_v1;
+    if record_layer {
+        crate::effect::harvester_v1::record_layer(state, record.host.0, prior_nightmare);
+    }
 }
 
 /// A copied creature leaving the battlefield stops being a copy first, so
@@ -4131,7 +4191,7 @@ pub(crate) fn end_aegis_copies_before_departure(state: &mut GameState, object: O
             .iter()
             .rposition(|copy| copy.host == (object, zone_change_count))
     }) {
-        end_aegis_copy(state, index);
+        end_aegis_copy_inner(state, index, false);
     }
 }
 

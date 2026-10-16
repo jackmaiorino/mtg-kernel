@@ -4335,6 +4335,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sun-Blessed Healer"
         | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
+        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
+        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")
         }
@@ -5868,6 +5870,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 effect: "EffectOp::Sequence(vec![EffectOp::LoseLife { player: PlayerRef::Opponent, amount: 10 }, EffectOp::GainLife { player: PlayerRef::Controller, amount: 10 }])",
             },
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
+        "Abyssal Harvester" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program {
+                name: "harvester_exile_copy_nightmare_then_other_nightmare_tokens_v1",
+                effect: "crate::effect::harvester_v1::marker()",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1)",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
         "Sphinx's Tutelage" => &[ActivatedAbilityRecipe {

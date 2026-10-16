@@ -381,6 +381,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // to this once-only drain. A rooted successor is required.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::HarvesterExileAndCopyV1 => out.atoms.push(Atom::Opaque),
         EffectOp::CreateTokenCopyOfSourceV1 => {
             let mut copy = EffectAtom::new(EvF::Copy)
                 .player(RelF::You)

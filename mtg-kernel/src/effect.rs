@@ -17,6 +17,7 @@
 
 pub(crate) mod curator_v1;
 pub(crate) mod greatwurm_v1;
+pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
 pub(crate) mod source_token_copy_v1;
@@ -2736,6 +2737,8 @@ pub enum EffectOp {
     SphinxLoreV1 {
         attack_history_index: u64,
     },
+    /// Native FDN54 activation: exile/copy and other-Nightmare token cleanup.
+    HarvesterExileAndCopyV1,
     /// Simultaneously exile each player's top card, then optionally cast the
     /// nonlands in any order during this resolution.
     ExileTopEachPlayerThenCastV1,
@@ -3588,6 +3591,11 @@ pub enum EffectTargetSelectionPurpose {
     CuratorCardsV1 {
         choice: curator_v1::ChoiceV1,
     },
+    OrderProgenitusGraveyardV1 {
+        original: Vec<EffectObjectBinding>,
+        library_prefix: bool,
+        preserve_known_identity: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -4305,6 +4313,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if harvester_v1::recipe(op)
+        || harvester_v1::selected(state, &resolving_item)
+        || harvester_v1::waiting(state, ctx)
+    {
+        return Err("Harvester requires its actual native activation row".into());
+    }
     if *op == EffectOp::ExileTopEachPlayerThenCastV1
         || standard_exile::top_batch_item(&resolving_item)
         || standard_exile::top_batch_waiting(state, ctx)
@@ -4566,6 +4580,12 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     {
         return Err("top-card free casting has no public resume authority".into());
     }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        harvester_v1::selected(state, &p.resolving_item) || harvester_v1::waiting(state, &p.ctx)
+    }) {
+        return Err("Harvester has no public continuation".into());
+    }
+
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         source_token_copy_v1::selected(state, &p.resolving_item)
             || source_token_copy_v1::waiting(state, &p.ctx)
@@ -6082,6 +6102,51 @@ fn complete_resumable_target_selection(
             continuation.frames.push(frame);
         }
 
+        EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 {
+            original,
+            library_prefix,
+            preserve_known_identity,
+        } => {
+            let mut all = objects;
+            all.extend(
+                original
+                    .iter()
+                    .copied()
+                    .filter(|binding| !all.contains(binding))
+                    .collect::<Vec<_>>(),
+            );
+            let frame = if library_prefix {
+                if aberration_continuation_v1(continuation) {
+                    let frame = EffectFrame::RevealedLibraryToGraveyardBatch {
+                        player: continuation.ctx.controller.opponent(),
+                        original_prefix: original,
+                        objects: all,
+                        order_resolved: true,
+                        path,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::StandardSelection {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                    return Ok(());
+                }
+                EffectFrame::MillLibraryBatch {
+                    objects: all,
+                    order_resolved: true,
+                    path,
+                }
+            } else {
+                EffectFrame::MoveObjectsBatch {
+                    objects: all,
+                    to_zone: Zone::Graveyard,
+                    preserve_known_identity,
+                    order_resolved: true,
+                    path,
+                }
+            };
+            continuation.frames.push(frame);
+        }
         EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
             continuation.frames.push(EffectFrame::MillLibraryBatch {
                 objects,
@@ -8215,6 +8280,11 @@ fn returning_aura_hosts_in_zone(
         .iter()
         .filter_map(|(object, live)| {
             (live.zone == Zone::Battlefield
+                && !crate::engine::has_effective_keyword(
+                    state,
+                    object,
+                    Keywords::PROTECTION_FROM_EVERYTHING,
+                )
                 && crate::engine::object_has_type(
                     state,
                     object,
@@ -9983,6 +10053,21 @@ fn validate_aberration_continuation_v1(
                 player,
                 path,
                 purpose:
+                    EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 {
+                        original,
+                        library_prefix: true,
+                        preserve_known_identity: true,
+                    },
+                ..
+            }),
+            [],
+            None,
+        ) if *player == opponent && path.is_empty() && *original == expected => Ok(()),
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                player,
+                path,
+                purpose:
                     EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
                         player: owner,
                         original_prefix,
@@ -10024,6 +10109,15 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| harvester_v1::selected(state, &p.resolving_item))
+    {
+        return Err("atomic Harvester activation retained a continuation".into());
+    }
+
     if state
         .engine
         .pending_effect
@@ -10632,6 +10726,47 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
                     // Complete prefix, partition, chooser and root validated together above.
+                }
+                EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 {
+                    original,
+                    library_prefix,
+                    ..
+                } => {
+                    for &binding in original {
+                        validate_effect_object_binding(state, binding)?;
+                    }
+                    if *library_prefix {
+                        validate_bound_library_prefix(state, original)?;
+                    }
+                    let expected = crate::progenitus_v1::graveyard_members(state, original)?
+                        .ok_or("Progenitus order lost replacement")?;
+                    let actual = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate
+                                .expected_object
+                                .filter(|b| candidate.target == Target::Object(b.object))
+                                .ok_or("Progenitus order binding missing")
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    validate_exact_binding_permutation(
+                        &expected,
+                        &actual,
+                        "Progenitus actual graveyard order",
+                    )?;
+                    let count =
+                        u16::try_from(expected.len()).map_err(|_| "Progenitus order width")?;
+                    if count < 2
+                        || *min_targets != count
+                        || *max_targets != count
+                        || !*ordered
+                        || original
+                            .first()
+                            .is_none_or(|b| state.objects.get(b.object).owner != *chooser)
+                    {
+                        return Err("Progenitus order shape/owner changed".into());
+                    }
                 }
                 EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                     let bindings = selected
@@ -12469,6 +12604,29 @@ fn drive_resumable_inner_with_native_row_v1(
                             validate_effect_object_binding(state, *binding)?;
                         }
                     }
+                    if to_zone == Zone::Graveyard && !order_resolved {
+                        if let Some(gy) = crate::progenitus_v1::graveyard_members(state, &objects)?
+                        {
+                            if stage_progenitus_order_v1(
+                                state,
+                                &mut continuation,
+                                path.clone(),
+                                objects.clone(),
+                                gy,
+                                false,
+                                preserve_known_identity,
+                            )? {
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            commit_zone_change_batch(
+                                state,
+                                &objects,
+                                to_zone,
+                                preserve_known_identity,
+                            )?;
+                            continue;
+                        }
+                    }
                     if to_zone == Zone::Graveyard
                         && objects.len() >= 2
                         && !order_resolved
@@ -12504,6 +12662,25 @@ fn drive_resumable_inner_with_native_row_v1(
                     path,
                 } => {
                     validate_bound_library_prefix(state, &objects)?;
+                    if !order_resolved {
+                        if let Some(gy) = crate::progenitus_v1::graveyard_members(state, &objects)?
+                        {
+                            if stage_progenitus_order_v1(
+                                state,
+                                &mut continuation,
+                                path.clone(),
+                                objects.clone(),
+                                gy,
+                                true,
+                                false,
+                            )? {
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            commit_zone_change_batch(state, &objects, Zone::Graveyard, false)?;
+                            continue;
+                        }
+                    }
+
                     if objects.len() >= 2
                         && !order_resolved
                         && crate::engine::graveyard_order_choice_exposed(
@@ -12542,6 +12719,24 @@ fn drive_resumable_inner_with_native_row_v1(
                         &objects,
                         "revealed-library graveyard order",
                     )?;
+                    if !order_resolved {
+                        if let Some(gy) = crate::progenitus_v1::graveyard_members(state, &objects)?
+                        {
+                            if stage_progenitus_order_v1(
+                                state,
+                                &mut continuation,
+                                path.clone(),
+                                original_prefix.clone(),
+                                gy,
+                                true,
+                                true,
+                            )? {
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            commit_zone_change_batch(state, &objects, Zone::Graveyard, true)?;
+                            continue;
+                        }
+                    }
                     if objects.len() >= 2
                         && !order_resolved
                         && crate::engine::graveyard_order_choice_exposed(state, player)
@@ -18793,6 +18988,47 @@ fn validate_effect_object_binding(
     Ok(())
 }
 
+fn stage_progenitus_order_v1(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    path: Vec<u16>,
+    original: Vec<EffectObjectBinding>,
+    gy: Vec<EffectObjectBinding>,
+    library_prefix: bool,
+    preserve_known_identity: bool,
+) -> Result<bool, String> {
+    let Some(first) = original.first() else {
+        return Ok(false);
+    };
+    let player = state.objects.get(first.object).owner;
+    if original
+        .iter()
+        .any(|b| state.objects.get(b.object).owner != player)
+    {
+        return Err("Progenitus mixed order owners".into());
+    }
+    if gy.len() < 2 || !crate::engine::graveyard_order_choice_exposed(state, player) {
+        return Ok(false);
+    }
+    crate::progenitus_v1::reveal_order_sources(state, &original)?;
+    if library_prefix {
+        state.reveal_library_top(player, player, original.len());
+    }
+    stage_graveyard_order_choice(
+        pending,
+        player,
+        path,
+        gy,
+        EffectTargetSelectionPurpose::OrderProgenitusGraveyardV1 {
+            original,
+            library_prefix,
+            preserve_known_identity,
+        },
+    );
+    state.engine.pending_effect = Some(pending.clone());
+    Ok(true)
+}
+
 fn commit_zone_change_batch(
     state: &mut GameState,
     objects: &[EffectObjectBinding],
@@ -18958,6 +19194,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (harvester_v1::recipe(op) || harvester_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (source_token_copy_v1::recipe(op) || source_token_copy_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
@@ -18999,6 +19244,16 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::HarvesterExileAndCopyV1 => {
+            if harvester_v1::execute(state, ctx, native_proof.expect("Harvester native owner"))
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::CreateTokenCopyOfSourceV1 => {
             if source_token_copy_v1::execute(
                 state,
@@ -25621,7 +25876,10 @@ fn run_tutelage_batch_v1(
     let ordered = if let Some(ordered) = ordered {
         validate_exact_binding_permutation(&pair, &ordered, "Tutelage mill order")?;
         ordered
-    } else if pair.len() == 2 && crate::engine::graveyard_order_choice_exposed(state, player) {
+    } else if pair.len() == 2
+        && crate::progenitus_v1::graveyard_members(state, &pair)?.is_none_or(|gy| gy.len() == 2)
+        && crate::engine::graveyard_order_choice_exposed(state, player)
+    {
         state.reveal_library_top(player, player, pair.len());
         stage_graveyard_order_choice(
             pending,
@@ -25637,7 +25895,6 @@ fn run_tutelage_batch_v1(
     } else {
         pair.clone()
     };
-    let repeat = tutelage_pair_repeats_v1(state, &pair);
     let move_start = state.engine.event_history.len() as u64;
     // Existing native mill semantics move an original pair as one batch;
     // graveyard order changes move order, never pair membership or color test.
@@ -25645,6 +25902,17 @@ fn run_tutelage_batch_v1(
     if state.engine.halted.is_some() {
         return Err("Tutelage native mill halted".into());
     }
+    // CR701.17c follows an actual milled card into any public destination.
+    // A reveal followed by a shuffle leaves Library hidden, so it supplies no
+    // characteristic operand to this condition.
+    let visible = pair.iter().copied().filter(|binding| {
+        let live=state.objects.get(binding.object);
+        live.v4.face_down_v1.is_none()
+            && binding.expected_zone_change_count.checked_add(1)==Some(live.zone_change_count)
+            && matches!(live.zone,Zone::Graveyard|Zone::Exile|Zone::Battlefield|Zone::Stack)
+            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone))
+    }).collect::<Vec<_>>();
+    let repeat = tutelage_pair_repeats_v1(state, &visible);
     let batch_index = state.engine.event_history.len() as u64;
     state
         .engine
@@ -25871,6 +26139,10 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if harvester_v1::waiting(state, ctx) {
+        return true;
+    }
+
     if standard_exile::top_batch_waiting(state, ctx) {
         return true;
     }
@@ -27058,6 +27330,7 @@ fn electroduplicate_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, target)?,
             ..Default::default()
         });
     }
@@ -27126,6 +27399,7 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    harvester_v1::require_legacy_absence(state)?;
     if state
         .objects
         .iter()
@@ -27283,6 +27557,7 @@ fn spirit_copy_proposal_v1(
         token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
             copied: true,
             copied_end_step_sacrifices_v1: count,
+            copied_nightmare_v1: harvester_v1::copiable_nightmare(state, *object)?,
             ..Default::default()
         });
     }
