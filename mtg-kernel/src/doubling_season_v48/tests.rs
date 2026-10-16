@@ -338,7 +338,7 @@ fn paid_stack_source_for_entry_primitive(
     let def = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(source).card_def)];
     assert_eq!(def.cost.x_count, 0);
     state.players[owner.index()].mana_pool[ManaColor::C.pool_index()] = def.cost.generic;
-    for pip in &def.cost.pips {
+    for pip in def.cost.pips {
         let crate::mana::Pip::Colored(color) = pip else {
             panic!("entry primitive fixture requires an ordinary colored printed cost");
         };
