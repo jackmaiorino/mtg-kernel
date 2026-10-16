@@ -16,6 +16,7 @@
 //! crate-level invariants in `lib.rs`).
 
 mod standard_ward;
+use crate::event_history_v1::EventKindV1;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
 use standard_look::ConvokeLookChoice;
@@ -71,7 +72,7 @@ pub(crate) use squad_rallier_resolution_v1::{
     begin_owned as begin_owned_squad_rallier_resolution,
     resume_owned as resume_owned_squad_rallier_resolution, SquadRallierResolutionOwnerV1,
 };
-mod inspiration_resolution_v1;
+pub(crate) mod inspiration_resolution_v1;
 pub(crate) use inspiration_resolution_v1::{
     acquire_owner as acquire_inspiration_resolution_owner,
     begin_owned as begin_owned_inspiration_resolution,
@@ -18961,6 +18962,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 let input = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
                     .iter()
                     .enumerate()
                     .rev()

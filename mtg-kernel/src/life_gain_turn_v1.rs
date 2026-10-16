@@ -2,6 +2,7 @@
 //! Public observations and frozen policy encoders do not inspect this ledger.
 
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{
     AbilitySourceContractV4, FirstLifeGainCaptureV1, GameState, LifeGainTurnV1, Zone,
@@ -303,6 +304,7 @@ pub(crate) fn take_captures(state: &mut GameState) -> Result<Vec<PendingTrigger>
         state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::LifeGain])
             .iter()
             .enumerate()
             .rev()

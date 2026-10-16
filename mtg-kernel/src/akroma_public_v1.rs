@@ -1,4 +1,5 @@
 //! Separate Akroma V40 transport. Private original snapshots never leave the backend.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -175,6 +176,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("../build.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update([0]);
             h.update(source.as_bytes());
@@ -313,7 +315,13 @@ pub(crate) fn facts(
         });
     }
     let mut departures = Vec::new();
-    for (order, event) in state.engine.event_history.iter().enumerate() {
+    for (order, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+        .iter()
+        .enumerate()
+    {
         let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = event
         else {
             continue;

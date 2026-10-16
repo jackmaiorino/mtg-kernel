@@ -1,4 +1,5 @@
 //! Separate public Gourmand transport. This is not V8/V9 or tensor/model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -105,6 +106,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("rl_session/flat_action_v4.rs"),
         include_str!("bloodthirsty_conqueror_v49/custody.rs"),
         include_str!("linked_aura_operation_v1.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -384,6 +386,7 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
     let owned = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2])
         .iter()
         .filter_map(|e| {
             if let crate::event::CommittedEvent::VampireGourmandCostOperationV2 { operation } = e {
@@ -414,7 +417,11 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
 }
 fn restrictions(state: &GameState) -> Result<Vec<RestrictionV1>, RlContractError> {
     let mut rows = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2])
+    {
         let crate::event::CommittedEvent::VampireGourmandCostOperationV2 { operation } = event
         else {
             continue;
@@ -519,30 +526,46 @@ fn sacrifice_menu(state: &GameState) -> Result<Option<SacrificeMenuV1>, RlContra
 fn resolutions(state: &GameState) -> Result<Vec<ResolutionV1>, RlContractError> {
     use crate::event::CommittedEvent;
     let mut rows = Vec::new();
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandAttackCaptureV2])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::VampireGourmandAttackCaptureV2 { source, .. } = event else {
             continue;
         };
-        let published = state.engine.event_history.iter().find_map(|e| {
-            if let CommittedEvent::VampireGourmandPublishedV2 {
-                capture_history_index,
-                item,
-            } = e
-            {
-                (*capture_history_index as usize == at).then_some(item.as_ref())
-            } else {
-                None
-            }
-        });
-        let cost = published.and_then(|item| {
-            state.engine.event_history.iter().find_map(|e| {
-                if let CommittedEvent::VampireGourmandCostOperationV2 { operation } = e {
-                    (operation.before.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
-                        .then_some(operation.as_ref())
+        let published = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::VampireGourmandPublishedV2])
+            .iter()
+            .find_map(|e| {
+                if let CommittedEvent::VampireGourmandPublishedV2 {
+                    capture_history_index,
+                    item,
+                } = e
+                {
+                    (*capture_history_index as usize == at).then_some(item.as_ref())
                 } else {
                     None
                 }
-            })
+            });
+        let cost = published.and_then(|item| {
+            state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2])
+                .iter()
+                .find_map(|e| {
+                    if let CommittedEvent::VampireGourmandCostOperationV2 { operation } = e {
+                        (operation.before.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
+                            .then_some(operation.as_ref())
+                    } else {
+                        None
+                    }
+                })
         });
         let current = published.and_then(|item| {
             state
@@ -551,7 +574,7 @@ fn resolutions(state: &GameState) -> Result<Vec<ResolutionV1>, RlContractError> 
                 .as_ref()
                 .filter(|p| p.resolving_item.v4.stack_item_id == item.v4.stack_item_id)
         });
-        let countered=published.is_some_and(|item|state.engine.event_history.iter().any(|e|matches!(e,
+        let countered=published.is_some_and(|item|state.engine.event_history.scan_for_v1(&[EventKindV1::VampireGourmandCounterRemovedV2]).iter().any(|e|matches!(e,
             CommittedEvent::VampireGourmandCounterRemovedV2 {item:removed,..} if removed.v4.stack_item_id==item.v4.stack_item_id)));
         let pending = state.engine.pending_triggers.iter().position(|p| {
             p.source_contract == Some(*source) && p.effect == crate::vampire_gourmand_v1::program()

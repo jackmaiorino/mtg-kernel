@@ -438,6 +438,93 @@ pub(crate) fn tanh_f32_v1(x: f32) -> f32 {
     result_abs.copysign(x)
 }
 
+/// [`tanh_f32_v1`] of every element of `values`, in place, with the same
+/// bits. On an x86-64 CPU with AVX2 it evaluates four elements at a time
+/// through the same sequence of `f64` operations as the scalar function,
+/// each rounded as there (AVX2 brings no fused multiply-add, and the
+/// rounding to `f32` uses the same MXCSR mode as the scalar cast); the
+/// special cases are selected per element afterwards. The last `len % 4`
+/// elements, and every element on other CPUs, go through [`tanh_f32_v1`]
+/// itself. `tanh_f32_in_place_v1_matches_the_scalar_bits_on_every_input`
+/// compares the two over all 2^32 inputs.
+pub(crate) fn tanh_f32_in_place_v1(values: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { tanh_f32_in_place_avx2_v1(values) };
+        return;
+    }
+    for value in values {
+        *value = tanh_f32_v1(*value);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn tanh_f32_in_place_avx2_v1(values: &mut [f32]) {
+    use std::arch::x86_64::*;
+    let sign_mask = _mm_castsi128_ps(_mm_set1_epi32(i32::MIN));
+    let small = _mm_set1_ps(TANH_SMALL_LINEAR_THRESHOLD_V1);
+    let saturation = _mm_set1_ps(TANH_SATURATION_THRESHOLD_V1);
+    let ln2 = _mm256_set1_pd(EXPM1_LN2_F64_V1);
+    let inv_ln2 = _mm256_set1_pd(EXPM1_INV_LN2_F64_V1);
+    let half = _mm256_set1_pd(0.5);
+    let one = _mm256_set1_pd(1.0);
+    let two = _mm256_set1_pd(2.0);
+    let zero = _mm256_setzero_pd();
+    let exponent_bias = _mm256_set1_epi64x(1023);
+    let mut chunks = values.chunks_exact_mut(4);
+    for chunk in &mut chunks {
+        let x = _mm_loadu_ps(chunk.as_ptr());
+        let sign = _mm_and_ps(x, sign_mask);
+        let ax = _mm_andnot_ps(sign_mask, x);
+        // The general case of `tanh_f32_v1` and `expm1_f64_v1`, in order.
+        let t = _mm256_mul_pd(two, _mm256_cvtps_pd(ax));
+        // `(t * EXPM1_INV_LN2_F64_V1).round()` rounds half away from zero.
+        // Here `y >= 0`, so it is the truncation plus one when the dropped
+        // fraction is at least one half; `y - trunc(y)` is exact.
+        let y = _mm256_mul_pd(t, inv_ln2);
+        let truncated = _mm256_round_pd::<{ _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC }>(y);
+        let fraction = _mm256_sub_pd(y, truncated);
+        let carry = _mm256_and_pd(_mm256_cmp_pd::<_CMP_GE_OQ>(fraction, half), one);
+        let k_f = _mm256_add_pd(truncated, carry);
+        let r = _mm256_sub_pd(t, _mm256_mul_pd(k_f, ln2));
+        let mut value = _mm256_set1_pd(EXPM1_TAYLOR_C7_V1);
+        for coefficient in [
+            EXPM1_TAYLOR_C6_V1,
+            EXPM1_TAYLOR_C5_V1,
+            EXPM1_TAYLOR_C4_V1,
+            EXPM1_TAYLOR_C3_V1,
+            EXPM1_TAYLOR_C2_V1,
+        ] {
+            value = _mm256_add_pd(_mm256_mul_pd(value, r), _mm256_set1_pd(coefficient));
+        }
+        let eminus1_r = _mm256_mul_pd(_mm256_add_pd(_mm256_mul_pd(value, r), one), r);
+        let k = _mm256_cvtepi32_epi64(_mm256_cvttpd_epi32(k_f));
+        let scale =
+            _mm256_castsi256_pd(_mm256_slli_epi64::<52>(_mm256_add_epi64(k, exponent_bias)));
+        let em1 = _mm256_add_pd(_mm256_sub_pd(scale, one), _mm256_mul_pd(scale, eminus1_r));
+        let quotient = _mm256_div_pd(em1, _mm256_add_pd(em1, two));
+        // The general case's quotient is finite, so min/max clamp like
+        // `f64::clamp`.
+        let clamped = _mm256_min_pd(_mm256_max_pd(quotient, zero), one);
+        let mut result = _mm_or_ps(_mm256_cvtpd_ps(clamped), sign);
+        // The early returns, lowest precedence first: small magnitudes keep
+        // `x`, saturated and infinite ones give +-1, and NaN gives `f32::NAN`.
+        result = _mm_blendv_ps(result, x, _mm_cmple_ps(ax, small));
+        result = _mm_blendv_ps(
+            result,
+            _mm_or_ps(_mm_set1_ps(1.0), sign),
+            _mm_cmpge_ps(ax, saturation),
+        );
+        result = _mm_blendv_ps(result, _mm_set1_ps(f32::NAN), _mm_cmpunord_ps(x, x));
+        _mm_storeu_ps(chunk.as_mut_ptr(), result);
+    }
+    for value in chunks.into_remainder() {
+        *value = tanh_f32_v1(*value);
+    }
+}
+
 // ---------------------------------------------------------------------
 // Panel ruling extension (2026-08-16): softmax_legal_action_weights_v1 and
 // its private exp_f64_v1 primitive. See the module doc's own "Panel ruling
@@ -813,6 +900,89 @@ pub(crate) fn assert_pinned_mxcsr_state_v1() {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    /// Inputs for the vectorized `tanh`: a stride through all 2^32 bit
+    /// patterns (both signs, subnormals, infinities, NaN payloads), each
+    /// threshold with its neighbors, and the inputs nearest every point
+    /// where `expm1_f64_v1`'s rounded `k` changes.
+    fn tanh_vector_inputs_v1() -> Vec<f32> {
+        let mut inputs: Vec<f32> = (0..=u32::MAX).step_by(65_521).map(f32::from_bits).collect();
+        for threshold in [TANH_SMALL_LINEAR_THRESHOLD_V1, TANH_SATURATION_THRESHOLD_V1] {
+            for delta in -2i32..=2 {
+                let x = f32::from_bits(threshold.to_bits().wrapping_add_signed(delta));
+                inputs.extend([x, -x]);
+            }
+        }
+        for k in 0..27 {
+            // 2|x| / ln 2 == k + 1/2
+            let x = ((f64::from(k) + 0.5) * EXPM1_LN2_F64_V1 / 2.0) as f32;
+            for neighbor in [x.to_bits() - 1, x.to_bits(), x.to_bits() + 1] {
+                let x = f32::from_bits(neighbor);
+                inputs.extend([x, -x]);
+            }
+        }
+        inputs.extend([
+            0.0,
+            -0.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            -f32::NAN,
+            f32::from_bits(0x7f80_0001),
+            f32::MIN_POSITIVE,
+            f32::MAX,
+            f32::MIN,
+            1.0,
+            -1.0,
+        ]);
+        inputs
+    }
+
+    /// The vectorized form gives `tanh_f32_v1`'s bits on the inputs above,
+    /// for every slice start and length the four-wide loop and its scalar
+    /// remainder can see.
+    #[test]
+    fn tanh_f32_in_place_v1_matches_the_scalar_bits() {
+        let inputs = tanh_vector_inputs_v1();
+        let scalar: Vec<u32> = inputs.iter().map(|&x| tanh_f32_v1(x).to_bits()).collect();
+        let mut whole = inputs.clone();
+        tanh_f32_in_place_v1(&mut whole);
+        assert_eq!(
+            whole.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+            scalar
+        );
+        for start in 0..4 {
+            for len in 0..=9 {
+                let mut part = inputs[start..start + len].to_vec();
+                tanh_f32_in_place_v1(&mut part);
+                let bits: Vec<u32> = part.iter().map(|x| x.to_bits()).collect();
+                assert_eq!(bits, scalar[start..start + len], "start {start} len {len}");
+            }
+        }
+    }
+
+    /// Every one of the 2^32 inputs, a million at a time (about a minute in
+    /// a release build).
+    #[test]
+    #[ignore = "exhaustive over all 2^32 inputs; run in release with --ignored"]
+    fn tanh_f32_in_place_v1_matches_the_scalar_bits_on_every_input() {
+        let mut block = vec![0f32; 1 << 20];
+        for high in 0u32..1 << 12 {
+            for (low, slot) in block.iter_mut().enumerate() {
+                *slot = f32::from_bits(high << 20 | low as u32);
+            }
+            let mut vector = block.clone();
+            tanh_f32_in_place_v1(&mut vector);
+            for (x, y) in block.iter().zip(&vector) {
+                assert_eq!(
+                    y.to_bits(),
+                    tanh_f32_v1(*x).to_bits(),
+                    "input {:#010x}",
+                    x.to_bits()
+                );
+            }
+        }
+    }
 
     // -------------------------------------------------------------
     // Golden battery: exact output bits for named edge cases.

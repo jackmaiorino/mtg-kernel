@@ -3,6 +3,7 @@
 
 use crate::card_def::{CardType, CARD_DEFS};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition};
 
@@ -148,7 +149,7 @@ pub(crate) fn pending(
         });
     if authorities.next().is_some()
         || history_death != death
-        || state.engine.event_history.iter().any(|event| {
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::ControlledCreatureDeathCaptureCollectedV1]).iter().any(|event| {
             matches!(event, CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index }
                 if u64::try_from(history_index).ok() == Some(*capture_history_index))
         })

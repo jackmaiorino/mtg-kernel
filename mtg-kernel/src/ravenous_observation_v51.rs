@@ -133,6 +133,7 @@ pub fn producer_sha256() -> String {
             include_str!("inspiration_observation_v1.rs"),
             include_str!("fishing_pole_observation_v39.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());

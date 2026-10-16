@@ -8,13 +8,22 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
+import host_reservation_v1 as reservations
 import native_expanded_dispatch_v1 as dispatch
 
 LINUX = sys.platform.startswith("linux")
+
+
+def owner():
+    """A start barrier's owner: this test process, which stays alive."""
+    pid, creation = reservations.self_identity()
+    return {"pid": pid, "creation_time": creation}
 
 
 def lease_guard_files(folder, pod="testpod", now=None, **guard):
@@ -35,7 +44,9 @@ def lease_guard_files(folder, pod="testpod", now=None, **guard):
     return lease
 
 
-class NativeExpandedAdmissionTests(unittest.TestCase):
+class AdmissionTestCase(unittest.TestCase):
+    """A fixture config, runtime and serial/parallel qualification trials."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -70,7 +81,12 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                             "reserve_bytes": dispatch.DISK_RESERVE_BYTES, "projected_additional_bytes": 1000,
                             "projected_volume_bytes": {self.root.drive.upper(): 1000}}}
 
-    def trial(self, workers, seconds, e_packet=None):
+    def trial(self, workers, seconds, e_packet=None, update_seconds=None, stdout_updates=1,
+              artifact_timing=None):
+        """A one-update qualification report. With `update_seconds` it pins a
+        stdout whose `stdout_updates` update lines carry that native timing, and
+        records `artifact_timing` (by default a 1 s fingerprint and a 0.5 s
+        archive; {} leaves it out)."""
         request = self.request(workers)
         original = dispatch.read(dispatch.checked(request["config"]))
         config = dispatch.placed_config(request, original, True)
@@ -106,6 +122,18 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                   "archive": self.save({"mismatches": 0, "native_root": str(native),
                       "scheme": "two-deflate1-shards-full-readback/v1",
                       "shards": [{"archive": self.save({"archive": i})} for i in range(2)]})}
+        if update_seconds is not None:
+            stdout = Path(request["root"]) / "stdout.jsonl"
+            stdout.parent.mkdir(parents=True, exist_ok=True)
+            timing = {"schema": "phase1-scheduler-wall/v1", "iteration_wall_seconds": update_seconds}
+            stdout.write_text("".join(json.dumps({"completed_iteration": i, "scheduler_timing": timing}) + "\n"
+                                      for i in range(stdout_updates)) + json.dumps(result) + "\n",
+                              encoding="utf-8")
+            report["native_stdout"] = dispatch.pin(stdout)
+            artifact = ({"fingerprint_seconds": 1, "archive_seconds": .5}
+                        if artifact_timing is None else artifact_timing)
+            if artifact:
+                report["artifact_timing"] = artifact
         return self.save(report)
 
     def choice(self):
@@ -118,6 +146,8 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                 "qualifications": [one, two],
                 "selected": {dispatch.workload(self.config, "training"): two}}
 
+
+class NativeExpandedAdmissionTests(AdmissionTestCase):
     def test_replication_seeds_only_are_compatible(self):
         replica = copy.deepcopy(self.config)
         replica["iterations"][0]["episodes"][0]["episode"].update(id="replica", seed=999)
@@ -361,6 +391,77 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
                 else:
                     self.assertNotIn("MTG_KERNEL_PROFILE_GAE_V1", environment)
 
+    def test_execute_waits_at_the_start_barrier_outside_its_seconds(self):
+        request = self.request(1)
+        release = self.root / "release.json"
+        request["start_barrier"] = {"ready": str(self.root / "ready.json"), "release": str(release),
+                                    "timeout_seconds": 30, "owner": owner()}
+        request_ref = self.save(request)
+
+        def popen(*args, **kwargs):
+            self.assertTrue(release.exists())  # the native child starts only after the release
+            child = unittest.mock.MagicMock(pid=4242, returncode=1)
+            child.poll.return_value = 1
+            return child
+        recorded = []
+
+        def record(token, pid):  # the reservation's lock, which packed trials take in turn
+            recorded.append(time.time())
+            time.sleep(0.2)
+        timer = threading.Timer(0.5, lambda: release.write_text('{"go": true}'))
+        self.addCleanup(timer.cancel)
+        with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
+                patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "set_affinity"), \
+                patch.object(dispatch, "require_mapped_libraries"), \
+                patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                patch("host_reservation_v1.record_descendant", side_effect=record), \
+                patch.object(dispatch.subprocess, "Popen", side_effect=popen) as spawn:
+            timer.start()
+            with self.assertRaisesRegex(RuntimeError, "native process failed"):
+                dispatch.execute(Path(request_ref["path"]), True)
+        self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(dispatch.read(self.root / "ready.json")["request"], request_ref)
+        execution = dispatch.read(Path(request["root"]) / "execution.json")
+        self.assertGreaterEqual(execution["barrier_seconds"], 0.4)
+        self.assertLess(execution["seconds"], execution["barrier_seconds"])
+        # The start is taken at the spawn, before the reservation's lock, and the receipt binds it.
+        started = dispatch.read(Path(request["root"]) / "started.json")
+        self.assertLessEqual(started["started_unix"], recorded[0])
+        self.assertEqual(execution["started_unix"], started["started_unix"])
+
+    def test_only_a_qualification_receipt_records_its_start(self):
+        """A production dispatch's execution record keeps its fields; a qualification's adds its start."""
+        def popen(*args, **kwargs):
+            child = unittest.mock.MagicMock(pid=4242, returncode=1)
+            child.poll.return_value = 1
+            return child
+        for qualification in (False, True):
+            request = self.request(1)
+            request["root"] += f"-{qualification}"
+            request["cold_root"] += f"-{qualification}"
+            if not qualification:
+                request["choice"] = {"path": "admitted", "sha256": "0" * 64}
+            request_ref = self.save(request)
+            with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
+                    patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                    patch.object(dispatch, "require_choice"), \
+                    patch.object(dispatch, "placed_config", side_effect=lambda request, config, qualification: config), \
+                    patch.object(dispatch, "set_affinity"), \
+                    patch.object(dispatch, "require_mapped_libraries"), \
+                    patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                    patch("host_reservation_v1.record_descendant"), \
+                    patch.object(dispatch.subprocess, "Popen", side_effect=popen):
+                with self.assertRaisesRegex(RuntimeError, "native process failed"):
+                    dispatch.execute(Path(request_ref["path"]), qualification)
+            execution = dispatch.read(Path(request["root"]) / "execution.json")
+            started = dispatch.read(Path(request["root"]) / "started.json")
+            if qualification:
+                self.assertEqual(sorted(execution), ["child_seconds", "error", "exit_code", "seconds", "started_unix"])
+                self.assertEqual(execution["started_unix"], started["started_unix"])
+            else:
+                self.assertEqual(sorted(execution), ["child_seconds", "error", "exit_code", "seconds"])
+
     def test_fastest_choice_rejects_profiled_qualification(self):
         choice = self.choice()
         request = self.request(2)
@@ -390,6 +491,45 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             choice["qualifications"] = choice["qualifications"][1:]
             with self.assertRaisesRegex(ValueError, "serial"):
                 dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+
+    def test_training_projection_pays_start_up_once(self):
+        # 64 updates. w1: a 10 s trial with a 6 s update, a 1 s fingerprint and a
+        # 0.5 s archive pays 2.5 s once, then 6.5 s per update and the
+        # fingerprint over one worker (1 GiB placement): 2.5 + 64 x 7.5.
+        # w2: 6 s, 4 s, 1 s, 0.5 s.
+        choice = self.choice()
+        choice["qualifications"] = [self.trial(1, 10, update_seconds=6), self.trial(2, 6, update_seconds=4)]
+        choice["selected"] = {dispatch.workload(self.config, "training"): choice["qualifications"][1]}
+        report = dispatch.read(choice["qualifications"][0]["path"])
+        self.assertEqual(dispatch.projected_seconds(report, self.config, "training"), 482.5)
+        # Four fingerprint workers spread the fingerprint: 2.5 + 64 x (6.5 + 1/4).
+        wide = report | {"placement": report["placement"] | {"cpu_affinity": [0, 1, 2, 3],
+                                                              "memory_bytes": 4 * 1024**3}}
+        self.assertEqual(dispatch.fingerprint_workers(wide["placement"]), 4)
+        self.assertEqual(dispatch.projected_seconds(wide, self.config, "training"), 434.5)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            result = dispatch.require_choice(self.save(choice), self.request(2), verify_outputs=True)
+        self.assertEqual(result["projected_seconds"], .5 + 64 * 5.5)
+
+    def test_training_projection_bases_and_timing_are_checked(self):
+        choice = self.choice()
+        request = self.request(2)
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)):
+            # One trial timed per update and one from before the pinned stdout.
+            choice["qualifications"][1] = self.trial(2, 6, update_seconds=4)
+            with self.assertRaisesRegex(ValueError, "one projection basis"):
+                dispatch.require_choice(self.save(choice), request, verify_outputs=True)
+            for kwargs, message in (({"update_seconds": 4, "stdout_updates": 0}, "exactly one update"),
+                                    ({"update_seconds": 4, "stdout_updates": 2}, "exactly one update"),
+                                    ({"update_seconds": 9.5}, "outlasts its native execution"),
+                                    ({"update_seconds": 8.75}, "outlast its trial"),
+                                    ({"update_seconds": 0}, "native update seconds"),
+                                    ({"update_seconds": 4, "artifact_timing": {}}, "artifact timing"),
+                                    ({"update_seconds": 4, "artifact_timing": {"fingerprint_seconds": 1}},
+                                     "archive seconds")):
+                report = dispatch.read(self.trial(1, 10, **kwargs)["path"])
+                with self.assertRaisesRegex(ValueError, message):
+                    dispatch.projected_seconds(report, self.config, "training")
 
     def test_changed_trajectory_and_eligible_unmeasured_host_are_refused(self):
         choice = self.choice()
@@ -758,6 +898,378 @@ class NativeExpandedAdmissionTests(unittest.TestCase):
             self.assertTrue(pattern.search(name), name)
         for name in ("python3.13", "trainer2", "nineXdeck-trainer"):
             self.assertFalse(pattern.search(name), name)
+
+
+# Two SMT P-cores (CPUs 0-1 and 2-3) and two E-cores (CPUs 4 and 5).
+class StartBarrierTests(unittest.TestCase):
+    """A packed qualification trial waits after its checks for the pack tool's release."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.request_path = self.root / "request.json"
+        self.request_path.write_text("{}")
+
+    def barrier(self, name, **fields):
+        return {"ready": str(self.root / f"{name}.ready.json"), "release": str(self.root / "release.json"),
+                "timeout_seconds": 30, "owner": owner(), **fields}
+
+    def test_only_training_qualification_trials_carry_a_barrier(self):
+        request = {"kind": "training", "start_barrier": self.barrier("a")}
+        self.assertEqual(dispatch.start_barrier(request, True), request["start_barrier"])
+        self.assertIsNone(dispatch.start_barrier({"kind": "training"}, False))
+        unowned = self.barrier("a")
+        del unowned["owner"]
+        cases = [(request, False), (dict(request, kind="evaluation"), True),
+                 (dict(request, start_barrier=self.barrier("a", ready="a.json")), True),
+                 (dict(request, start_barrier=self.barrier("a", extra=1)), True),
+                 (dict(request, start_barrier=unowned), True)]
+        for bad in ({"pid": 0, "creation_time": 1}, {"pid": 1, "creation_time": "1"},
+                    {"pid": 1, "creation_time": 1, "extra": 1}, {"pid": 1}, [1, 1]):
+            cases.append((dict(request, start_barrier=self.barrier("a", owner=bad)), True))
+        for value, qualification in cases:
+            with self.assertRaisesRegex(ValueError, "start barrier belongs"):
+                dispatch.start_barrier(value, qualification)
+        with self.assertRaisesRegex(ValueError, "start barrier timeout"):
+            dispatch.start_barrier(dict(request, start_barrier=self.barrier("a", timeout_seconds=0)), True)
+
+    def test_a_trial_waits_for_go_and_fails_without_it(self):
+        release = self.root / "release.json"
+        timer = threading.Timer(0.3, lambda: release.write_text('{"go": true}'))
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.assertGreaterEqual(dispatch.await_release(self.barrier("a"), self.request_path, poll=0.01), 0.2)
+        self.assertEqual(dispatch.read(self.root / "a.ready.json")["request"], dispatch.pin(self.request_path))
+        release.write_text('{"go": false}')
+        with self.assertRaisesRegex(ValueError, "without go"):
+            dispatch.await_release(self.barrier("b"), self.request_path, poll=0.01)
+        release.unlink()
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            dispatch.await_release(self.barrier("c", timeout_seconds=0.05), self.request_path, poll=0.01)
+
+    def test_a_trial_stops_waiting_once_its_pack_tool_has_ended(self):
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        creation = reservations.creation_time(ended.pid)  # readable until it is reaped
+        ended.wait()
+        gone = {"pid": ended.pid, "creation_time": creation}
+        self.assertEqual(reservations.process_state(gone["pid"], gone["creation_time"]), "absent")
+        started = time.monotonic()
+        with self.assertRaisesRegex(ValueError, "pack tool ended without releasing it"):
+            dispatch.await_release(self.barrier("a", owner=gone, timeout_seconds=600), self.request_path,
+                                   poll=0.01, owner_poll=0.1)
+        self.assertLess(time.monotonic() - started, 30)  # long before the backstop
+        # A live owner keeps the trial waiting, here until the backstop.
+        with self.assertRaisesRegex(ValueError, "timed out"):
+            dispatch.await_release(self.barrier("b", timeout_seconds=0.3), self.request_path,
+                                   poll=0.01, owner_poll=0.05)
+        # A release its owner wrote before it ended still counts.
+        (self.root / "release.json").write_text('{"go": true}')
+        self.assertGreaterEqual(dispatch.await_release(self.barrier("c", owner=gone), self.request_path,
+                                                       poll=0.01, owner_poll=0.0), 0)
+
+    def test_a_release_written_as_its_pack_tool_ends_still_counts(self):
+        # The tool renames the release into place and ends between the trial's look
+        # at the release and its look at the tool.
+        release = self.root / "release.json"
+
+        def released_then_gone(*_):
+            release.write_text('{"go": true}')
+            return "absent"
+
+        with patch.object(reservations, "process_state", side_effect=released_then_gone) as state:
+            self.assertGreaterEqual(dispatch.await_release(self.barrier("a"), self.request_path,
+                                                           poll=0.01, owner_poll=0.0), 0)
+        state.assert_called_once()
+
+
+TOPOLOGY = [{"cpus": "0-1", "efficiency_class": 1, "smt": True}, {"cpus": "2-3", "efficiency_class": 1, "smt": True},
+            {"cpus": "4", "efficiency_class": 0, "smt": False}, {"cpus": "5", "efficiency_class": 0, "smt": False}]
+
+
+class PackChoiceTests(AdmissionTestCase):
+    """Side-by-side runs: a pack is chosen only on byte-equal trials that started
+    together, when its waves beat the fastest solo allocation for the study."""
+
+    def setUp(self):
+        super().setUp()
+        # Members run on one-worker slots, so their production config keeps the serial defaults.
+        del self.config["collection_workers"], self.config["preparation_workers"]
+
+    def slot(self, cpus):
+        return {"host": "desktop", "cpu_affinity": cpus, "workers": 1, "preparation_workers": 1,
+                "memory_bytes": 1024**3}
+
+    def pack_trial(self, name, slot, seconds, start, child_seconds, tensors=(1, 2), barrier=False):
+        request = self.request(slot["workers"])
+        request.update(placement=dict(slot), root=str(self.root / name), cold_root=str(self.root / f"cold-{name}"))
+        if barrier:
+            request["start_barrier"] = {"ready": str(self.root / f"{name}.ready.json"),
+                                        "release": str(self.root / "release.json"), "timeout_seconds": 600,
+                                        "owner": owner()}
+        original = dispatch.read(dispatch.checked(request["config"]))
+        config = dispatch.placed_config(request, original, True)
+        native = Path(config["output_directory"])
+        self.save({"git_commit": self.runtime["engine_commit"],
+                   "tracked_tree_sha256": self.runtime["tracked_tree_sha256"]}, native/"run.json")
+        trajectory = self.save({"terminal": {"terminal_classification": "natural"}, "tensors": list(tensors)},
+                               native/"episode.json")
+        collection = self.save({"complete": True, "trajectories": [trajectory]}, native/"collection.json")
+        checkpoint = self.save({"trajectories": [trajectory], "parameters": [123], "first_moments": [456],
+                                "second_moments": [789], "adam_step": 32401}, native/"checkpoint.json")
+        update = self.save({"complete": True, "checkpoint": checkpoint})
+        receipt = self.save({"iteration": 0, "collection": collection, "update": update})
+        result = {"complete": False, "completed_iterations": 1, "planned_iterations": 64, "iterations": [receipt]}
+        request_pin = self.save(request)
+        report = {"schema": dispatch.SCHEMA, "qualification": True, "complete": True, "request": request_pin,
+                  "executed_config": self.save(config), "native_result": self.save(result),
+                  "runtime": self.runtime, "launcher_sha256": dispatch.pin(dispatch.__file__)["sha256"],
+                  "workload": dispatch.workload(original, "training"), "placement": dict(slot),
+                  "fingerprint": dispatch.output_fingerprint(config, "training", result, self.runtime, True),
+                  "completed_games": 1, "completed_updates": 1, "seconds": seconds,
+                  "execution": self.save({"exit_code": 0, "error": None, "child_seconds": child_seconds,
+                                          "seconds": seconds - 1, "started_unix": start}),
+                  "run": dispatch.pin(native/"run.json"),
+                  "archive": self.save({"mismatches": 0, "native_root": str(native),
+                      "scheme": "two-deflate1-shards-full-readback/v1",
+                      "shards": [{"archive": self.save({"archive": i})} for i in range(2)]})}
+        return {"report": self.save(report),
+                "started": self.save({"pid": 1, "started_unix": start, "placement": dict(slot),
+                                      "request": request_pin})}
+
+    def pack(self, packed_seconds=12, packed_start=1000, solo_overlap=False, changed=None, host="desktop",
+             topology=TOPOLOGY):
+        """Slots: two P-threads (CPUs 0 and 2) and two E-cores (4 and 5); one solo trial per kind.
+        The packed trials start 0.1 s apart (a 0.3 s spread against 9 s native runs)."""
+        slots = [dict(self.slot(cpus), host=host) for cpus in ([0], [2], [4], [5])]
+        solo = [dict(slot=0, **self.pack_trial(f"solo-0-{host}", slots[0], 10, 0, 8)),
+                dict(slot=2, **self.pack_trial(f"solo-2-{host}", slots[2], 11, 1005 if solo_overlap else 100, 8))]
+        packed = [dict(slot=i, **self.pack_trial(f"packed-{i}-{host}", slot, packed_seconds, packed_start + i / 10, 9,
+                                                 (1, 3) if changed == i else (1, 2)))
+                  for i, slot in enumerate(slots)]
+        return {"schema": dispatch.PACK, "workload": dispatch.workload(self.config, "training"),
+                "slots": slots, "kinds": dispatch.slot_kinds(slots, topology), "topology": topology,
+                "load": {point: self.load() for point in ("start", "packed", "end")},
+                "solo": solo, "packed": packed}
+
+    def load(self, cores=(0, 1, 2, 3, 4, 5), claims=(), token="a" * 64):
+        """One recorded point: the qualifying reservation's declaration and the host's claims."""
+        return {"at_unix": 1.0, "token_sha256": token, "cores": None if cores is None else list(cores),
+                "claims": [{"id": "-".join(map(str, cpus)), "cores": list(cpus), "state": state, "lane": "other"}
+                           for cpus, state in claims]}
+
+    def study(self, runs, pack, select_pack=True):
+        choice = self.choice()
+        choice["inventory"]["desktop"]["cpu_affinity"] = [0, 1, 2, 3, 4, 5]
+        choice["packs"] = [self.save(pack)]
+        choice["study_runs"] = {dispatch.workload(self.config, "training"): runs}
+        if select_pack:
+            choice["selected"][dispatch.workload(self.config, "training")] = choice["packs"][0]
+        return choice
+
+    def admit(self, choice, placement, verify=True):
+        request = self.request(1)
+        request["placement"] = placement
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "host_topology", return_value=TOPOLOGY):
+            return dispatch.require_choice(self.save(choice), request, verify_outputs=verify)
+
+    def test_slot_kinds_name_core_type_and_workers(self):
+        slots = [self.slot([0]), self.slot([0, 1]), self.slot([0, 2]), self.slot([4]),
+                 dict(self.slot([0, 2]), workers=2)]
+        self.assertEqual(dispatch.slot_kinds(slots, TOPOLOGY),
+                         ["class1-cores1-cpus1-w1-p1", "class1-cores1-cpus2-w1-p1", "class1-cores2-cpus2-w1-p1",
+                          "class0-cores1-cpus1-w1-p1", "class1-cores2-cpus2-w2-p1"])
+        with self.assertRaisesRegex(ValueError, "spans core types"):
+            dispatch.slot_kinds([self.slot([0, 4])], TOPOLOGY)
+        with self.assertRaisesRegex(ValueError, "outside this host"):
+            dispatch.slot_kinds([self.slot([9])], TOPOLOGY)
+
+    def test_study_picks_a_faster_pack_and_admits_any_of_its_slots(self):
+        # Solo: 6 s x 64 updates = 384 s a run, 8 runs = 3,072 s. Pack: 4 slots,
+        # 12 s x 64 = 768 s a wave, two waves = 1,536 s.
+        choice = self.study(8, self.pack())
+        selected = self.admit(choice, self.slot([4]))
+        self.assertEqual(selected["pack"], choice["packs"][0])
+        self.assertEqual((selected["projected_seconds"], selected["slots"], selected["study_runs"]), (1536, 4, 8))
+        self.assertEqual(selected["slot_seconds"], [768, 768, 768, 768])  # 12 s x 64 updates, each slot
+        self.assertEqual(selected["slowdown"], {"class0-cores1-cpus1-w1-p1": 12 / 11,
+                                                "class1-cores1-cpus1-w1-p1": 12 / 10})
+        self.assertEqual(selected["background_claims"], 0)
+        for slot in (self.slot([0]), self.slot([2]), self.slot([5])):
+            self.assertEqual(self.admit(choice, slot), selected)
+            self.assertEqual(dispatch.placed_config(dict(self.request(1), placement=slot), self.config, False),
+                             self.config)  # what execute() runs on that slot
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(choice, self.slot([1]))
+        request = self.request(1)
+        request["placement"] = self.slot([2])
+        choice_ref = self.save(choice)
+        request["choice_verification"] = self.save({"schema": dispatch.CHOICE, "choice": choice_ref,
+                                                   "selected": selected, "outputs_verified": True})
+        with patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                patch.object(dispatch, "host_topology", return_value=TOPOLOGY):
+            self.assertEqual(dispatch.require_choice(choice_ref, request), selected)
+
+    def test_study_keeps_solo_when_the_pack_is_slower(self):
+        # One run: solo 384 s against one 768 s wave.
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(self.study(1, self.pack()), self.slot([0]))
+        choice = self.study(1, self.pack(), select_pack=False)
+        selected = self.admit(choice, self.request(2)["placement"])
+        self.assertEqual((selected["qualification"], selected["projected_seconds"], selected["study_runs"]),
+                         (choice["qualifications"][1], 384, 1))
+
+    def test_transport_counts_once_a_run_or_wave_and_the_queue_once(self):
+        """Two runs on a host with 100 s transport and a 50 s queue: solo 2 x (384 + 100) + 50
+        = 1,018 s, the pack one wave of 768 + 100 + 50 = 918 s. Without them the two tie at
+        768 s, and the solo allocation, listed first, stays the fastest."""
+        def priced(select_pack, transport=100, queue=50):
+            choice = self.study(2, self.pack(), select_pack=select_pack)
+            choice["inventory"]["desktop"].update(transport_seconds=transport, queue_seconds=queue,
+                                                  queue_evidence=self.save({"queue": "measured"}))
+            return choice
+        selected = self.admit(priced(True), self.slot([0]))
+        self.assertEqual((selected["projected_seconds"], selected["study_runs"]), (918, 2))
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(priced(False), self.request(2)["placement"])
+        choice = priced(False, 0, 0)
+        solo = self.admit(choice, self.request(2)["placement"])
+        self.assertEqual((solo["qualification"], solo["projected_seconds"]), (choice["qualifications"][1], 768))
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(priced(True, 0, 0), self.slot([0]))
+
+    def test_pack_refuses_changed_outputs_and_unproven_timing(self):
+        with self.assertRaisesRegex(ValueError, "changed the sample or the saved learning outputs"):
+            self.admit(self.study(8, self.pack(changed=3)), self.slot([0]))
+        for start in (5000, 1000.91):  # far apart, or just past a tenth of the 9 s runs
+            with self.assertRaisesRegex(ValueError, "did not start together"):
+                pack = self.pack()
+                pack["packed"][3] = dict(slot=3, **self.pack_trial(f"late-{start}", pack["slots"][3], 12, start, 9))
+                self.admit(self.study(8, pack), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "start time differs from its receipt"):
+            pack = self.pack()  # a start record moved to fit, against the start its receipt binds
+            moved = dispatch.read(pack["packed"][3]["started"]["path"])
+            moved["started_unix"] -= 0.05
+            pack["packed"][3]["started"] = self.save(moved)
+            self.admit(self.study(8, pack), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "solo trial overlapped"):
+            self.admit(self.study(8, self.pack(solo_overlap=True)), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "start record"):
+            pack = self.pack()
+            pack["packed"][1]["started"] = pack["packed"][0]["started"]
+            self.admit(self.study(8, pack), self.slot([0]))
+
+    def test_pack_needs_its_slots_kinds_and_trials(self):
+        pack = self.pack()
+        pack["solo"] = pack["solo"][:1]
+        with self.assertRaisesRegex(ValueError, "one solo trial per slot kind"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["packed"] = pack["packed"][:3]
+        with self.assertRaisesRegex(ValueError, "one packed trial per slot"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["slots"][1] = self.slot([0])
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        pack["packed"][1], pack["packed"][2] = dict(pack["packed"][2], slot=1), dict(pack["packed"][1], slot=2)
+        with self.assertRaisesRegex(ValueError, "placement differs from its slot"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        choice = self.study(8, self.pack())
+        choice["inventory"]["desktop"]["cpu_affinity"] = [0, 1, 2, 3]
+        with self.assertRaisesRegex(ValueError, "eligible CPU set"):
+            self.admit(choice, self.slot([0]))
+        choice = self.study(8, self.pack())
+        choice["study_runs"][dispatch.workload(self.config, "training")] = 0
+        with self.assertRaisesRegex(ValueError, "study size"):
+            self.admit(choice, self.slot([0]))
+        del choice["study_runs"]
+        with self.assertRaisesRegex(ValueError, "study size"):
+            self.admit(choice, self.slot([0]))
+
+    def test_pack_slots_share_one_worker_count(self):
+        """A member's config implements its slot's counts, so mixed counts run fewer members per wave."""
+        pack = self.pack()
+        pack["slots"][3] = dict(pack["slots"][3], preparation_workers=2)
+        with self.assertRaisesRegex(ValueError, "one worker count"):
+            self.admit(self.study(8, pack), self.slot([0]))
+
+    def test_pack_needs_its_declaration_and_records_background_load(self):
+        """At each recorded point one declaration of the qualifying reservation held the slots
+        and their SMT siblings (CPUs 1 and 3), and no other claim ran on it."""
+        def admitted(**loads):
+            pack = self.pack()
+            pack["load"].update(loads)
+            return self.admit(self.study(8, pack), self.slot([0]))
+        pack = self.pack()
+        del pack["load"]
+        with self.assertRaisesRegex(ValueError, "record its host load"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        for loads in ({"start": self.load(cores=(0, 2, 3, 4, 5))}, {"end": self.load(cores=None)},
+                      {"packed": self.load(token="b" * 64)}, {"start": self.load(token=None)}):
+            with self.assertRaisesRegex(ValueError, "one declaration"):
+                admitted(**loads)
+        with self.assertRaisesRegex(ValueError, "another claim ran"):
+            admitted(packed=self.load(claims=[((3, 6), "running")]))
+        quiet = admitted(start=self.load(claims=[((3,), "suspended")]))
+        self.assertEqual(quiet["background_claims"], 0)
+        loaded = admitted(start=self.load(claims=[((6, 7), "running")]), end=self.load(claims=[((6, 7), "running")]))
+        self.assertEqual(loaded["background_claims"], 1)  # one claim, seen twice
+
+    def test_a_packed_trial_cannot_price_a_solo_allocation(self):
+        """A packed trial ran beside others, so it is no serial/parallel qualification."""
+        choice = self.choice()
+        packed = self.pack_trial("packed-solo", self.request(1)["placement"], 5, 0, 4, barrier=True)
+        choice["qualifications"].append(packed["report"])
+        with self.assertRaisesRegex(ValueError, "cannot price a solo allocation"):
+            self.admit(choice, self.request(1)["placement"])
+
+    def test_a_study_runs_in_one_layout(self):
+        """Every family a pack choice selects for must use the same slots."""
+        choice = self.study(8, self.pack())
+        choice["selected"]["another-family"] = choice["packs"][0]
+        self.admit(choice, self.slot([0]))
+        choice["selected"]["another-family"] = choice["qualifications"][1]  # a solo allocation
+        with self.assertRaisesRegex(ValueError, "one layout"):
+            self.admit(choice, self.slot([0]))
+        other = self.pack()
+        other["slots"][3] = self.slot([1])  # an equal-shaped slot on other CPUs
+        choice["selected"]["another-family"] = self.save(other)
+        with self.assertRaisesRegex(ValueError, "one layout"):
+            self.admit(choice, self.slot([0]))
+
+    def test_kinds_come_from_the_recorded_topology(self):
+        """On its own host a pack needs the topology it qualified on; another host's
+        pack keeps its own recorded topology."""
+        pack = self.pack(topology=[dict(row, efficiency_class=2) if row["cpus"] == "4" else row for row in TOPOLOGY])
+        with self.assertRaisesRegex(ValueError, "topology changed"):
+            self.admit(self.study(8, pack), self.slot([0]))
+        choice = self.study(8, self.pack())
+        computehost = [{"cpus": str(cpu), "efficiency_class": 0, "smt": False} for cpu in (0, 2, 4, 5)]
+        remote = self.pack(host="computehost", topology=computehost)
+        remote["solo"] = remote["solo"][:1]  # one kind there; this host's topology would make two
+        choice["packs"].append(self.save(remote))
+        choice["inventory"]["computehost"].update(eligible=True, cpu_affinity=[0, 1, 2, 4, 5], transport_seconds=0)
+        choice["qualifications"] += [self.save(dict(dispatch.read(dispatch.checked(ref)),
+                                                    placement=dict(dispatch.read(dispatch.checked(ref))["placement"],
+                                                                   host="computehost")))
+                                     for ref in choice["qualifications"]]
+        with patch.object(dispatch, "qualification_evidence", side_effect=lambda report, *args: (
+                    dispatch.read(dispatch.checked(report["request"])) | {"placement": report["placement"]},
+                    self.config, None, "fingerprint")), \
+                patch.object(dispatch, "qualification_sample", return_value="sample"), \
+                patch.object(dispatch, "qualification_work",
+                             side_effect=lambda report, *args: dispatch.read(dispatch.checked(report["execution"]))):
+            # The computehost's slots (CPUs 0, 2, 4, 5, one class) classify by its record, not by this host.
+            self.assertEqual(self.admit(choice, self.slot([0]))["pack"], choice["packs"][0])
+
+    def test_verified_pack_detects_changed_trial_outputs(self):
+        choice = self.study(8, self.pack())
+        (self.root / "packed-2-desktop" / "native" / "episode.json").write_text("changed")
+        with self.assertRaisesRegex(ValueError, "changed pinned input"):
+            self.admit(choice, self.slot([0]))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 //! Validated public replacement facts for the pending V33 consumer.
 //! This transport does not admit a predecessor observation or model.
 use crate::event::{CommittedEvent, ReplacementEffectKind};
+use crate::event_history_v1::EventKindV1;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{GameState, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -148,6 +149,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("../build.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());
@@ -163,7 +165,11 @@ pub fn facts_v1(state: &GameState) -> Result<FactsV1, RlContractError> {
     crate::event::validate_exile_if_dies_replacements(state)
         .map_err(|_| RlContractError("invalid Fiery replacement lifecycle".into()))?;
     let mut death_replacements = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementInstalledV1])
+    {
         let CommittedEvent::ExileIfDiesReplacementInstalledV1 { replacement } = event else {
             continue;
         };
@@ -194,11 +200,16 @@ pub fn facts_v1(state: &GameState) -> Result<FactsV1, RlContractError> {
             .map_err(|_| {
                 RlContractError("Fiery public facts require genuine printed source".into())
             })?;
-        let expired = state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        let expired = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::ExileIfDiesReplacementExpiredV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::ExileIfDiesReplacementExpiredV1 { replacement: original, .. }
             if original == replacement)
-        });
+            });
         death_replacements.push(DeathReplacementV1 {
             source_at_resolution: CardStableRefV1 {
                 arena_id: source.source.0,

@@ -75,6 +75,7 @@ pub fn source_sha256() -> String {
             "linked_aura_operation_v1.rs",
             include_str!("linked_aura_operation_v1.rs"),
         ),
+        ("event_history_v1.rs", include_str!("event_history_v1.rs")),
     ] {
         hash.update(path.as_bytes());
         hash.update([0]);

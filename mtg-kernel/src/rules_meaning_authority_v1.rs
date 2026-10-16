@@ -97,6 +97,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("../build.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             digest.update([0]);
             digest.update(source.as_bytes());

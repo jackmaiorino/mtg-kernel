@@ -1,6 +1,7 @@
 //! Independent Hunter custody, not a renamed Gourmand receipt.
 use crate::effect::{EffectContinuation, EffectObjectBinding, EffectOp};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Zone,
 };
@@ -151,6 +152,10 @@ pub(crate) fn captures(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::ControlledCreatureDeathCaptureV1,
+            EventKindV1::HighSocietyHunterAttackCaptureV1,
+        ])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -168,6 +173,10 @@ fn collected(state: &GameState, capture: u64) -> Vec<usize> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::ControlledCreatureDeathCaptureCollectedV1,
+            EventKindV1::HighSocietyHunterAttackCollectedV1,
+        ])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -195,6 +204,7 @@ fn publication<'a>(state: &'a GameState, item: &StackItem) -> Result<(u64, &'a S
     let matches = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -258,7 +268,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
         || item.v4.ability_source_contract!=Some(source) || !item.targets.is_empty()
         || !item.v4.target_contracts.is_empty() || item.v4.target_spec.is_some()
         || !item.v4.high_society_hunter_started_v45.is_empty() || collected(state,capture).len()!=1
-        || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),JournalV45::Published{capture:old,..} if *old==capture)))
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),JournalV45::Published{capture:old,..} if *old==capture)))
     {return Err("Hunter publication lost original collected untargeted root".into())}
     append(
         state,
@@ -385,7 +395,13 @@ pub(crate) fn linked_paid_incarnation(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Option<crate::effect::EffectObjectBinding>, String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::HighSocietyHunterJournalV45 { journal } = event else {
             continue;
         };
@@ -467,6 +483,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         let pubs = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -529,6 +546,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         let removed = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -546,6 +564,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         let closed = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -567,7 +586,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if *input <= *pub_at || unstarted(item) != **original {
                 return Err("Hunter actual removal input changed original publication".into());
             }
-            let phases = state.engine.event_history.iter().filter(|event| matches!(event,
+            let phases = state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().filter(|event| matches!(event,
                 CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),
                     JournalV45::Menu{removal,..}|JournalV45::DrawInput{removal,..} if removal==input))).count();
             if phases != usize::from(!*countered) {
@@ -611,6 +630,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             let expected = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
                 .iter()
                 .rev()
                 .find_map(|e| match e {
@@ -662,7 +682,13 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             return Err("Hunter waiting root has no original occurrence".into());
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::HighSocietyHunterJournalV45 { journal: j } = event else {
             continue;
         };
@@ -715,7 +741,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 Some((*selection, 3))
             }
             JournalV45::CostOperation { input, .. } | JournalV45::DrawOperation { input, .. } => {
-                let uses=state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::Closed{operation:Some(reference),..}if *reference==at))).count();
+                let uses=state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().filter(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::Closed{operation:Some(reference),..}if *reference==at))).count();
                 if uses != 1 {
                     return Err("Hunter actual operation was erased, replayed or unused".into());
                 }
@@ -764,6 +790,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         let uses = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
             .iter()
             .filter(|event| {
                 let CommittedEvent::HighSocietyHunterJournalV45 { journal: next } = event else {
@@ -1061,6 +1088,7 @@ pub(crate) fn record_answer(
     let menu = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
         .iter()
         .enumerate()
         .rev()
@@ -1336,6 +1364,7 @@ pub(crate) fn resume_owned(
     let selection = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
         .iter()
         .enumerate()
         .rev()

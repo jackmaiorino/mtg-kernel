@@ -58,6 +58,7 @@ use crate::native_policy_value_net_v1::{
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseRecorderV1, NativeTrainingPhaseV1,
 };
+use crate::training_math_v1::TrainingMathV1;
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -921,6 +922,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
         value_targets: usize,
         advantages: usize,
     },
+    /// The portable training math (`training_math_v1`) covers only the
+    /// ordinary CPU learner: the terminal and GAE losses on canonical inputs,
+    /// with sequential or fixed-partition backward. Every other learner path
+    /// refuses a state that trains under it.
+    PortableMathUnsupported {
+        path: &'static str,
+    },
 }
 
 impl Display for NativePolicyTrainErrorV1 {
@@ -965,6 +973,9 @@ pub(crate) struct NativePolicyValueTrainStateV1 {
     first_moments: Vec<Vec<f32>>,
     second_moments: Vec<Vec<f32>>,
     scorer_bias_anchor_bits: u32,
+    /// Which tanh, exp and ln this state's train steps compute with. Not part
+    /// of the state digest or snapshot: records carry it beside them.
+    training_math: TrainingMathV1,
 }
 
 #[derive(Clone, Copy)]
@@ -992,6 +1003,7 @@ impl NativePolicyValueTrainStateV1 {
             first_moments,
             second_moments,
             scorer_bias_anchor_bits,
+            training_math: TrainingMathV1::PlatformLibm,
         };
         state.validate_state_v1()?;
         Ok(state)
@@ -1025,6 +1037,7 @@ impl NativePolicyValueTrainStateV1 {
                 .map(|parameter| parameter.values.clone())
                 .collect(),
             scorer_bias_anchor_bits,
+            training_math: TrainingMathV1::PlatformLibm,
         };
         candidate.validate_state_v1()?;
         Ok(candidate)
@@ -1040,6 +1053,28 @@ impl NativePolicyValueTrainStateV1 {
 
     pub(crate) fn scorer_bias_anchor_f32_bits_v1(&self) -> u32 {
         self.scorer_bias_anchor_bits
+    }
+
+    pub(crate) fn training_math_v1(&self) -> TrainingMathV1 {
+        self.training_math
+    }
+
+    /// Train with `math` from now on. A new or restored state trains with
+    /// the platform's libm until its owner records otherwise.
+    pub(crate) fn set_training_math_v1(&mut self, math: TrainingMathV1) {
+        self.training_math = math;
+    }
+
+    /// Refuses a learner path the portable math does not cover.
+    pub(crate) fn require_platform_math_v1(
+        &self,
+        path: &'static str,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.training_math.is_platform_libm() {
+            Ok(())
+        } else {
+            Err(NativePolicyTrainErrorV1::PortableMathUnsupported { path })
+        }
     }
 
     pub(crate) fn first_moment_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
@@ -1111,7 +1146,8 @@ impl NativePolicyValueTrainStateV1 {
         snapshot: &NativePolicyValueTrainSnapshotV1,
     ) -> Result<(), NativePolicyTrainErrorV1> {
         self.validate_state_v1()?;
-        let candidate = Self::from_snapshot_v1(self.model.clone(), snapshot)?;
+        let mut candidate = Self::from_snapshot_v1(self.model.clone(), snapshot)?;
+        candidate.training_math = self.training_math;
         *self = candidate;
         Ok(())
     }
@@ -1535,6 +1571,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.require_platform_math_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
             self,
             groups,
@@ -1562,6 +1599,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.require_platform_math_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
@@ -1583,6 +1621,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.require_platform_math_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
             self,
             groups,
@@ -1605,6 +1644,7 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         device_ordinal: usize,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        self.require_platform_math_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
             self,
             groups,
@@ -1637,6 +1677,7 @@ impl NativePolicyValueTrainStateV1 {
         ),
         NativePolicyTrainErrorV1,
     > {
+        self.require_platform_math_v1("cuda")?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
             self,
             matches!(
@@ -1796,6 +1837,21 @@ impl NativePolicyValueTrainStateV1 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
 
+        let math = self.training_math;
+        // Packed tapes come from the rollout's platform-libm forward.
+        if !math.is_platform_libm()
+            && groups
+                .iter()
+                .flat_map(|group| group.substeps)
+                .any(|substep| {
+                    matches!(&substep.forward, NativePolicyForwardInputV1::Packed { .. })
+                })
+        {
+            return Err(NativePolicyTrainErrorV1::PortableMathUnsupported {
+                path: "packed forward input",
+            });
+        }
+
         let parameters = self.model.parameter_snapshot_v1();
         validate_parameter_manifest(&parameters)?;
         validate_optimizer_state(&parameters, &self.first_moments, &self.second_moments)?;
@@ -1863,8 +1919,12 @@ impl NativePolicyValueTrainStateV1 {
             for (substep_index, substep) in group.substeps.iter().enumerate() {
                 let tape = match &substep.forward {
                     NativePolicyForwardInputV1::Encoded(encoded) => {
-                        let recomputed =
-                            Box::new(forward_with_tape(&parameters, input_config, **encoded)?);
+                        let recomputed = Box::new(forward_with_tape(
+                            &parameters,
+                            input_config,
+                            **encoded,
+                            math,
+                        )?);
                         validate_forward_output_bits_v1(
                             &recomputed,
                             substep,
@@ -1887,8 +1947,12 @@ impl NativePolicyValueTrainStateV1 {
                             }
                         } else {
                             recompute_execution_context.record_actual_recompute_v1();
-                            let independently_recomputed =
-                                forward_with_tape(&parameters, input_config, **encoded)?;
+                            let independently_recomputed = forward_with_tape(
+                                &parameters,
+                                input_config,
+                                **encoded,
+                                TrainingMathV1::PlatformLibm,
+                            )?;
                             validate_forward_output_bits_v1(
                                 &independently_recomputed,
                                 substep,
@@ -1919,8 +1983,11 @@ impl NativePolicyValueTrainStateV1 {
                         action_count: tape.logits_v1().len(),
                     });
                 }
-                let (selected_log_probability, log_probabilities) =
-                    selected_log_softmax(tape.logits_v1(), substep.selected_action_index)?;
+                let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
+                    tape.logits_v1(),
+                    substep.selected_action_index,
+                    math,
+                )?;
                 joint_log_probability = Some(match joint_log_probability {
                     None => selected_log_probability,
                     Some(active) => active + selected_log_probability,
@@ -1975,7 +2042,7 @@ impl NativePolicyValueTrainStateV1 {
         let backward_gauge_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
         let (mut gradients, gauge_accumulator, reverse_workspace) = match backward_execution {
             BackwardExecutionV1::Sequential => {
-                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+                let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
                 let mut reverse_workspace = ReverseWorkspaceV1::default();
                 // Torch autograd walks the independently constructed
                 // physical-decision and substep graphs in reverse construction
@@ -2010,9 +2077,9 @@ impl NativePolicyValueTrainStateV1 {
                             .iter()
                             .zip(&selected.log_probabilities)
                         {
-                            reverse_workspace
-                                .d_logits
-                                .push(*gradient - log_probability.exp() * grad_output_sum);
+                            reverse_workspace.d_logits.push(
+                                *gradient - math.exp_f32_v1(*log_probability) * grad_output_sum,
+                            );
                         }
                         gauge_accumulator.observe(
                             selected.tape.logits_v1(),
@@ -2045,7 +2112,8 @@ impl NativePolicyValueTrainStateV1 {
                         )
                     })
                     .collect();
-                let gauge_accumulator = observe_scorer_bias_gauge_v1(&group_tapes, &coefficients)?;
+                let gauge_accumulator =
+                    observe_scorer_bias_gauge_v1(&group_tapes, &coefficients, math)?;
                 let execution_context = FixedPartitionBackwardExecutionContextV1::current_v1();
                 gradients = fixed_partition_backward_gradients_v1(
                     &parameters,
@@ -2054,6 +2122,7 @@ impl NativePolicyValueTrainStateV1 {
                     worker_limit,
                     gradients,
                     &execution_context,
+                    math,
                 )?;
                 drop(group_tapes);
                 (gradients, gauge_accumulator, ReverseWorkspaceV1::default())
@@ -2079,6 +2148,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             next_step,
             learning_rate,
+            math,
         )?;
         next_parameters[SCORER_SECOND_BIAS].values[0] =
             f32::from_bits(self.scorer_bias_anchor_bits);
@@ -2148,6 +2218,7 @@ fn prepare_reverse_logits_v1(
     selected: &SelectedDecisionTapeV1<'_>,
     d_joint_log_probability: f32,
     workspace: &mut ReverseWorkspaceV1,
+    math: TrainingMathV1,
 ) {
     // Torch LogSoftmaxBackward: retain the complete forward log-softmax
     // output, then evaluate grad_output - exp(output) * sum(grad_output).
@@ -2167,7 +2238,7 @@ fn prepare_reverse_logits_v1(
     {
         workspace
             .d_logits
-            .push(*gradient - log_probability.exp() * grad_output_sum);
+            .push(*gradient - math.exp_f32_v1(*log_probability) * grad_output_sum);
     }
 }
 
@@ -2179,9 +2250,10 @@ fn prepare_reverse_logits_v1(
 fn observe_scorer_bias_gauge_v1(
     groups: &[GroupTapeV1<'_>],
     coefficients: &[(f32, f32)],
+    math: TrainingMathV1,
 ) -> Result<ScorerBiasGaugeAccumulatorV1, NativePolicyTrainErrorV1> {
     debug_assert_eq!(groups.len(), coefficients.len());
-    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::default();
+    let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
     for index in (0..groups.len()).rev() {
         let group = &groups[index];
         let (d_joint_log_probability, _) = coefficients[index];
@@ -2218,6 +2290,7 @@ fn fixed_partition_backward_gradients_v1(
     worker_limit: usize,
     mut reduced_gradients: Vec<Vec<f32>>,
     execution_context: &FixedPartitionBackwardExecutionContextV1,
+    math: TrainingMathV1,
 ) -> Result<Vec<Vec<f32>>, NativePolicyTrainErrorV1> {
     if worker_limit == 0 {
         return Err(NativePolicyTrainErrorV1::FixedPartitionBackwardWorkerLimitZero);
@@ -2234,6 +2307,7 @@ fn fixed_partition_backward_gradients_v1(
             partition_count,
             &partition_ordinals,
             execution_context,
+            math,
         )
     } else {
         let partitions_per_worker = partition_count.div_ceil(worker_count);
@@ -2258,6 +2332,7 @@ fn fixed_partition_backward_gradients_v1(
                                 partition_count,
                                 chunk,
                                 execution_context,
+                                math,
                             )
                         })
                 };
@@ -2285,6 +2360,7 @@ fn fixed_partition_backward_gradients_v1(
                             partition_count,
                             chunk,
                             execution_context,
+                            math,
                         ));
                     }
                 }
@@ -2333,6 +2409,7 @@ fn fixed_partition_backward_outcomes_v1(
     partition_count: usize,
     partition_ordinals: &[usize],
     execution_context: &FixedPartitionBackwardExecutionContextV1,
+    math: TrainingMathV1,
 ) -> Vec<FixedPartitionBackwardOutcomeV1> {
     partition_ordinals
         .iter()
@@ -2353,6 +2430,7 @@ fn fixed_partition_backward_outcomes_v1(
                     coefficients,
                     partition_count,
                     partition_ordinal,
+                    math,
                 )
             }));
             match completed {
@@ -2383,6 +2461,7 @@ fn fixed_partition_backward_v1(
     coefficients: &[(f32, f32)],
     partition_count: usize,
     partition_ordinal: usize,
+    math: TrainingMathV1,
 ) -> Result<FixedPartitionBackwardResultV1, NativePolicyTrainErrorV1> {
     let mut gradients = parameters
         .iter()
@@ -2396,7 +2475,12 @@ fn fixed_partition_backward_v1(
         let group = &groups[index];
         let (d_joint_log_probability, d_value) = coefficients[index];
         for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
-            prepare_reverse_logits_v1(selected, d_joint_log_probability, &mut reverse_workspace);
+            prepare_reverse_logits_v1(
+                selected,
+                d_joint_log_probability,
+                &mut reverse_workspace,
+                math,
+            );
             reverse_decision(
                 parameters,
                 &mut gradients,
@@ -2518,7 +2602,9 @@ fn recompute_packed_chunk_v1(
                     unreachable!("parallel packed recompute eligibility checked")
                 };
                 execution_context.record_actual_recompute_v1();
-                let independently_recomputed = forward_with_tape(parameters, config, **encoded)?;
+                // Packed input is refused under the portable math.
+                let independently_recomputed =
+                    forward_with_tape(parameters, config, **encoded, TrainingMathV1::PlatformLibm)?;
                 if execution_context.force_panic_v1(ordinal) {
                     panic!("injected packed recompute panic at ordinal {ordinal}");
                 }
@@ -2636,6 +2722,8 @@ fn validate_forward_output_bits_v1(
 
 #[derive(Default)]
 pub(crate) struct ScorerBiasGaugeAccumulatorV1 {
+    /// The `exp` and `ln` of the high-precision residual.
+    math: TrainingMathV1,
     substep_count: usize,
     total_action_count: usize,
     max_action_count: usize,
@@ -2646,6 +2734,13 @@ pub(crate) struct ScorerBiasGaugeAccumulatorV1 {
 }
 
 impl ScorerBiasGaugeAccumulatorV1 {
+    pub(crate) fn for_math_v1(math: TrainingMathV1) -> Self {
+        Self {
+            math,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn observe(
         &mut self,
         logits: &[f32],
@@ -2689,9 +2784,9 @@ impl ScorerBiasGaugeAccumulatorV1 {
             .iter()
             .copied()
             .map(f64::from)
-            .map(|logit| (logit - maximum).exp())
+            .map(|logit| self.math.exp_f64_v1(logit - maximum))
             .sum::<f64>();
-        let log_sum = exponential_sum.ln();
+        let log_sum = self.math.ln_f64_v1(exponential_sum);
         // Match the full reverse scorer-bias reduction while recomputing the
         // normalization and backward in f64 from the same stored f32 logits.
         for action in (0..logits.len()).rev() {
@@ -2701,7 +2796,8 @@ impl ScorerBiasGaugeAccumulatorV1 {
             } else {
                 0.0
             };
-            self.high_precision_residual += grad_output - log_probability.exp() * coefficient;
+            self.high_precision_residual +=
+                grad_output - self.math.exp_f64_v1(log_probability) * coefficient;
         }
         Ok(())
     }
@@ -3294,7 +3390,12 @@ impl NativePolicyPackedForwardBuilderV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyPackedForwardTapeV1, NativePolicyTrainErrorV1> {
-        let tape = forward_with_tape(self.parameters.as_ref(), self.config, encoded)?;
+        let tape = forward_with_tape(
+            self.parameters.as_ref(),
+            self.config,
+            encoded,
+            TrainingMathV1::PlatformLibm,
+        )?;
         #[cfg(test)]
         self.forward_call_count.fetch_add(1, Ordering::SeqCst);
         Ok(NativePolicyPackedForwardTapeV1 {
@@ -3384,8 +3485,9 @@ fn forward_with_tape(
     parameters: &[NativeNamedParameterV1],
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     encoded: NativeEncodedDecisionViewV1<'_>,
+    math: TrainingMathV1,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
-    forward_with_tape_input_major_v1(parameters, None, config, encoded)
+    forward_with_tape_input_major_v1(parameters, None, config, encoded, math)
 }
 
 /// `forward_with_tape`, with the hidden-width layers' rows on the vectorized
@@ -3396,6 +3498,7 @@ fn forward_with_tape_input_major_v1(
     input_major: Option<&InputMajorWeightsV1>,
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     encoded: NativeEncodedDecisionViewV1<'_>,
+    math: TrainingMathV1,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
     #[cfg(test)]
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
@@ -3440,6 +3543,7 @@ fn forward_with_tape_input_major_v1(
         object_input,
         counts.object_count,
         &mut f32_arena,
+        math,
     )?;
 
     let mut pooling_scratch = Vec::with_capacity(capacities.scratch_f32_count);
@@ -3482,6 +3586,7 @@ fn forward_with_tape_input_major_v1(
             edge_input,
             counts.edge_count,
             &mut f32_arena,
+            math,
         )?;
         add_indexed_rows(
             &mut pooling_scratch,
@@ -3518,6 +3623,7 @@ fn forward_with_tape_input_major_v1(
         node_input,
         counts.object_count,
         &mut f32_arena,
+        math,
     )?;
 
     resize_tape_scratch_v1(
@@ -3542,6 +3648,7 @@ fn forward_with_tape_input_major_v1(
         state_input,
         1,
         &mut f32_arena,
+        math,
     )?;
 
     resize_tape_scratch_v1(
@@ -3584,6 +3691,7 @@ fn forward_with_tape_input_major_v1(
             action_ref_input,
             counts.action_ref_count,
             &mut f32_arena,
+            math,
         )?;
         add_indexed_rows(
             &mut pooling_scratch,
@@ -3615,6 +3723,7 @@ fn forward_with_tape_input_major_v1(
         action_input,
         counts.action_count,
         &mut f32_arena,
+        math,
     )?;
 
     let scorer_input_start = f32_arena.len();
@@ -3641,7 +3750,7 @@ fn forward_with_tape_input_major_v1(
         HIDDEN_DIM_V1,
         &mut f32_arena,
     )?;
-    tanh_span_in_place_v1(&mut f32_arena, scorer_hidden);
+    tanh_span_in_place_v1(&mut f32_arena, scorer_hidden, math);
     let logits = linear_forward_into_arena_v1(
         parameters,
         input_major,
@@ -3665,7 +3774,7 @@ fn forward_with_tape_input_major_v1(
         HIDDEN_DIM_V1,
         &mut f32_arena,
     )?;
-    tanh_span_in_place_v1(&mut f32_arena, value_hidden);
+    tanh_span_in_place_v1(&mut f32_arena, value_hidden, math);
     let value = linear_forward_into_arena_v1(
         parameters,
         input_major,
@@ -4048,8 +4157,8 @@ fn resize_tape_scratch_v1(
     Ok(())
 }
 
-fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1) {
-    tanh_in_place(span.values_mut_v1(arena));
+fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1, math: TrainingMathV1) {
+    math.tanh_in_place_v1(span.values_mut_v1(arena));
 }
 
 fn two_layer_forward_into_arena_v1(
@@ -4059,6 +4168,7 @@ fn two_layer_forward_into_arena_v1(
     input: TapeSpanV1,
     rows: usize,
     arena: &mut Vec<f32>,
+    math: TrainingMathV1,
 ) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
     let first_output = linear_forward_into_arena_v1(
         parameters,
@@ -4071,7 +4181,7 @@ fn two_layer_forward_into_arena_v1(
         HIDDEN_DIM_V1,
         arena,
     )?;
-    tanh_span_in_place_v1(arena, first_output);
+    tanh_span_in_place_v1(arena, first_output, math);
     let second_output = linear_forward_into_arena_v1(
         parameters,
         input_major,
@@ -4083,7 +4193,7 @@ fn two_layer_forward_into_arena_v1(
         HIDDEN_DIM_V1,
         arena,
     )?;
-    tanh_span_in_place_v1(arena, second_output);
+    tanh_span_in_place_v1(arena, second_output, math);
     Ok(TwoLayerTapeV1 {
         input,
         first_output,
@@ -4416,13 +4526,22 @@ pub(crate) fn selected_log_softmax(
     logits: &[f32],
     selected: usize,
 ) -> Result<(f32, Vec<f32>), NativePolicyTrainErrorV1> {
+    selected_log_softmax_math_v1(logits, selected, TrainingMathV1::PlatformLibm)
+}
+
+/// `selected_log_softmax` with `math`'s `exp` and `ln`.
+pub(crate) fn selected_log_softmax_math_v1(
+    logits: &[f32],
+    selected: usize,
+    math: TrainingMathV1,
+) -> Result<(f32, Vec<f32>), NativePolicyTrainErrorV1> {
     let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let mut exponential_sum = 0.0f32;
     for logit in logits {
-        let exponential = (*logit - maximum).exp();
+        let exponential = math.exp_f32_v1(*logit - maximum);
         exponential_sum += exponential;
     }
-    let log_sum = exponential_sum.ln();
+    let log_sum = math.ln_f32_v1(exponential_sum);
     let log_probabilities = logits
         .iter()
         .map(|logit| (*logit - maximum) - log_sum)
@@ -4442,6 +4561,7 @@ fn adam_update(
     second_moments: &[Vec<f32>],
     step: u64,
     learning_rate: f32,
+    math: TrainingMathV1,
 ) -> Result<AdamUpdateV1, NativePolicyTrainErrorV1> {
     adam_update_impl(
         parameters,
@@ -4451,6 +4571,7 @@ fn adam_update(
         step,
         learning_rate,
         true,
+        math,
     )
 }
 
@@ -4463,10 +4584,11 @@ fn adam_update_impl(
     step: u64,
     learning_rate: f32,
     skip_exact_zero_state: bool,
+    math: TrainingMathV1,
 ) -> Result<AdamUpdateV1, NativePolicyTrainErrorV1> {
     let exponent = i32::try_from(step).map_err(|_| NativePolicyTrainErrorV1::AdamStepOverflow)?;
-    let bias_correction1 = 1.0f64 - f64::from(ADAM_BETA1_V1).powi(exponent);
-    let bias_correction2 = 1.0f64 - f64::from(ADAM_BETA2_V1).powi(exponent);
+    let bias_correction1 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA1_V1), exponent);
+    let bias_correction2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
     let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
     let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
     finite_scalar("adam_scalar", 0, step_size)?;
@@ -5148,12 +5270,6 @@ fn add_indexed_rows(destination: &mut [f32], source: &[f32], indices: &[usize]) 
         for hidden in 0..HIDDEN_DIM_V1 {
             destination[destination_begin + hidden] += source[source_begin + hidden];
         }
-    }
-}
-
-fn tanh_in_place(values: &mut [f32]) {
-    for value in values {
-        *value = value.tanh();
     }
 }
 
@@ -6805,6 +6921,54 @@ mod tests {
         assert_eq!(zero_worker_state.snapshot_v1().unwrap(), before_zero_worker);
     }
 
+    /// Packed tapes come from the rollout's platform-math forward, so the
+    /// portable math (B5) refuses them before any change.
+    #[test]
+    fn portable_math_refuses_packed_tapes_before_any_change() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        state.set_training_math_v1(TrainingMathV1::PortableV1);
+        let before = state.snapshot_v1().unwrap();
+        let builder = NativePolicyPackedForwardBuilderV1::from_model_v1(state.model_v1()).unwrap();
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let tape = builder.forward_v1(encoded(case)).unwrap();
+        let logit_bits = tape
+            .logits_v1()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>();
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Packed {
+                encoded: Box::new(encoded(case)),
+                tape: &tape,
+            },
+            selected_action_index: 0,
+            expected_raw_action_logit_bits: &logit_bits,
+            expected_value_bits: tape.value_v1().to_bits(),
+        }];
+        let groups = [NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+            baseline_bits: 0,
+        }];
+        assert_eq!(
+            state
+                .train_step_v1(
+                    &groups,
+                    golden.value_coefficient,
+                    golden.optimizer.learning_rate,
+                )
+                .unwrap_err(),
+            NativePolicyTrainErrorV1::PortableMathUnsupported {
+                path: "packed forward input"
+            }
+        );
+        assert_eq!(state.snapshot_v1().unwrap(), before);
+    }
+
     #[test]
     fn packed_parallel_recompute_is_bit_identical_to_scalar_reference() {
         let (forward, golden) = fixtures();
@@ -7367,6 +7531,7 @@ mod tests {
                 packed_result.adam_step,
                 golden.optimizer.learning_rate,
                 false,
+                TrainingMathV1::PlatformLibm,
             )
             .unwrap();
             dense_parameters[SCORER_SECOND_BIAS].values[0] =
@@ -7505,12 +7670,29 @@ mod tests {
         let first = vec![vec![0.0, 0.0, -0.0, 0.0, 0.0, 0.5, 0.0, 0.0]];
         let second = vec![vec![0.0, 0.0, 0.0, -0.0, 0.0, 0.0, 0.5, 0.0]];
         for step in [1, 2, 4_096] {
-            let dense =
-                adam_update_impl(&parameters, &gradients, &first, &second, step, 0.001, false)
-                    .unwrap();
-            let shortcut =
-                adam_update_impl(&parameters, &gradients, &first, &second, step, 0.001, true)
-                    .unwrap();
+            let math = TrainingMathV1::PlatformLibm;
+            let dense = adam_update_impl(
+                &parameters,
+                &gradients,
+                &first,
+                &second,
+                step,
+                0.001,
+                false,
+                math,
+            )
+            .unwrap();
+            let shortcut = adam_update_impl(
+                &parameters,
+                &gradients,
+                &first,
+                &second,
+                step,
+                0.001,
+                true,
+                math,
+            )
+            .unwrap();
             for (dense_values, shortcut_values) in [
                 (&dense.0[0].values, &shortcut.0[0].values),
                 (&dense.1[0], &shortcut.1[0]),

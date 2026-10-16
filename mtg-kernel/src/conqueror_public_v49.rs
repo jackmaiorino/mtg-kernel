@@ -1,6 +1,7 @@
 //! Public saved-loss occurrences; original worlds and engine journals stay private.
 use crate::bloodthirsty_conqueror_v49::{self as conqueror, custody::JournalV49};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::rules_meaning_bloodthirsty_conqueror_v49 as meaning;
 use crate::state::{AbilitySourceContractV4, GameState, StackItem, Zone};
@@ -266,6 +267,7 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
     let batches = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ConquerorLossBatchV49])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| {
@@ -292,6 +294,7 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
     let captures = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ConquerorCapturedV49])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| {
@@ -338,7 +341,7 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
             },
             actual_gain: None,
         };
-        let publication = state.engine.event_history.iter().enumerate().find_map(|(at, event)| match event {
+        let publication = state.engine.event_history.scan_for_v1(&[EventKindV1::ConquerorJournalV49]).iter().enumerate().find_map(|(at, event)| match event {
             CommittedEvent::ConquerorJournalV49 { journal } if matches!(journal.as_ref(), JournalV49::Published { capture, .. } if *capture == captured) => Some(at as u64), _ => None,
         });
         if let Some(publication) = publication {
@@ -346,6 +349,7 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
             let removed = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::ConquerorJournalV49])
                 .iter()
                 .enumerate()
                 .find_map(|(at, event)| match event {
@@ -368,6 +372,7 @@ pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
                 let closed = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ConquerorJournalV49])
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::ConquerorJournalV49 { journal } => match journal.as_ref() {

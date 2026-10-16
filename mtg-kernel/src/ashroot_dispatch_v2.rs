@@ -3,6 +3,7 @@
 use crate::effect::{EffectObjectBinding, EffectOp};
 use crate::engine::UntilEndOfTurnEffect;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, Target, Zone};
 use crate::trigger::PendingTrigger;
@@ -148,6 +149,7 @@ fn indices(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AshrootDispatchV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| {
@@ -165,6 +167,7 @@ fn rows(state: &GameState, capture: u64) -> Vec<(u64, &JournalV2)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::AshrootDispatchV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -292,7 +295,7 @@ fn validate_item(state: &GameState, capture: u64, item: &StackItem) -> Result<()
     else {
         return Err("Ashroot target contract changed".into());
     };
-    if item.targets[0] != Target::Object(object) || !state.engine.event_history.iter().any(|e| matches!(e,
+    if item.targets[0] != Target::Object(object) || !state.engine.event_history.scan_for_v1(&[EventKindV1::Targeted]).iter().any(|e| matches!(e,
         CommittedEvent::Targeted { target, target_zone_change_count, targeting_stack_item, targeting_controller }
         if *target == object && *target_zone_change_count == zone_change_count && *targeting_stack_item == item.v4.stack_item_id && *targeting_controller == item.controller)) {
         return Err("Ashroot publication lost actual target occurrence".into());
@@ -484,8 +487,8 @@ pub(crate) fn counter(state: &mut GameState, owner: Option<&RemovedOwnerV2>) -> 
 }
 pub(crate) fn expire(state: &mut GameState) -> Result<(), String> {
     validate_state(state)?;
-    let active: Vec<_> = state.engine.event_history.iter().enumerate().filter_map(|(at,e)| match e {
-        CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Installed {..}} if !state.engine.event_history.iter().any(|e| matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation,..}} if *installation == at as u64)) => Some(at as u64), _=>None
+    let active: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootDispatchV2]).iter().enumerate().filter_map(|(at,e)| match e {
+        CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Installed {..}} if !state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootDispatchV2]).iter().any(|e| matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation,..}} if *installation == at as u64)) => Some(at as u64), _=>None
     }).collect();
     if active.is_empty() {
         return Ok(());
@@ -517,7 +520,13 @@ pub(crate) fn has_active(state: &GameState) -> bool {
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let captures = indices(state);
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::AshrootDispatchV2])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::AshrootDispatchV2 { journal: j } = event else {
             continue;
         };
@@ -529,7 +538,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             JournalV2::Cleanup {installations,..} => {
                 if installations.is_empty() {return Err("Ashroot empty cleanup journal".into());}
-                for installation in installations {if *installation>=at as u64 || !matches!(journal(state,*installation)?,JournalV2::Installed {..}) || state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation:i,cleanup}} if i==installation && *cleanup==at as u64)).count()!=1 {return Err("Ashroot cleanup lost exact mandatory expiry".into());}}
+                for installation in installations {if *installation>=at as u64 || !matches!(journal(state,*installation)?,JournalV2::Installed {..}) || state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootDispatchV2]).iter().filter(|e|matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation:i,cleanup}} if i==installation && *cleanup==at as u64)).count()!=1 {return Err("Ashroot cleanup lost exact mandatory expiry".into());}}
             }
             JournalV2::Collected {capture} | JournalV2::Published {capture,..} | JournalV2::PlacementRemoved {capture,..} | JournalV2::Removed {capture,..} | JournalV2::Installed {capture,..} | JournalV2::Operation {capture,..} | JournalV2::Completed {capture,..} => if !captures.contains(capture) || *capture >= at as u64 { return Err("Ashroot orphan lifecycle journal".into()); }
         }
@@ -817,7 +826,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if keyword != 1 || pt != usize::from(*power > 0) {
                 return Err("Ashroot incomplete boost/trample".into());
             }
-            let expiries=state.engine.event_history.iter().enumerate().filter_map(|(at,e)|matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation:i,..}} if i==installation).then_some(at as u64)).collect::<Vec<_>>();
+            let expiries=state.engine.event_history.scan_for_v1(&[EventKindV1::AshrootDispatchV2]).iter().enumerate().filter_map(|(at,e)|matches!(e,CommittedEvent::AshrootDispatchV2 {journal:JournalV2::Expired {installation:i,..}} if i==installation).then_some(at as u64)).collect::<Vec<_>>();
             if expiries.len() > 1 || expiries.first().is_some_and(|at| *at <= close_at) {
                 return Err("Ashroot expiry order/replay changed".into());
             }

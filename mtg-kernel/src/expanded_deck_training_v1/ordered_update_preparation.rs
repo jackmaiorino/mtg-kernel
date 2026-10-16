@@ -356,7 +356,7 @@ pub(super) fn load_opponent_cached_v1(
             true,
         ));
     }
-    let (policy, identity) = load_expanded_inference_v1(source)?;
+    let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
     let behavior = ExpandedSeatBehaviorV1 {
         source: source.clone(),
         identity: identity.clone(),
@@ -398,6 +398,7 @@ pub(super) fn prepare_v1<'a>(
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    training_math: TrainingMathV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
     let mut hits = 0;
     let mut prepared = prepare_with_loader_v1(
@@ -407,8 +408,9 @@ pub(super) fn prepare_v1<'a>(
         workers,
         max_prepared_tensor_mebibytes,
         |source| {
-            let (loaded, hit) = load_opponent_cached_v1(source)?;
+            let (mut loaded, hit) = load_opponent_cached_v1(source)?;
             hits += usize::from(hit);
+            bind_opponent_math_v1(source, &mut loaded.policy, training_math)?;
             Ok(loaded)
         },
     )?;

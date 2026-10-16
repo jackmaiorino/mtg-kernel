@@ -69,6 +69,7 @@ pub fn producer_sha256() -> String {
             include_str!("../build.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());

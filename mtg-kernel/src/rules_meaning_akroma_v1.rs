@@ -75,6 +75,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("source_power_activation_v1.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());

@@ -22,6 +22,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             age,
             0.0001,
+            self.training_math,
         )?;
         parameters[SCORER_SECOND_BIAS].values[0] = f32::from_bits(before.scorer_bias_anchor_bits);
         first[SCORER_SECOND_BIAS][0] = 0.0;
@@ -33,7 +34,9 @@ impl NativePolicyValueTrainStateV1 {
             adam_step: age,
             scorer_bias_anchor_bits: before.scorer_bias_anchor_bits,
         };
-        Self::from_snapshot_v1(self.model_v1().clone(), &after)
+        let mut successor = Self::from_snapshot_v1(self.model_v1().clone(), &after)?;
+        successor.training_math = self.training_math;
+        Ok(successor)
     }
 }
 

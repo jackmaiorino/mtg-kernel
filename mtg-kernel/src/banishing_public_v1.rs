@@ -1,5 +1,6 @@
 //! Explicit linked-exile and immediate owner-attachment transport. Frozen V8/V9 remain refused.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -125,6 +126,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("standard_statics_v1.rs"),
         include_str!("sower_restriction_capture_v1.rs"),
         include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());
@@ -226,12 +228,16 @@ pub(crate) fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
     crate::banishing_light_v1::validate_state(state).map_err(RlContractError)?;
     let mut triggers = Vec::new();
     let mut links = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::BanishingEntryV1,
+        EventKindV1::BanishingLinkInstalledV1,
+    ]) {
         match event {
             CommittedEvent::BanishingEntryV1 { source, .. } => {
                 let published = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::BanishingPublishedV1])
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::BanishingPublishedV1 { item }
@@ -242,16 +248,22 @@ pub(crate) fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
                         _ => None,
                     });
                 let phase = if let Some(item) = published {
-                    if state.engine.event_history.iter().any(|event|matches!(event,
+                    if state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingFinishedV1]).iter().any(|event|matches!(event,
                         CommittedEvent::BanishingFinishedV1 {stack_item_id} if *stack_item_id==item.v4.stack_item_id)) {
                         if state.engine.event_history.iter().any(|event|matches!(event,
                             CommittedEvent::BanishingRemovedV1 {item:original,outcome:crate::banishing_light_v1::RemovalV1::Countered}
                                 if original==item)){"countered"}else{"resolved"}
                     }else{"published"}
-                } else if state.engine.event_history.iter().any(|event| {
-                    matches!(event,
+                } else if state
+                    .engine
+                    .event_history
+                    .scan_for_v1(&[EventKindV1::BanishingNoTargetsV1])
+                    .iter()
+                    .any(|event| {
+                        matches!(event,
                     CommittedEvent::BanishingNoTargetsV1 {source:original} if original==source)
-                }) {
+                    })
+                {
                     "no_legal_target"
                 } else {
                     "pending"
@@ -273,6 +285,7 @@ pub(crate) fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
                 let expiry = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::BanishingLinkExpiredV1])
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::BanishingLinkExpiredV1 {
@@ -298,7 +311,7 @@ pub(crate) fn facts(state: &GameState) -> Result<FactsV1, RlContractError> {
                     duration_ended: !crate::banishing_light_v1::source_present(state,record.source),
                     return_pending: expiry.is_none() && crate::linked_aura_operation_v1::has_pending(state)
                         && !crate::banishing_light_v1::source_present(state,record.source),
-                    recipient_ceased: state.engine.event_history.iter().any(|event|matches!(event,
+                    recipient_ceased: state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingRecipientCeasedV1]).iter().any(|event|matches!(event,
                         CommittedEvent::BanishingRecipientCeasedV1 {record:original} if original==record)),
                     outcome: expiry.flatten(),
                 });

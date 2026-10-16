@@ -3,6 +3,7 @@
 use crate::card_def::{CostComponent, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, TargetRef};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Target, Zone,
@@ -83,7 +84,7 @@ pub(crate) fn selected(item: &StackItem) -> bool {
 }
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item) || item.v4.fixed_damage_paid_v3.0.is_some()
-        || state.engine.event_history.iter().any(|e| matches!(e,
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::FixedDamagePaidV3]).iter().any(|e| matches!(e,
             CommittedEvent::FixedDamagePaidV3 { payment } if payment.item.v4.stack_item_id==item.v4.stack_item_id))
 }
 pub(crate) fn requires_successor(state: &GameState) -> bool {
@@ -189,6 +190,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     let mut rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
@@ -267,6 +269,7 @@ fn payment(state: &GameState, id: StackItemId) -> Result<&PaidV3, String> {
     if state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
         .iter()
         .filter(|e| {
             matches!(e,CommittedEvent::FixedDamagePaidV3 {payment}
@@ -294,10 +297,15 @@ pub(crate) fn damage_source(
     }
 }
 pub(crate) fn has_payment(state: &GameState, id: StackItemId) -> bool {
-    state.engine.event_history.iter().any(|e| {
-        matches!(e,CommittedEvent::FixedDamagePaidV3 {payment}
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FixedDamagePaidV3])
+        .iter()
+        .any(|e| {
+            matches!(e,CommittedEvent::FixedDamagePaidV3 {payment}
         if payment.item.v4.stack_item_id==id)
-    })
+        })
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
@@ -311,10 +319,15 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
             .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
             .count()
             != 1
-        || state.engine.event_history.iter().any(|e| {
-            matches!(e,CommittedEvent::FixedDamageRemovedV3 {removal}
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FixedDamageRemovedV3])
+            .iter()
+            .any(|e| {
+                matches!(e,CommittedEvent::FixedDamageRemovedV3 {removal}
             if removal.payment==p.history_index)
-        })
+            })
     {
         return Err("fixed damage lacks its exact unique unclosed live owner".into());
     }
@@ -340,6 +353,7 @@ fn completed_item(state: &GameState, payment: &PaidV3) -> Result<StackItem, Stri
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
@@ -379,10 +393,15 @@ pub(crate) fn record_removed(
             .stack
             .iter()
             .any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
-        || state.engine.event_history.iter().any(|e| {
-            matches!(e,CommittedEvent::FixedDamageRemovedV3{removal}
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::FixedDamageRemovedV3])
+            .iter()
+            .any(|e| {
+                matches!(e,CommittedEvent::FixedDamageRemovedV3{removal}
             if removal.payment==owner.payment)
-        })
+            })
     {
         return Err("fixed damage removal no longer owns its original paid row".into());
     }
@@ -390,10 +409,15 @@ pub(crate) fn record_removed(
         completed_item(state, p)?
     } else {
         if owner.item.v4.crystal_prevention_started_v1.0.is_some()
-            || state.engine.event_history.iter().any(|e| {
-                matches!(e,CommittedEvent::CrystalPreventionBoundaryV1{boundary}
+            || state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
+                .iter()
+                .any(|e| {
+                    matches!(e,CommittedEvent::CrystalPreventionBoundaryV1{boundary}
                 if boundary.item.v4.stack_item_id==owner.item.v4.stack_item_id)
-            })
+                })
         {
             return Err("started fixed damage cannot be downgraded to unstarted removal".into());
         }
@@ -421,17 +445,27 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         validate_item(state, item)?;
     }
-    for (i, e) in state.engine.event_history.iter().enumerate() {
+    for (i, e) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::FixedDamageDepartureV3,
+            EventKindV1::FixedDamagePaidV3,
+            EventKindV1::FixedDamageRemovedV3,
+        ])
+        .iter()
+        .enumerate()
+    {
         match e {
             CommittedEvent::FixedDamageDepartureV3{departure}=>{
-                if departure.history_index as usize!=i || state.engine.event_history.iter().filter(|e|
+                if departure.history_index as usize!=i || state.engine.event_history.scan_for_v1(&[EventKindV1::FixedDamagePaidV3]).iter().filter(|e|
                     matches!(e,CommittedEvent::FixedDamagePaidV3{payment} if payment.departure as usize==i)).count()!=1 {
                     return Err("fixed departure lost its unique paid owner".into());
                 }
             }
             CommittedEvent::FixedDamagePaidV3{payment:p}=>{
                 let p=payment(state,p.item.v4.stack_item_id)?;
-                let removed=state.engine.event_history.iter().filter_map(|e|match e {
+                let removed=state.engine.event_history.scan_for_v1(&[EventKindV1::FixedDamageRemovedV3]).iter().filter_map(|e|match e {
                     CommittedEvent::FixedDamageRemovedV3{removal} if removal.payment==p.history_index=>Some(removal),
                     _=>None,
                 }).collect::<Vec<_>>();
@@ -445,7 +479,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                                     if boundary.item.v4.stack_item_id==p.item.v4.stack_item_id)) {
                                 return Err("fixed resolved closure changed or preceded execution".into());
                             }
-                        } else if r.item!=p.item || state.engine.event_history.iter().any(|e|
+                        } else if r.item!=p.item || state.engine.event_history.scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1]).iter().any(|e|
                             matches!(e,CommittedEvent::CrystalPreventionBoundaryV1{boundary}
                                 if boundary.item.v4.stack_item_id==p.item.v4.stack_item_id)) {
                             return Err("fixed unstarted closure changed".into());

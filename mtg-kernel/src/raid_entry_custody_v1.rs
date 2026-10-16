@@ -1,5 +1,6 @@
 //! Event-time eligibility and mandatory custody of the two printed Raid entries.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{PlayerId, StackItemId};
 use crate::state::{
     AbilitySourceContractV4, AttackDeclarationTurnV1, GameState, StackItem, StackItemKind, Zone,
@@ -63,10 +64,15 @@ pub(crate) fn record_started(state: &mut GameState, id: StackItemId) -> Result<(
     let p = published_for_id(state, id)?;
     let publication = p.index;
     if !published_matches_base(state, item, p)
-        || state.engine.event_history.iter().any(|e| {
-            matches!(e,
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::RaidEntryStartedV1])
+            .iter()
+            .any(|e| {
+                matches!(e,
   CommittedEvent::RaidEntryStartedV1{started:s} if s.publication==publication)
-        })
+            })
     {
         return Err("Gutless begin changed or replayed its original published owner".into());
     }
@@ -129,7 +135,7 @@ pub(crate) fn capture_entry(state: &mut GameState, entry_capture: usize) {
     if !definition(source) {
         return;
     }
-    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::RaidEntryCaptureV1 {capture} if capture.entry_capture==entry_capture)){return;}
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::RaidEntryCaptureV1]).iter().any(|e|matches!(e,CommittedEvent::RaidEntryCaptureV1 {capture} if capture.entry_capture==entry_capture)){return;}
     let live = state.objects.get(source.source);
     let face_index = live.v4.face_index;
     let printed_active = live.zone == Zone::Battlefield
@@ -228,6 +234,7 @@ fn capture_for_source(
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RaidEntryCaptureV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::RaidEntryCaptureV1 { capture: c } if c.source == source => {
@@ -276,7 +283,7 @@ pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), Stri
     }
     let c = capture_for_source(state, source)?;
     let capture = c.index;
-    if state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::RaidEntryPublishedV1{publication:p} if p.capture==capture)) {
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::RaidEntryPublishedV1]).iter().any(|event|matches!(event,CommittedEvent::RaidEntryPublishedV1{publication:p} if p.capture==capture)) {
   return Err("Raid entry was already published".into());
  }
     let index =
@@ -353,6 +360,7 @@ fn published_matches(state: &GameState, item: &StackItem, p: &PublishedV1) -> bo
     let starts = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RaidEntryStartedV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::RaidEntryStartedV1 { started } if started.publication == p.index => {
@@ -372,6 +380,7 @@ fn published_for_id(state: &GameState, id: StackItemId) -> Result<&PublishedV1, 
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::RaidEntryPublishedV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::RaidEntryPublishedV1 { publication: p }
@@ -397,7 +406,7 @@ pub(crate) fn counter_owner(
             definition(s) && item.inline_effect.as_ref() == Some(&expected(s).effect)
         })
         && item.v4.ability_source_contract.is_some_and(definition);
-    if !selected && !state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::RaidEntryPublishedV1{publication:p} if p.item.v4.stack_item_id==item.v4.stack_item_id)){return Ok(None);}
+    if !selected && !state.engine.event_history.scan_for_v1(&[EventKindV1::RaidEntryPublishedV1]).iter().any(|e|matches!(e,CommittedEvent::RaidEntryPublishedV1{publication:p} if p.item.v4.stack_item_id==item.v4.stack_item_id)){return Ok(None);}
     let p = published_for_id(state, item.v4.stack_item_id)?;
     if !published_matches(state, item, p)
         || state
@@ -521,10 +530,23 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::RaidEntryCaptureV1,
+            EventKindV1::RaidEntryCounteredV1,
+            EventKindV1::RaidEntryDroppedV1,
+            EventKindV1::RaidEntryPublishedV1,
+            EventKindV1::RaidEntrySourceV1,
+            EventKindV1::RaidEntryStartedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::RaidEntrySourceV1 { source, .. } if definition(*source) => {
-                let count=state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::RaidEntryCaptureV1{capture:c} if c.entry_capture==index)).count();
+                let count=state.engine.event_history.scan_for_v1(&[EventKindV1::RaidEntryCaptureV1]).iter().filter(|e|matches!(e,CommittedEvent::RaidEntryCaptureV1{capture:c} if c.entry_capture==index)).count();
                 if count != 1 {
                     return Err(
                         "Raid actual entry lost its mandatory eligibility occurrence".into(),
@@ -547,6 +569,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let publications = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::RaidEntryPublishedV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::RaidEntryPublishedV1 { publication: p }
@@ -560,6 +583,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let dropped = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::RaidEntryDroppedV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::RaidEntryDroppedV1 { dropped: d }
@@ -594,6 +618,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 let counters = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::RaidEntryCounteredV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::RaidEntryCounteredV1 { countered: c }
@@ -612,6 +637,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     state
                         .engine
                         .event_history
+                        .scan_for_v1(&[EventKindV1::GorehornOperationV1])
                         .iter()
                         .filter(|e| {
                             matches!(e,CommittedEvent::GorehornOperationV1{operation:o}
@@ -627,6 +653,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     let receipts = state
                         .engine
                         .event_history
+                        .scan_for_v1(&[EventKindV1::SquadRallierResolutionBoundaryV1])
                         .iter()
                         .filter_map(|e| match e {
                             CommittedEvent::SquadRallierResolutionBoundaryV1 { receipt }

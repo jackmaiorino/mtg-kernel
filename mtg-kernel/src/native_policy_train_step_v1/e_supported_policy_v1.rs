@@ -28,6 +28,7 @@ impl NativePolicyValueTrainStateV1 {
         input: &ESupportedPolicyInputV1,
     ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
     {
+        self.require_platform_math_v1("E-supported")?;
         let invalid = |code| NativePolicyTrainErrorV1::LineBAuxiliary { code };
         if input.rows.len() > input.scheduled {
             return Err(invalid("e-supported-scheduled-count"));

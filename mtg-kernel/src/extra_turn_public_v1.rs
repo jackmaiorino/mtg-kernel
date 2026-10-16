@@ -1,4 +1,5 @@
 //! Separate event-time ExtraTurn transport. This is not V8/V9 or model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -45,6 +46,7 @@ fn schedule(state: &GameState) -> Result<Option<TurnScheduleV1>, RlContractError
     let scheduled: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ExtraTurnScheduledV1])
         .iter()
         .filter_map(|event| {
             if let crate::event::CommittedEvent::ExtraTurnScheduledV1 { item } = event {
@@ -157,6 +159,7 @@ pub fn producer_sha256_v1() -> String {
         include_str!("rl_session/flat_action_v4.rs"),
         include_str!("bloodthirsty_conqueror_v49/custody.rs"),
         include_str!("linked_aura_operation_v1.rs"),
+        include_str!("event_history_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());

@@ -149,7 +149,7 @@ fn runtime_setting_refuses_unknown_identity_and_unsupported_modes() {
     assert!(parse_runtime_rules("s4a-diag", Some("unknown")).is_err());
 }
 
-fn test_cfg() -> CensusConfigV1 {
+pub(super) fn test_cfg() -> CensusConfigV1 {
     CensusConfigV1 {
         source: String::new(),
         out: String::new(),
@@ -166,7 +166,7 @@ fn test_cfg() -> CensusConfigV1 {
     }
 }
 
-fn fixture() -> FrozenPlayPolicyV1 {
+pub(super) fn fixture() -> FrozenPlayPolicyV1 {
     FrozenPlayPolicyV1::training_fixture_v4()
 }
 

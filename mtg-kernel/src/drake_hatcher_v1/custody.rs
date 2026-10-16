@@ -698,7 +698,7 @@ fn restore_world(saved: &GameState, prefix: &[CommittedEvent]) -> Result<GameSta
     let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
     restore(&mut value, prefix, None)?;
     let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
-    input.engine.event_history = prefix.to_vec();
+    input.engine.event_history = prefix.to_vec().into();
     Ok(input)
 }
 pub(crate) fn definition(id: u16) -> bool {

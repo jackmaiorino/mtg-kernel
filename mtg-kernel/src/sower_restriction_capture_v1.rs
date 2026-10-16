@@ -2,6 +2,7 @@
 use crate::effect::{EffectOp, ExecCtx};
 use crate::engine::{EffectDuration, UntilEndOfTurnEffect};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::rl::{CardStableRefV1, RlContractError};
 use crate::state::{
@@ -91,6 +92,7 @@ fn validate_targeting(
     let mut events = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::Targeted])
         .iter()
         .enumerate()
         .filter(|(_, event)| {
@@ -135,12 +137,18 @@ pub(crate) fn begin_resolution(state: &mut GameState) -> Result<(), RlContractEr
 
 pub(crate) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, timestamp: u64) {
     let Some(item) = ctx.stack_item_id.and_then(|id| {
-        state.engine.event_history.iter().rev().find_map(|event| {
-            let CommittedEvent::SowerRestrictionResolutionV1 { item, .. } = event else {
-                return None;
-            };
-            (item.v4.stack_item_id == id).then_some(item.as_ref())
-        })
+        state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::SowerRestrictionResolutionV1])
+            .iter()
+            .rev()
+            .find_map(|event| {
+                let CommittedEvent::SowerRestrictionResolutionV1 { item, .. } = event else {
+                    return None;
+                };
+                (item.v4.stack_item_id == id).then_some(item.as_ref())
+            })
     }) else {
         return;
     };
@@ -177,6 +185,7 @@ pub(crate) fn expire(state: &mut GameState) {
     let captures: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SowerRestrictionInstalledV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::SowerRestrictionInstalledV1 { capture } => Some(capture),
@@ -269,7 +278,17 @@ fn authenticated_active(state: &GameState) -> Result<Vec<&CaptureV1>, RlContract
     let mut installs = Vec::new();
     let mut expiries = Vec::new();
     let mut resolutions = Vec::new();
-    for (ordinal, event) in state.engine.event_history.iter().enumerate() {
+    for (ordinal, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::SowerRestrictionExpiredV1,
+            EventKindV1::SowerRestrictionInstalledV1,
+            EventKindV1::SowerRestrictionResolutionV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::SowerRestrictionResolutionV1 {
                 item,

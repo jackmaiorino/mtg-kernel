@@ -7,6 +7,10 @@ edition.workspace = true
 burn = { version = "=0.21.0", default-features = false, features = ["std", "autodiff"], optional = true }
 burn-cuda = { version = "=0.21.0", default-features = false, features = ["std"], optional = true }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "driver", "runtime", "nvrtc", "cublas", "cuda-12080", "dynamic-loading"], optional = true }
+# Pure-Rust libm (FreeBSD msun port) for the portable training math
+# (`training_math_v1`): the same bits on every x86-64 system. Pinned exactly,
+# since its version is part of that identity.
+libm = "=0.2.16"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # `compress` only exports sha2's own compress512 (resumable digests).
@@ -48,6 +52,11 @@ tensorize-cost-profile-v1 = []
 # (`s4a-search-profile` rows). Off by default; default builds compile the
 # spans to nothing, so uninstrumented timings use a build without it.
 s4a-profile-v1 = []
+# Test tooling only: test processes write the first committed event of each
+# kind to `MTG_EVENT_SAMPLES_V1` (event_history_v1::sample_harvest_v1), so
+# integration tests can supply the every-kind fixtures. Off by default; unit
+# tests have it without the feature.
+event-sample-harvest-v1 = []
 # Windows-only production admission for the native V2 training-store writer.
 # Non-Windows builds retain parser/stub support but never emit a production
 # build-capture tuple.
@@ -164,6 +173,7 @@ toml = "0.8"
 
 [dev-dependencies]
 semver = "1"
+syn = { version = "2", features = ["full", "visit"] }
 toml = "0.8"
 
 [[test]]

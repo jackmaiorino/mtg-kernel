@@ -2,6 +2,7 @@
 use crate::card_def::{CardType, Subtype, CARD_DEFS};
 use crate::effect::EffectOp;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::state::{GameState, StackItem, StackItemKind, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,17 @@ use serde::{Deserialize, Serialize};
 pub fn recipe() -> EffectOp {
     EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::ZulAshurPermissionV1)
 }
+/// Every event this module records; each history scan below acts only on
+/// some of them, so it is skipped when none occurs.
+const ZUL_EVENTS_V1: &[EventKindV1] = &[
+    EventKindV1::ZulAshurPublishedV1,
+    EventKindV1::ZulAshurRemovalInputV1,
+    EventKindV1::ZulAshurRemovedV1,
+    EventKindV1::ZulAshurInstalledV1,
+    EventKindV1::ZulAshurCleanupV1,
+    EventKindV1::ZulAshurExpiredV1,
+    EventKindV1::ZulAshurCleanupEnteredV1,
+];
 pub(crate) fn owns_definition(id: u16) -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
@@ -98,6 +110,7 @@ fn published(state: &GameState, id: StackItemId) -> Result<&PublicationV1, Strin
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ZulAshurPublishedV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::ZulAshurPublishedV1 { publication }
@@ -176,7 +189,7 @@ pub(crate) fn final_graveyard_targeting(
         || !matches!(state.engine.event_history.get(publication.payment as usize),
             Some(CommittedEvent::Tap { object }) if *object == item.source)
         || !target_legal(state, item)
-        || state.engine.event_history.iter().any(|event| matches!(event,
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::Targeted]).iter().any(|event| matches!(event,
             CommittedEvent::Targeted { targeting_stack_item, .. } if *targeting_stack_item == item.v4.stack_item_id))
     {
         return Err("Zul final targeting lost original paid publication or target".into());
@@ -194,7 +207,7 @@ pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), Stri
         return Ok(());
     };
     metadata(state, &item)?;
-    if state.engine.event_history.iter().any(|e| matches!(e, CommittedEvent::ZulAshurPublishedV1{publication} if publication.item.v4.stack_item_id==id)) {
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::ZulAshurPublishedV1]).iter().any(|e| matches!(e, CommittedEvent::ZulAshurPublishedV1{publication} if publication.item.v4.stack_item_id==id)) {
         return Err("Zul publication replay".into());
     }
     let payment = index(state)?
@@ -218,7 +231,7 @@ pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), Stri
     Ok(())
 }
 pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<OwnerV1>, String> {
-    if !selected(item) && !state.engine.event_history.iter().any(|e| matches!(e,
+    if !selected(item) && !state.engine.event_history.scan_for_v1(&[EventKindV1::ZulAshurPublishedV1]).iter().any(|e| matches!(e,
         CommittedEvent::ZulAshurPublishedV1 { publication } if publication.item.v4.stack_item_id==item.v4.stack_item_id))
     { return Ok(None); }
     validate_state(state)?;
@@ -273,7 +286,7 @@ pub(crate) fn record_removal_input(
 ) -> Result<(), String> {
     if state.stack.iter().any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
         || published(state, owner.item.v4.stack_item_id)?.item.as_ref() != &owner.item
-        || state.engine.event_history.iter().any(|e| matches!(e,
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::ZulAshurRemovalInputV1]).iter().any(|e| matches!(e,
             CommittedEvent::ZulAshurRemovalInputV1 { input } if input.publication == owner.publication))
     {
         return Err("Zul input lacks the genuine uniquely removed private owner".into());
@@ -389,15 +402,21 @@ pub(crate) fn remove_owned(
     Ok(())
 }
 fn installations(state: &GameState) -> impl Iterator<Item = &InstallationV1> {
-    state.engine.event_history.iter().filter_map(|e| match e {
-        CommittedEvent::ZulAshurInstalledV1 { installation } => Some(installation.as_ref()),
-        _ => None,
-    })
+    state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ZulAshurInstalledV1])
+        .iter()
+        .filter_map(|e| match e {
+            CommittedEvent::ZulAshurInstalledV1 { installation } => Some(installation.as_ref()),
+            _ => None,
+        })
 }
 fn expiry_count(state: &GameState, installation: u32) -> usize {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::ZulAshurExpiredV1])
         .iter()
         .filter(|e| {
             matches!(e,
@@ -494,7 +513,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(ZUL_EVENTS_V1)
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::ZulAshurPublishedV1 { publication: p } => {
                 if p.index as usize != at
@@ -505,7 +530,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 }
                 metadata(state, &p.item)?;
                 let original_target = p.item.v4.target_contracts[0];
-                let targeting=state.engine.event_history.iter().enumerate().filter(|(position,e)| matches!(e,
+                let targeting=state.engine.event_history.scan_for_v1(&[EventKindV1::Targeted]).iter().enumerate().filter(|(position,e)| matches!(e,
                     CommittedEvent::Targeted{target,target_zone_change_count,targeting_stack_item,targeting_controller}
                     if *position>at && *targeting_stack_item==p.item.v4.stack_item_id && *targeting_controller==p.item.controller
                         && matches!(original_target,StackTargetContractV4::Object{object,zone_change_count,..} if object==*target && zone_change_count==*target_zone_change_count))).count();
@@ -524,6 +549,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let removed: Vec<_> = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ZulAshurRemovedV1])
                     .iter()
                     .enumerate()
                     .filter_map(|(i, e)| match e {
@@ -545,7 +571,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if input.index as usize != at || input.publication as usize >= at
                     || !matches!(state.engine.event_history.get(input.publication as usize),
                         Some(CommittedEvent::ZulAshurPublishedV1 { publication }) if publication.item == input.item)
-                    || state.engine.event_history.iter().filter(|e| matches!(e,
+                    || state.engine.event_history.scan_for_v1(&[EventKindV1::ZulAshurRemovalInputV1]).iter().filter(|e| matches!(e,
                         CommittedEvent::ZulAshurRemovalInputV1 { input: other } if other.publication == input.publication)).count() != 1
                     || input.target_legal != input_target_legal(input)
                     || (input.target_now.is_none() && (input.target_is_zombie_creature || input.target_in_original_graveyard))
@@ -649,18 +675,23 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .objects
         .iter()
         .any(|(_, o)| owns_definition(o.card_def))
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                CommittedEvent::ZulAshurPublishedV1 { .. }
-                    | CommittedEvent::ZulAshurRemovalInputV1 { .. }
-                    | CommittedEvent::ZulAshurRemovedV1 { .. }
-                    | CommittedEvent::ZulAshurInstalledV1 { .. }
-                    | CommittedEvent::ZulAshurCleanupV1 { .. }
-                    | CommittedEvent::ZulAshurExpiredV1 { .. }
-                    | CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(ZUL_EVENTS_V1)
+            .iter()
+            .any(|e| {
+                matches!(
+                    e,
+                    CommittedEvent::ZulAshurPublishedV1 { .. }
+                        | CommittedEvent::ZulAshurRemovalInputV1 { .. }
+                        | CommittedEvent::ZulAshurRemovedV1 { .. }
+                        | CommittedEvent::ZulAshurInstalledV1 { .. }
+                        | CommittedEvent::ZulAshurCleanupV1 { .. }
+                        | CommittedEvent::ZulAshurExpiredV1 { .. }
+                        | CommittedEvent::ZulAshurCleanupEnteredV1 { .. }
+                )
+            })
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 //! Exact Inspiration choice transport, with scoped chooser-only mill visibility.
 use crate::effect::{EffectTargetSelectionPurpose, PendingEffectChoice};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -101,6 +102,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("standard_legends_v1.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update([0]);
             h.update(source.as_bytes());
@@ -185,6 +187,7 @@ pub(crate) fn validate_projection_authority(state: &GameState) -> Result<(), RlC
                 state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::InspirationResolutionBoundaryV1])
                     .iter()
                     .rev()
                     .find_map(|e| match e {
@@ -251,6 +254,7 @@ pub(crate) fn mill_card_ref(
     let inputs = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::InspirationResolutionInputV1])
         .iter()
         .filter_map(|e| match e {
             crate::event::CommittedEvent::InspirationResolutionInputV1 { input }

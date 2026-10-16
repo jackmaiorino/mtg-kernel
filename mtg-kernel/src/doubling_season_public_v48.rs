@@ -1,6 +1,7 @@
 //! Public replacement relations, without private replay worlds or executable inputs.
 use crate::doubling_season_v48 as season;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 use serde::{Deserialize, Serialize};
@@ -100,6 +101,7 @@ pub fn producer_sha256() -> String {
             include_str!("rules_meaning_doubling_season_v48.rs"),
             include_str!("card_def.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());
@@ -137,7 +139,12 @@ pub fn capture(state: &GameState) -> Result<FactsV48, RlContractError> {
     let mut creations = Vec::new();
     let mut counter_placements = Vec::new();
     let mut attachments = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::BaitTransferAppliedV48,
+        EventKindV1::PlusCounterReplacementV48,
+        EventKindV1::TokenAttachmentJournalV48,
+        EventKindV1::TokenCreationReplacementV48,
+    ]) {
         match event {
             CommittedEvent::TokenCreationReplacementV48 { creation } => {
                 let mut cursor = 0;

@@ -1534,12 +1534,17 @@ fn linear_rows_reference_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Ve
 }
 
 fn tanh_in_place_v1(values: &mut [f32], activation_mode: ForwardActivationModeV1) {
-    if activation_mode == ForwardActivationModeV1::FastSearchTanh {
-        fast_tanh_in_place_v1(values);
-        return;
-    }
-    for value in values {
-        *value = activation_mode.apply_v1(*value);
+    match activation_mode {
+        ForwardActivationModeV1::FastSearchTanh => fast_tanh_in_place_v1(values),
+        // Four at a time where AVX2 is available, with the scalar's bits.
+        ForwardActivationModeV1::KernelDeterministicTanh => {
+            deterministic_math_v1::tanh_f32_in_place_v1(values)
+        }
+        ForwardActivationModeV1::LibmTanh => {
+            for value in values {
+                *value = activation_mode.apply_v1(*value);
+            }
+        }
     }
 }
 

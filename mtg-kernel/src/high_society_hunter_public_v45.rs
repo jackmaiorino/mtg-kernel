@@ -1,6 +1,7 @@
 //! Hunter-specific public facts. Private library/input journals never cross this boundary.
 use crate::effect::PendingEffectChoice;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::high_society_hunter_custody_v45::{self as custody, JournalV45};
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::rules_meaning_high_society_hunter_v1 as meaning;
@@ -90,6 +91,7 @@ pub fn producer_sha256() -> String {
             include_str!("trigger.rs"),
             include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("linked_aura_operation_v1.rs"),
+            include_str!("event_history_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());
@@ -202,6 +204,7 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
         let publication = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
             .iter()
             .enumerate()
             .find_map(|(at, event)| match event {
@@ -213,7 +216,7 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
                 },
                 _ => None,
             });
-        let collected=state.engine.event_history.iter().any(|event|matches!(event,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index}|CommittedEvent::ControlledCreatureDeathCaptureCollectedV1{capture_history_index}if *capture_history_index==capture));
+        let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::ControlledCreatureDeathCaptureCollectedV1, EventKindV1::HighSocietyHunterAttackCollectedV1]).iter().any(|event|matches!(event,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index}|CommittedEvent::ControlledCreatureDeathCaptureCollectedV1{capture_history_index}if *capture_history_index==capture));
         let mut row = OccurrenceV45 {
             occurrence,
             source: captured_source(source),
@@ -250,6 +253,7 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
             let removal = state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
                 .iter()
                 .enumerate()
                 .find_map(|(at, event)| match event {
@@ -269,6 +273,7 @@ pub fn capture(state: &GameState) -> Result<FactsV45, RlContractError> {
                 let closed = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::HighSocietyHunterJournalV45 { journal } => {
