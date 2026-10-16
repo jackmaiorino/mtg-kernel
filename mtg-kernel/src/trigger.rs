@@ -353,10 +353,9 @@ fn materialize_trigger_source_program(
         }
         EffectOp::BindAleshaRaidReturn => {
             EffectOp::AleshaRaidReturn {
-                // Preserve the trigger-time source power independently from
-                // the live-power check. A departure checkpoint updates both
-                // this effect and its exact source contract to departure-time
-                // LKI before the source incarnation changes zones.
+                // Preserve trigger-time source power. A departure checkpoint
+                // records engine-produced LKI before the source incarnation
+                // changes zones, and updates this effect payload to match.
                 source_power_lki: crate::engine::effective_power(state, source),
             }
         }
