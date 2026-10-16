@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 485);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 486);
         assert_eq!(
             partials,
             [
@@ -9043,6 +9043,7 @@ mod tests {
                 (482, "Leyline Axe"),
                 (483, "Fiend Artisan"),
                 (484, "Imprisoned in the Moon"),
+                (485, "Thousand-Year Storm"),
             ]
         );
         let mut playable = Vec::new();

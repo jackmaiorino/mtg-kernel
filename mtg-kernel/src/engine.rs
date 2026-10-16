@@ -79,8 +79,15 @@ mod spell_costs_v1;
 mod standard_cast_convoke;
 #[path = "standard_spell_copy.rs"]
 mod standard_spell_copy;
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) use standard_spell_copy::copy_snapshot_assignment_is_legal;
 pub(crate) use standard_spell_copy::{
-    copy_snapshot_legal_targets, materialize_copy_snapshot, validate_copy_snapshot,
+    copy_snapshot_prefix_can_complete, copy_snapshot_replacement_targets,
+    materialize_copy_snapshot, validate_copy_snapshot,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2521,11 +2528,6 @@ fn validate_spell_source_contract_fields(
         {
             return Err("spell copy source types disagree with its selected form".into());
         }
-        if def.target_spec == TargetSpec::KickerControlledCreatures {
-            return Err(
-                "variable-cardinality spell copies require a copy-targeting successor".into(),
-            );
-        }
         if item.is_flashback
             || !matches!(
                 cast_method,
@@ -2937,7 +2939,13 @@ pub(crate) fn materialize_storm_copy_binding(
                 controller: producer.controller,
             })
     })?;
-    if spell_cast_event_index + 1 != state.engine.event_history.len() {
+    if spell_cast_event_index + 1 != state.engine.event_history.len()
+        && !crate::effect::thousand_year_storm_v1::exact_cast_tail(
+            state,
+            spell_cast_event_index,
+            producer,
+        )
+    {
         return None;
     }
     let binding = StormCopyBindingV1 {
@@ -4377,7 +4385,11 @@ pub(crate) fn effect_target_is_legal(
     targets.get(index).is_some_and(|target| {
         legal_targets_for_controller_from_source(
             spec,
-            &targets[..index],
+            if spec == TargetSpec::KickerControlledCreatures {
+                &[]
+            } else {
+                &targets[..index]
+            },
             controller,
             targeting_source_for_object(state, source),
             state,
@@ -4485,6 +4497,11 @@ pub(crate) fn record_different_controller_target_departure(
             {
                 contracts.push(captured);
             }
+        }
+    }
+    for captured in crate::effect::thousand_year_storm_v1::departure_contracts(state, object) {
+        if !contracts.contains(&captured) {
+            contracts.push(captured)
         }
     }
     for contract in contracts {
@@ -14455,6 +14472,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             damage_history_index,
         );
     }
+    if let Some(item) = state
+        .stack
+        .last()
+        .filter(|r| {
+            r.inline_effect
+                .as_ref()
+                .is_some_and(|op| crate::effect::thousand_year_storm_v1::capture(op).is_some())
+        })
+        .cloned()
+    {
+        crate::effect::thousand_year_storm_v1::publish(state, &item)?;
+    }
     if state.stack.last().is_some_and(|item| {
         matches!(
             item.inline_effect,
@@ -14961,6 +14990,20 @@ fn triggered_stack_item_expected_target_spec(
             .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
         {
             crate::event::validate_published_lathril_v1(state, item)?;
+        }
+        return Ok(None);
+    }
+    if crate::effect::thousand_year_storm_v1::selected(state, item)
+        || crate::effect::thousand_year_storm_v1::definition(source_card_def)
+            && crate::effect::thousand_year_storm_v1::recipe(inline_effect)
+    {
+        crate::effect::thousand_year_storm_v1::validate_item(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            crate::effect::thousand_year_storm_v1::validate_published(state, item)?;
         }
         return Ok(None);
     }
@@ -15565,11 +15608,24 @@ fn validated_stack_item_target_metadata(
         item.kind == StackItemKind::Spell
             && item.targets.len() >= minimum
             && maximum.is_none_or(|maximum| item.targets.len() <= maximum)
-            && item
-                .targets
-                .iter()
-                .enumerate()
-                .all(|(index, target)| !item.targets[..index].contains(target))
+            && if item.is_copy {
+                item.v4.target_contracts.len() == item.targets.len()
+                    && item
+                        .v4
+                        .target_contracts
+                        .iter()
+                        .enumerate()
+                        .all(|(index, contract)| {
+                            !item.v4.target_contracts[..index].iter().any(|old| {
+                                standard_spell_copy::copy_target_identity_eq(*old, *contract)
+                            })
+                        })
+            } else {
+                item.targets
+                    .iter()
+                    .enumerate()
+                    .all(|(index, target)| !item.targets[..index].contains(target))
+            }
     } else {
         target_cardinality_is_complete(spec, item.targets.len())
     };
@@ -15798,7 +15854,11 @@ pub(crate) fn stack_targets_still_legal(
                 }
                 _ => legal_targets_for_controller_from_source(
                     spec,
-                    &chosen,
+                    if spec == TargetSpec::KickerControlledCreatures {
+                        &[]
+                    } else {
+                        &chosen
+                    },
                     item.controller,
                     match item.kind {
                         StackItemKind::Spell => Some(TargetingSource {

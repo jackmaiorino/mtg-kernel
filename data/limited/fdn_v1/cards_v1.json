@@ -8830,6 +8830,37 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Thousand-Year Storm",
+      "mana_cost": "{4}{U}{R}",
+      "mana_value": 6,
+      "colors": [
+        "U",
+        "R"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "mechanics": [
+        "own_instant_sorcery_cast_event_time_snapshot",
+        "copy_for_each_prior_own_instant_sorcery_cast_this_turn",
+        "optional_new_targets_independently_for_each_copy_target"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/ThousandYearStorm.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_thousand_year_storm_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

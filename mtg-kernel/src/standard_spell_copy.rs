@@ -97,9 +97,24 @@ pub(crate) fn validate_copy_snapshot(state: &GameState, spell: &StackItem) -> Re
         def.printed_mode_target(spell.mode_chosen, spell.kicked)
             .ok_or("copy snapshot mode missing")?
     };
-    if spell.v4.target_spec != Some(spec)
-        || !target_cardinality_is_complete(spec, spell.targets.len())
-    {
+    let cardinality_complete = if spec == TargetSpec::KickerControlledCreatures {
+        let (min, max) = cast_target_bounds(spec, spell.kicked);
+        spell.targets.len() >= min && max.is_none_or(|max| spell.targets.len() <= max)
+    } else {
+        target_cardinality_is_complete(spec, spell.targets.len())
+    };
+    let unique = spec != TargetSpec::KickerControlledCreatures
+        || spell.v4.target_contracts.iter().enumerate().all(|(i, c)| {
+            !spell.v4.target_contracts[..i]
+                .iter()
+                .any(|old| copy_target_identity_eq(*old, *c))
+        }) && (spell.is_copy
+            || spell
+                .targets
+                .iter()
+                .enumerate()
+                .all(|(i, t)| !spell.targets[..i].contains(t)));
+    if spell.v4.target_spec != Some(spec) || !cardinality_complete || !unique {
         return Err("copy snapshot changed its definition-owned targets".into());
     }
     if let Some(kind) = spell.v4.optional_additional_cost_paid {
@@ -150,6 +165,265 @@ pub(crate) fn copy_snapshot_legal_targets(
     ))
 }
 
+/// Target identity follows CR 400.7, not mutable controller metadata or just
+/// the arena slot. A retained departed object and its returned incarnation are
+/// different targets; two bindings of the same incarnation are the same target.
+pub(super) fn copy_target_identity_eq(a: StackTargetContractV4, b: StackTargetContractV4) -> bool {
+    match (a, b) {
+        (StackTargetContractV4::Player(a), StackTargetContractV4::Player(b)) => a == b,
+        (
+            StackTargetContractV4::Object {
+                object: a,
+                zone_change_count: ag,
+                ..
+            },
+            StackTargetContractV4::Object {
+                object: b,
+                zone_change_count: bg,
+                ..
+            },
+        ) => a == b && ag == bg,
+        (
+            StackTargetContractV4::StackItem {
+                stack_item_id: a, ..
+            },
+            StackTargetContractV4::StackItem {
+                stack_item_id: b, ..
+            },
+        ) => a == b,
+        _ => false,
+    }
+}
+
+/// A replacement slot is fresh; an unchanged slot retains its exact old contract.
+/// Legality is evaluated against the final assignment, including dependent slots.
+fn copy_assignment_slot_legal(
+    state: &GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: &[Target],
+    contracts: &[StackTargetContractV4],
+    index: usize,
+) -> Result<bool, String> {
+    if !target_contract_matches_live(state, targets[index], contracts[index]) {
+        return Ok(false);
+    }
+    let spec = spell.v4.target_spec.ok_or("copy target spec absent")?;
+    if spec == TargetSpec::TwoCreaturesWithDifferentControllers {
+        if targets.len() != 2 || targets[0] == targets[1] {
+            return Ok(false);
+        }
+        let controllers = std::array::from_fn::<_, 2, _>(|i| {
+            if target_contract_matches_live(state, targets[i], contracts[i]) {
+                if let Target::Object(object) = targets[i] {
+                    if battlefield_objects(state).any(|id| id == object) {
+                        return Some(state.objects.get(object).controller);
+                    }
+                }
+            }
+            let mut found = state.engine.event_history.iter().filter_map(|e| match e {
+                event::CommittedEvent::DifferentControllerTargetDepartureV1 {
+                    target,
+                    controller_before,
+                } if *target == contracts[i] => Some(*controller_before),
+                _ => None,
+            });
+            let first = found.next()?;
+            found.next().is_none().then_some(first)
+        });
+        if !matches!(controllers,[Some(a),Some(b)] if a!=b) {
+            return Ok(false);
+        }
+        return Ok(
+            copy_snapshot_legal_targets(state, spell, controller, &[])?.contains(&targets[index])
+        );
+    }
+    let prefix = if spec == TargetSpec::KickerControlledCreatures {
+        &[][..]
+    } else {
+        &targets[..index]
+    };
+    Ok(copy_snapshot_legal_targets(state, spell, controller, prefix)?.contains(&targets[index]))
+}
+pub(crate) fn copy_snapshot_assignment_is_legal(
+    state: &GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    targets: &[Target],
+    contracts: &[StackTargetContractV4],
+) -> Result<bool, String> {
+    validate_copy_snapshot(state, spell)?;
+    if targets.iter().enumerate().any(|(i, t)| {
+        let unchanged =
+            spell.targets.get(i) == Some(t) && spell.v4.target_contracts.get(i) == contracts.get(i);
+        !unchanged
+            && match t {
+                Target::Object(id) => state.objects.try_get(*id).is_none(),
+                Target::StackItem(id) => !state.stack.iter().any(|r| r.v4.stack_item_id == *id),
+                Target::Player(_) => false,
+            }
+    }) {
+        return Ok(false);
+    }
+    if targets.len() != spell.targets.len()
+        || contracts.len() != targets.len()
+        || !targets.iter().zip(contracts).all(|(t, c)| *t == c.target())
+    {
+        return Ok(false);
+    }
+    if spell.v4.target_spec == Some(TargetSpec::KickerControlledCreatures)
+        && contracts.iter().enumerate().any(|(i, c)| {
+            contracts[..i]
+                .iter()
+                .any(|old| copy_target_identity_eq(*old, *c))
+        })
+    {
+        return Ok(false);
+    }
+    for i in 0..targets.len() {
+        let unchanged =
+            targets[i] == spell.targets[i] && contracts[i] == spell.v4.target_contracts[i];
+        let now = copy_assignment_slot_legal(state, spell, controller, targets, contracts, i)?;
+        if unchanged {
+            // An unchanged illegal original may remain. New selections must not
+            // make an originally legal unchanged target illegal.
+            if copy_assignment_slot_legal(
+                state,
+                spell,
+                controller,
+                &spell.targets,
+                &spell.v4.target_contracts,
+                i,
+            )? && !now
+            {
+                return Ok(false);
+            }
+        } else if contracts[i] != StackTargetContractV4::capture(state, targets[i]) || !now {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+pub(crate) fn copy_snapshot_replacement_targets(
+    state: &GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    prefix: &[Target],
+) -> Result<Vec<Target>, String> {
+    // The different-controller relation depends on the final pair, not the
+    // stale live arena slot of a retained first target. Final-set validation
+    // below uses the exact native departure LKI for that original incarnation.
+    let prefix = if matches!(
+        spell.v4.target_spec,
+        Some(
+            TargetSpec::TwoCreaturesWithDifferentControllers
+                | TargetSpec::KickerControlledCreatures
+        )
+    ) {
+        &[][..]
+    } else {
+        prefix
+    };
+    copy_snapshot_legal_targets(state, spell, controller, prefix)
+}
+pub(crate) fn copy_snapshot_prefix_can_complete(
+    state: &GameState,
+    spell: &StackItem,
+    controller: PlayerId,
+    prefix: &[Target],
+    contracts: &[StackTargetContractV4],
+) -> Result<bool, String> {
+    validate_copy_snapshot(state, spell)?;
+    if prefix.iter().enumerate().any(|(i, t)| {
+        let unchanged =
+            spell.targets.get(i) == Some(t) && spell.v4.target_contracts.get(i) == contracts.get(i);
+        !unchanged
+            && match t {
+                Target::Object(id) => state.objects.try_get(*id).is_none(),
+                Target::StackItem(id) => !state.stack.iter().any(|r| r.v4.stack_item_id == *id),
+                Target::Player(_) => false,
+            }
+    }) {
+        return Ok(false);
+    }
+    if prefix.len() > spell.targets.len()
+        || prefix.len() != contracts.len()
+        || !prefix.iter().zip(contracts).all(|(t, c)| *t == c.target())
+    {
+        return Ok(false);
+    }
+    if prefix.len() == spell.targets.len() {
+        return copy_snapshot_assignment_is_legal(state, spell, controller, prefix, contracts);
+    }
+    if spell.v4.target_spec == Some(TargetSpec::KickerControlledCreatures) {
+        // Exact matching specialization: every replacement edge shares the
+        // current legal incarnation pool, plus each slot's unique original keep
+        // edge. Controller metadata does not change object identity (CR400.7).
+        let originals = &spell.v4.target_contracts;
+        if originals.iter().enumerate().any(|(i, c)| {
+            originals[..i]
+                .iter()
+                .any(|old| copy_target_identity_eq(*old, *c))
+        }) || contracts.iter().enumerate().any(|(i, c)| {
+            contracts[..i]
+                .iter()
+                .any(|old| copy_target_identity_eq(*old, *c))
+        }) {
+            return Ok(false);
+        }
+        let legal = copy_snapshot_legal_targets(state, spell, controller, &[])?;
+        for (i, target) in prefix.iter().enumerate() {
+            if (*target != spell.targets[i] || contracts[i] != originals[i])
+                && (contracts[i] != StackTargetContractV4::capture(state, *target)
+                    || !legal.contains(target))
+            {
+                return Ok(false);
+            }
+        }
+        let mut pool = legal
+            .into_iter()
+            .map(|t| StackTargetContractV4::capture(state, t))
+            .collect::<Vec<_>>();
+        pool.retain(|c| {
+            !contracts
+                .iter()
+                .any(|used| copy_target_identity_eq(*used, *c))
+        });
+        let own_outside = originals[prefix.len()..]
+            .iter()
+            .filter(|c| {
+                !contracts
+                    .iter()
+                    .any(|used| copy_target_identity_eq(*used, **c))
+                    && !pool
+                        .iter()
+                        .any(|fresh| copy_target_identity_eq(*fresh, **c))
+            })
+            .count();
+        return Ok(spell.targets.len() - prefix.len() - own_outside <= pool.len());
+    }
+    let i = prefix.len();
+    let mut selected = prefix.to_vec();
+    let mut bindings = contracts.to_vec();
+    selected.push(spell.targets[i]);
+    bindings.push(spell.v4.target_contracts[i]);
+    if copy_snapshot_prefix_can_complete(state, spell, controller, &selected, &bindings)? {
+        return Ok(true);
+    }
+    for target in copy_snapshot_replacement_targets(state, spell, controller, prefix)? {
+        let binding = StackTargetContractV4::capture(state, target);
+        if target == spell.targets[i] && binding == spell.v4.target_contracts[i] {
+            continue;
+        }
+        selected[i] = target;
+        bindings[i] = binding;
+        if copy_snapshot_prefix_can_complete(state, spell, controller, &selected, &bindings)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn materialize_copy_snapshot(
     state: &mut GameState,
     spell: &StackItem,
@@ -166,6 +440,9 @@ pub(crate) fn materialize_copy_snapshot(
             .all(|(t, c)| *t == c.target())
     {
         return Err("copy target cardinality changed".into());
+    }
+    if !copy_snapshot_assignment_is_legal(state, spell, controller, &targets, &contracts)? {
+        return Err("copy final target assignment is not legal".into());
     }
     // Final validation needs the new object and stack membership. Build both
     // privately so any source, target, or stack-ID rejection leaves the arena,

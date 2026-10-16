@@ -127,6 +127,9 @@ pub fn producer_sha256() -> String {
             include_str!("../rl.rs"),
             include_str!("../sower_restriction_capture_v1.rs"),
             include_str!("../linked_aura_operation_v1.rs"),
+            include_str!("../effect/thousand_year_storm_v1.rs"),
+            include_str!("../effect/standard_copy.rs"),
+            include_str!("../standard_spell_copy.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());

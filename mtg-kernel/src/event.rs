@@ -2020,6 +2020,9 @@ pub enum CommittedEvent {
         gain_history_index: u64,
         amount: u32,
     },
+    ThousandYearStormV1 {
+        journal: crate::effect::thousand_year_storm_v1::JournalV1,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -6527,6 +6530,12 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     let committed = CommittedEvent::SpellCast { spell, controller };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if crate::effect::thousand_year_storm_v1::record_cast(state, spell).is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            spell,
+        ));
+    }
 }
 
 /// Logs a crime committed by one completed targeting action.

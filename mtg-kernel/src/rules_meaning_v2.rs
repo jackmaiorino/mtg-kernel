@@ -129,6 +129,18 @@ pub fn producer_sha256_v2() -> String {
         ("legend_rule_v1.rs", include_str!("legend_rule_v1.rs")),
         ("event.rs", include_str!("event.rs")),
         ("rl.rs", include_str!("rl.rs")),
+        (
+            "effect/thousand_year_storm_v1.rs",
+            include_str!("effect/thousand_year_storm_v1.rs"),
+        ),
+        (
+            "effect/standard_copy.rs",
+            include_str!("effect/standard_copy.rs"),
+        ),
+        (
+            "standard_spell_copy.rs",
+            include_str!("standard_spell_copy.rs"),
+        ),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

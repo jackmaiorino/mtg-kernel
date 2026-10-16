@@ -101,6 +101,7 @@ pub fn producer_sha256() -> String {
             include_str!("legend_rule_v1.rs"),
             include_str!("doubling_season_v48.rs"),
             include_str!("rl.rs"),
+            include_str!("effect/thousand_year_storm_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());
