@@ -1,5 +1,5 @@
 //! Progenitus native protection and mandatory reveal/shuffle replacement.
-//! No registration, consumer admission, or serialized execution permission.
+//! Native Partial480 only; no consumer admission or serialized execution permission.
 use crate::{
     card_def::{self, CardType, Keywords},
     effect::{EffectOp, ObjectRef},
@@ -193,7 +193,7 @@ pub(crate) fn preview(
         let Some(plan) = plan(state, event, None)? else {
             continue;
         };
-        if events[..index].iter().any(|earlier| matches!(earlier,ProposedEvent::ZoneChange(z)if z.object==plan.input.source.source)) { return Err(plan.input.source.source); }
+        if events.iter().enumerate().any(|(other,earlier)| other!=index && matches!(earlier,ProposedEvent::ZoneChange(z)if z.object==plan.input.source.source)) { return Err(plan.input.source.source); }
         let scene = rng_scene.get_or_insert_with(|| state.clone());
         let token = scene
             .preflight_library_shuffle(plan.input.source.owner)

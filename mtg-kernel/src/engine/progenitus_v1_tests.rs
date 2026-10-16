@@ -69,9 +69,13 @@ fn pass(s: &mut GameState, d: Decision) {
                 Action::ChooseEffectTarget(legal_targets[0])
             }
         }
-        Decision::ChooseLegendPermanent { candidates, .. } => {
-            Action::ChooseLegendPermanent(candidates[0])
-        }
+        Decision::ChooseLegendPermanent { candidates, .. } => Action::ChooseLegendPermanent(
+            candidates
+                .iter()
+                .copied()
+                .find(|id| !s.objects.get(*id).v4.is_token)
+                .unwrap_or(candidates[0]),
+        ),
         Decision::OrderTriggers { pending, .. } => {
             Action::OrderTriggers((0..pending.len()).collect())
         }
@@ -482,6 +486,19 @@ fn genuine_native_spell_copy_conversion_season_legend_and_token_cease_both_seats
             // No pure-FDN paid copy-spell producer is claimed.
             let (copy, _) = copy_spell_for(&mut s, c, p).unwrap();
             assert!(s.objects.get(copy).spell_copy_origin.is_some());
+            let mut countered = restore(&s);
+            cast(
+                &mut countered,
+                p.opponent(),
+                "Counterspell",
+                (false, 0, false),
+                &[Target::Object(copy)],
+                None,
+                2,
+            );
+            finish(&mut countered);
+            assert!(!countered.players[p.index()].library.contains(&copy));
+            assert!(!countered.engine.event_history.iter().any(|entry|matches!(entry,event::CommittedEvent::ProgenitusShuffledV1{source,..}if source.source==copy)));
             let mut r = restore(&s);
             finish(&mut s);
             finish(&mut r);
@@ -494,6 +511,9 @@ fn genuine_native_spell_copy_conversion_season_legend_and_token_cease_both_seats
                     .count(),
                 1
             );
+            assert!(s.players[p.index()].battlefield.contains(&c));
+            assert!(!s.players[p.index()].library.contains(&copy));
+            assert!(s.engine.event_history.iter().any(|entry|matches!(entry,event::CommittedEvent::ProgenitusShuffledV1{source,..}if source.source==copy)));
             crate::progenitus_v1::validate(&s).unwrap();
             let mut raw = ready(p, "Forest");
             event::propose_and_commit(&mut raw, event::ProposedEvent::create_token(id(NAME), p));
