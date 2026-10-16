@@ -430,25 +430,14 @@ pub(super) fn prepare_current(
     session: &FastActorSessionV1,
     current: &mut FastActorCurrentDecisionV1,
 ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-    current.candidates = normalized_origin(session, current)?;
+    // The same immutable reconstruction already builds and validates the complete
+    // public parts. Candidate/cache updates below change none of its inputs.
+    let (candidates, _validated_public_parts) = normalized_origin_parts(session, current)?;
+    current.candidates = candidates;
     current.flat_action_cache = None;
     current.flat_action_cache_error = None;
     current.flat_action_cache_v2 = None;
     current.flat_action_cache_error_v2 = None;
-    crate::elenda_observation_v52::observe_v52(
-        &session.state,
-        &session.surface,
-        (current.actor, &current.origin_decision),
-        session.policy_step_count,
-        current.physical_decision_id,
-        (current.substep_index, current.substep_count),
-    )
-    .map_err(|_| {
-        diagnose_origin_error(
-            "elenda_v52.prepare.observation",
-            FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
-        )
-    })?;
     Ok(())
 }
 
