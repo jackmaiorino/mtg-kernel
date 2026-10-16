@@ -633,6 +633,18 @@ pub(super) fn label_parts_v59(
             && stable.controller == public.controller
             && stable.zone == public.zone
     };
+    // A Creature target remains the same legal target across a control change.
+    // Goblin's quote captures the announcement controller, while its ordering
+    // stage captures the target's resolution-time controller for the affected-
+    // player menu. Bind those records by public incarnation and identity only.
+    let target_incarnation_matches = |stable: &CardStableRefV1, public: &ReferenceV1| {
+        matches!(&public.identity, IdentityV1::Known { card_id }
+            if stable.card_db_id == *card_id)
+            && stable.arena_id == public.object
+            && stable.zone_change_count == public.generation
+            && stable.owner == public.owner
+            && stable.zone == public.zone
+    };
     let stable_refs_match = |left: &CardStableRefV1, right: &CardStableRefV1| {
         left.arena_id == right.arena_id
             && left.card_db_id == right.card_db_id
@@ -817,7 +829,7 @@ pub(super) fn label_parts_v59(
                     && ref_matches(source, &quote.source)
                     && ref_matches(&stage.source, &quote.source)
                     && matches!(&quote.target, TargetV59::Object(target)
-                        if ref_matches(&stage.target, target))
+                        if target_incarnation_matches(&stage.target, target))
             });
             if stage.chooser != human
                 || !quote_matches
@@ -2874,6 +2886,191 @@ mod next_five_native_label_tests {
             );
             step_next_five(&mut session, restored_decision, restored_index as u32);
             assert!(session.fixture_state_v59().engine.pending_cast.is_none());
+        }
+    }
+
+    #[test]
+    fn goblin_replacement_label_tracks_paid_control_response_and_restore_both_seats() {
+        use crate::{
+            engine::{self, Action, Decision},
+            event,
+            state::{Target, Zone},
+        };
+
+        for human in [PlayerId::P0, PlayerId::P1] {
+            let caster = human.opponent();
+            let mut state = ready(caster);
+            crate::combat_damage_v1::enable_foundations_combat_v1(&mut state).unwrap();
+            for seat in [PlayerId::P0, PlayerId::P1] {
+                for _ in 0..10 {
+                    put(&mut state, seat, "Mountain", Zone::Battlefield);
+                }
+            }
+            put(&mut state, human, "High Fae Trickster", Zone::Battlefield);
+            let employment = put(&mut state, human, "Involuntary Employment", Zone::Hand);
+            let target = put(&mut state, caster, "Axgard Cavalry", Zone::Battlefield);
+            let target_generation = state.objects.get(target).zone_change_count;
+            let multiplier = put(&mut state, caster, "Twinflame Tyrant", Zone::Battlefield);
+
+            // The existing native damage-choice fixture primitive supplies a
+            // real shield replacement alongside the actual Tyrant multiplier.
+            let replacement_id = state.engine.next_replacement_id;
+            state.engine.next_replacement_id += 1;
+            state
+                .engine
+                .active_replacements
+                .push(event::ActiveReplacement {
+                    id: replacement_id,
+                    source: multiplier,
+                    kind: event::ReplacementEffectKind::PreventNextDamage {
+                        target: Target::Object(target),
+                        remaining: 1,
+                    },
+                });
+
+            let goblin = put(&mut state, caster, "Goblin Negotiation", Zone::Hand);
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == caster && castable_spells.contains(&goblin)
+            ));
+            engine::step(&mut state, Action::CastSpell(goblin)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(target))
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseEffectOption { option_count, .. } if option_count > 3
+            ));
+            engine::step(&mut state, Action::ChooseEffectOption(3)).unwrap();
+
+            // High Fae Trickster makes the real sorcery a legal response. Both
+            // spells pay through native cast decisions; the target's physical
+            // incarnation stays fixed while its controller changes at resolve.
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == caster && castable_spells.contains(&employment)
+            ));
+            engine::step(&mut state, Action::Pass).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == human && castable_spells.contains(&employment)
+            ));
+            engine::step(&mut state, Action::CastSpell(employment)).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(target))
+            ));
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+            for _ in 0..8 {
+                let decision = engine::advance_until_decision(&mut state);
+                if state.objects.get(employment).zone == Zone::Graveyard && state.stack.len() == 1 {
+                    break;
+                }
+                assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+                engine::step(&mut state, Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(employment).zone, Zone::Graveyard);
+            assert_eq!(state.stack.len(), 1);
+            assert_eq!(state.stack[0].source, goblin);
+            assert_eq!(state.objects.get(target).controller, human);
+            assert_eq!(state.objects.get(target).owner, caster);
+            assert_eq!(
+                state.objects.get(target).zone_change_count,
+                target_generation
+            );
+
+            let mut found_choice = false;
+            for _ in 0..24 {
+                let decision = engine::advance_until_decision(&mut state);
+                if matches!(decision, Decision::ChooseEffectOption { .. })
+                    && crate::effect::crystal_prevention_v1::is_choice(&state)
+                {
+                    found_choice = true;
+                    break;
+                }
+                match decision {
+                    Decision::CastSpellOrPass { .. } => {
+                        engine::step(&mut state, Action::Pass).unwrap();
+                    }
+                    Decision::OrderTriggers { pending, .. } => {
+                        engine::step(
+                            &mut state,
+                            Action::OrderTriggers((0..pending.len()).collect()),
+                        )
+                        .unwrap();
+                    }
+                    other => panic!("unexpected native Goblin response resolution: {other:?}"),
+                }
+            }
+            assert!(found_choice, "actual affected-player replacement choice");
+            let ordering = crate::goblin_negotiation_v1::public_ordering_stage(&state)
+                .unwrap()
+                .expect("actual native Goblin ordering stage");
+            assert_eq!(ordering.chooser, human.into());
+            assert_eq!(ordering.controller, caster.into());
+            assert_eq!(ordering.target.controller, human.into());
+
+            let mut session = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+                human.into(),
+            )
+            .unwrap();
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(human.into());
+            let (_, visible) = owned_human_prompt(&mut session, &mut projector, human);
+            let multiplier_choice = visible
+                .actions
+                .iter()
+                .find(|row| {
+                    row.label.contains("double the remaining damage")
+                        && row.label.contains("Twinflame Tyrant")
+                        && row.label.contains("Axgard Cavalry")
+                })
+                .expect("Human label for actual post-control-change replacement choice");
+            assert!(visible.state.next_five.goblin_quotes.iter().any(|quote| {
+                matches!(&quote.target, crate::human_bo3_v1::HumanNextFiveTargetV59::Object(target)
+                    if target.controller == caster.into()
+                        && target.name == "Axgard Cavalry")
+            }));
+            assert_eq!(
+                visible
+                    .state
+                    .next_five
+                    .goblin_ordering
+                    .as_ref()
+                    .unwrap()
+                    .target
+                    .controller,
+                human.into()
+            );
+
+            let label = multiplier_choice.label.clone();
+            let saved = session.snapshot_v59();
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &visible,
+                multiplier_choice.action_index,
+            );
+            session.restore_v59(&saved).unwrap();
+            let (_, restored) = owned_human_prompt(&mut session, &mut projector, human);
+            let restored_choice = restored
+                .actions
+                .iter()
+                .find(|row| row.label == label)
+                .expect("restored native replacement choice preserves its label");
+            submit_owned(
+                &mut session,
+                &mut projector,
+                &restored,
+                restored_choice.action_index,
+            );
         }
     }
 
