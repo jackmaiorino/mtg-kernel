@@ -3493,6 +3493,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Consuming Aberration" => program("None", "MoveObject(ThisSource,Battlefield);cda_all_zones:power_and_toughness_equal_all_opponents_graveyard_physical_cards;controller_cast_spell:each_opponent_reveal_through_first_land_then_owner_ordered_graveyard", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Sphinx's Tutelage" => program("None", "MoveObject(ThisSource,Battlefield);own_successful_draw:captured_original_source_controller:target_opponent:mill2_repeat_iff_two_nonland_cards_share_color;5U:draw1_then_discard1", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Drakuseth, Maw of Flames" => program("None", "MoveObject(ThisSource,Battlefield);attacks:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_contracts:one_damage_batch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Unregistered source recipe. No catalog slot is allocated here.
@@ -7127,6 +7128,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Consuming Aberration" => "controller_cast_spell:mandatory:untargeted_each_opponent:reveal_library_through_first_land_or_entire_remaining_library:owner_orders_revealed_cards_into_graveyard:original_source_controller_incarnation:copies_are_not_casts",
         "Sphinx's Tutelage" => "successful_controller_draw:one_event_time_observer_roster_per_actual_card:original_source_incarnation_controller:target_opponent_at_announcement:response_window:mill2_as_one_original_pair:owner_ordered_graveyard:repeat_iff_exactly_two_nonland_cards_share_at_least_one_color:zero_one_colorless_land_disjoint_stop:source_departure_or_later_control_does_not_change_captured_trigger",
         "Zimone, Paradox Sculptor" => "beginning_captured_controller_combat:captured_source_incarnation_controller:zero_to_two_distinct_controlled_effective_creature_targets:original_target_slots_and_current_exact_incarnation_legality:put_one_plus_one_counter_on_each_legal_target:normal_counter_placement_replacements:checked_widths",
         "Drakuseth, Maw of Flames" => "source_attacks:captured_source_incarnation_controller:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_target_contracts:individual_legality:one_damage_batch_before_sba",
@@ -10853,6 +10855,10 @@ fn codegen(cards: &[CardJson]) -> String {
                 "none"
             });
             canon.push('|');
+        }
+        if c.name == "Consuming Aberration" && c.engine_capability != EngineCapabilityJson::NoEffect
+        {
+            canon.push_str("fdn_static=characteristic_defining_power_and_toughness:all_zones:all_opponents_graveyard_physical_cards:owner_when_no_controller:effective_copied_definition:layer7a_before_base_settings:printed_ability_suppression:checked_native_i32|" );
         }
         if c.name == "Crystal Barricade" && c.engine_capability != EngineCapabilityJson::NoEffect {
             canon.push_str("fdn_static=controller_hexproof;prevent_all_noncombat_damage_to_other_controlled_effective_creatures:current_battlefield_source_and_abilities;cannot_prevent_overrides|");

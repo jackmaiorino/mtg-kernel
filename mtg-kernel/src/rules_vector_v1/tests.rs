@@ -906,6 +906,8 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    // Native own-cast template is walked; reveal-until mill remains opaque.
+    "Consuming Aberration",
     // Native per-successful-controller-draw template and captured target
     // are walked; the repeat-mill body remains opaque in frozen v1.
     "Sphinx's Tutelage",
@@ -1158,6 +1160,8 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect.rs", "Consuming Aberration", "exact native revealed-mill answer-stage validation; reveal-until effect remains opaque"),
+    ("engine.rs", "Consuming Aberration", "native all-zone layer7a CDA; exact opponent-graveyard cardinality remains opaque in frozen V1"),
     ("event.rs", "Sphinx's Tutelage",
      "event-time draw source validation; ControllerDraws/TargetOpponent are extracted, exact captured repeat-mill remains opaque"),
     (
@@ -1618,4 +1622,37 @@ fn tutelage_native_draw_trigger_and_captured_target_keep_repeat_opaque_in_frozen
         nth: 0
     })));
     assert!(triggered[0].atoms.contains(&Atom::Opaque));
+}
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn aberration_own_cast_untargeted_mill_and_all_zone_cda_remain_truthfully_opaque() {
+    let id = card_id("Consuming Aberration");
+    let [trigger] = crate::trigger::triggers_for(id) else {
+        panic!("one printed cast trigger");
+    };
+    assert_eq!(
+        trigger.condition,
+        crate::trigger::TriggerCondition::CastSpell
+    );
+    assert_eq!(crate::trigger::trigger_target_spec(id), TargetSpec::None);
+    assert_eq!(
+        (trigger.effect)(),
+        EffectOp::RevealUntilCardTypeAndMill {
+            player: crate::effect::PlayerRef::Opponent,
+            card_type: crate::card_def::CardType::Land
+        }
+    );
+    let actual = rules("Consuming Aberration");
+    assert!(actual
+        .abilities
+        .iter()
+        .any(|a| a.ctx == CtxF::Static && a.atoms.contains(&Atom::Opaque)));
+    assert!(actual
+        .abilities
+        .iter()
+        .any(|a| a.ctx == CtxF::Trigger && a.atoms.contains(&Atom::Opaque)));
 }

@@ -8832,11 +8832,18 @@ fn effect_target_ref_visible(
 /// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
-    if state
-        .objects
-        .try_get(object)
-        .is_some_and(|live| crate::event::is_sphinxs_tutelage_v1(live.card_def))
-    {
+    if state.objects.try_get(object).is_some_and(|o| {
+        o.v4.face_down_v1.is_none()
+            && CARD_DEFS[usize::from(o.card_def)].name == "Consuming Aberration"
+    }) {
+        return Err(RlContractError(
+            "Aberration requires its distinct complete consumer".into(),
+        ));
+    }
+
+    if state.objects.try_get(object).is_some_and(|live| {
+        live.v4.face_down_v1.is_none() && crate::event::is_sphinxs_tutelage_v1(live.card_def)
+    }) {
         return Err(RlContractError(
             "Tutelage requires its distinct complete consumer".into(),
         ));
@@ -13457,5 +13464,54 @@ mod soul_counter_representation_v1_tests {
         assert!(public_card(&state, source).is_err());
         assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
+fn neutral_face_down_projection_does_not_select_hidden_tutelage_or_aberration() {
+    use crate::policy_observation_v6::tests::put;
+    let island = crate::card_def::card_id_by_name("Island").unwrap();
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let mut public_rows = None;
+        for name in [
+            "Flourishing Bloom-Kin",
+            "Sphinx's Tutelage",
+            "Consuming Aberration",
+        ] {
+            let mut state =
+                GameState::new_from_libraries(&[island; 8], &[island; 8], card_name, 110_467);
+            let object = put(&mut state, owner, name, crate::state::Zone::Battlefield);
+            // Explicit neutral native projection setup, not a claim that either
+            // hidden printing has a legal paid disguise/manifest cast route.
+            state.objects.get_mut(object).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 1 << owner.index(),
+                hidden_by: None,
+                hidden_by_source: None,
+            });
+            assert!(
+                !crate::continuous_characteristics_v1::printed_abilities_active(&state, object)
+            );
+            crate::optional_trigger_public_v1::validate_state(&state).unwrap();
+            let rows = (
+                public_card(&state, object).unwrap(),
+                public_card_v2(&state, object, ObservationTextModeV2::FullArtifact).unwrap(),
+            );
+            if let Some(expected) = &public_rows {
+                assert_eq!(&rows, expected);
+            } else {
+                public_rows = Some(rows);
+            }
+            state.objects.get_mut(object).v4.face_down_v1 = None;
+            if name != "Flourishing Bloom-Kin" {
+                assert!(require_legacy_public_counter_schema(&state, object).is_err());
+                assert!(crate::optional_trigger_public_v1::validate_state(&state).is_err());
+            }
+        }
     }
 }

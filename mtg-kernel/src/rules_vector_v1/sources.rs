@@ -1100,6 +1100,14 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
     }
 
     // Static abilities the engine keys by name outside `CardDef`.
+    if crate::engine::consuming_aberration_cda_for_v1(name) {
+        walk.rec("native_all_zone_cda", json!({"power_and_toughness": "all_opponents_graveyard_physical_cards", "layer": "7a", "native_width": "checked_i32"}));
+        walk.opaque
+            .push("all-zone opponent-graveyard CDA requires its exact native successor");
+        walk.ability(CtxF::Static, |out| {
+            out.atoms.push(Atom::Opaque);
+        });
+    }
     if let Some((minimum, keywords, subtype)) =
         crate::engine::static_plus_one_counter_characteristics_for(name)
     {
