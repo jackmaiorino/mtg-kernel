@@ -40,3 +40,25 @@ dynamic error text. They grant no owning authority. A production repair still
 needs evidence of the actual rejection and must retain authenticated public
 validation plus the genuine native removal/restore contract. No SSH, Cargo,
 CI/native launch or observer was run or changed for this diagnostic.
+
+## Separate native contract repair
+
+The child repair keeps public direct resume validation and its errors/order.
+Its Hunter, Crystal and pending-presence gates are shared with the new private
+pre-removal factory, after the same full public validator. The factory selects
+only the two existing optional/ferocious predicates and only when no earlier
+native family owns resumption. A nonserializable, non-Clone single-use owner
+captures the actual pending continuation, exact row position and remaining
+stack. Native execution acquires it last, removes only that exact row, then
+consumes it in the same synchronous engine frame after checking the pending
+continuation and remaining stack. It enters the unchanged interpreter with
+the row removed, allowing genuine nested entry ownership without a borrowed
+public row. No public skip flag or restored proof exists.
+
+Both native callers retain their validation: ordinary drain checks the public
+continuation before resumption; authenticated discard checks its saved leaf
+before discarding. The new selected factory independently validates its current
+pre-pop boundary. Existing paid Quandary/Phoenix and public refusal fixtures
+remain unchanged for later authorized runtime verification. This repairs the
+source-level contract contradiction; it does not establish the observed old
+source82 failure phase or claim a runtime pass. Rust is still uncompiled/unrun.

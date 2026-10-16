@@ -10874,6 +10874,28 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    // Acquire last while the exact public row is live. All preceding owner
+    // acquisitions are read-only; only this frame's exact row removal may
+    // intervene before consuming the private optional owner below.
+    let printed_optional_owner = if spinner_owner.is_none()
+        && hunter_owner.is_none()
+        && inspiration_owner.is_none()
+        && squad_owner.is_none()
+        && frenzied_owner.is_none()
+        && gourmand_owner.is_none()
+        && crystal_owner.is_none()
+    {
+        match effect::acquire_printed_optional_resume_owner(state, &item) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return None;
+            }
+        }
+    } else {
+        None
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -10907,6 +10929,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
     } else if let Some(owner) = gourmand_owner.as_ref() {
         effect::resume_owned_vampire_gourmand_resolution(state, owner)
+    } else if let Some(owner) = printed_optional_owner {
+        effect::resume_owned_printed_optional(state, owner)
     } else {
         effect::resume_resumable_resolution(state)
     };
