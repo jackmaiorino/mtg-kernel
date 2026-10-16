@@ -227,3 +227,6 @@ fn genuine_paid_call_full_width_fellowship_storage_primitive_keeps_adjacent_inte
             .all(|x| x.is_finite()));
     }
 }
+
+#[path = "complete_family.rs"]
+mod complete_family;

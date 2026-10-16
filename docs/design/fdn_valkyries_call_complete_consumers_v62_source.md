@@ -76,3 +76,52 @@ restore, and has not been run. No CI job, runtime/performance qualification,
 consumer promotion, sampler/search/training admission or playing-strength claim
 is supplied by this source checkpoint. Existing current qualification and frozen
 Native196/197 assets remain untouched.
+
+## Three-printing current-model interaction checkpoint
+
+The source audit at `1f2260e08fbd5c97d844f9989a3d555579908f9b` found the
+complete numeric adapters already present. `GraveyardReturnSession` remains the
+closed Alesha/Familiar V61 predecessor; its sixteen-field counter schema and
+Call refusal are preserved. The existing `CallSession` is the complete
+three-printing scope. It uses V62's seventeen-field roster and retains all V61
+ordered meanings, current/departure source roles, mandatory target annotations,
+resolution-time may choices, and delayed-return programs in every issued packet.
+All ordinary action fields and public ordinals survive normalization. Its sealed
+backend still binds the entire native candidate pairs, original-index map,
+projection and inherited family projections before the model's complete packet
+comparison and original native step. No new execution API, permission or cache is
+needed for these interactions.
+
+Three additional, unrun Rust model groups in
+`current_mixed_policy_v1/call/complete_family.rs` cover gaps in the previous
+Call-only model fixtures:
+
+- Actual paid Call, Familiar and Alesha, followed by an opposing paid Shock.
+  Call's immediate return gives the new Familiar incarnation one +1/+1 counter
+  and zero revival counters. The old genuine Familiar delayed trigger must
+  resolve without returning that newer battlefield incarnation. Independent
+  persistent native and numeric streams agree after each action, serialized
+  native/public artifacts round-trip, and snapshot replay preserves the whole
+  world and both counters.
+- A genuinely paid Familiar spell is countered before entry, so Call observes no
+  battlefield death and Familiar receives no cast-entry counters. A real Alesha
+  attack enables the later Raid target. Opposing paid Abrade kills the original
+  Alesha, and Call returns her as a newer incarnation before the old Raid's may
+  choice. Numeric source facts must retain original departure LKI, not the new
+  source incarnation. Both accept and decline replay from opaque snapshots;
+  action reordering and a changed LKI value in the numeric packet refuse without
+  changing the native world or counters.
+- Independently initialized concealed hand/library worlds are built before all
+  three paid casts. Their current actor packets agree despite different private
+  worlds. All seventeen counter fields on every battlefield row round-trip.
+  Equal public packets do not authorize foreign decisions or snapshots, erased
+  actions, wrong source scope, stale generations or out-of-range ordinals.
+
+Initial lands/hands are native setup, not a production deck-reset claim. All
+three printing capabilities remain Partial; old Full-only resets and old
+consumer refusals are unchanged. No old V61 or Call Rust test body changes.
+The numeric subtree has eight existing groups plus three new groups, eleven
+source functions in total. This is source presence only. Rust compilation,
+execution, native V7/V8 process playback, production three-card deck admission,
+actual catalog/profile binding and Full qualification remain pending. Fifteen
+Python V7/V8 mock/parser tests pass; they do not execute native gameplay.
