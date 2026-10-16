@@ -1158,7 +1158,8 @@ pub(super) fn conflicts(
         .any(|event| {
             matches!(
                 event,
-                crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+                crate::event::CommittedEvent::TimeStopJournalV1 { .. }
+                    | crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
                     | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
@@ -1386,7 +1387,8 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            SphinxsTutelageDrawV1 { .. }
+            TimeStopJournalV1 { .. }
+            | SphinxsTutelageDrawV1 { .. }
             | SphinxsTutelageCollectedV1 { .. }
             | SphinxsTutelagePublishedV1 { .. }
             | SphinxsTutelageMillStartedV1 { .. }

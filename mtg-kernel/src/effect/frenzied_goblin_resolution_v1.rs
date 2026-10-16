@@ -1163,6 +1163,19 @@ fn validate_publications_with_owner(
         {
             return Err("Frenzied operation journal repeats or precedes publication".into());
         }
+        if crate::engine::time_stop_v1::disposed(state, &publication.item)? {
+            if !live.is_empty()
+                || !completed.is_empty()
+                || !payments.is_empty()
+                || !removals.is_empty()
+                || !installations.is_empty()
+                || last.is_some()
+                || owner.is_some_and(|owner| owner.expected.v4.stack_item_id == id)
+            {
+                return Err("Frenzied disposed publication has another owner/outcome".into());
+            }
+            continue;
+        }
         if let Some((end, outcome)) = completed.first() {
             if !live.is_empty()
                 || owner.is_some_and(|owner| owner.expected.v4.stack_item_id == id)

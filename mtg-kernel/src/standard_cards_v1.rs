@@ -626,6 +626,8 @@ pub enum StandardOpV1 {
     /// Add the current number of every counter kind to each declared target,
     /// through the normal placement replacements and checked native widths.
     DoubleAllCountersOnTargets,
+    /// CR 724. Only an authentic native resolving Time Stop may run this leaf.
+    EndTurnV1,
 }
 
 impl StandardOpV1 {
@@ -778,6 +780,12 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::EndTurnV1 => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         StandardOpV1::PutPlusOneCountersOnTargets => {
             crate::counter_target_effects_v1::execute(
                 crate::counter_target_effects_v1::CounterTargetEffectV1::PutPlusOne,

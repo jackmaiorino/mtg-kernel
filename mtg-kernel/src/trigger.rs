@@ -4786,17 +4786,18 @@ fn token_card_defs() -> &'static [bool] {
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
-) {
+) -> bool {
+    let mut any_changed = false;
     loop {
         // Refuse the entire sweep before legend/death/detachment mutations.
         if crate::engine::halt_on_invalid_battlefield_pt(state) {
-            return;
+            return any_changed;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
         {
             crate::standard_cards_v1::refresh_aegis_copies(state);
             if crate::engine::halt_on_invalid_battlefield_pt(state) {
-                return;
+                return any_changed;
             }
         }
         let protected_players = crate::game_outcome_protection_v1::protected_players(state);
@@ -4806,7 +4807,7 @@ fn sba_fixed_point_with_protected_triggers(
                 protected_players,
             );
         if crate::legend_rule_v1::stage(state, protected_triggers) {
-            return;
+            return true;
         }
         #[cfg(feature = "standard-magezero-fixtures")]
         {
@@ -4835,7 +4836,7 @@ fn sba_fixed_point_with_protected_triggers(
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     id,
                 ));
-                return;
+                return any_changed;
             };
             let indestructible = crate::engine::has_effective_keyword(
                 state,
@@ -5037,10 +5038,12 @@ fn sba_fixed_point_with_protected_triggers(
             }
         }
 
+        any_changed |= changed;
         if !changed {
             break;
         }
     }
+    any_changed
 }
 
 /// Matches the events already in `state.engine.event_log`, runs SBAs to a
@@ -5088,18 +5091,27 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
 
 pub(crate) fn collect_and_process_with_waiting(
     state: &mut GameState,
-    mut waiting: Vec<PendingTrigger>,
+    waiting: Vec<PendingTrigger>,
 ) -> Vec<PendingTrigger> {
+    collect_and_process_with_sba_result_v1(state, waiting).0
+}
+
+/// Same complete checkpoint, also exposing whether its SBA pass acted. Cleanup
+/// uses this native fact for CR 514.3a even when the action creates no trigger.
+pub(crate) fn collect_and_process_with_sba_result_v1(
+    state: &mut GameState,
+    mut waiting: Vec<PendingTrigger>,
+) -> (Vec<PendingTrigger>, bool, bool) {
     if state.pending_legend_rule_v1.is_some()
         || crate::engine::halt_on_invalid_battlefield_pt(state)
     {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
     waiting.extend(capture_triggers_without_sba(state));
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
     if state.engine.halted.is_some() {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
     let mut new_triggers = waiting;
 
@@ -5108,9 +5120,9 @@ pub(crate) fn collect_and_process_with_waiting(
     // graveyard here; its dies trigger belongs to this same trigger-placement
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
-    sba_fixed_point_with_protected_triggers(state, &new_triggers);
+    let sba_changed = sba_fixed_point_with_protected_triggers(state, &new_triggers);
     if state.engine.halted.is_some() || state.pending_legend_rule_v1.is_some() {
-        return Vec::new();
+        return (Vec::new(), sba_changed, !new_triggers.is_empty());
     }
     // SBA entry/replacement work can itself commit counters. Merge those
     // immediate captures before the same checkpoint's one APNAP ordering.
@@ -5130,6 +5142,7 @@ pub(crate) fn collect_and_process_with_waiting(
     // checkpoint, rather than at the earlier event-matching snapshot. The
     // targets must be legal for the trigger's own source (protection,
     // "other than this"), the same set its target decision will offer.
+    let triggered = !new_triggers.is_empty();
     new_triggers.retain(|pending| {
         let keep = crate::engine::pending_trigger_targets_can_complete(pending, state);
         if !keep {
@@ -5149,10 +5162,14 @@ pub(crate) fn collect_and_process_with_waiting(
         keep
     });
     if state.engine.halted.is_some() {
-        return Vec::new();
+        return (Vec::new(), false, false);
     }
 
-    order_apnap(new_triggers, state.active_player)
+    (
+        order_apnap(new_triggers, state.active_player),
+        sba_changed,
+        triggered,
+    )
 }
 
 /// Per-definition flag: whether an object of this definition can produce a

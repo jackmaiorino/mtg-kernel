@@ -91,6 +91,8 @@ pub(crate) use standard_spell_copy::{
     materialize_copy_snapshot, validate_copy_snapshot,
 };
 
+pub mod time_stop_v1;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EngineState {
     /// Last allocated private stack-incarnation id. Zero remains reserved for
@@ -321,6 +323,8 @@ pub struct EngineState {
         skip_serializing_if = "crate::drake_hatcher_v1::custody::LedgerV1::is_empty"
     )]
     pub drake_ledger_v1: crate::drake_hatcher_v1::custody::LedgerV1,
+    #[serde(default, skip_serializing_if = "time_stop_v1::StateV1::is_empty")]
+    pub time_stop_v1: time_stop_v1::StateV1,
 }
 
 /// Opt-in rules-presentation options that change which choices the engine
@@ -1167,6 +1171,8 @@ pub enum DiscardResume {
         path: Vec<u16>,
         original_hand: Vec<effect::EffectObjectBinding>,
     },
+    /// Native 514.1 discard, before the ending-turn owner expires 514.2 effects.
+    TimeStopCleanupV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -10063,6 +10069,14 @@ pub(crate) fn refresh_face_down_lookers(state: &mut GameState) {
     }
 }
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    if time_stop_v1::validate(state).is_err() {
+        let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
+        state.engine.halted = Some((mechanic, ObjectId(0)));
+        return Decision::Halted {
+            mechanic,
+            source: ObjectId(0),
+        };
+    }
     if crate::leyline_axe_v1::validate(state).is_err() {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
@@ -10336,6 +10350,15 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
             }
         }
 
+        match time_stop_v1::drive(state) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(_) => {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+                continue;
+            }
+        }
         if state.pending_legend_rule_v1.is_some() {
             match crate::legend_rule_v1::drain_or_decide(state) {
                 Ok(Some(decision)) => return decision,
@@ -10592,7 +10615,10 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         // from *this* turn's cleanup discard is still sitting, unresolved,
         // on the stack underneath -- a genuine active-player/turn
         // desync, not merely a missed decision.
-        if !step_grants_priority(state.step) && state.stack.is_empty() {
+        if !step_grants_priority(state.step)
+            && state.stack.is_empty()
+            && !time_stop_v1::at_priority(state)
+        {
             advance_step(state);
             continue;
         }
@@ -10796,6 +10822,10 @@ pub(crate) fn validate_pending_discard_binding(
             message,
         )
     })?;
+    if matches!(pending_discard.resume, DiscardResume::TimeStopCleanupV1) {
+        return time_stop_v1::validate_discard(state, pending_discard)
+            .map_err(|e| (ObjectId(0), e));
+    }
     match &pending_discard.resume {
         DiscardResume::FinishEffectContinuation { .. } => {
             effect::validate_resumable_discard(state, pending_discard).map_err(|message| {
@@ -10902,6 +10932,7 @@ pub(crate) fn validate_pending_discard_binding(
                 )),
             }
         }
+        DiscardResume::TimeStopCleanupV1 => unreachable!("validated native end-turn discard"),
         DiscardResume::None
         | DiscardResume::FinishSpellResolution { .. }
         | DiscardResume::FinishOptionalCost { .. } => Ok(()),
@@ -11019,6 +11050,13 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             return;
         }
     }
+    if matches!(pending_discard.resume, DiscardResume::TimeStopCleanupV1) {
+        if time_stop_v1::answer_discard(state, chosen).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        }
+        return;
+    }
     let owned_cast = if matches!(pending_discard.resume, DiscardResume::FinishCast { .. }) {
         let staged_method = state
             .stack
@@ -11068,6 +11106,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 .pop();
             let _ = resume_owned_pending_effect(state);
         }
+        DiscardResume::TimeStopCleanupV1 => unreachable!("owned native end-turn discard"),
         DiscardResume::None => collect_and_queue_triggers(state),
         DiscardResume::FinishAbilityResolution { stack_item_id } => {
             #[cfg(feature = "standard-magezero-fixtures")]
@@ -16655,6 +16694,17 @@ fn keep_spell_on_stack_until_resolved(state: &mut GameState, item: StackItem) {
 }
 
 fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
+    if let Some(item) = state.stack.last().cloned().filter(|item| {
+        item.kind == StackItemKind::Spell
+            && time_stop_v1::definition(state.objects.get(item.source).card_def)
+    }) {
+        if time_stop_v1::begin(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+        }
+        // CR 724 defers the normal post-resolution checkpoint to cleanup.
+        return ResolutionProgress::Suspended;
+    }
     let item = state
         .stack
         .last()
@@ -17880,6 +17930,14 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 /// obviously-combat-shaped divergence. See `Decision::DeclareAttackers`'s
 /// doc and the replay comparator's handling of an empty `eligible`.
 fn advance_step(state: &mut GameState) {
+    if time_stop_v1::at_priority(state) {
+        if time_stop_v1::leave_cleanup(state).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        }
+        return;
+    }
+
     if state.step == Step::Cleanup
         && (crate::zul_ashur_v1::has_active(state)
             || crate::ashroot_dispatch_v2::has_active(state)
@@ -20603,6 +20661,7 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    time_stop_v1::validate(state)?;
     crate::leyline_axe_v1::validate(state)?;
     validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;

@@ -338,6 +338,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         match (finishes, live.as_slice()) {
             (0, [candidate]) => validate_item(state, candidate)?,
             (1, []) => {}
+            (0, []) if crate::engine::time_stop_v1::disposed(state, item)? => {}
             _ => return Err("source-power activation ownership was erased or replayed".into()),
         }
     }

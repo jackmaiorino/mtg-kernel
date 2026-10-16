@@ -1694,8 +1694,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 .filter(|i| i.v4.stack_item_id == item.v4.stack_item_id)
                 .collect::<Vec<_>>();
             let live_once = matches!((lives.as_slice(), removals.as_slice()), ([live], []) if *live == item.as_ref());
-            if removals.len() > 1
-                || !(local || live_once || lives.is_empty() && removals.len() == 1)
+            let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+            if (disposed && (!lives.is_empty() || !removals.is_empty()))
+                || removals.len() > 1
+                || !(local || live_once || lives.is_empty() && removals.len() == 1 || disposed)
             {
                 return Err("Drake issued stack row lost/duplicated/replayed".into());
             }

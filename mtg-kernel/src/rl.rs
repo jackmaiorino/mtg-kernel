@@ -11466,6 +11466,11 @@ fn pending_discard_semantic_v2(
     engine::validate_pending_discard_binding(state, p)
         .map_err(|(_, error)| RlContractError(format!("invalid pending discard: {error}")))?;
     let (resume_stage, resume_source) = match &p.resume {
+        engine::DiscardResume::TimeStopCleanupV1 => {
+            return Err(RlContractError(
+                "Time Stop cleanup is outside this frozen discard protocol".into(),
+            ))
+        }
         // The resolving ability itself stays on the public stack.
         engine::DiscardResume::None
         | engine::DiscardResume::FinishAbilityResolution { .. }

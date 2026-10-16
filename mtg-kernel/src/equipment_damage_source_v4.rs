@@ -747,9 +747,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .iter()
                     .filter(|i| i.v4.stack_item_id == p.item.v4.stack_item_id)
                     .count();
+                let disposed = crate::engine::time_stop_v1::disposed(state, &p.item)?;
                 if !matches!(
-                    (live, closed_count(state, p.item.v4.stack_item_id)),
-                    (1, 0) | (0, 1)
+                    (live, closed_count(state, p.item.v4.stack_item_id), disposed),
+                    (1, 0, false) | (0, 1, false) | (0, 0, true)
                 ) {
                     return Err("equipment damage owner erased or reintroduced".into());
                 }

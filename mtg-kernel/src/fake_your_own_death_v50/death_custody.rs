@@ -596,7 +596,12 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                             return Err("Fake death resolution completed more than once".into());
                         }
                     }
-                    if ((departures == 0 || entry_borrowed_row) && rows.as_slice() != [*original])
+                    let disposed = crate::engine::time_stop_v1::disposed(state, original)?;
+                    if disposed && (departures != 0 || entry_borrowed_row || !rows.is_empty()) {
+                        return Err("Fake disposed gained trigger has another owner/outcome".into());
+                    }
+                    if ((!disposed && (departures == 0 || entry_borrowed_row))
+                        && rows.as_slice() != [*original])
                         || (departures == 1 && !entry_borrowed_row && !rows.is_empty())
                         || departures > 1
                     {

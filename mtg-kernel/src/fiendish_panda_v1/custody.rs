@@ -854,7 +854,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                     _ => None,
                 }).collect::<Vec<_>>();
                 if removals.is_empty() {
-                    if live.as_slice() != [item.as_ref()] {
+                    let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
+                    if (!disposed && live.as_slice() != [item.as_ref()])
+                        || (disposed && !live.is_empty())
+                    {
                         return Err(
                             "Panda whole full stack publication disappeared or changed".into()
                         );

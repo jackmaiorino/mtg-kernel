@@ -472,6 +472,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let live=state.stack.iter().filter(|i|i.v4.stack_item_id==p.item.v4.stack_item_id).count();
                 match (live,removed.as_slice()) {
                     (1,[])=>{},
+                    (0,[]) if crate::engine::time_stop_v1::disposed(state,&p.item)?=>{},
                     (0,[r]) if r.history_index>p.history_index && (r.history_index as usize)<state.engine.event_history.len()=>{
                         if r.outcome==OutcomeV3::Resolved {
                             if completed_item(state,p)?!=*r.item || state.engine.event_history[r.history_index as usize..].iter().any(|e|
