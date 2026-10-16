@@ -13,7 +13,9 @@ Panda capture preserve the frozen V49/Panda ordinary DTOs. NextFive mandatory
 current facts, full native counter rosters, complete owning binding, numeric tree,
 Human projection and V6 grammar carry these values. No criterion was narrowed.
 The composed candidate must also retain root's separately authored ordinary V49
-lost-Runner repair99422. This branch does not duplicate that repair.
+lost-Runner repair99422. This branch now normally merges `d748777d6db9659df7bc001d702ac0fd594fbfd0`,
+including that ordinary repair, the concrete3131 compile/source closures and
+Moon484. It does not duplicate their native implementations.
 
 Four new source groups use the real production constructors and five distinct
 40-card deck files. Each deck contains four real copies of its printing, four
@@ -45,11 +47,11 @@ All later Partial/token rows keep their exact IDs/names and refusal checks. Pyth
 reconstructs the exact former capability/deck metadata for the historical prefix
 pins, and still rejects each candidate deck when that printing is marked Partial.
 
-At this isolated base there are484 definitions and292 FDN rows. Frozen membership
+After that normal merge there are485 definitions and293 FDN rows. Frozen membership
 is286 printings plus24 token dependencies, unchanged byte-for-byte. The candidate
-pool is250 Full,26 Partial,10 Missing;27 registry Partial rows include Kykar's
-separate token. Root's later Moon484 composition changes these counts and must
-be reconciled explicitly. No registration is appended here.
+pool is250 Full,27 Partial,9 Missing;28 registry Partial rows include Kykar's
+separate token. Moon484 remains Partial and its source/consumer refusals remain.
+No registration is appended by the candidate capability change.
 
 `next_five_full_candidate_v59.json` records the exact input roster and pending
 qualification. Its catalog/profile fields are null. Existing V88 literals remain
@@ -79,7 +81,14 @@ Infernal9, Giada10, Goblin20, wide-native5, Snack-public9, Snack-meaning1,
 NextFive-public9, wide-public2, owner9, Human-label8, Human-wide1,
 Human-production1, V6wire15. These are source counts, not compiled `--list`
 evidence. Exact FQNs were retained in the parent-facing local source inventory.
-Affected Python observed132 PASS: deck97, V6 twenty, V7 eleven, V8 four.
+Affected Python observed133 PASS after composition: deck98, V6 twenty, V7 eleven, V8 four.
 Across the five touched gameplay fixture files,41 old test bodies remain byte-identical;
 only the three explicitly superseded metadata/reference bodies changed. Inventory
 and deck-preflight tests separately retain their old acceptance/refusal requirements.
+
+The five original native/public exact-printing metadata checks and Snack's paid
+helper now assert candidate Full, preserving every other cost, target, trigger,
+return, mana, token and refusal assertion. Hatcher's unrelated global catalog-size
+assertion changes452 to485 because this composed catalog has genuine appended
+Partial definitions; IDs448/449, Full/token preflight, frozen-vector refusal and
+counter-width checks remain intact. No V88 historical catalog/profile tuple changes.

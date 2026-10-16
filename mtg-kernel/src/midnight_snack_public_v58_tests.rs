@@ -109,7 +109,7 @@ fn exact_ordered_meaning_selector_characteristics_native_costs_food_and_tamper_r
     let id = crate::card_def::card_id_by_name("Midnight Snack").unwrap();
     let m = meaning::printed_meaning(id).unwrap();
     assert_eq!(id, 452);
-    assert_eq!(m.capability, CardCapability::Partial);
+    assert_eq!(m.capability, CardCapability::Full);
     assert!(!m.model_admitted);
     assert_eq!(m.printed.mana.generic, 2);
     assert_eq!(m.printed.mana.colored_pips, [crate::mana::ManaColor::B]);

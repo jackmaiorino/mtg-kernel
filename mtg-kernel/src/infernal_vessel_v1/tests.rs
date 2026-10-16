@@ -150,7 +150,7 @@ fn exact_partial_printing_paid_cast_and_lethal_damage_return_both_seats() {
     let id = card_def::card_id_by_name("Infernal Vessel").unwrap();
     assert_eq!(id, 454);
     let definition = &card_def::CARD_DEFS[usize::from(id)];
-    assert_eq!(definition.capability, CardCapability::Partial);
+    assert_eq!(definition.capability, CardCapability::Full);
     assert_eq!(definition.subtypes, [Subtype::Human, Subtype::Cleric]);
     assert_eq!((definition.power, definition.toughness), (Some(2), Some(1)));
     for actor in [PlayerId::P0, PlayerId::P1] {

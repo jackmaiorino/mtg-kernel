@@ -45,8 +45,147 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         .filter(|(characteristics, _)| characteristics.loses_abilities)
         .map(|(_, timestamp)| timestamp)
         .into_iter()
+        .chain(land_override_timestamp(state, host))
         .chain(crate::standard_creatures_v1::removal_timestamp(state, host))
         .max()
+}
+
+/// Moon uses the same exact two-way incarnation link as other Auras. Do not
+/// ask the host's effective type here: that query itself depends on this layer.
+pub(crate) fn land_override_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
+    if !cfg!(feature = "limited-fdn-fixtures") {
+        return None;
+    }
+    let object = state.objects.try_get(host)?;
+    if object.zone != Zone::Battlefield {
+        return None;
+    }
+    let link = Some(ObjectLinkV4 {
+        object: host,
+        zone_change_count: object.zone_change_count,
+    });
+    object
+        .attachments
+        .iter()
+        .copied()
+        .filter_map(|aura| {
+            let source = state.objects.try_get(aura)?;
+            if aura == host
+                || source.zone != Zone::Battlefield
+                || source.v4.attached_to != link
+                || source.v4.face_down_v1.is_some()
+                || object.attachments.iter().filter(|&&id| id == aura).count() != 1
+                || creature_override(state, aura).is_some_and(|(c, _)| c.loses_abilities)
+                || crate::standard_creatures_v1::removal_timestamp(state, aura).is_some()
+            {
+                return None;
+            }
+            let definition = CARD_DEFS.get(source.card_def as usize)?;
+            (definition.is_executable()
+                && definition.attachment == Some(AttachmentDef::AuraLandOverride))
+            .then_some(source.v4.layer_timestamp.unwrap_or(0))
+        })
+        .max()
+}
+
+/// Witness sets only Creature in layer 4. Later Moon replaces that with only
+/// Land; a later animation can subsequently add Creature/Artifact again.
+pub(crate) fn land_type_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
+    let timestamp = land_override_timestamp(state, host)?;
+    creature_override(state, host)
+        .is_none_or(|(_, other)| timestamp > other)
+        .then_some(timestamp)
+}
+
+pub(crate) fn land_colorless(state: &GameState, host: ObjectId) -> bool {
+    land_override_timestamp(state, host).is_some_and(|timestamp| {
+        creature_override(state, host).is_none_or(|(_, other)| timestamp > other)
+            && state
+                .objects
+                .get(host)
+                .v4
+                .creature_upgrade
+                .as_ref()
+                .and_then(|upgrade| upgrade.color)
+                .is_none_or(|(_, other)| timestamp > other)
+            && animation(state, host)
+                .is_none_or(|(a, other)| a.colors.is_empty() || timestamp > other)
+    })
+}
+
+pub(crate) fn later_land_animation(state: &GameState, host: ObjectId, timestamp: u64) -> bool {
+    state
+        .objects
+        .get(host)
+        .v4
+        .creature_upgrade
+        .as_ref()
+        .and_then(|upgrade| upgrade.temporary_creature)
+        .is_some_and(|(_, _, other)| other > timestamp)
+}
+
+/// The granted ability survives only the later layer-6 ability removals. It
+/// is independent of the original card's printed mana abilities and amounts.
+pub(crate) fn land_grants_colorless_mana(state: &GameState, host: ObjectId) -> bool {
+    land_override_timestamp(state, host)
+        .is_some_and(|timestamp| removal_timestamp(state, host) == Some(timestamp))
+}
+
+pub(crate) fn is_land_subtype(id: u16) -> bool {
+    use crate::card_def::Subtype as S;
+    matches!(
+        S::from_stable_id(id),
+        Some(
+            S::Forest
+                | S::Island
+                | S::Mountain
+                | S::Plains
+                | S::Swamp
+                | S::Gate
+                | S::Urzas
+                | S::Tower
+                | S::PowerPlant
+                | S::Mine
+                | S::Desert
+                | S::Sphere
+                | S::Town
+        )
+    )
+}
+
+/// Existing observations do not describe the new type/ability/mana override.
+/// Select only a face the viewer actually knows. Unknown opposing hands,
+/// libraries and neutral face-down sources never select this refusal.
+pub(crate) fn refuse_land_override_consumer(
+    state: &GameState,
+    viewer: crate::ids::PlayerId,
+) -> Result<(), String> {
+    let selected = state.objects.iter().any(|(id, object)| {
+        object.v4.face_down_v1.is_none()
+            && (matches!(
+                object.zone,
+                Zone::Battlefield | Zone::Graveyard | Zone::Exile | Zone::Stack | Zone::Command
+            ) || (object.zone == Zone::Hand
+                && (object.owner == viewer
+                    || state
+                        .known_hand_cards(viewer, object.owner)
+                        .iter()
+                        .any(|entry| {
+                            entry.object == id
+                                && entry.zone_change_count == object.zone_change_count
+                        }))))
+            && CARD_DEFS
+                .get(usize::from(object.card_def))
+                .is_some_and(|def| def.attachment == Some(AttachmentDef::AuraLandOverride))
+    });
+    if selected {
+        Err(
+            "land-only Aura characteristics and granted mana require a complete consumer successor"
+                .into(),
+        )
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn printed_abilities_active(state: &GameState, source: ObjectId) -> bool {

@@ -210,6 +210,8 @@ pub enum StandardTargetV1 {
     UpToTwoControlledArtifactsOrCreatures,
     /// One physical creature card put into any graveyard during this turn.
     CreatureCardPutIntoGraveyardThisTurnV1,
+    /// Imprisoned in the Moon's exact battlefield union.
+    CreatureLandOrPlaneswalkerV1,
 }
 
 impl StandardTargetV1 {
@@ -356,6 +358,9 @@ pub(crate) fn target_matches(
     }
     let has = |card_type| crate::engine::object_has_type(state, object, card_type);
     match target {
+        StandardTargetV1::CreatureLandOrPlaneswalkerV1 => {
+            has(CardType::Creature) || has(CardType::Land) || has(CardType::Planeswalker)
+        }
         StandardTargetV1::OpponentNonlandPermanentManaValueAtMost(maximum) => {
             live.controller != controller
                 && !has(CardType::Land)

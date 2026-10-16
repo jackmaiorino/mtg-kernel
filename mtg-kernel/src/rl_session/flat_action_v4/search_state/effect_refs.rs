@@ -1022,6 +1022,7 @@ pub(super) fn conflicts(
                 e,
                 crate::event::CommittedEvent::DrakeJournalV1 { .. }
                     | crate::event::CommittedEvent::DrakeHistoryRefV1 { .. }
+                    | crate::event::CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
             )
         })
         || crate::bloodthirsty_conqueror_v49::has_history(state)
@@ -1208,6 +1209,7 @@ pub(super) fn conflicts(
         match event {
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
+            | ConquerorGainReplayBorrowV49 { .. }
             | AjaniJournalV42 { .. }
             | StromkirkEndStepObserversV1 { .. }
             | StromkirkTriggerCaptureV2 { .. }

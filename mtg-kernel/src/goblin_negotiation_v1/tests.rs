@@ -113,13 +113,13 @@ fn exact_partial_printing_reuses_existing_goblin_dependency() {
     let id = card_def::card_id_by_name("Goblin Negotiation").unwrap();
     assert_eq!(id, 456);
     let d = &CARD_DEFS[usize::from(id)];
-    assert_eq!(d.capability, CardCapability::Partial);
+    assert_eq!(d.capability, CardCapability::Full);
     assert_eq!(d.types, [CardType::Sorcery]);
     assert_eq!(d.colors, [ManaColor::R]);
     assert_eq!((d.mana_value, d.cost.generic, d.cost.x_count), (2, 0, 1));
     assert_eq!(d.cost.pips, [Pip::Colored(ManaColor::R); 2]);
     assert_eq!(d.target_spec, TargetSpec::Creature);
-    assert!(card_def::preflight_fully_supported_deck(&[id]).is_err());
+    card_def::preflight_fully_supported_deck(&[id]).unwrap();
     let token = &CARD_DEFS[usize::from(card_def::card_id_by_name("Goblin Token").unwrap())];
     assert!(token.is_token && token.has_full_support());
     assert_eq!(token.subtypes, [Subtype::Goblin]);

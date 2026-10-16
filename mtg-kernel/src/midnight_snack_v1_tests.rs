@@ -49,7 +49,7 @@ pub(crate) fn paid(actor: PlayerId) -> (GameState, ObjectId) {
     let source = put(&mut s, actor, "Midnight Snack", Zone::Hand);
     assert_eq!(s.objects.get(source).card_def, 452);
     assert!(definition(452));
-    assert!(crate::card_def::preflight_fully_supported_deck(&[452]).is_err());
+    crate::card_def::preflight_fully_supported_deck(&[452]).unwrap();
     mana(&mut s, actor, "Swamp", 3);
     engine::step(&mut s, Action::CastSpell(source)).unwrap();
     engine::advance_until_decision(&mut s);

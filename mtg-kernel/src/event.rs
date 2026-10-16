@@ -1753,6 +1753,12 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
+    /// Conditional history-only replay context for the original V49 gain.
+    /// Frozen V49/Panda journal and world payloads are unchanged.
+    ConquerorGainReplayBorrowV49 {
+        input_history_index: u64,
+        borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
+    },
     /// Engine-produced pre-departure power for one exact Alesha battlefield
     /// incarnation. Structural validation binds this receipt to the matching
     /// immediately preceding ZoneChange and effect payload. Because native
@@ -4736,11 +4742,15 @@ fn aberration_definition_v1(id: u16) -> bool {
 /// Select only actual battlefield characteristics, including suppressed forms
 /// and reversible native copies. This is a cost guard, not an execution permit.
 pub(crate) fn has_potential_aberration_battlefield_v1(state: &GameState) -> bool {
-    state
-        .objects
-        .iter()
-        .any(|(_, o)| o.zone == Zone::Battlefield && aberration_definition_v1(o.card_def))
-        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
+    state.objects.iter().any(|(_, o)| {
+        o.zone == Zone::Battlefield
+            && (aberration_definition_v1(o.card_def)
+                || crate::card_def::CARD_DEFS
+                    .get(usize::from(o.card_def))
+                    .is_some_and(|def| {
+                        def.attachment == Some(crate::card_def::AttachmentDef::AuraLandOverride)
+                    }))
+    }) || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
 }
 fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> bool {
     if !events.iter().any(|event| {

@@ -946,6 +946,22 @@ fn gather_sources_for_spell_restrictions_v1(
     let mut sources = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         let obj = state.objects.get(id);
+        if crate::continuous_characteristics_v1::land_grants_colorless_mana(state, id) {
+            if !obj.tapped
+                && !crate::engine::creature_summoning_sick(
+                    state,
+                    id,
+                    &crate::card_def::CARD_DEFS[obj.card_def as usize],
+                )
+            {
+                sources.push(ManaSource {
+                    id,
+                    choices: vec![ManaColor::C],
+                    yield_per_tap: 1,
+                });
+            }
+            continue;
+        }
         let granted_colors = crate::standard_legends_v1::katilda_mana_colors(state, id);
         if obj.tapped
             || (granted_colors.is_empty()

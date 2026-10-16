@@ -132,6 +132,7 @@ pub fn producer_sha256() -> String {
             include_str!("banner_observation_v1.rs"),
             include_str!("inspiration_observation_v1.rs"),
             include_str!("fishing_pole_observation_v39.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("effect/harvester_v1.rs"),
@@ -153,6 +154,12 @@ pub fn producer_sha256() -> String {
             include_str!("fiendish_panda_v1/custody.rs"),
             include_str!("life_gain_turn_v1.rs"),
             include_str!("midnight_snack_v1.rs"),
+            include_str!("continuous_characteristics_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("event.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());

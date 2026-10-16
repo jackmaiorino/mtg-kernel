@@ -1600,6 +1600,7 @@ fn optional_cost_facts(cost: crate::card_def::OptionalAdditionalCostDef, out: &m
 
 fn attachment_facts(aura: AttachmentDef, out: &mut Collector) {
     match aura {
+        AttachmentDef::AuraLandOverride => out.atoms.push(Atom::Opaque),
         AttachmentDef::AuraArtifactAnimation(animation) => {
             out.effect(EffectAtom::new(EvF::Attach).obj(ObjF::Typed(CardTypeF::Artifact)));
             out.effect(

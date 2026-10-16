@@ -185,7 +185,7 @@ fn exact_partial_legendary_printing_and_paid_entries_count_only_prior_angels_bot
     let id = card_def::card_id_by_name("Giada, Font of Hope").unwrap();
     assert_eq!(id, 455);
     let definition = &card_def::CARD_DEFS[usize::from(id)];
-    assert_eq!(definition.capability, CardCapability::Partial);
+    assert_eq!(definition.capability, CardCapability::Full);
     assert_eq!(definition.subtypes, [Subtype::Angel]);
     assert_eq!(definition.supertypes, [Supertype::Legendary]);
     assert_eq!(definition.keywords, Keywords::FLYING | Keywords::VIGILANCE);

@@ -51,6 +51,7 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("rl_session/flat_action_v4/search_state/sampler.rs"),
             include_str!("../build.rs"),
+            include_str!("linked_aura_operation_v1.rs"),
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
             include_str!("standard_creatures_v1.rs"),
@@ -70,8 +71,11 @@ pub fn producer_sha256() -> String {
             include_str!("effect/standard_exile.rs"),
             include_str!("snack_wide_life_v59.rs"),
             include_str!("snack_wide_life_v59/custody.rs"),
-            include_str!("linked_aura_operation_v1.rs"),
             include_str!("midnight_snack_v1.rs"),
+            include_str!("mana.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("rl.rs"),
         ] {
             h.update([0]);
             h.update(text.as_bytes());

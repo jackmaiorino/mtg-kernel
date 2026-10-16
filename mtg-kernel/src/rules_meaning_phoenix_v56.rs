@@ -127,6 +127,7 @@ pub fn producer_sha256() -> String {
             include_str!("continuous_characteristics_v1.rs"),
             include_str!("../build.rs"),
             include_str!("../../data/limited/fdn_v1/cards_v1.json"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
             include_str!("planeswalker_v1.rs"),
@@ -151,6 +152,9 @@ pub fn producer_sha256() -> String {
             include_str!("fiendish_panda_v1/custody.rs"),
             include_str!("life_gain_turn_v1.rs"),
             include_str!("midnight_snack_v1.rs"),
+            include_str!("legend_rule_v1.rs"),
+            include_str!("doubling_season_v48.rs"),
+            include_str!("rl.rs"),
         ] {
             h.update((source.len() as u64).to_le_bytes());
             h.update(source.as_bytes());

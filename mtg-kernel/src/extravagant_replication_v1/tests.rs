@@ -172,8 +172,8 @@ fn exact_partial_printing_and_native_target_contract_remain_unadmitted() {
     let id = card_def::card_id_by_name("Extravagant Replication").unwrap();
     assert_eq!(id, 453);
     let d = &card_def::CARD_DEFS[id as usize];
-    assert_eq!(d.capability, CardCapability::Partial);
-    assert!(!d.has_full_support());
+    assert_eq!(d.capability, CardCapability::Full);
+    assert!(d.has_full_support());
     assert!(d.is_castable());
     assert_eq!(d.types, [card_def::CardType::Enchantment]);
     assert_eq!(d.mana_value, 6);
@@ -182,7 +182,7 @@ fn exact_partial_printing_and_native_target_contract_remain_unadmitted() {
         d.cost.pips,
         &[crate::mana::Pip::Colored(crate::mana::ManaColor::U); 2]
     );
-    assert!(card_def::preflight_fully_supported_deck(&[id]).is_err());
+    card_def::preflight_fully_supported_deck(&[id]).unwrap();
     assert_eq!(
         crate::trigger::trigger_target_spec(id),
         card_def::TargetSpec::AnotherControlledNonlandPermanent
