@@ -2,10 +2,12 @@
 
 This checkpoint adds a reusable definition-owned optional non-target sacrifice
 of one nonland permanent. The unpaid program stays bound to its exact printed
-path. It does not register a card, trigger, reference deck, test module, public
-consumer, or model recipe. The unregistered `perforating_artist_v1.rs` contains
-the printed Raid program and complete native definition predicate for later
-composition. Existing definitions and the 459-entry registry remain unchanged.
+path. It does not register a card, reference deck, test module, public consumer,
+or model recipe. The inline `effect::perforating_artist_v1` module contains the
+printed Raid program, complete native definition predicate, closed public stage
+validator, definition-gated trigger dispatch, and separate consumed native row
+owner. Existing definitions and the 459-entry registry remain unchanged. The
+Artist selector is false while its complete printing is absent.
 
 The input is frozen FDN124, Scryfall printing
 `72980409-53f0-43c1-965e-06f22e7bb608`, Oracle
@@ -37,12 +39,27 @@ payment tree. The disabled rules-vector meaning remains Opaque. There is no
 Full promotion, catalog/profile hash, DTO retag, or consumer permission change.
 All production primitive code is inline in already source-hashed effect.rs.
 
+The closed Artist validator checks the exact captured source definition and
+controller, printed root, End step and true Raid history. Later control,
+suppression, departure and reentry do not replace the captured controller.
+Public boundaries are exactly the initial printed root, the waiting sacrifice
+or discard prompt, and their answered frames and guards. The existing generic
+validators still check complete rosters, selection bindings and answer content.
+Consequences execute synchronously, so an empty frame list, false Raid branch,
+or exposed unpaid program is not a valid public restore boundary.
+
+A separate move-only row owner is created before actual native removal. It
+captures the full original row, exact position, full remaining stack, and, for
+resumption, the entire pending continuation. Consumption requires an exact
+match. Initial public begin refuses the new payment tree without its native
+owner. Both owned begin and resume lend the authentic removed row back only
+for the unchanged full public resume validator and reducer. The entire loaned
+stack must remain unchanged; the original remaining stack is restored on both
+Ok and Err before returning. Spinner and Quandary ownership is unchanged.
+
 The later registration must first compose actual Valkyrie's Call459, then
-append Artist460. Before enabling Artist, add its exact closed stage validator
-and a separate move-only native stack-row handoff owner. In particular the
-conditional false path, erased or duplicated frames, direct public resume,
-and the nested discard/life continuation must not become forged executable
-stages. This checkpoint does not claim those integration stages are admitted.
+append Artist460. This checkpoint does not claim live Artist integration or
+paid coverage before actual printing registration.
 
 Required registration coverage is genuine paid {1}{B}{R} casting and actual
 attack/end-step trigger capture, both seats, no attack, no eligible permanent,

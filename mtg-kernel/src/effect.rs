@@ -217,6 +217,418 @@ mod nonland_sacrifice_payment_v1 {
         Ok(())
     }
 }
+
+/// Definition-gated Artist stages and move-only native row custody. Inline
+/// executable source keeps existing effect.rs producer closures complete.
+pub(crate) mod perforating_artist_v1 {
+    use super::*;
+    use crate::{
+        card_def::{CardCapability, Subtype, TargetSpec, CARD_DEFS},
+        mana::Pip,
+        state::StackItemKind,
+        trigger::{TriggerCondition, TriggeredAbilityDef},
+    };
+
+    /// The captured trigger controller supplies Controller/Opponent through ExecCtx.
+    /// Recheck Raid at resolution, then offer the affected opponent's non-target
+    /// sacrifice, followed by their private discard and finally three life loss.
+    pub(crate) fn raid() -> EffectOp {
+        EffectOp::Conditional {
+            cond: EffectCond::ControllerAttackedThisTurn,
+            then: Box::new(EffectOp::MaySacrificeNonlandOtherwiseV1 {
+                player: PlayerRef::Opponent,
+                unpaid: Box::new(EffectOp::MayDiscardCardOtherwiseV1 {
+                    player: PlayerRef::Opponent,
+                    unpaid: Box::new(EffectOp::LoseLife {
+                        player: PlayerRef::Opponent,
+                        amount: 3,
+                    }),
+                }),
+            }),
+            else_: Box::new(EffectOp::Sequence(Vec::new())),
+        }
+    }
+
+    pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
+        d.name == "Perforating Artist"
+            && matches!(d.capability, CardCapability::Partial | CardCapability::Full)
+            && d.types == [CardType::Creature]
+            && d.subtypes == [Subtype::Devil]
+            && d.supertypes.is_empty()
+            && d.cost.generic == 1
+            && d.cost.x_count == 0
+            && d.cost.pips == [Pip::Colored(ManaColor::B), Pip::Colored(ManaColor::R)]
+            && d.colors == [ManaColor::B, ManaColor::R]
+            && d.mana_value == 3
+            && d.power == Some(3)
+            && d.toughness == Some(2)
+            && !d.is_land
+            && !d.is_token
+            && d.keywords == Keywords::DEATHTOUCH
+            && d.target_spec == TargetSpec::None
+            && d.alt_cost.is_none()
+            && d.kicker_cost.is_none()
+            && d.additional_cost.is_none()
+            && d.flashback.is_none()
+            && d.ward_cost.is_none()
+            && d.starting_loyalty.is_none()
+            && d.object_name == "Perforating Artist"
+            && !d.spell_cannot_be_countered
+            && !d.records_mana_spent
+            && d.generic_cost_reduction.is_none()
+            && d.equipment.is_none()
+            && d.enters_with_plus_one_counters.is_none()
+            && d.controlled_counter_keyword.is_none()
+            && d.game_outcome_protection_v1.is_none()
+            && d.controlled_creature_grant.is_none()
+            && (d.mana_ability)().is_none()
+            && d.produces_mana.is_empty()
+            && d.plot_cost.is_none()
+            && d.madness_cost.is_none()
+            && d.escape.is_none()
+            && d.mode2.is_none()
+            && d.mode3.is_none()
+            && d.additional_modes.is_empty()
+            && d.kicked_target_spec.is_none()
+            && d.mana_ability_choices.is_empty()
+            && !d.enters_battlefield_tapped
+            && d.enters_battlefield_tapped_unless.is_none()
+            && d.mana_ability_def.is_none()
+            && d.minimum_blockers == 1
+            && d.omen.is_none()
+            && d.bestow.is_none()
+            && d.adventure.is_none()
+            && !d.mana_ability_includes_chosen_color
+            && d.as_enters_choose_color_other_than.is_none()
+            && d.additional_mana_abilities.is_empty()
+            && d.additional_mana_ability_conditions.is_empty()
+            && d.attachment.is_none()
+            && d.transform_face.is_none()
+            && d.saga.is_none()
+            && d.optional_additional_cost.is_none()
+            && !d.changeling
+            && !d.delve
+            && !d.cant_be_blocked_by_monarchs_creatures
+            && d.conditional_tap_yield.is_none()
+            && d.enters_tapped_unless_controller.is_none()
+            && d.restricted_mana_abilities.is_empty()
+            && d.animation.is_none()
+            && d.activated_ability_generic_reductions.is_empty()
+            && d.combat_static_rules == crate::card_def::CombatStaticRulesDef::NONE
+            && d.as_enters_color_choice_v1.is_none()
+            && d.chosen_color_creature_boost_v1.is_none()
+            && d.damage_replacement_v1.is_none()
+            && d.starting_life_self_bonuses_v1.is_empty()
+            && d.source_type_hexproof_v1.is_none()
+            && d.other_controlled_nontoken_death_v1.is_none()
+            && d.activated_abilities.is_empty()
+            && d.token_counter_replacement_v48.is_none()
+            && (d.spell_effect)()
+                == Some(EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                })
+    }
+
+    static TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+        condition: TriggerCondition::BeginningControllerEndStepAfterControllerAttackedThisTurn,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        face_index: 0,
+        effect: raid,
+    }];
+
+    pub(crate) fn triggers(card: &crate::card_def::CardDef) -> &'static [TriggeredAbilityDef] {
+        if cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) && exact_definition(card)
+        {
+            &TRIGGERS
+        } else {
+            &[]
+        }
+    }
+
+    fn definition(id: u16) -> bool {
+        let Some(card) = CARD_DEFS.get(usize::from(id)) else {
+            return false;
+        };
+        let expected = triggers(card);
+        let actual = crate::trigger::triggers_for(id);
+        expected.len() == 1
+            && actual.len() == 1
+            && actual[0].condition == expected[0].condition
+            && actual[0].home_zone == Zone::Battlefield
+            && actual[0].face_index == 0
+            && !actual[0].intervening_if_kicked
+            && !actual[0].intervening_if_controls_another_source_card
+            && (actual[0].effect)() == raid()
+    }
+
+    fn selected(item: &StackItem) -> bool {
+        item.kind == StackItemKind::TriggeredAbility
+            && item
+                .v4
+                .ability_source_contract
+                .is_some_and(|source| definition(source.card_def))
+    }
+
+    /// No pool contains Artist yet. Even a new-shaped forged tree does not
+    /// activate this selector until the real complete printing is registered.
+    pub(super) fn requires_stage(pending: &EffectContinuation) -> bool {
+        if !CARD_DEFS.iter().any(|card| !triggers(card).is_empty()) {
+            return false;
+        }
+        selected(&pending.resolving_item)
+            || pending
+                .resolving_item
+                .inline_effect
+                .as_ref()
+                .is_some_and(contains_nonland_sacrifice_payment_v1)
+            || pending
+                .frames
+                .iter()
+                .any(|frame| matches!(frame, EffectFrame::NonlandSacrificePaymentV1 { .. }))
+            || matches!(
+                pending.choice.as_ref(),
+                Some(PendingEffectChoice::SelectTargets {
+                    purpose: EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { .. },
+                    ..
+                })
+            )
+    }
+
+    fn validate_origin(state: &GameState, item: &StackItem) -> Result<(), String> {
+        let source = item
+            .v4
+            .ability_source_contract
+            .ok_or("Artist lost captured trigger source")?;
+        if !selected(item)
+            || item.inline_effect.as_ref() != Some(&raid())
+            || source.source != item.source
+            || source.controller != item.controller
+            || source.zone != Zone::Battlefield
+            || !item.targets.is_empty()
+            || !item.v4.target_contracts.is_empty()
+            || item.v4.target_spec.is_some()
+            || state.step != crate::state::Step::End
+            || !state.player_attacked_this_turn_v1(source.controller)
+        {
+            return Err("Artist lost its printed Raid root or original trigger controller".into());
+        }
+        // Later control, suppression, departure or reentry must not replace
+        // the captured controller. The native historical contract owns LKI.
+        crate::engine::validate_historical_ability_source_contract(state, source)
+    }
+
+    pub(super) fn validate_continuation(
+        state: &GameState,
+        pending: &EffectContinuation,
+    ) -> Result<(), String> {
+        if !requires_stage(pending) {
+            return Ok(());
+        }
+        validate_origin(state, &pending.resolving_item)?;
+        if pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
+            || pending.ctx.controller != pending.resolving_item.controller
+        {
+            return Err("Artist execution changed the captured source/controller".into());
+        }
+        let root = validated_definition_owned_root_effect(state, pending)?;
+        let EffectOp::Conditional {
+            then: sacrifice, ..
+        } = root.as_ref()
+        else {
+            return Err("Artist lost printed conditional root".into());
+        };
+        let EffectOp::MaySacrificeNonlandOtherwiseV1 {
+            unpaid: discard, ..
+        } = sacrifice.as_ref()
+        else {
+            return Err("Artist lost printed sacrifice stage".into());
+        };
+        let EffectOp::MayDiscardCardOtherwiseV1 { unpaid: loss, .. } = discard.as_ref() else {
+            return Err("Artist lost printed discard stage".into());
+        };
+        let payer = pending.resolving_item.controller.opponent();
+        let sacrifice_choice = |choice: &nonland_sacrifice_payment_v1::ChoiceV1| {
+            choice.path.as_slice() == [0]
+                && choice.player == payer
+                && choice.player_ref == PlayerRef::Opponent
+                && choice.unpaid == *discard
+        };
+        let discard_choice = |choice: &discard_payment_v1::DiscardPaymentChoiceV1| {
+            choice.path.as_slice() == [0, 0]
+                && choice.player == payer
+                && choice.player_ref == PlayerRef::Opponent
+                && choice.unpaid == *loss
+        };
+        match (
+            pending.choice.as_ref(),
+            pending.answered_choice_guard.as_ref(),
+        ) {
+            (None, None) if matches!(pending.frames.as_slice(), [EffectFrame::Program { op, path }] if op == root.as_ref() && path.is_empty()) => {
+                Ok(())
+            }
+            (Some(PendingEffectChoice::SelectTargets { purpose, .. }), None)
+                if pending.frames.is_empty() =>
+            {
+                match purpose {
+                    EffectTargetSelectionPurpose::NonlandSacrificePaymentV1 { choice }
+                        if sacrifice_choice(choice) =>
+                    {
+                        Ok(())
+                    }
+                    EffectTargetSelectionPurpose::DiscardPaymentV1 { choice }
+                        if discard_choice(choice) =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err("Artist waiting payment stage changed".into()),
+                }
+            }
+            (None, Some(EffectAnsweredChoiceGuard::StandardSelection { frame }))
+                if pending.frames.len() == 1 && pending.frames.first() == Some(frame.as_ref()) =>
+            {
+                match frame.as_ref() {
+                    EffectFrame::NonlandSacrificePaymentV1 { choice, .. }
+                        if sacrifice_choice(choice) =>
+                    {
+                        Ok(())
+                    }
+                    EffectFrame::DiscardPaymentV1 { choice, .. } if discard_choice(choice) => {
+                        Ok(())
+                    }
+                    _ => Err("Artist answered payment stage changed".into()),
+                }
+            }
+            // Final sacrifice/discard/life consequences run synchronously.
+            // There is no public empty/false/unpaid-program boundary to restore.
+            _ => Err("Artist lost its exact closed public continuation stage".into()),
+        }
+    }
+
+    /// Created against the actual pre-removal row and consumed synchronously.
+    /// No Clone, serde, public fields or restored representation supplies it.
+    pub(crate) struct RowOwnerV1 {
+        item: StackItem,
+        pending: Option<EffectContinuation>,
+        position: usize,
+        remaining_stack: Vec<StackItem>,
+    }
+
+    fn capture(
+        state: &GameState,
+        item: &StackItem,
+        pending: Option<EffectContinuation>,
+    ) -> Result<RowOwnerV1, String> {
+        let position =
+            crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+                .ok_or("Artist native handoff lost its exact public row")?;
+        let mut remaining_stack = state.stack.clone();
+        if remaining_stack.remove(position) != *item
+            || remaining_stack
+                .iter()
+                .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            return Err("Artist native handoff changed or duplicated its public row".into());
+        }
+        Ok(RowOwnerV1 {
+            item: item.clone(),
+            pending,
+            position,
+            remaining_stack,
+        })
+    }
+
+    pub(crate) fn acquire_begin(
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<RowOwnerV1>, String> {
+        if !selected(item) {
+            return Ok(None);
+        }
+        if state.engine.pending_effect.is_some() {
+            return Err("Artist native begin found another pending resolution".into());
+        }
+        validate_origin(state, item)?;
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+        Ok(Some(capture(state, item, None)?))
+    }
+
+    pub(crate) fn acquire_resume(
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<RowOwnerV1>, String> {
+        let Some(pending) = state.engine.pending_effect.as_ref() else {
+            return Ok(None);
+        };
+        if !requires_stage(pending) {
+            return Ok(None);
+        }
+        crate::effect::validate_pending_effect_choice(state)?;
+        if pending.resolving_item != *item || pending.choice.is_some() {
+            return Err("Artist native resume lost its exact ready continuation".into());
+        }
+        Ok(Some(capture(state, item, Some(pending.clone()))?))
+    }
+
+    fn run_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+        ctx: Option<&ExecCtx>,
+    ) -> Result<ResumableProgress, String> {
+        if state.engine.pending_effect != owner.pending
+            || state.stack != owner.remaining_stack
+            || ctx.is_some() != owner.pending.is_none()
+        {
+            return Err("Artist private row handoff changed before consumption".into());
+        }
+        if let Some(ctx) = ctx {
+            validate_resumable_program(&raid())?;
+            state.engine.pending_effect = Some(EffectContinuation {
+                resolving_item: owner.item.clone(),
+                ctx: ctx.clone(),
+                frames: vec![EffectFrame::Program {
+                    op: raid(),
+                    path: vec![],
+                }],
+                choice: None,
+                answered_choice_guard: None,
+            });
+        }
+        state.stack.insert(owner.position, owner.item.clone());
+        let loaned_stack = state.stack.clone();
+        // The unchanged public boundary performs every common, printed-stage,
+        // roster and answered-guard check with the authentic original row.
+        let result = super::resume_resumable_resolution(state);
+        // Closed Artist consequences do not edit the stack. Always remove
+        // the temporary loan, including a validation or reducer error.
+        let returned_stack = std::mem::replace(&mut state.stack, owner.remaining_stack);
+        if returned_stack != loaned_stack {
+            return Err("Artist private stack changed before row loan return".into());
+        }
+        result
+    }
+
+    pub(crate) fn begin_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+        ctx: &ExecCtx,
+    ) -> Result<ResumableProgress, String> {
+        run_owned(state, owner, Some(ctx))
+    }
+
+    pub(crate) fn resume_owned(
+        state: &mut GameState,
+        owner: RowOwnerV1,
+    ) -> Result<ResumableProgress, String> {
+        run_owned(state, owner, None)
+    }
+}
+
 pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
@@ -3496,6 +3908,9 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if contains_nonland_sacrifice_payment_v1(op) {
+        return Err("nonland sacrifice root requires its distinct native pre-removal owner".into());
+    }
     begin_resumable_resolution_with_inspiration_owner(op, ctx, resolving_item, state, None)
 }
 
@@ -3568,6 +3983,7 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
         nonland_copy_v1::requires_stage(pending)
             || requires_ferocious_payment_stage(pending)
             || requires_printed_optional_trigger_stage(state, pending)
+            || perforating_artist_v1::requires_stage(pending)
     }) {
         validate_pending_effect_choice(state)?;
     }
@@ -8721,6 +9137,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
+    perforating_artist_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
     validate_answered_choice_guard(state, pending)?;
     nonland_copy_v1::validate_boundary(state, pending)?;
