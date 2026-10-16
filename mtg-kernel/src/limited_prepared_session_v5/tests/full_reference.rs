@@ -1,4 +1,4 @@
-//! Prospective Full-reference source coverage, entirely uncompiled/unrun.
+//! Prospective Full-reference coverage through paid three-owner gameplay.
 //! Only public reset and issued actions mutate the three independent owners.
 use super::*;
 use crate::human_bo3_v1::prepared_v57::{HumanPreparedProjectorV57, HumanPreparedSessionV57};
@@ -270,10 +270,22 @@ fn seven_actual_reference_full_resets_paid_casts_human_wire_and_owning_replays_b
                     })
                     .is_err());
                 }
-                445 | 447 => {
+                445 => {
                     assert!(!crate::rules_vector_v1::sources::card_rules(printing)
                         .opaque_rules
                         .is_empty());
+                }
+                447 => {
+                    use crate::rules_vector_v1::facets::{Atom, CtxF};
+                    let rules = crate::rules_vector_v1::sources::card_rules(printing);
+                    // Readable trigger/program data carries opaque facets;
+                    // opaque_rules separately lists rules implemented only in code.
+                    assert!(rules.abilities.iter().any(|ability| {
+                        ability.ctx == CtxF::Trigger && ability.atoms.contains(&Atom::Opaque)
+                    }));
+                    let triggers = rules.record["trigger"].as_array().unwrap();
+                    assert_eq!(triggers.len(), 1);
+                    assert_eq!(triggers[0]["condition"], "OpponentCastsSpellV1");
                 }
                 _ => unreachable!(),
             }

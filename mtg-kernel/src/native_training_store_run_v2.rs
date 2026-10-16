@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 480);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 481);
         assert_eq!(
             partials,
             [
@@ -9043,6 +9043,7 @@ mod tests {
                 (477, "Sphinx of Forgotten Lore"),
                 (478, "Omniscience"),
                 (479, "Abyssal Harvester"),
+                (480, "Progenitus"),
             ]
         );
         let mut playable = Vec::new();
