@@ -26030,7 +26030,7 @@ impl NativeExecutionOwnerV1 {
             ctx: pending.ctx.clone(),
             root,
             remaining_stack: state.stack.clone(),
-            saved_pending: Some(Box::new(pending.clone())),
+            saved_pending: None,
         })
     }
 }
@@ -26102,6 +26102,7 @@ pub(crate) fn acquire_top_batch_resume_v1(
     let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
         .ok_or("top-card cast resume row absent")?;
     let mut native = NativeExecutionOwnerV1::from_validated_pending(state)?;
+    native.saved_pending = Some(Box::new(pending.clone()));
     if native.remaining_stack.remove(position) != *item
         || native
             .remaining_stack
