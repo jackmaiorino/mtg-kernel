@@ -3793,6 +3793,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
+        "Curator of Destinies" if crate::effect::curator_v1::definition(card_def) => {
+            &crate::effect::curator_v1::TRIGGERS
+        }
         "Solemn Simulacrum" => &SOLEMN_SIMULACRUM_TRIGGERS,
         "Campus Guide" => &CAMPUS_GUIDE_TRIGGERS,
         "Adventuring Gear" => &ADVENTURING_GEAR_TRIGGERS,
@@ -5137,6 +5140,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::effect::curator_v1::collect(state, events) {
+        Ok(p) => new_triggers.extend(p),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::event::collect_copied_token_end_step_v1(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
@@ -5554,6 +5567,9 @@ fn triggers_from_events(
                 }
             }
             for (ability_index, def) in triggers_for(obj.card_def).iter().enumerate() {
+                if crate::effect::curator_v1::definition(obj.card_def) {
+                    continue;
+                }
                 if crate::fiendish_panda_v1::owns_definition(obj.card_def) {
                     continue; // Both roots are captured at actual commit, before later operations/SBA.
                 }

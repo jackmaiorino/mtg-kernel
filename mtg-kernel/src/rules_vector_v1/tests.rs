@@ -906,6 +906,7 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    "Curator of Destinies",
     "Lathril, Blade of the Elves",
     // Native own-cast template is walked; reveal-until mill remains opaque.
     "Consuming Aberration",
@@ -1161,6 +1162,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/curator_v1.rs", "Curator of Destinies", "closed native entry/private-pile printing selector; frozen V1 Opaque"),
     ("event.rs", "Lathril, Blade of the Elves", "positive final combat damage capture; token root remains opaque in frozen v1"),
     ("effect.rs", "Elf Warrior Token", "private exact captured Lathril token batch; frozen v1 root opaque"),
     ("effect.rs", "Blasphemous Edict", "definition-owned APNAP simultaneous sacrifice root remains opaque in frozen V1; conditional mana cost is extracted"),
@@ -1433,6 +1435,10 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    (
+        "effect/curator_v1.rs",
+        include_str!("../effect/curator_v1.rs"),
+    ),
     ("trigger.rs", include_str!("../trigger.rs")),
     (
         "trigger/standard_family_g_v1.rs",

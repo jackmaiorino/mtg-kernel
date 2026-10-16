@@ -15,6 +15,7 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
+pub(crate) mod curator_v1;
 mod standard_ward;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
@@ -2708,6 +2709,10 @@ pub enum EffectOp {
         observer: u32,
         ability: u32,
     },
+    BindCuratorDestiniesV1,
+    CuratorDestiniesV1 {
+        entry_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3178,6 +3183,10 @@ pub enum EffectFrame {
         choice: blasphemous_edict_v1::ChoiceV1,
         selected: Vec<EffectObjectBinding>,
     },
+    CuratorV1 {
+        choice: curator_v1::ChoiceV1,
+        answer: curator_v1::AnswerV1,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3547,6 +3556,9 @@ pub enum EffectTargetSelectionPurpose {
     BlasphemousEdictV1 {
         choice: blasphemous_edict_v1::ChoiceV1,
     },
+    CuratorCardsV1 {
+        choice: curator_v1::ChoiceV1,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -3669,6 +3681,10 @@ pub enum EffectBooleanChoicePurpose {
         life: u8,
     },
     AleshaRaidReturnV1,
+    CuratorPileV1 {
+        face_down_count: u8,
+        face_up_count: u8,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -4174,7 +4190,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
         EffectOp::SphinxsTutelageMillV1 { .. } => true,
-        EffectOp::LookAtLibraryTopAndReorder { .. }
+        EffectOp::BindCuratorDestiniesV1
+        | EffectOp::CuratorDestiniesV1 { .. }
+        | EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
         | EffectOp::Scry { .. }
@@ -4335,6 +4353,17 @@ fn begin_resumable_resolution_with_native_row_v1(
     native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
     if native_row.is_none()
+        && (curator_v1::selected(state, &resolving_item)
+            || curator_v1::waiting_item(state, &resolving_item)
+            || curator_v1::waiting(state, ctx)
+            || matches!(
+                op,
+                EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. }
+            ))
+    {
+        return Err("Curator requires its genuine private native row".into());
+    }
+    if native_row.is_none()
         && (matches!(
             op,
             EffectOp::ElectroduplicateCopyV1 | EffectOp::CopiedTokenEndStepSacrificeV1 { .. }
@@ -4409,6 +4438,14 @@ fn begin_resumable_resolution_with_native_row_v1(
 
 /// Resumes after `choose_resumable_option` installed the selected branch.
 pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumableProgress, String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| curator_v1::pending_selected(state, p))
+    {
+        return Err("Curator has no public resume authority".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         electroduplicate_item_v1(state, &p.resolving_item)
             || matches!(
@@ -5104,6 +5141,18 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
         } => {
             path.push(u16::from(value));
             match purpose {
+                EffectBooleanChoicePurpose::CuratorPileV1 {
+                    face_down_count,
+                    face_up_count,
+                } => {
+                    curator_v1::pile_answer(
+                        state,
+                        &mut continuation,
+                        face_down_count,
+                        face_up_count,
+                        value,
+                    )?;
+                }
                 EffectBooleanChoicePurpose::ExilePlay { choice } => {
                     let frame = EffectFrame::ExilePlay {
                         choice,
@@ -5622,6 +5671,9 @@ fn complete_resumable_target_selection(
         })
         .collect::<Result<Vec<_>, String>>()?;
     match purpose {
+        EffectTargetSelectionPurpose::CuratorCardsV1 { choice } => {
+            curator_v1::answer(continuation, choice, curator_v1::AnswerV1::Cards(objects))?;
+        }
         EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
             return Err("Crystal discard requires its authenticated owning answer".into())
         }
@@ -8907,6 +8959,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -8957,6 +9010,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::DiscardDraw { .. }
                         | EffectFrame::DiscardPaymentV1 { .. }
                         | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                        | EffectFrame::CuratorV1 { .. }
                         | EffectFrame::BlasphemousEdictV1 { .. }
                         | EffectFrame::AleshaRaidAnswerV1 { .. }
                         | EffectFrame::SphinxsTutelageMillV1 {
@@ -9954,6 +10008,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
     blasphemous_edict_v1::validate(state, pending)?;
+    if curator_v1::pending_selected(state, pending) {
+        return curator_v1::validate(state, pending);
+    }
     if matches!(
         pending.resolving_item.inline_effect.as_ref(),
         Some(EffectOp::CounterUnlessPaysLifeWithChoice { .. })
@@ -10207,6 +10264,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 }
                 EffectTargetSelectionPurpose::CrystalDiscardAfterDamageV2 { .. } => {
                     crystal_prevention_v1::validate_discard_choice(state, pending)?
+                }
+                EffectTargetSelectionPurpose::CuratorCardsV1 { .. } => {
+                    return Err("Curator purpose requires its native root".into())
                 }
                 EffectTargetSelectionPurpose::BlasphemousEdictV1 { .. } => {
                     blasphemous_edict_v1::validate(state, pending)?;
@@ -11401,6 +11461,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err("exiled play choice changed".into());
                 }
             }
+            EffectBooleanChoicePurpose::CuratorPileV1 { .. } => {
+                return Err("Curator purpose requires its native root".into())
+            }
             EffectBooleanChoicePurpose::AleshaRaidReturnV1 => {
                 alesha_optional_v1::validate_continuation(state, pending)?
             }
@@ -12141,6 +12204,7 @@ fn drive_resumable_inner_with_native_row_v1(
                 | EffectFrame::DiscardDraw { .. }
                 | EffectFrame::DiscardPaymentV1 { .. }
                 | EffectFrame::NonlandSacrificePaymentV1 { .. }
+                | EffectFrame::CuratorV1 { .. }
                 | EffectFrame::BlasphemousEdictV1 { .. }
                 | EffectFrame::AleshaRaidAnswerV1 { .. }
                 | EffectFrame::SphinxsTutelageMillV1 {
@@ -12166,6 +12230,12 @@ fn drive_resumable_inner_with_native_row_v1(
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::CuratorV1 { choice, answer } => {
+                    if curator_v1::apply(state, &mut continuation, choice, answer)? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::BlasphemousEdictV1 { choice, selected } => {
                     if blasphemous_edict_v1::advance(state, &mut continuation, choice, selected)? {
                         state.engine.pending_effect = Some(continuation);
@@ -15583,6 +15653,11 @@ fn drive_resumable_inner_with_native_row_v1(
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::CuratorDestiniesV1 { .. } => {
+                if native_row.is_none() {return Err("Curator driver lost native proof".into())}
+                if curator_v1::start(state,&mut continuation)? {state.engine.pending_effect=Some(continuation);return Ok(ResumableProgress::Suspended)}
+            }
+            EffectOp::BindCuratorDestiniesV1 => return Err("Curator entry template cannot execute".into()),
             EffectOp::ExploreTarget { object } => {
                 let target = continuation.ctx.resolve_object(object);
                 // A self-exploring trigger (Cenote Scout) still reveals when
@@ -18629,6 +18704,17 @@ fn execute_with_native_row_v1(
     if state.engine.halted.is_some() {
         return;
     }
+    if matches!(
+        op,
+        EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. }
+    ) || curator_v1::waiting(state, ctx) && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if lathril_context_v1(state, ctx.stack_item_id)
         || state
             .engine
@@ -18708,6 +18794,12 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
         EffectOp::ElectroduplicateCopyV1 => {
             if let Err(_error) =
                 execute_electroduplicate_v1(state, ctx, native_row.expect("checked native proof"))
@@ -25317,6 +25409,7 @@ pub(crate) fn acquire_tutelage_resume_v1(
         return Ok(None);
     };
     if !tutelage_item_v1(state, &pending.resolving_item)
+        && !curator_v1::pending_selected(state, pending)
         && !pending
             .ctx
             .stack_item_id
@@ -25503,6 +25596,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if curator_v1::waiting(state, ctx) {
+        return true;
+    }
     state.stack.iter().any(|item| {
         electroduplicate_item_v1(state, item)
             && (item.source == ctx.source

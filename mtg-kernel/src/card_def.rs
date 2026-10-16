@@ -3121,15 +3121,15 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 471 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 472 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, and Electroduplicate Partial registrations at 457-471.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, Sphinx's Tutelage, Consuming Aberration, Lathril, Blasphemous Edict, Secluded Courtyard, Electroduplicate, and Curator of Destinies Partial registrations at 457-472.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                472
+                473
             } else {
                 192
             }
@@ -3601,6 +3601,7 @@ mod tests {
                 (469, "Blasphemous Edict"),
                 (470, "Secluded Courtyard"),
                 (471, "Electroduplicate"),
+                (472, "Curator of Destinies"),
             ]
         } else {
             &[]
