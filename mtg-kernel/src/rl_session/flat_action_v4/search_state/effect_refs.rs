@@ -52,7 +52,8 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            AjaniLoyaltyV42 { .. }
+            MaySacrificeNonlandOtherwiseV1 { .. }
+            | AjaniLoyaltyV42 { .. }
             | DrakeIncubationFromCaptureV1 { .. }
             | DrakeCreateTokenFromPaidV1
             | LoseLifeEqualControllerTurnGainsV1
@@ -319,6 +320,7 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
+            NonlandSacrificePaymentV1 { .. } => true,
             CopyTarget { choice, selected } => {
                 self.copy(&choice.spell)
                     || self.fs(&choice.remaining)
@@ -571,6 +573,7 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
+            NonlandSacrificePaymentV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),

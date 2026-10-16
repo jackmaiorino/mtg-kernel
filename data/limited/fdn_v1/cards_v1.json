@@ -7994,6 +7994,38 @@
       "mechanics": ["controlled_nontoken_nonangel_creature_death_returns_to_owner_with_counter_angel_and_flying"],
       "java_file": "Mage.Sets/src/mage/cards/v/ValkyriesCall.java",
       "is_token": false
+    },
+    {
+      "name": "Perforating Artist",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}{R}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Devil"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_perforating_artist_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "deathtouch",
+        "raid_end_step_opponent_may_sacrifice_nonland_or_discard_otherwise_lose_three"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/p/PerforatingArtist.java",
+      "is_token": false
     }
   ]
 }

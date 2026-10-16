@@ -10977,6 +10977,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             return None;
         }
     };
+    let artist_owner = match effect::perforating_artist_v1::acquire_resume(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, &item, false, false) {
             Ok(owner) => owner,
@@ -11058,6 +11066,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
 
     let progress = if let Some(owner) = hunter_owner.as_ref() {
         crate::high_society_hunter_custody_v45::resume_owned(state, owner)
+    } else if let Some(owner) = artist_owner {
+        effect::perforating_artist_v1::resume_owned(state, owner)
     } else if let Some(owner) = spinner_owner {
         crate::spinner_of_souls_v1::resume_owned(state, owner)
     } else if let Some(owner) = inspiration_owner.as_ref() {
@@ -16171,6 +16181,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let artist_owner = match effect::perforating_artist_v1::acquire_begin(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let item = state
         .stack
         .pop()
@@ -16247,6 +16267,23 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = artist_owner {
+        return match effect::perforating_artist_v1::begin_owned(state, owner, &ctx) {
+            Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {
+                ResolutionProgress::Complete
+            }
+            Ok(effect::ResumableProgress::Suspended) => {
+                resolution_cast_v1::restore_parent(state, item);
+                ResolutionProgress::Suspended
+            }
+            Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
+                state.stack.push(item.clone());
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                ResolutionProgress::Suspended
+            }
+        };
+    }
     if let Some(owner) = drake_owner {
         if crate::drake_hatcher_v1::custody::resolve(state, owner, &ctx).is_err() {
             state.engine.halted =

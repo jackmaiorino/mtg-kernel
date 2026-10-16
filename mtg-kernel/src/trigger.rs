@@ -3579,6 +3579,10 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    let artist = crate::effect::perforating_artist_v1::triggers(card);
+    if !artist.is_empty() {
+        return artist;
+    }
     if card.other_controlled_nontoken_death_v1.is_some() {
         return crate::spinner_of_souls_v1::triggers(card);
     }

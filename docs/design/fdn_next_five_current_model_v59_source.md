@@ -4,10 +4,10 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 `8a43c201cf18b9aaa310294a42642dee276313bb`, composed by normal merge with
 `41aea9c56747df05377d42810f93833cdd8d3f93` at `891af8e91`.
 Seven earlier Full registrations remain Full. The five appendices retain Partial
-IDs 452-456. Native Alesha and Nine-Lives Familiar appendices retain Partial IDs
-457 and 458. Source inventory is 459 definitions and 267 FDN rows; frozen booster
-membership remains 286 names and 24 token dependencies (245 Full, 7 Partial,
-34 Missing). Full-only production deck reset still refuses each new appendix.
+IDs 452-456. Native Alesha, Nine-Lives Familiar and Valkyrie's Call appendices
+retain Partial IDs 457-459. Source inventory is 460 definitions and 268 FDN rows;
+frozen booster membership remains 286 names and 24 token dependencies (245 Full,
+8 Partial, 33 Missing). Full-only production deck reset still refuses each appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -133,7 +133,36 @@ claimed. The composed source and guard identity received scoped read-only review
 At exact composed source `10af6792c646645f5a7e942f90aedad176aa079e`, all 173
 affected Python cases across the same nine modules passed in 21.761 seconds,
 including the new exact-printing, frozen-prefix, deck and Full-only refusal case.
-The complete 151-case model subtree remains unchanged. This integration passed pinned
+The complete 151-case model subtree remains unchanged.
+
+Reviewed Valkyrie's Call source through
+`7575266372540c9a160e1e7de3b6e0820613d9d1` is composed at `3e072cc25`.
+Its pre-departure observer captures a controlled nontoken non-Angel death,
+including its own qualifying death. Return binds the exact source, collected
+death receipt and graveyard incarnation, and uses the physical owner's control.
+The entry counter receives current replacements once; additive Angel and flying
+belong to the new incarnation. Stored creature-subtype additions apply only
+while the object has the corresponding card type. Legacy death-program matching
+remains exact. One paid both-seat source case includes restore and individual
+effect-only binding mutations; it does not claim an unavailable self-animation
+fixture. These source repairs received root and scoped read-only review.
+
+The separate two-family Graveyard Return V61 public appendix through
+`a08dc0e65ea627280aa881811e83f5e36ca1800c` is composed at
+`d016006c9105ac56d6697b510158c5bff171883a`. Its complete printing checks use the
+generator's exact ordinary permanent-cast program. Viewer facts retain current
+versus departure power, actual held/published/resolving positions, exact public
+graveyard contracts, departure counters and live delayed schedules. All sixteen
+native counter fields appear for every battlefield permanent. No completed return
+or original entry amount is inferred from later state. Six source fixture groups
+cover genuine paid states, restore, privacy and explicit counter-storage boundaries.
+This appendix does not provide a complete ordinary observation or any new owning,
+model, Human, transport or sampling permission. The existing model subtree and
+NextFive owning/observation source remain byte-identical to preceding `901afe2da`.
+
+All 174 affected Python cases across the same nine modules passed at exact
+`d016006c9105ac56d6697b510158c5bff171883a` in 21.028 seconds, including the new
+Call printing/deck/Full-only-refusal case. This integration passed pinned
 1.94.1 formatting, diff checks, and lightweight static checks of source-case
 preservation and feature identity coverage.
 All 151 Rust source cases at this composed head, binary and checker remain
