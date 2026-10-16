@@ -600,3 +600,72 @@ fn paid_delayed_sacrifice_waits_for_next_real_end_step_after_time_stop_both_seat
         assert_eq!(state, replay);
     }
 }
+
+#[test]
+fn paid_heartfire_disposal_cannot_gain_a_second_finished_or_live_outcome_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(player);
+        // Native opposing-target setup; both new spells and the activation
+        // use their real native announcement, target and paid-cost paths.
+        let target = put(
+            &mut state,
+            player.opponent(),
+            "Axgard Cavalry",
+            Zone::Battlefield,
+        );
+        let source = cast(&mut state, player, "Heartfire Immolator", &[], 2);
+        finish(&mut state);
+        priority(&mut state, player);
+        let taps = tapped(&state, player);
+        assert!(
+            matches!(next(&mut state),Decision::CastSpellOrPass{activatable_abilities,..} if activatable_abilities.contains(&(source,0)))
+        );
+        step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(
+            matches!(next(&mut state),Decision::ChooseTargets{legal_targets,..} if legal_targets.contains(&Target::Object(target)))
+        );
+        step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        assert!(matches!(next(&mut state),Decision::CastSpellOrPass{player:p,..} if p==player));
+        assert!(state.engine.pending_activation.is_none());
+        assert_eq!(tapped(&state, player) - taps, 1);
+        assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        let original = state
+            .stack
+            .iter()
+            .find(|r| r.source == source && r.kind == StackItemKind::ActivatedAbility)
+            .unwrap()
+            .clone();
+        cast(&mut state, player, "Time Stop", &[], 6);
+        let mut replay = restore(&state);
+        for branch in [&mut state, &mut replay] {
+            end_turn(branch);
+            assert!(disposed(branch, &original).unwrap());
+            crate::source_power_activation_v1::validate_state(branch).unwrap();
+            assert_eq!(branch.players[player.opponent().index()].life, 20);
+            assert_eq!(branch.objects.get(target).zone, Zone::Battlefield);
+            assert_eq!(branch.objects.get(target).damage, 0);
+        }
+        assert_eq!(state, replay);
+        // Append only a forged suffix. All original paid history, disposal
+        // inputs, outputs and their actual row remain byte-for-byte intact.
+        for finished in [true, false] {
+            let mut forged = restore(&state);
+            if finished {
+                forged
+                    .engine
+                    .event_history
+                    .push(CommittedEvent::SourcePowerActivationFinishedV1 {
+                        stack_item_id: original.v4.stack_item_id,
+                    });
+            } else {
+                forged.stack.push(original.clone());
+            }
+            let bytes = serde_json::to_vec(&forged).unwrap();
+            assert!(crate::source_power_activation_v1::validate_state(&forged).is_err());
+            assert!(step(&mut forged, Action::Pass).is_err());
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), bytes);
+            assert!(crate::source_power_activation_v1::validate_state(&restore(&forged)).is_err());
+        }
+    }
+}
