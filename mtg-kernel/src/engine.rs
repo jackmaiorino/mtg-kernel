@@ -31916,3 +31916,11 @@ mod wide_cast_x_v59_tests {
         assert!(matches!(action, Action::ChooseEffectOption(65535)));
     }
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/ordinary_cleanup_discard_tests.rs"]
+mod ordinary_cleanup_discard_tests;
