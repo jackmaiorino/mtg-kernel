@@ -42,5 +42,6 @@ than a Windows job object.
 work will use in the lock record as `cores`. `host_slots_v1.py` then lets
 untimed claims keep the other cores from the moment the lock exists, instead of
 pausing them until `timed` declares its cores. Without `--cores`, the lock
-reserves the whole host, as before. A lock whose `cores` field is malformed
+reserves the whole host, as before. Pass `--cores` only when the work is
+pinned to those cores (normally `timed --cores` with the same set). A lock whose `cores` field is malformed
 reads as unknown, never dead.

@@ -20,8 +20,9 @@ Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
    CPUs the work will use (`--cores 0-15`). Recording them in the lock itself
    lets untimed host_slots claims keep the other cores from the moment the
    lock exists, before `host_slots_v1.py timed` declares them; without
-   cores the lock reserves the whole host until that declaration. The lock
-   file is never rewritten.
+   cores the lock reserves the whole host until that declaration. Pass
+   cores only when the work is pinned to them (run under `timed --cores`
+   with the same set). The lock file is never rewritten.
 3. Spawn handoff: acquire before WMI creation; right after creation the
    caller records the created process (handoff). The supervisor also records
    itself when it starts (adopt), so a lost creation response still leaves a
