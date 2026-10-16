@@ -3,8 +3,8 @@
 `human_bo3_v1::HumanGraveyardReturnSessionV61` wraps the separate sealed V61
 owner. It consumes an existing native session through that owner's guarded
 opt-in, or uses the unchanged Full-deck reset preflight. Alesha and Nine-Lives
-remain Partial and cannot bypass reset preflight. There is no transport/Python
-module admission, export, sampler, Full promotion or runtime qualification here.
+remain Partial and cannot bypass reset preflight. This facade itself grants no
+transport/Python module admission, export, sampler, Full promotion or runtime qualification.
 
 The distinct Human DTO retains all ordinary V59/Prepared/Elenda/Ravenous state
 and printed meanings, plus both complete V61 printed programs, original/current
@@ -40,5 +40,8 @@ and policy/physical counts against the original-index native clone. Lands and
 initial hidden hands are labeled fixture setup; no printing/capability is faked.
 
 Rust was not compiled or executed in this lane. Pinned formatting and static
-source/diff checks do not establish that these fixtures pass. Python HumanSessionV1
-transport remains a separate follow-up with its existing module gate.
+source/diff checks do not establish that these fixtures pass. The distinct
+[Limited V7 transport source](../../../docs/design/fdn_graveyard_return_transport_v7_source.md)
+now supplies the separate native/Python host interface and closed client checks.
+Its native compilation and process replay remain pending; no predecessor protocol
+or Partial deck-preflight gate is widened.
