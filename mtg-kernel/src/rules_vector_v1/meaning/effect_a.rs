@@ -272,6 +272,12 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(amount),
             );
         }
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => {
+            // The amount is bound to a definition-specific committed damage
+            // receipt. This legacy meaning slice has no receipt operand, so
+            // keep the new leaf opaque rather than inventing a loose count.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::RevealTopAndPartitionByType {
             player,
             count,

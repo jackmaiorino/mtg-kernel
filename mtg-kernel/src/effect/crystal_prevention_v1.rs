@@ -582,6 +582,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // These two fixed owned roots can only sacrifice/counter or draw.
         // Their genuine capture/publication is authenticated by Hunter custody.
         EffectOp::HighSocietyHunterFromCaptureV45 { .. } => true,
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => true,
         // These leaves authenticate their original collected capture before
         // countering an exact source or moving a legal graveyard target. ETB
         // triggers from the returned card are separately published roots.

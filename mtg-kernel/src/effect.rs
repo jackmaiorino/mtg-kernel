@@ -1789,6 +1789,11 @@ pub enum EffectOp {
         graveyard: crate::state::ObjectLinkV4,
         owner: crate::ids::PlayerId,
     },
+    /// Resolve Niv-Mizzet's draw count from its exact committed damage and
+    /// triggered-stack receipts, rather than trusting a queued literal count.
+    NivMizzetVisionaryDrawV1 {
+        damage_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17355,6 +17360,27 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
             for _ in 0..count.max(0) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
+            }
+        }
+        EffectOp::NivMizzetVisionaryDrawV1 {
+            damage_history_index,
+        } => {
+            let count = match event::resolve_niv_mizzet_visionary_draw_count_v1(
+                state,
+                ctx,
+                *damage_history_index,
+            ) {
+                Ok(count) => count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
+            for _ in 0..count.max(0) {
+                event::propose_and_commit(state, event::ProposedEvent::draw(ctx.controller));
             }
         }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {

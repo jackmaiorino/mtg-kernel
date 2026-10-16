@@ -4171,6 +4171,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if card.name == "Niv-Mizzet, Visionary"
+        && matches!(effect, EffectOp::NivMizzetVisionaryDrawV1 { .. })
+    {
+        return true;
+    }
     if card.name == "Wardens of the Cycle"
         && wardens_of_the_cycle_modes()
             .iter()
@@ -5034,6 +5039,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::event::niv_mizzet_visionary_triggers_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
     match crate::drake_hatcher_v1::custody::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
