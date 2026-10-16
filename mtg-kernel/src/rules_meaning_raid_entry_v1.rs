@@ -68,6 +68,7 @@ pub fn producer_sha256_v1() -> String {
             include_str!("effect/loot_v1.rs"),
             include_str!("effect/kykar_v1.rs"),
             include_str!("effect/greatwurm_v1.rs"),
+            include_str!("effect/source_token_copy_v1.rs"),
             include_str!("engine/greatwurm_cast_v1.rs"),
             include_str!("effect.rs"),
             include_str!("effect/private_keep_one_v1.rs"),

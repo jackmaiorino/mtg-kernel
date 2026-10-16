@@ -1340,12 +1340,7 @@ fn koma_coils_effect() -> EffectOp {
 }
 
 fn homunculus_horde_effect() -> EffectOp {
-    let token_def = crate::card_def::card_id_by_name("Homunculus Horde Token")
-        .expect("Homunculus Horde Token in CARD_DEFS");
-    EffectOp::CreateToken {
-        token_def,
-        controller: PlayerRef::Controller,
-    }
+    EffectOp::CreateTokenCopyOfSourceV1
 }
 
 fn mischievous_mystic_effect() -> EffectOp {

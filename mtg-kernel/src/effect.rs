@@ -19,6 +19,7 @@ pub(crate) mod curator_v1;
 pub(crate) mod greatwurm_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
+pub(crate) mod source_token_copy_v1;
 mod standard_ward;
 use standard_ward::WardPaymentChoice;
 mod standard_look;
@@ -2727,6 +2728,9 @@ pub enum EffectOp {
         capture_history_index: u64,
         observer: u32,
     },
+    /// Copy the resolving ability's source using its current copiable values
+    /// or its original battlefield incarnation's last-known values.
+    CreateTokenCopyOfSourceV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4292,6 +4296,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if source_token_copy_v1::recipe(op)
+        || source_token_copy_v1::selected(state, &resolving_item)
+        || source_token_copy_v1::waiting(state, ctx)
+    {
+        return Err("source copy requires its original native row".into());
+    }
     if greatwurm_v1::recipe(op)
         || greatwurm_v1::selected(state, &resolving_item)
         || greatwurm_v1::waiting(state, ctx)
@@ -4530,6 +4540,12 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        source_token_copy_v1::selected(state, &p.resolving_item)
+            || source_token_copy_v1::waiting(state, &p.ctx)
+    }) {
+        return Err("source copy has no public continuation".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         greatwurm_v1::selected(state, &p.resolving_item) || greatwurm_v1::waiting(state, &p.ctx)
     }) {
@@ -9979,6 +9995,14 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| source_token_copy_v1::selected(state, &p.resolving_item))
+    {
+        return Err("atomic source copy cannot retain a continuation".into());
+    }
     if state
         .engine
         .pending_effect
@@ -18884,6 +18908,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (source_token_copy_v1::recipe(op) || source_token_copy_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (greatwurm_v1::recipe(op) || greatwurm_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
@@ -18913,6 +18946,20 @@ fn execute_with_native_row_v1(
         return;
     }
     match op {
+        EffectOp::CreateTokenCopyOfSourceV1 => {
+            if source_token_copy_v1::execute(
+                state,
+                ctx,
+                native_proof.expect("source-copy native proof"),
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::BindGreatwurmCountersV1 | EffectOp::GreatwurmCountersV1 { .. } => {
             if greatwurm_v1::execute(
                 op,
@@ -25745,6 +25792,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if source_token_copy_v1::waiting(state, ctx) {
+        return true;
+    }
     if greatwurm_v1::waiting(state, ctx) {
         return true;
     }

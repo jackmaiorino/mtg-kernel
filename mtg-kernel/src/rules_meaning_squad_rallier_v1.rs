@@ -70,6 +70,10 @@ pub fn producer_sha256() -> String {
                 include_str!("effect/greatwurm_v1.rs"),
             ),
             (
+                "effect/source_token_copy_v1.rs",
+                include_str!("effect/source_token_copy_v1.rs"),
+            ),
+            (
                 "engine/greatwurm_cast_v1.rs",
                 include_str!("engine/greatwurm_cast_v1.rs"),
             ),

@@ -378,6 +378,14 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // to this once-only drain. A rooted successor is required.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::CreateTokenCopyOfSourceV1 => {
+            let mut copy = EffectAtom::new(EvF::Copy)
+                .player(RelF::You)
+                .obj(ObjF::ThisObject);
+            copy.from = Some(ZoneF::Battlefield);
+            copy.to = Some(ZoneF::Battlefield);
+            out.effect(copy);
+        }
         EffectOp::CreateControlledCreatureTargetCopyV1 => out.atoms.push(Atom::Opaque),
         EffectOp::DealXDamageThenCreateTokensForExcess { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::ReturnTwoDifferentControllerCreaturesToOwnersHands

@@ -1888,6 +1888,9 @@ pub enum CommittedEvent {
     GreatwurmCounterInputV1 {
         input: Box<crate::engine::greatwurm_cast_v1::PaidV1>,
     },
+    SourceCopyDepartureV1 {
+        departure: Box<crate::effect::source_token_copy_v1::DepartureV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4045,6 +4048,17 @@ fn commit_with_entry_batch_and_source_color(
         None
     };
     let greatwurm_history_start = state.engine.event_history.len();
+    let source_copy_departure =
+        match crate::effect::source_token_copy_v1::departure_input(state, &event) {
+            Ok(input) => input,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        };
     let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
     let tutelage_observers = match &event {
         ProposedEvent::Draw(draw) => state
@@ -4377,6 +4391,19 @@ fn commit_with_entry_batch_and_source_color(
         batch.record(entry_history_index);
     } else {
         crate::authority_of_the_consuls_v1::record_entry(state, entry_history_index);
+    }
+    if crate::effect::source_token_copy_v1::record_departure(
+        state,
+        source_copy_departure,
+        entry_history_index,
+    )
+    .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
     }
     if let Some(object) = left_battlefield {
         crate::standard_legends_v1::return_lagrella_exiles(
@@ -9683,6 +9710,16 @@ pub(crate) fn validate_published_copied_token_v1(
     Ok(())
 }
 
+pub(crate) fn historical_copiable_token_abilities_v1(
+    state: &GameState,
+    source: crate::state::AbilitySourceContractV4,
+) -> Result<u32, String> {
+    if state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::CopiedTokenAbilitiesEnteredV1{source: original,..} if original.source==source.source && original.zone_change_count==source.zone_change_count)) {
+        copied_token_entry_v1(state, source)
+    } else {
+        Ok(0)
+    }
+}
 pub(crate) fn copiable_token_abilities_v1(
     state: &GameState,
     object: ObjectId,

@@ -741,3 +741,234 @@ fn genuine_paid_dragon_tokens_share_native_name_without_losing_distinct_printing
         assert!(!engine::objects_share_name(&s, trainer, five));
     }
 }
+
+fn horde_rows(s: &GameState) -> Vec<StackItem> {
+    s.stack
+        .iter()
+        .filter(|r| r.inline_effect == Some(EffectOp::CreateTokenCopyOfSourceV1))
+        .cloned()
+        .collect()
+}
+fn publish_horde(s: &mut GameState, expected: usize) {
+    for _ in 0..64 {
+        let d = engine::advance_until_decision(s);
+        assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+        if !horde_rows(s).is_empty() {
+            quiet_if_order(s, d);
+            assert_eq!(horde_rows(s).len(), expected);
+            return;
+        }
+        quiet(s, d);
+    }
+    panic!("genuine second-draw Horde trigger absent")
+}
+fn hordes(s: &GameState) -> Vec<ObjectId> {
+    s.objects
+        .iter()
+        .filter_map(|(object, o)| {
+            (o.zone == Zone::Battlefield
+                && matches!(
+                    card_def::CARD_DEFS[usize::from(o.card_def)].name,
+                    "Homunculus Horde" | "Homunculus Horde Token"
+                ))
+            .then_some(object)
+        })
+        .collect()
+}
+fn second_draw_horde(s: &mut GameState, actor: PlayerId, expected: usize) {
+    assert_eq!(s.players[actor.index()].draws_this_turn, 0);
+    cast(s, actor, "Think Twice", &[], 2);
+    finish(s);
+    assert_eq!(s.players[actor.index()].draws_this_turn, 1);
+    assert!(horde_rows(s).is_empty());
+    cast(s, actor, "Think Twice", &[], 2);
+    publish_horde(s, expected);
+    assert_eq!(s.players[actor.index()].draws_this_turn, 2);
+}
+fn response_resolved_with_horde(s: &mut GameState, response: ObjectId) {
+    for _ in 0..64 {
+        let d = engine::advance_until_decision(s);
+        assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+        if s.objects.get(response).zone == Zone::Graveyard {
+            assert!(!horde_rows(s).is_empty());
+            assert!(matches!(d, Decision::CastSpellOrPass { .. }));
+            return;
+        }
+        quiet(s, d);
+    }
+    panic!("paid response did not resolve before original Horde row")
+}
+
+#[test]
+fn genuine_paid_horde_second_draw_copies_copiable_abilities_and_real_end_step_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let original = paid(&mut s, actor, "Homunculus Horde", 4);
+        let (_, first) = electro(&mut s, actor, original);
+        let (_, second) = electro(&mut s, actor, first);
+        assert_eq!(s.objects.get(first).v4.copied_end_step_sacrifices_v1, 1);
+        assert_eq!(s.objects.get(second).v4.copied_end_step_sacrifices_v1, 2);
+        second_draw_horde(&mut s, actor, 3);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        let all = hordes(&s);
+        assert_eq!(all.len(), 6);
+        let mut copied = Vec::new();
+        for object in &all {
+            assert_eq!(engine::checked_effective_pt(&s, *object).unwrap(), (2, 2));
+            let count = s.objects.get(*object).v4.copied_end_step_sacrifices_v1;
+            if count != 0 {
+                assert!(engine::has_effective_keyword(&s, *object, Keywords::HASTE));
+                copied.push(count);
+            }
+        }
+        copied.sort_unstable();
+        assert_eq!(copied, vec![1, 1, 2, 2]);
+        let d = end_priority(&mut s);
+        let rows = publish_end(&mut s, d);
+        assert_eq!(rows.len(), 6);
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        assert_eq!(hordes(&s).len(), 2);
+        assert_eq!(s.objects.get(original).zone, Zone::Battlefield);
+        assert!(hordes(&s)
+            .into_iter()
+            .all(|o| s.objects.get(o).v4.copied_end_step_sacrifices_v1 == 0));
+    }
+}
+
+#[test]
+fn genuine_paid_horde_departed_copy_uses_original_lki_and_refuses_corruption_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        let original = paid(&mut s, actor, "Homunculus Horde", 4);
+        let (_, copied) = electro(&mut s, actor, original);
+        second_draw_horde(&mut s, actor, 2);
+        let row = horde_rows(&s)
+            .into_iter()
+            .find(|r| r.source == copied)
+            .unwrap();
+        let ctx = crystal_prevention_v1::context(&row);
+        for op in [
+            EffectOp::CreateTokenCopyOfSourceV1,
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+        ] {
+            let mut bad = restore(&s);
+            assert!(begin_resumable_resolution(&op, &ctx, row.clone(), &mut bad).is_err());
+            assert_eq!(bad, s);
+            execute(&op, &ctx, &mut bad);
+            let mut expected = s.clone();
+            expected.engine.halted = Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+            assert_eq!(bad, expected);
+        }
+        let response = cast(
+            &mut s,
+            actor.opponent(),
+            "Unsummon",
+            &[Target::Object(copied)],
+            1,
+        );
+        response_resolved_with_horde(&mut s, response);
+        assert_ne!(s.objects.get(copied).zone, Zone::Battlefield);
+        let receipt = s
+            .engine
+            .event_history
+            .iter()
+            .position(|e| matches!(e, CommittedEvent::SourceCopyDepartureV1 { .. }))
+            .unwrap();
+        assert!(engine::validated_stack_item_target_spec(&row, &s).is_ok());
+        for mode in 0..4 {
+            let mut json = serde_json::to_value(&s).unwrap();
+            let history = json["engine"]["event_history"].as_array_mut().unwrap();
+            match mode {
+                0 => {
+                    history.remove(receipt);
+                }
+                1 => {
+                    let duplicate = history[receipt].clone();
+                    history.push(duplicate);
+                }
+                2 => {
+                    history[receipt]["SourceCopyDepartureV1"]["departure"]["values"]["FaceUp"]
+                        ["copied_sacrifices"] = serde_json::json!(0);
+                }
+                _ => {
+                    history[receipt]["SourceCopyDepartureV1"]["departure"]["source"]
+                        ["zone_change_count"] = serde_json::json!(1);
+                }
+            }
+            let bad: GameState = serde_json::from_value(json).unwrap();
+            let before = bad.clone();
+            assert!(engine::validated_stack_item_target_spec(&row, &bad).is_err());
+            assert_eq!(bad, before);
+        }
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        assert_eq!(hordes(&s).len(), 3);
+        let descendants = hordes(&s)
+            .into_iter()
+            .filter(|o| s.objects.get(*o).v4.copied_end_step_sacrifices_v1 != 0)
+            .collect::<Vec<_>>();
+        assert_eq!(descendants.len(), 1);
+        assert_eq!(
+            s.objects
+                .get(descendants[0])
+                .v4
+                .copied_end_step_sacrifices_v1,
+            1
+        );
+        assert!(engine::has_effective_keyword(
+            &s,
+            descendants[0],
+            Keywords::HASTE
+        ));
+    }
+}
+
+#[test]
+fn genuine_paid_horde_season_copies_ignore_response_boost_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(actor);
+        // Additional genuine lands fund all paid casts before this turn's second draw.
+        for _ in 0..8 {
+            put(&mut s, actor, "Forest", Zone::Battlefield);
+        }
+        let original = paid(&mut s, actor, "Homunculus Horde", 4);
+        let (_, copied) = electro(&mut s, actor, original);
+        paid(&mut s, actor, "Doubling Season", 5);
+        second_draw_horde(&mut s, actor, 2);
+        let response = cast(&mut s, actor, "Giant Growth", &[Target::Object(copied)], 1);
+        response_resolved_with_horde(&mut s, response);
+        assert_eq!(engine::checked_effective_pt(&s, copied).unwrap(), (5, 5));
+        let mut replay = restore(&s);
+        finish(&mut s);
+        finish(&mut replay);
+        assert_eq!(s, replay);
+        assert_eq!(hordes(&s).len(), 6);
+        let inherited = hordes(&s)
+            .into_iter()
+            .filter(|o| s.objects.get(*o).v4.copied_end_step_sacrifices_v1 != 0)
+            .collect::<Vec<_>>();
+        assert_eq!(inherited.len(), 3);
+        for object in inherited {
+            assert_eq!(s.objects.get(object).v4.copied_end_step_sacrifices_v1, 1);
+            assert!(engine::has_effective_keyword(&s, object, Keywords::HASTE));
+            assert_eq!(
+                engine::checked_effective_pt(&s, object).unwrap(),
+                if object == copied { (5, 5) } else { (2, 2) }
+            );
+        }
+    }
+}

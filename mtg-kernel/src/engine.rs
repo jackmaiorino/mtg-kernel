@@ -14451,6 +14451,7 @@ fn validate_bound_trigger_source_objects(
     source: ObjectId,
     source_contract: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
+    crate::effect::source_token_copy_v1::validate_root(state, effect, source_contract)?;
     crate::effect::greatwurm_v1::validate_root(state, effect, source_contract)?;
     crate::effect::kykar_v1::validate_root(state, effect, source_contract)?;
     match effect {

@@ -7235,7 +7235,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Vanguard Seraph" => "controller_first_positive_life_gain_each_turn:anchored_history:event_time_source_controller_incarnation_capture:unprocessed_positive_gain_suffix:after_resolution_apnap:surveil:1",
         "Cat Collector" => "etb:create_food:1;controller_first_positive_life_gain_own_turn:anchored_history:event_time_source_controller_incarnation_capture:unprocessed_positive_gain_suffix:after_resolution_apnap:create_white_1_1_cat:1",
         "Mischievous Mystic" => "controller_draws_nth_card_this_turn:2:create_faerie_token:1",
-        "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:create_homunculus_horde_copy_token:1",
+        "Homunculus Horde" | "Homunculus Horde Token" => "controller_draws_nth_card_this_turn:2:copy_source_current_copiable_values_or_original_battlefield_departure_lki:captured_trigger_controller:replacement_batch",
         "Koma, World-Eater" => "source_combat_damage_to_player:create_blue_3_3_serpent_coil_tokens:4",
         "Slumbering Cerberus" => "printed_active:does_not_untap_during_current_controller_untap_step:beginning_each_end_step:intervening_if_creature_died_this_turn:recheck_morbid:untap_captured_source_owner_battlefield_incarnation:stun_replacement:untargeted",
         "Cackling Prowler" => "beginning_controller_end_step_if_creature_died_this_turn:recheck_morbid:plus_one_counter_on_bound_source:1",
