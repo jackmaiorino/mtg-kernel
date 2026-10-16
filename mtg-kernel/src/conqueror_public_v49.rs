@@ -58,20 +58,24 @@ pub struct FactsV49 {
     pub trigger_order: Vec<TriggerOrderV49>,
 }
 pub fn producer_sha256() -> String {
-    let mut hash = Sha256::new();
-    for text in [
-        SCHEMA,
-        include_str!("conqueror_public_v49.rs"),
-        include_str!("sower_restriction_capture_v1.rs"),
-    ] {
-        hash.update((text.len() as u64).to_le_bytes());
-        hash.update(text.as_bytes());
-    }
-    hash.update(meaning::producer_sha256().as_bytes());
-    hash.finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| {
+        let mut hash = Sha256::new();
+        for text in [
+            SCHEMA,
+            include_str!("conqueror_public_v49.rs"),
+            include_str!("sower_restriction_capture_v1.rs"),
+        ] {
+            hash.update((text.len() as u64).to_le_bytes());
+            hash.update(text.as_bytes());
+        }
+        hash.update(meaning::producer_sha256().as_bytes());
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    })
+    .clone()
 }
 fn source_ref(source: AbilitySourceContractV4) -> CardStableRefV1 {
     // Eligible observers are genuine original face-up front-face sources.
