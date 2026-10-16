@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+pub(crate) mod own_registration;
 pub(crate) mod public_inputs_v1;
 mod scratch_v1;
 pub(crate) mod stack_inputs_v1;
@@ -809,6 +810,32 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         counts: ValidatedCountsV1,
+        action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
+        public: Option<(
+            &public_inputs_v1::PublicInputWeightsV1,
+            &crate::public_cost_features_v1::PublicFeatureRowsV1,
+        )>,
+        stack: Option<(
+            &stack_inputs_v1::StackInputWeightsV1,
+            &crate::public_stack_features_v1::StackFeatureRowsV1,
+        )>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        self.forward_registration_validated_rows_v1(
+            encoded,
+            counts,
+            action_ref_pooled_capture,
+            activation_mode,
+            public,
+            stack,
+            None,
+        )
+    }
+
+    fn forward_registration_validated_rows_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+        counts: ValidatedCountsV1,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
         activation_mode: ForwardActivationModeV1,
         public: Option<(
@@ -818,6 +845,10 @@ impl NativePolicyValueNetV1 {
         stack: Option<(
             &stack_inputs_v1::StackInputWeightsV1,
             &crate::public_stack_features_v1::StackFeatureRowsV1,
+        )>,
+        registration: Option<(
+            &own_registration::RegistrationInputWeightsV1,
+            &crate::own_registration_v1::RegistrationFeatureRowsV1,
         )>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let mut object_input = Vec::with_capacity(counts.object_count * OBJECT_ENCODER_INPUT_V1);
@@ -904,13 +935,23 @@ impl NativePolicyValueNetV1 {
             &state_input,
             1,
             activation_mode,
-            public.map(|(weights, rows)| {
-                (
-                    weights.state.as_slice(),
-                    rows.state.clone(),
-                    crate::public_cost_features_v1::STATE_WIDTH,
-                )
-            }),
+            registration
+                .map(|(weights, rows)| {
+                    (
+                        weights.values(),
+                        rows.features.clone(),
+                        crate::own_registration_v1::WIDTH,
+                    )
+                })
+                .or_else(|| {
+                    public.map(|(weights, rows)| {
+                        (
+                            weights.state.as_slice(),
+                            rows.state.clone(),
+                            crate::public_cost_features_v1::STATE_WIDTH,
+                        )
+                    })
+                }),
         );
 
         let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];

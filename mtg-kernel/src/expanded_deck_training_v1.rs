@@ -5,6 +5,8 @@
 pub mod archive_distillation_v1;
 pub mod e_supported_teacher_v1;
 pub mod exploration_probe_v1;
+#[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
+pub mod own_registration;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
 
 use crate::card_def::KERNEL_CARDDB_HASH;
