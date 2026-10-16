@@ -632,15 +632,9 @@ fn publish_bytes(directory: &Path, name: &str, bytes: &[u8]) -> Result<String, S
         "public output size exceeds bound",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    publish_new_file_v1(
-        &parent,
-        format!(".{name}.stage"),
-        name,
-        bytes,
-        DurableFileExpectationV1::from_bytes(bytes).map_err(err)?,
-    )
-    .map_err(err)?;
-    Ok(sha(bytes))
+    let receipt =
+        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, bytes).map_err(err)?;
+    Ok(hex(&receipt.sha256()))
 }
 
 /// The update's input from one trajectory: the learner's physical-decision

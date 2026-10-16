@@ -8,9 +8,7 @@ pub mod exploration_probe_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
 
 use crate::card_def::KERNEL_CARDDB_HASH;
-use crate::durable_publication_v1::{
-    capture_existing_publication_parent_v1, publish_new_file_v1, DurableFileExpectationV1,
-};
+use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
 use crate::fast_sampler::{
     WideCategoricalScratchV1, FAST_CATEGORICAL_MAX_ACTIONS, WIDE_CATEGORICAL_SAMPLER_VERSION_V1,
 };
@@ -1273,6 +1271,22 @@ fn identity_valid(contract: &str, encoding: &str, cards: &str) -> Result<(), Str
     )
 }
 
+/// A checkpoint's `e_supported` member alone, so the continuation check above
+/// does not build the whole parameter document a second time (the typed
+/// checkpoint read that follows parses it in full). An explicit `null` stays
+/// `Some(Value::Null)`, as `Value::get` returned it.
+#[derive(Deserialize)]
+struct CheckpointESupportedProbeV1 {
+    #[serde(default, deserialize_with = "present_value_v1")]
+    e_supported: Option<Value>,
+}
+
+fn present_value_v1<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
+}
+
 fn initialize(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, NativePolicyValueTrainStateV1), String> {
@@ -1498,15 +1512,7 @@ pub fn inspect_fresh_initialization_v1(
     )?;
     fs::create_dir_all(output_directory).map_err(err)?;
     let parent = capture_existing_publication_parent_v1(output_directory).map_err(err)?;
-    let expected = DurableFileExpectationV1::from_bytes(&raw).map_err(err)?;
-    publish_new_file_v1(
-        &parent,
-        ".parameters.stage",
-        "parameters.f32le",
-        &raw,
-        expected,
-    )
-    .map_err(err)?;
+    publish_new_bytes_v1(&parent, ".parameters.stage", "parameters.f32le", &raw).map_err(err)?;
     let inspection = publish_json(output_directory, "inspection.json", &result)?;
     Ok(
         json!({"schema":"mtg-kernel-fresh-initialization-inspection-result/v1",
@@ -3181,8 +3187,9 @@ fn execute_update_v1(
         "output directory already exists",
     )?;
     if let Some(pin) = &source.checkpoint {
-        let saved: Value = serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
-        if let Some(identity) = saved.get("e_supported") {
+        let saved: CheckpointESupportedProbeV1 =
+            serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+        if let Some(identity) = &saved.e_supported {
             ensure(
                 e_supported
                     .as_ref()
@@ -3687,6 +3694,7 @@ fn execute_update_v1(
                                 Some(fixed_partition_backward_worker_limit_v1())
                             }
                         },
+                        preparation_workers.unwrap_or(1),
                         &mut gae_phase_recorder,
                     )
                     .map_err(err)?,
@@ -4080,9 +4088,8 @@ fn publish_json<T: Serialize>(
         "output exceeds file size limit",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    let expected = DurableFileExpectationV1::from_bytes(&bytes).map_err(err)?;
-    let receipt = publish_new_file_v1(&parent, format!(".{name}.stage"), name, &bytes, expected)
-        .map_err(err)?;
+    let receipt =
+        publish_new_bytes_v1(&parent, format!(".{name}.stage"), name, &bytes).map_err(err)?;
     Ok(PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),
@@ -4154,6 +4161,20 @@ pub(crate) mod tests {
             .unwrap_err()
             .contains("unknown field"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_e_supported_probe_reads_the_member_as_value_get_did() {
+        for document in [
+            json!({"schema": "x", "parameters": [1, 2, {"e_supported": 3}]}),
+            json!({"e_supported": null, "parameters": [[0.5, -1e-7]]}),
+            json!({"e_supported": {"continuation": {"a": 1}, "packet": {"path": "p"}}}),
+            json!({"e_supported": [1, "two"], "trajectories": []}),
+        ] {
+            let bytes = serde_json::to_vec(&document).unwrap();
+            let probe: CheckpointESupportedProbeV1 = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(probe.e_supported.as_ref(), document.get("e_supported"));
+        }
     }
 
     #[test]

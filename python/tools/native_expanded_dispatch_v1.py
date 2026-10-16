@@ -428,7 +428,68 @@ def collection_fingerprint(path, expected, resolve=checked, ledgers=None, valida
     return hashes
 
 
-def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None, validated_files=None, timing=None, exposure_inputs=None):
+FINGERPRINT_TIMING = ("collection_seconds", "checkpoint_read_hash_parse_seconds",
+                      "checkpoint_encode_hash_seconds", "receipt_read_hash_parse_seconds")
+# Memory allowed per fingerprint worker process, out of the placement's limit
+# (one nine-deck checkpoint peaks near 150 MB in a worker).
+FINGERPRINT_WORKER_BYTES = 1024**3
+
+
+def iteration_fingerprint(index, item, expected, tolerant, project, resolve=checked):
+    """One update's fingerprint entry, with the files it validated, its exposure
+    projections (when ``project``) and its phase timings."""
+    validated_files, timing = {}, dict.fromkeys(FINGERPRINT_TIMING, 0.0)
+    phase_started = time.monotonic()
+    receipt = read_pinned_json(item, resolve, validated_files)
+    timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
+    require(receipt["iteration"] == index, "unordered update receipts")
+    ledgers = [] if tolerant else None
+    projected = [] if project else None
+    phase_started = time.monotonic()
+    trajectories = collection_fingerprint(receipt["collection"], expected, resolve, ledgers, validated_files,
+                                          projected)
+    timing["collection_seconds"] += time.monotonic() - phase_started
+    phase_started = time.monotonic()
+    update = read_pinned_json(receipt["update"], resolve, validated_files)
+    timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
+    require(update["complete"], "incomplete optimizer update")
+    phase_started = time.monotonic()
+    checkpoint = read_pinned_json(update["checkpoint"], resolve, validated_files)
+    timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
+    require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
+            "optimizer used different ordered trajectories")
+    # Read the complete parameter and Adam tensors. Only the output-root
+    # metadata in trajectory pins differs between serial/parallel trials.
+    checkpoint["trajectories"] = trajectories
+    e_packet = None
+    if "e_supported" in update:
+        # The E packet is bound by content; its pin path names the output root.
+        e_packet = read_pinned_json(update["e_supported"]["packet"], resolve, validated_files)
+        packet_pin = checkpoint["e_supported"]["packet"]
+        require(packet_pin["sha256"] == update["e_supported"]["packet"]["sha256"]
+                and e_packet["scheduled"] == update["e_supported"]["scheduled"],
+                "E checkpoint does not bind its update's teacher packet")
+        checkpoint["e_supported"]["packet"] = packet_pin["sha256"]
+    phase_started = time.monotonic()
+    entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
+    if e_packet is not None:
+        entry["e_packet_sha256"] = update["e_supported"]["packet"]["sha256"]
+    timing["checkpoint_encode_hash_seconds"] += time.monotonic() - phase_started
+    if tolerant:
+        entry["non_natural_ledger"] = ledgers[0]
+    return entry, validated_files, projected, timing
+
+
+def _iteration_fingerprint_task(task):
+    return iteration_fingerprint(*task)
+
+
+def output_fingerprint(config, kind, result, runtime, qualification, resolve=checked, collection_ref=None, run_ref=None, validated_files=None, timing=None, exposure_inputs=None, workers=1):
+    """``workers`` > 1 reads, hashes and parses the updates in that many worker
+    processes (pinned files only, read through ``checked``). Each update's work is
+    unchanged and the entries, validated files and projections are merged in
+    update order, so the result is identical and the first failing update in
+    order raises its own error; phase timings then sum the workers' time."""
     if kind == "evaluation":
         return {"trajectories": collection_fingerprint(
             collection_ref or pin(Path(config["output_directory"])/"collection.json"), len(config["episodes"]), resolve,
@@ -445,59 +506,39 @@ def output_fingerprint(config, kind, result, runtime, qualification, resolve=che
             and result["complete"] == (count == len(config["iterations"])),
             "incomplete native update coverage")
     tolerant = config.get("max_non_natural_episode_fraction", 0) > 0
-    fingerprints = []
+    tasks = [(index, item, len(config["iterations"][index]["episodes"]), tolerant, exposure_inputs is not None)
+             for index, item in enumerate(result["iterations"])]
     if timing is not None:
-        timing.update(collection_seconds=0.0, checkpoint_read_hash_parse_seconds=0.0,
-                      checkpoint_encode_hash_seconds=0.0, receipt_read_hash_parse_seconds=0.0)
-    for index, item in enumerate(result["iterations"]):
-        phase_started = time.monotonic()
-        receipt = read_pinned_json(item, resolve, validated_files)
-        if timing is not None:
-            timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
-        require(receipt["iteration"] == index, "unordered update receipts")
-        ledgers = [] if tolerant else None
-        projected = [] if exposure_inputs is not None else None
-        phase_started = time.monotonic()
-        trajectories = collection_fingerprint(receipt["collection"],
-                                              len(config["iterations"][index]["episodes"]), resolve, ledgers, validated_files,
-                                              projected)
-        if exposure_inputs is not None:
-            exposure_inputs.append(projected)
-        if timing is not None:
-            timing["collection_seconds"] += time.monotonic() - phase_started
-        phase_started = time.monotonic()
-        update = read_pinned_json(receipt["update"], resolve, validated_files)
-        if timing is not None:
-            timing["receipt_read_hash_parse_seconds"] += time.monotonic() - phase_started
-        require(update["complete"], "incomplete optimizer update")
-        phase_started = time.monotonic()
-        checkpoint = read_pinned_json(update["checkpoint"], resolve, validated_files)
-        if timing is not None:
-            timing["checkpoint_read_hash_parse_seconds"] += time.monotonic() - phase_started
-        require([t["sha256"] for t in checkpoint["trajectories"]] == trajectories,
-                "optimizer used different ordered trajectories")
-        # Read the complete parameter and Adam tensors. Only the output-root
-        # metadata in trajectory pins differs between serial/parallel trials.
-        checkpoint["trajectories"] = trajectories
-        e_packet = None
-        if "e_supported" in update:
-            # The E packet is bound by content; its pin path names the output root.
-            e_packet = read_pinned_json(update["e_supported"]["packet"], resolve, validated_files)
-            packet_pin = checkpoint["e_supported"]["packet"]
-            require(packet_pin["sha256"] == update["e_supported"]["packet"]["sha256"]
-                    and e_packet["scheduled"] == update["e_supported"]["scheduled"],
-                    "E checkpoint does not bind its update's teacher packet")
-            checkpoint["e_supported"]["packet"] = packet_pin["sha256"]
-        phase_started = time.monotonic()
-        entry = {"trajectories": trajectories, "checkpoint_bits": digest(checkpoint)}
-        if e_packet is not None:
-            entry["e_packet_sha256"] = update["e_supported"]["packet"]["sha256"]
-        if timing is not None:
-            timing["checkpoint_encode_hash_seconds"] += time.monotonic() - phase_started
-        if tolerant:
-            entry["non_natural_ledger"] = ledgers[0]
-        fingerprints.append(entry)
+        timing.update(dict.fromkeys(FINGERPRINT_TIMING, 0.0))
+    workers = min(workers, len(tasks))
+    if workers > 1 and resolve is checked:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            parts = pool.map(_iteration_fingerprint_task, tasks)
+            fingerprints = [_merge_iteration(part, validated_files, timing, exposure_inputs) for part in parts]
+    else:
+        fingerprints = [_merge_iteration(iteration_fingerprint(*task, resolve), validated_files, timing,
+                                         exposure_inputs) for task in tasks]
     return {"iterations": fingerprints}
+
+
+def fingerprint_workers(placement):
+    """One fingerprint process per placed CPU (the native child has exited and the
+    processes inherit its affinity), within the placement's memory limit."""
+    return max(1, min(len(placement["cpu_affinity"]),
+                      int(placement["memory_bytes"] // FINGERPRINT_WORKER_BYTES)))
+
+
+def _merge_iteration(part, validated_files, timing, exposure_inputs):
+    entry, validated, projected, phases = part
+    if validated_files is not None:
+        validated_files.update(validated)
+    if timing is not None:
+        for name, seconds in phases.items():
+            timing[name] += seconds
+    if exposure_inputs is not None:
+        exposure_inputs.append(projected)
+    return entry
 
 
 def projected_seconds(report, config, kind):
@@ -749,7 +790,8 @@ def execute(request_path, qualification):
     exposure_iterations = [] if request["kind"] == "training" else None
     fingerprint = output_fingerprint(placed, request["kind"], last, runtime, qualification,
                                      validated_files=validated_files, timing=fingerprint_timing,
-                                     exposure_inputs=exposure_iterations)
+                                     exposure_inputs=exposure_iterations,
+                                     workers=fingerprint_workers(request["placement"]))
     exposure_pin = None
     if exposure_iterations is not None:
         from nine_deck_exposure_collector_v1 import INPUT_SCHEMA

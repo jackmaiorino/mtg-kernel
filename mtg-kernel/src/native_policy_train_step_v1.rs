@@ -4473,9 +4473,7 @@ fn hash_train_state_tensor_v1(
         &(values.len() as u64).to_be_bytes(),
     );
     train_state_hash_atom_prefix_v1(hasher, b"tensor_f32le", values.len() * 4);
-    for value in values {
-        hasher.update(value.to_bits().to_le_bytes());
-    }
+    crate::native_policy_value_net_v1::sha256_update_f32_le_v1(hasher, values);
 }
 
 fn finish_train_state_hash_v1(hasher: Sha256) -> [u8; 32] {
