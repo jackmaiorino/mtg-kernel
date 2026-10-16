@@ -29,7 +29,7 @@
 //! Unset or `search-v1` preserves the existing search and row format.
 //! `s4a-root-rebuild` replays recorded `s4a-budget` search games without
 //! search (`BUDGET_ROWS`, as `s4a-budget-replay`), checks each record (and,
-//! with `S4A_ROOT_SCHEDULE`, its decks, seat and seed against that frozen
+//! with `S4A_ROOT_SCHEDULE`, every case field it carries against that frozen
 //! schedule) and rebuilds every new-root decision's map from storage edges
 //! to live actions along the executor's own keying
 //! (`stage4a/root_rebuild.rs`).
@@ -60,6 +60,7 @@ mod root_rebuild;
 mod seeds;
 mod sharing;
 mod tree;
+mod utility_root;
 #[cfg(feature = "viewer-recording-v1")]
 pub(super) mod viewer_replay;
 #[cfg(feature = "viewer-recording-v1")]
@@ -100,6 +101,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-budget-replay"
             | "s4a-root-rebuild"
             | "s4a-search-profile"
+            | "s4a-utility-root"
+            | "s4a-utility-root-inspect"
     )
 }
 
@@ -991,9 +994,9 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
     }
     let path = std::env::var("BANK_SPEC").map_err(|_| "BANK_SPEC is required")?;
+    let spec_bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     let spec: bank::BankSpec =
-        serde_json::from_slice(&std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?)
-            .map_err(|e| format!("{path}: {e}"))?;
+        serde_json::from_slice(&spec_bytes).map_err(|e| format!("{path}: {e}"))?;
     if cfg.decks != (0..RUNTIME_DECKS.len()).collect::<Vec<_>>()
         || spec.decks.len() != cfg.decks.len()
     {
@@ -1019,6 +1022,12 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         prior: world::DeckPrior::new(&cfg.decks),
         limits: parse_limits()?,
     };
+    if cfg.mode == "s4a-utility-root" {
+        return utility_root::run(cfg, policy, &sh, &spec_bytes);
+    }
+    if cfg.mode == "s4a-utility-root-inspect" {
+        return utility_root::run_inspect(cfg, policy, &sh, &spec_bytes);
+    }
     if cfg.mode == "s4a-branch" {
         // Roots: BRANCH_ROOTS (JSONL of branch::RootSpec); this process plays
         // roots [first_game, first_game + games) for arm BRANCH_ARM (B1 or D8).
@@ -1229,8 +1238,8 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
         // (`stage4a/root_rebuild.rs`); one root_rebuild row per game, with
         // `void` null or the reason the game is void.
         let path = std::env::var("BUDGET_ROWS").map_err(|_| "BUDGET_ROWS is required")?;
-        // Optional: the frozen schedule each record's decks, seat and seed
-        // must match (JSONL of cases, as BUDGET_CASES).
+        // Optional: the frozen schedule (JSONL of cases, as BUDGET_CASES)
+        // whose case each record's carried case fields must equal.
         let schedule = match std::env::var("S4A_ROOT_SCHEDULE") {
             Ok(p) => {
                 use sha2::{Digest, Sha256};
@@ -1269,10 +1278,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                     v
                 });
                 rebuilt["file"] = json!(file.trim());
-                out.push_str(&format!(
-                    "{rebuilt}
-"
-                ));
+                out.push_str(&format!("{rebuilt}\n"));
             }
         }
         return std::fs::write(&cfg.out, out).map_err(|e| e.to_string());
@@ -1523,13 +1529,23 @@ fn run_bank_parity(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<
 }
 
 pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(), String> {
+    if cfg.mode == "s4a-utility-root-inspect" && !cfg!(feature = "gameplay-decision-trace-v1") {
+        return Err("s4a-utility-root-inspect requires gameplay-decision-trace-v1".into());
+    }
     // Every mode refuses a best-line `S4A_BACKUP` it would not use.
     parse_backup(&cfg.mode, std::env::var("S4A_BACKUP"))?;
     match cfg.mode.as_str() {
-        "s4a-bank" | "s4a-bank-trace" | "s4a-refresh" | "s4a-branch" | "s4a-canon-offline"
-        | "s4a-budget" | "s4a-budget-replay" | "s4a-root-rebuild" | "s4a-search-profile" => {
-            return run_bank_mode(cfg, policy)
-        }
+        "s4a-bank"
+        | "s4a-bank-trace"
+        | "s4a-refresh"
+        | "s4a-branch"
+        | "s4a-canon-offline"
+        | "s4a-budget"
+        | "s4a-budget-replay"
+        | "s4a-root-rebuild"
+        | "s4a-search-profile"
+        | "s4a-utility-root"
+        | "s4a-utility-root-inspect" => return run_bank_mode(cfg, policy),
         "s4a-bank-parity" => return run_bank_parity(cfg, policy),
         "s4a-label-replay" => return replay_labels::run(cfg),
         _ => {}

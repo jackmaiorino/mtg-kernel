@@ -207,6 +207,30 @@ class HostReservationTests(unittest.TestCase):
         self.assertIn("boot id changed", new["reclaimed"]["evidence"])
         hr.release(new["token"], "cancelled")
 
+    def test_acquire_records_cores_and_rejects_bad_ones(self):
+        r = hr.acquire("test", "cores", "released by the test", cores=[3, 1, 2])
+        self.assertEqual(r["cores"], [1, 2, 3])
+        self.assertEqual(hr.status()["record"]["cores"], [1, 2, 3])
+        hr.release(r["token"], "cancelled")
+        plain = hr.acquire("test", "whole-host", "released by the test")
+        self.assertNotIn("cores", plain)
+        hr.release(plain["token"], "cancelled")
+        for bad in ([], [-1], [0, 0], [True]):
+            with self.subTest(cores=bad), self.assertRaises(ValueError):
+                hr.acquire("test", "bad", "never acquired", cores=bad)
+        self.assertEqual(hr.status()["state"], "free")
+        self.assertEqual(hr.parse_cores("0-3,8,2"), [0, 1, 2, 3, 8])
+        self.assertEqual(hr.parse_cores("5-4"), [4, 5])
+        for spec in ("", "a", "1-", "-1", "1,,2"):
+            with self.subTest(spec=spec), self.assertRaises(ValueError):
+                hr.parse_cores(spec)
+        lock = hr.lock_path()
+        lock.write_bytes(json.dumps(self.record(cores=[0, 0])).encode())
+        self.assertEqual(hr.status()["state"], "unknown")
+        lock.write_bytes(json.dumps(self.record(cores=[0, 1])).encode())
+        self.assertEqual(hr.status()["state"], "held")
+        lock.unlink()
+
     def test_nested_wrappers_share_the_token(self):
         r = hr.acquire("test", "outer", "released by the test")
         inner = PRELUDE + "r = hr.acquire('test', 'inner', 'nested')\nprint(json.dumps({'token': r['token'], 'shared': r.get('shared')}))\n"
