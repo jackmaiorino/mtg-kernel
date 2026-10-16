@@ -1767,6 +1767,18 @@ pub enum EffectOp {
     AleshaRaidReturn {
         source_power_lki: i32,
     },
+    /// Unmaterialized template for the exact captured Nine-Lives death.
+    BindNineLivesFamiliarReturnV1,
+    /// Schedule the return after the exact death trigger resolves.
+    ScheduleNineLivesFamiliarReturnV1 {
+        graveyard: crate::state::ObjectLinkV4,
+        revival_counters: i32,
+    },
+    /// One-shot delayed return for the exact graveyard incarnation.
+    ReturnNineLivesFamiliarV1 {
+        graveyard: crate::state::ObjectLinkV4,
+        revival_counters: i32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17501,6 +17513,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindAleshaRaidReturn => {
             panic!("unmaterialized Alesha Raid return");
         }
+        EffectOp::BindNineLivesFamiliarReturnV1 => {
+            panic!("unmaterialized Nine-Lives death return");
+        }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
         }
@@ -17717,6 +17732,90 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 state,
                 event::ProposedEvent::zone_change(*target, Zone::Battlefield),
             );
+        }
+        EffectOp::ScheduleNineLivesFamiliarReturnV1 {
+            graveyard,
+            revival_counters,
+        } => {
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            if source.source != ctx.source
+                || ctx.controller != source.controller
+                || source.zone != Zone::Battlefield
+                || crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                    != "Nine-Lives Familiar"
+                || graveyard.object != source.source
+                || source.zone_change_count.checked_add(1) != Some(graveyard.zone_change_count)
+                || *revival_counters < 0
+                || state
+                    .counter_lki_for(source.source, source.zone_change_count)
+                    .and_then(|counters| counters.revival.checked_sub(1))
+                    != Some(*revival_counters)
+            {
+                return;
+            }
+            let scheduled = crate::state::NineLivesDelayedReturnV1 {
+                source,
+                graveyard: *graveyard,
+                revival_counters: *revival_counters,
+                created_after_history_len: u64::try_from(state.engine.event_history.len())
+                    .unwrap_or(u64::MAX),
+            };
+            let duplicate = state.nine_lives_delayed_v1.as_ref().is_some_and(|pending| {
+                pending.iter().any(|existing| {
+                    existing.source.source == source.source
+                        && existing.source.zone_change_count == source.zone_change_count
+                        && existing.graveyard == *graveyard
+                })
+            });
+            if duplicate {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            state
+                .nine_lives_delayed_v1
+                .get_or_insert_with(Vec::new)
+                .push(scheduled);
+        }
+        EffectOp::ReturnNineLivesFamiliarV1 {
+            graveyard,
+            revival_counters,
+        } => {
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            if source.source != ctx.source
+                || ctx.controller != source.controller
+                || source.zone != Zone::Battlefield
+                || crate::card_def::CARD_DEFS[usize::from(source.card_def)].name
+                    != "Nine-Lives Familiar"
+                || *revival_counters < 0
+            {
+                return;
+            }
+            let Some(card) = state.objects.try_get(graveyard.object) else {
+                return;
+            };
+            if card.zone != Zone::Graveyard
+                || card.owner != source.owner
+                || card.zone_change_count != graveyard.zone_change_count
+                || card.card_def != source.card_def
+            {
+                return;
+            }
+            let mut proposed = event::ProposedEvent::zone_change_to_battlefield_under_controller(
+                graveyard.object,
+                source.controller,
+            );
+            let event::ProposedEvent::ZoneChange(change) = &mut proposed else {
+                unreachable!("zone-change constructor")
+            };
+            change.battlefield_revival_v1 = Some(*revival_counters);
+            event::propose_and_commit(state, proposed);
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {

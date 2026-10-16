@@ -74,6 +74,10 @@ pub struct Counters {
     pub soul: i32,
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub incubation: i32,
+    /// Nine-Lives Familiar's revival counter. The absent/zero value preserves
+    /// the historical snapshot and hash sequence exactly.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub revival: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -98,6 +102,7 @@ impl Counters {
             || self.bait != 0
             || self.soul != 0
             || self.incubation != 0
+            || self.revival != 0
     }
 }
 
@@ -141,6 +146,10 @@ impl std::hash::Hash for Counters {
         if self.soul != 0 {
             b"soul_counters_v1".hash(state);
             self.soul.hash(state);
+        }
+        if self.revival != 0 {
+            b"revival_counters_v1".hash(state);
+            self.revival.hash(state);
         }
     }
 }
@@ -2220,6 +2229,27 @@ pub struct GameState {
     pub wildwood_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raid_waiting_v1: Option<Vec<crate::trigger::PendingTrigger>>,
+    /// Resolved Nine-Lives death triggers waiting for any future beginning of
+    /// an end step. Absent until the first such schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nine_lives_delayed_v1: Option<Vec<NineLivesDelayedReturnV1>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NineLivesDelayedReturnV1 {
+    pub source: AbilitySourceContractV4,
+    pub graveyard: ObjectLinkV4,
+    pub revival_counters: i32,
+    pub created_after_history_len: u64,
+}
+impl Hash for NineLivesDelayedReturnV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.graveyard.hash(state);
+        self.revival_counters.hash(state);
+        self.created_after_history_len.hash(state);
+    }
 }
 
 /// The round counter and active seat together identify the declaring turn.
@@ -2455,6 +2485,10 @@ impl Hash for GameState {
             "raid-entry-waiting/v1".hash(state);
             waiting.hash(state);
         }
+        if let Some(delayed) = &self.nine_lives_delayed_v1 {
+            "nine-lives-delayed/v1".hash(state);
+            delayed.hash(state);
+        }
     }
 }
 
@@ -2664,6 +2698,7 @@ impl GameState {
             attack_declaration_turn_v1: None,
             wildwood_waiting_v1: None,
             raid_waiting_v1: None,
+            nine_lives_delayed_v1: None,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -4917,6 +4952,24 @@ mod soul_counter_storage_v1_tests {
         assert_eq!(serde_json::to_string(&counters).unwrap(), original);
         assert_eq!(bytes(counters), vec![0; 10]);
         assert!(!counters.any());
+    }
+    #[test]
+    fn absent_revival_preserves_counter_json_and_hash_while_positive_value_roundtrips() {
+        let legacy = r#"{"plus1_plus1":0,"minus1_minus1":0,"minus0_minus1":0,"stun":0,"lore":0}"#;
+        let empty: Counters = serde_json::from_str(legacy).unwrap();
+        assert_eq!(serde_json::to_string(&empty).unwrap(), legacy);
+        assert_eq!(bytes(empty), vec![0; 10]);
+        let revival = Counters {
+            revival: 8,
+            ..Default::default()
+        };
+        assert!(revival.any());
+        assert_eq!(serde_json::to_value(revival).unwrap()["revival"], 8);
+        assert_ne!(bytes(revival), bytes(empty));
+        assert_eq!(
+            serde_json::from_slice::<Counters>(&serde_json::to_vec(&revival).unwrap()).unwrap(),
+            revival
+        );
     }
     #[test]
     fn soul_is_a_distinct_restorable_hashed_counter_and_zone_change_clears_it() {

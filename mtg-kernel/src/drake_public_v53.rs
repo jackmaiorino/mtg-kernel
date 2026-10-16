@@ -259,7 +259,11 @@ fn counters(state: &GameState, id: ObjectId) -> Result<CountersV53, RlContractEr
         bait,
         soul,
         incubation,
+        revival,
     } = live.counters;
+    if revival != 0 {
+        return Err(error("V53 does not expose Nine-Lives revival counters"));
+    }
     let lifelink = live.v4.lifelink_keyword_counters;
     if [
         plus1_plus1,

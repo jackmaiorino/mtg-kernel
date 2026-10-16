@@ -14166,6 +14166,51 @@ fn validate_bound_trigger_source_objects(
                 );
             }
         }
+        EffectOp::ScheduleNineLivesFamiliarReturnV1 {
+            graveyard,
+            revival_counters,
+        } => {
+            let Some(contract) = source_contract else {
+                return Err("Nine-Lives return lost its source contract".into());
+            };
+            let expected = revival_counters.checked_add(1);
+            let actual = state
+                .counter_lki_for(contract.source, contract.zone_change_count)
+                .map(|counters| counters.revival);
+            if contract.source != source
+                || contract.zone != Zone::Battlefield
+                || !card_def::CARD_DEFS
+                    .get(usize::from(contract.card_def))
+                    .is_some_and(|definition| definition.name == "Nine-Lives Familiar")
+                || graveyard.object != source
+                || contract.zone_change_count.checked_add(1) != Some(graveyard.zone_change_count)
+                || *revival_counters < 0
+                || actual != expected
+            {
+                return Err("Nine-Lives death trigger changed its captured counter LKI".into());
+            }
+        }
+        EffectOp::ReturnNineLivesFamiliarV1 {
+            graveyard,
+            revival_counters,
+        } => {
+            let Some(contract) = source_contract else {
+                return Err("Nine-Lives return lost its source contract".into());
+            };
+            if contract.source != source
+                || contract.zone != Zone::Battlefield
+                || !card_def::CARD_DEFS
+                    .get(usize::from(contract.card_def))
+                    .is_some_and(|definition| definition.name == "Nine-Lives Familiar")
+                || graveyard.object != source
+                || contract.zone_change_count.checked_add(1) != Some(graveyard.zone_change_count)
+                || *revival_counters < 0
+            {
+                return Err(
+                    "Nine-Lives return changed its captured incarnation or counters".into(),
+                );
+            }
+        }
         _ => {}
     }
     Ok(())
