@@ -1862,6 +1862,32 @@ pub enum CommittedEvent {
         schedule_history_index: u64,
         end_step_history_index: u64,
     },
+    GreatwurmCounterPaymentV1 {
+        paid: Box<crate::engine::greatwurm_cast_v1::PaidV1>,
+        input_history_index: u64,
+    },
+    GreatwurmCombatCaptureV1 {
+        capture: Box<crate::effect::greatwurm_v1::CaptureV1>,
+    },
+    GreatwurmCombatBoundV1 {
+        capture_history_index: u64,
+        original: Box<crate::effect::greatwurm_v1::CaptureV1>,
+    },
+    GreatwurmCollectedV1 {
+        capture_history_index: u64,
+        observer: u32,
+    },
+    GreatwurmPublishedV1 {
+        capture_history_index: u64,
+        observer: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    GreatwurmFinishedV1 {
+        stack_item_id: crate::ids::StackItemId,
+    },
+    GreatwurmCounterInputV1 {
+        input: Box<crate::engine::greatwurm_cast_v1::PaidV1>,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4004,6 +4030,21 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
+    let greatwurm_single = if !entry_context.1 {
+        match crate::effect::greatwurm_v1::capture_wave(state, std::slice::from_ref(&event)) {
+            Ok(wave) => Some(wave),
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let greatwurm_history_start = state.engine.event_history.len();
     let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
     let tutelage_observers = match &event {
         ProposedEvent::Draw(draw) => state
@@ -4237,6 +4278,15 @@ fn commit_with_entry_batch_and_source_color(
         };
         state.engine.event_log.push(receipt.clone());
         state.engine.event_history.push(receipt);
+    }
+    if let Some(wave) = greatwurm_single {
+        if wave.finish(state, greatwurm_history_start).is_err() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
     }
     if let Some((source, card_def, zone_change_count, power)) = alesha_power_departure {
         if zone_change_count
@@ -5737,6 +5787,17 @@ fn commit_batch_survivors(
     } else {
         None
     };
+    let greatwurm_wave = match crate::effect::greatwurm_v1::capture_wave(state, &survivors) {
+        Ok(wave) => wave,
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return;
+        }
+    };
+    let greatwurm_history_start = state.engine.event_history.len();
     let mut counter_inputs = planned_counter_inputs.into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
@@ -5805,6 +5866,16 @@ fn commit_batch_survivors(
         }
     }
 
+    if greatwurm_wave
+        .finish(state, greatwurm_history_start)
+        .is_err()
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return;
+    }
     for (aura, host) in attachments {
         if state.objects.get(aura.object).zone == Zone::Battlefield {
             let generation = state.objects.get(aura.object).zone_change_count;

@@ -39,6 +39,7 @@
 //! (`begin_cast`), before targets/modes/costs, so `finalize_cast` only
 //! fills in the placeholder `begin_cast` already pushed.
 
+pub mod greatwurm_cast_v1;
 pub mod mandatory_cast_cost_v1;
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
@@ -832,6 +833,8 @@ pub enum ChosenCreatureCostZoneV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCast {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm_v1: Option<greatwurm_cast_v1::ChoiceV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mandatory_additional_cost: Option<mandatory_cast_cost_v1::ChoiceV1>,
     pub spell: ObjectId,
     /// Exact physical source incarnation and stack provenance captured after
@@ -958,6 +961,10 @@ impl std::hash::Hash for PendingCast {
         if let Some(choice) = self.mandatory_additional_cost {
             std::hash::Hash::hash(&"mandatory_additional_cost/v1", state);
             std::hash::Hash::hash(&choice, state);
+        }
+        if let Some(choice) = &self.greatwurm_v1 {
+            std::hash::Hash::hash(&"greatwurm_cast/v1", state);
+            std::hash::Hash::hash(choice, state);
         }
         if !self.convoke_chosen.is_empty() || self.convoke_finished {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
@@ -2114,6 +2121,7 @@ fn validate_physical_spell_cast_origin(
         return Err("variable spell lost its finalized physical-source kicker authority".into());
     }
     mandatory_cast_cost_v1::validate_finalized(state, item, def, is_pending_placeholder)?;
+    greatwurm_cast_v1::validate_finalized(state, item, is_pending_placeholder)?;
     match (is_pending_placeholder, source.v4.finalized_cast_binding) {
         (true, None) => {}
         (true, Some(_)) => {
@@ -2207,6 +2215,17 @@ fn validate_physical_spell_cast_origin(
                 } else {
                     cast_method == CastMethodV4::Omen
                 }
+        }
+        SpellCastRouteV4::GreatwurmGraveyardV1 {
+            holder,
+            graveyard_generation,
+        } => {
+            origin.origin_zone == Zone::Graveyard
+                && holder == item.controller
+                && source.owner == holder
+                && graveyard_generation == origin.origin_zone_change_count
+                && cast_method == CastMethodV4::Normal
+                && crate::effect::greatwurm_v1::definition(source.card_def)
         }
         SpellCastRouteV4::GraveyardFlashback => {
             origin.origin_zone == Zone::Graveyard
@@ -2699,7 +2718,8 @@ fn storm_source_contract_is_structurally_valid(
         | SpellCastRouteV4::GraveyardEscape
         | SpellCastRouteV4::AdventureExile
         | SpellCastRouteV4::GraveyardPermissionV1 { .. }
-        | SpellCastRouteV4::GraveyardAdventure { .. } => false,
+        | SpellCastRouteV4::GraveyardAdventure { .. }
+        | SpellCastRouteV4::GreatwurmGraveyardV1 { .. } => false,
     };
     has_storm(definition)
         && definition.is_executable()
@@ -8432,7 +8452,8 @@ fn is_castable_now(
                 })
             };
             let main_ok = (state.objects.get(id).zone != Zone::Graveyard
-                || graveyard_permission_zone_change_count(player, id, state).is_some())
+                || graveyard_permission_zone_change_count(player, id, state).is_some()
+                || greatwurm_cast_v1::allowed(state, id, player))
                 && main_timing_ok
                 && (((normal_ok() || alt_ok())
                     && !viable_printed_spell_modes(def, id, player, state).is_empty())
@@ -8557,7 +8578,8 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
         let castable = match unambiguous_graveyard_cast_method(def) {
             Some(method) => is_castable_now(player, id, method, state),
             None => {
-                graveyard_permission_zone_change_count(player, id, state).is_some()
+                (graveyard_permission_zone_change_count(player, id, state).is_some()
+                    || greatwurm_cast_v1::allowed(state, id, player))
                     && is_castable_now(player, id, CastMethodV4::Normal, state)
             }
         };
@@ -11410,6 +11432,7 @@ pub(crate) fn validate_pending_cast(
 ) -> Result<(), String> {
     resolution_cast_v1::validate_pending_child(state, pending)?;
     mandatory_cast_cost_v1::validate_pending(state, pending)?;
+    greatwurm_cast_v1::validate_pending(state, pending)?;
     let source = state
         .objects
         .try_get(pending.spell)
@@ -11550,6 +11573,12 @@ pub(crate) fn validate_pending_cast(
                     });
             if pending.origin_zone != Zone::Hand
                 && !has_graveyard_permission
+                && !pending.source_contract.spell_cast_origin.is_some_and(|origin| {
+                    matches!(origin.route, SpellCastRouteV4::GreatwurmGraveyardV1 { holder, graveyard_generation }
+                        if pending.origin_zone == Zone::Graveyard && holder == pending.controller
+                            && source.owner == holder && graveyard_generation == origin.origin_zone_change_count
+                            && crate::effect::greatwurm_v1::definition(source.card_def))
+                })
                 && !(pending.origin_zone == Zone::Exile
                     && (has_prior_exile_permission() || has_adventure_exile_permission))
                 && !pending.source_contract.spell_cast_origin.is_some_and(|origin| matches!(origin.route, SpellCastRouteV4::GraveyardAdventure { holder, .. } if holder == pending.controller))
@@ -12180,6 +12209,24 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         .and_then(|item| item.v4.cast_method)
         .expect("validated pending cast retains its placeholder method");
 
+    if greatwurm_cast_v1::waiting(&pending) {
+        match greatwurm_cast_v1::options(state, &pending) {
+            Ok(option_count) if option_count > 0 => {
+                return Some(Decision::ChooseEffectOption {
+                    player: pending.controller,
+                    source: pending.spell,
+                    option_count,
+                })
+            }
+            _ => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.spell,
+                ));
+                return None;
+            }
+        }
+    }
     // Ordinary, Flashback, and Plotted casts are pre-filtered before they
     // reach `begin_cast`, but Madness intentionally bypasses that offer-time
     // gate and restored snapshots are untrusted. Re-check the complete
@@ -14203,6 +14250,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             .clone();
         crate::event::publish_tutelage_v1(state, &tutelage_item)?;
     }
+    if let Some(item) = state
+        .stack
+        .last()
+        .filter(|r| {
+            r.inline_effect
+                .as_ref()
+                .is_some_and(crate::effect::greatwurm_v1::recipe)
+        })
+        .cloned()
+    {
+        crate::effect::greatwurm_v1::publish(state, &item)?;
+    }
     if state.stack.last().is_some_and(|item| {
         matches!(
             item.inline_effect,
@@ -14392,6 +14451,7 @@ fn validate_bound_trigger_source_objects(
     source: ObjectId,
     source_contract: Option<AbilitySourceContractV4>,
 ) -> Result<(), String> {
+    crate::effect::greatwurm_v1::validate_root(state, effect, source_contract)?;
     crate::effect::kykar_v1::validate_root(state, effect, source_contract)?;
     match effect {
         EffectOp::Sequence(steps) => {
@@ -14629,6 +14689,20 @@ fn triggered_stack_item_expected_target_spec(
             .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
         {
             event::validate_published_copied_token_v1(state, item)?;
+        }
+        return Ok(None);
+    }
+    if crate::effect::greatwurm_v1::selected(state, item)
+        || crate::effect::greatwurm_v1::definition(source_card_def)
+            && crate::effect::greatwurm_v1::recipe(inline_effect)
+    {
+        crate::effect::greatwurm_v1::validate_item(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            crate::effect::greatwurm_v1::validate_published(state, item)?;
         }
         return Ok(None);
     }
@@ -15704,6 +15778,10 @@ pub(crate) fn counter_stack_item_by_id(
     let fake_death_counter_owner =
         crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    let greatwurm_counter = crate::effect::greatwurm_v1::selected(state, &item);
+    if greatwurm_counter {
+        crate::effect::greatwurm_v1::validate_published(state, &item)?;
+    }
     let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
     let curator_counter = if effect::curator_v1::selected(state, &item) {
         Some(effect::curator_v1::validate_trigger(state, &item)?)
@@ -15740,6 +15818,14 @@ pub(crate) fn counter_stack_item_by_id(
             .engine
             .event_history
             .push(CommittedEvent::CopiedTokenSacrificeFinishedV1 { stack_item_id });
+    }
+    if greatwurm_counter {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::GreatwurmFinishedV1 {
+                stack_item_id: item.v4.stack_item_id,
+            });
     }
     if let Some(capture_history_index) = lathril_counter_capture {
         state
@@ -19453,6 +19539,10 @@ pub(crate) fn commit_combat_damage_events_inner(
     false
 }
 pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start: usize) {
+    if crate::effect::greatwurm_v1::bind_wave(state, event_start).is_err() {
+        state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
+        return;
+    }
     let lathril_captures = state.engine.event_log[event_start..]
         .iter()
         .filter(|event| matches!(event, CommittedEvent::LathrilCombatDamageV1 { .. }))
@@ -19753,6 +19843,7 @@ enum PendingCastActionStage {
     AwaitEngineAdvance,
     ChooseConvoke,
     ChooseMandatoryAdditionalCost,
+    ChooseGreatwurmCost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19780,6 +19871,9 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::Discard);
     }
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    if greatwurm_cast_v1::waiting(pending) {
+        return Ok(PendingCastActionStage::ChooseGreatwurmCost);
+    }
     if pending.kicked.is_none() {
         return Ok(PendingCastActionStage::ChooseKicker);
     }
@@ -19902,7 +19996,8 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             Action::ChooseCostTarget(_)
         ) | (
             PendingCastActionStage::ChooseAdditionalCostZone
-                | PendingCastActionStage::ChooseMandatoryAdditionalCost,
+                | PendingCastActionStage::ChooseMandatoryAdditionalCost
+                | PendingCastActionStage::ChooseGreatwurmCost,
             Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseXValue,
@@ -22495,6 +22590,9 @@ fn apply_pending_cast_effect_option(
     let stage = pending_cast_action_stage(state, &pending)?;
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     match stage {
+        PendingCastActionStage::ChooseGreatwurmCost => {
+            greatwurm_cast_v1::answer(state, &pending, option_index)
+        }
         PendingCastActionStage::ChooseOptionalAdditionalCost => {
             apply_choose_optional_additional_cost(state, option_index)
         }
@@ -22710,13 +22808,21 @@ fn materialize_begin_cast_v1(
             .expect("permitted adventure")
     });
     let target_spec = def.target_spec;
+    let greatwurm_choice = if forced_cast_method.is_none() {
+        greatwurm_cast_v1::seed(state, spell_id, player)
+    } else {
+        None
+    };
     let graveyard_permission = (forced_cast_method.is_none()
         && origin_zone == Zone::Graveyard
         && unambiguous_graveyard_cast_method(def).is_none())
     .then(|| graveyard_permission_zone_change_count(player, spell_id, state))
     .flatten();
     let cast_method = forced_cast_method.unwrap_or_else(|| {
-        if graveyard_permission.is_some() || graveyard_adventure.is_some() {
+        if graveyard_permission.is_some()
+            || graveyard_adventure.is_some()
+            || greatwurm_choice.is_some()
+        {
             CastMethodV4::Normal
         } else if origin_zone == Zone::Graveyard {
             unambiguous_graveyard_cast_method(def).expect(
@@ -22752,6 +22858,12 @@ fn materialize_begin_cast_v1(
             }
         }
         CastMethodV4::Normal if origin_zone == Zone::Hand => SpellCastRouteV4::Hand,
+        CastMethodV4::Normal if greatwurm_choice.is_some() => {
+            SpellCastRouteV4::GreatwurmGraveyardV1 {
+                holder: player,
+                graveyard_generation: origin_zone_change_count,
+            }
+        }
         CastMethodV4::Normal if origin_zone == Zone::Graveyard => {
             SpellCastRouteV4::GraveyardPermissionV1 {
                 holder: player,
@@ -22888,6 +23000,7 @@ fn materialize_begin_cast_v1(
     });
 
     state.engine.pending_cast = Some(PendingCast {
+        greatwurm_v1: greatwurm_choice,
         spell: spell_id,
         source_contract,
         controller: player,
@@ -23018,7 +23131,9 @@ fn finalize_owned_cast(
     };
     crate::standard_cards_v1::clear_payment_sources(state);
     let mandatory_payment_input = mandatory_cast_cost_v1::record_input(state, &pending);
+    let greatwurm_payment_input = greatwurm_cast_v1::record_input(state, &pending);
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    let greatwurm_payment_v1 = greatwurm_cast_v1::record_paid(state, greatwurm_payment_input)?;
 
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
@@ -23104,6 +23219,7 @@ fn finalize_owned_cast(
     cast_origin.finalized_method = Some(cast_method);
     debug_assert!(source_v4.finalized_cast_binding.is_none());
     source_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
+        greatwurm_payment_v1,
         x_value: u16::from(x_value),
         chosen_creature_cost,
         variable_targeting_kicked: (def.target_spec == TargetSpec::KickerControlledCreatures)

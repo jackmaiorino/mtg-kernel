@@ -921,6 +921,10 @@ pub enum SpellCastRouteV4 {
         holder: PlayerId,
         permission_zone_change_count: u32,
     },
+    GreatwurmGraveyardV1 {
+        holder: PlayerId,
+        graveyard_generation: u32,
+    },
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -1111,6 +1115,8 @@ pub struct PaidCostRefV4 {
 /// that exact battlefield incarnation leaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FinalizedCastBindingV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm_payment_v1: Option<u64>,
     pub x_value: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chosen_creature_cost: Option<PaidCostRefV4>,
@@ -1124,6 +1130,10 @@ impl std::hash::Hash for FinalizedCastBindingV1 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.x_value.hash(state);
         self.chosen_creature_cost.hash(state);
+        if let Some(index) = self.greatwurm_payment_v1 {
+            "greatwurm_payment/v1".hash(state);
+            index.hash(state);
+        }
         if let Some(choice) = self.mandatory_additional_cost {
             "mandatory_additional_cost/v1".hash(state);
             choice.hash(state);
@@ -4900,6 +4910,7 @@ mod tests {
         let spell = state.players[0].library[0];
         let source_contract = StackSourceContractV4::capture(&state, spell, CastMethodV4::Normal);
         state.engine.pending_cast = Some(crate::engine::PendingCast {
+            greatwurm_v1: None,
             spell,
             source_contract,
             controller: PlayerId::P0,
