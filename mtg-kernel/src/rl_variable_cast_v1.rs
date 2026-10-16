@@ -108,6 +108,7 @@ pub(crate) fn candidates_fake_scoped_v50(
         decision,
         (accept_hunter, accept_panda, accept_conqueror, accept_fake),
         false,
+        false,
     )
 }
 pub(crate) fn candidates_next_five_v59(
@@ -115,7 +116,29 @@ pub(crate) fn candidates_next_five_v59(
     surface: &PolicySurfaceV5,
     decision: &PolicyDecisionV5,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
-    candidates_current_scope(state, surface, decision, (true, true, true, true), true)
+    candidates_current_scope(
+        state,
+        surface,
+        decision,
+        (true, true, true, true),
+        true,
+        false,
+    )
+}
+pub(crate) fn candidates_graveyard_return_v61(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope(
+        state,
+        surface,
+        decision,
+        (true, true, true, true),
+        true,
+        true,
+    )
 }
 fn candidates_current_scope(
     state: &GameState,
@@ -123,6 +146,7 @@ fn candidates_current_scope(
     decision: &PolicyDecisionV5,
     capabilities: (bool, bool, bool, bool),
     accept_next_five: bool,
+    accept_graveyard_return: bool,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
     let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
 
@@ -325,7 +349,9 @@ fn candidates_current_scope(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = if accept_next_five {
+                let old = if accept_graveyard_return {
+                    crate::rl::core_policy_action_candidates_graveyard_return_v61(decision, state)?
+                } else if accept_next_five {
                     crate::rl::core_policy_action_candidates_next_five_v59(decision, state)?
                 } else {
                     crate::rl::core_policy_action_candidates_fake_scoped_v50(

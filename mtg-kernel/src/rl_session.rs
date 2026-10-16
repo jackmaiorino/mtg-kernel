@@ -93,6 +93,39 @@ pub(crate) fn next_five_candidates_v59(
     next_five_v59::actual_candidates(origin, state, surface)
 }
 
+/// V61 read-only candidate production. There is deliberately no V61 session mode.
+pub(crate) fn graveyard_return_candidates_v61(
+    origin: &PolicyDecisionV5,
+    state: &crate::state::GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    #[cfg(feature = "limited-fdn-fixtures")]
+    if let Some((player, pending, prefix)) = surface
+        .hunter_order_parts_v45(state)
+        .map_err(RlContractError)?
+    {
+        return crate::rl::hunter_trigger_order_candidates_v45(player, pending, prefix, state);
+    }
+    if let Some(candidates) =
+        crate::divine_actions_v44::candidates_graveyard_return_v61(origin, state, surface)?
+    {
+        return Ok(candidates);
+    }
+    if matches!(
+        origin,
+        PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+            Decision::ChooseEntryColorV36 { .. }
+        ))
+    ) {
+        banner_v36::actual_candidates(origin, state)
+    } else if inspiration_v37::is_mill(state) {
+        inspiration_v37::actual_candidates(origin, state)
+    } else {
+        crate::rl::core_policy_action_candidates_graveyard_return_v61(origin, state)
+    }
+}
+
 pub(crate) mod human_opening_v1;
 pub(crate) mod human_v8;
 pub(crate) mod juggernaut_v25;

@@ -8461,6 +8461,30 @@ fn known_face_down_cards_v1(
         .collect()
 }
 
+/// Positionless visible library ordering shared by frozen normalization and
+/// source-only successor projections. Native indices remain private bindings.
+pub(crate) fn positionless_library_candidate_order(
+    semantic: &ActionSemanticV1,
+    search: &DecisionLocalLibraryV6,
+) -> Result<usize> {
+    match semantic {
+        ActionSemanticV1::ChooseEffectTarget {
+            target: TargetRefV1::Object { object },
+            ..
+        } => search
+            .cards
+            .iter()
+            .position(|card| card.stable == *object)
+            .ok_or_else(|| {
+                RlContractError("library candidate has no positionless visible card".into())
+            }),
+        ActionSemanticV1::FinishEffectSelection { .. } => Ok(usize::MAX),
+        _ => Err(RlContractError(
+            "library candidate changed semantic family".into(),
+        )),
+    }
+}
+
 pub(crate) fn card_ref(state: &GameState, id: ObjectId) -> Result<CardStableRefV1> {
     let object = state
         .objects
@@ -8955,6 +8979,17 @@ pub(crate) fn core_policy_action_candidates_next_five_v59(
     state: &GameState,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision, state, true, true, true, true, true,
+    )
+}
+
+/// Read-only V61 source projection. This does not admit an owning consumer.
+pub(crate) fn core_policy_action_candidates_graveyard_return_v61(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
         decision, state, true, true, true, true, true,
     )
