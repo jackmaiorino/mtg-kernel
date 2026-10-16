@@ -27045,9 +27045,14 @@ fn spirit_copy_proposal_v1(
         .v4
         .source_contract
         .ok_or("copy spell source absent")?;
-    // This validates native copy ancestry as well as physical cast provenance.
-    // Neither the copy flag nor a caller-provided copy-origin payload suffices.
-    crate::engine::validated_stack_item_target_spec(&owner.item, state)?;
+    owner.validate_entry(state, &owner.item, ctx, &owner.root)?;
+    // The native driver has already removed this exact row. Lend only its
+    // authenticated original to an immutable validation copy; the public
+    // source validator still requires actual unique stack membership and
+    // checks native virtual-copy ancestry as well as physical cast provenance.
+    let mut loan = state.clone();
+    loan.stack.push(owner.item.clone());
+    crate::engine::validated_stack_item_target_spec(&owner.item, &loan)?;
     if owner.ctx != *ctx
         || owner.item.kind != StackItemKind::Spell
         || owner.item.source != ctx.source

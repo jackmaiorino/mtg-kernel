@@ -1018,12 +1018,23 @@ fn paid_spirit_copy_stale_target_and_generic_or_forged_copy_authority_refuse_bot
                 owner: &owner,
                 ctx: &ctx,
             };
+            let before = input.clone();
+            // Public validation still refuses an absent row. Only the private
+            // native owner may lend its exact original for copy validation.
+            assert!(crate::engine::validated_stack_item_target_spec(&item, &input).is_err());
             let proposal = spirit_copy_proposal_v1(&input, &proof).unwrap().unwrap();
+            assert_eq!(input, before);
             let good = SpiritCopyPermitV1 {
                 proof: &proof,
                 proposal: proposal.clone(),
             };
             assert!(good.allows(&input, &good.events()));
+            let mut foreign_stack = input.clone();
+            foreign_stack.stack.push(item.clone());
+            let before = foreign_stack.clone();
+            assert!(!good.allows(&foreign_stack, &good.events()));
+            assert!(spirit_copy_proposal_v1(&foreign_stack, &proof).is_err());
+            assert_eq!(foreign_stack, before);
             let mut stale = input.clone();
             event::propose_and_commit(
                 &mut stale,
