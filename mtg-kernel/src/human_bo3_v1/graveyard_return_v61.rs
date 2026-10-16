@@ -338,11 +338,11 @@ pub(super) fn choice_label(
     }
     super::prepared_v57::choice_label_graveyard_return(obs, a, h)
 }
-fn project(
+pub(super) fn project_with_handles(
     decision: &GraveyardReturnDecisionV61,
     human: PlayerSeatV1,
     prompt_seq: u64,
-) -> Result<(HumanDecisionGraveyardReturnV61, Vec<u32>), Error> {
+) -> Result<(HumanDecisionGraveyardReturnV61, Vec<u32>, Handles), Error> {
     let obs = decision.observation();
     if obs.graveyard_return.viewer != human || obs.common.common.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -429,7 +429,16 @@ fn project(
             action_meanings,
         },
         indexes,
+        handles,
     ))
+}
+fn project(
+    decision: &GraveyardReturnDecisionV61,
+    human: PlayerSeatV1,
+    prompt_seq: u64,
+) -> Result<(HumanDecisionGraveyardReturnV61, Vec<u32>), Error> {
+    project_with_handles(decision, human, prompt_seq)
+        .map(|(visible, indexes, _)| (visible, indexes))
 }
 #[derive(Clone)]
 struct AuthorityV61 {
