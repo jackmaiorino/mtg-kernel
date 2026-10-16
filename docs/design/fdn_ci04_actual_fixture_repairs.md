@@ -52,3 +52,11 @@ Fixed public test-phase labels identify Quandary decline/discard, Spinner
 reveal and the closed five-family Prepared/Human casting loops. These test-only
 labels print no state, object references or hidden operands and change no guard.
 They do not resolve the continuation or generic origin failure.
+
+The Season attachment fixture uses the registered Viridian Longbow printing
+instead of the nonexistent Longbow name in both native setup helpers. The Human
+assertion follows the actual label producer, which uses the visible equipment
+name in "Attach {} to newly created {}". CreateTokenAndAttachSource remains an
+explicit native primitive, not a fictional printed Longbow trigger or copy
+spell. All two-seat token-choice, original private binding, stale/foreign
+refusal, attachment and restore checks remain. No production label changed.
