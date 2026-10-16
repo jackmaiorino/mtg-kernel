@@ -453,7 +453,7 @@ fn native_pt_prefix(state: &GameState, id: ObjectId) -> Result<(Option<i32>, Opt
 fn form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
     form_inner(state, id, false)
 }
-fn checked_form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
+pub(crate) fn checked_form(state: &GameState, id: ObjectId) -> Result<FormV1, String> {
     form_inner(state, id, true)
 }
 fn form_inner(state: &GameState, id: ObjectId, checked: bool) -> Result<FormV1, String> {

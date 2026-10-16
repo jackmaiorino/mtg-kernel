@@ -433,7 +433,7 @@ fn closed_fields(d: &CardDef) {
         creature_type_entry_v1: _,
     } = d;
 }
-fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
+pub(crate) fn ordinary_foreign_fields_absent(d: &CardDef) -> bool {
     closed_fields(d);
     d.object_name == d.name
         && !d.is_land

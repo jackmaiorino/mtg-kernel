@@ -755,6 +755,8 @@ pub mod midnight_snack_v1;
 pub mod nine_lives_familiar_v1;
 pub mod prepared_observation_v57;
 pub mod rules_meaning_graveyard_return_v61;
+pub mod rules_meaning_valkyries_call_v62;
+pub mod valkyries_call_public_v62;
 pub mod valkyries_call_v1;
 
 #[cfg(all(
