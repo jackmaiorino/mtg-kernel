@@ -2235,86 +2235,102 @@ mod variable_target_refusal_tests {
 mod next_five_native_label_tests {
     use super::*;
     use crate::{
-        extra_turn_v1::tests::ready,
-        ids::PlayerId,
-        policy_observation_v6::tests::put,
-        rl_session::{FastActorResponseV1, FastActorSessionV1},
-        state::Zone,
+        extra_turn_v1::tests::ready, ids::PlayerId, policy_observation_v6::tests::put,
+        rl_session::FastActorSessionV1, state::Zone,
     };
 
-    fn fake_rows(
-        session: &FastActorSessionV1,
+    fn next_five_rows(
+        session: &crate::rl_session::NextFiveSessionV59,
     ) -> (
-        crate::fake_observation_v50::FakeObservationV50,
+        crate::next_five_observation_v59::NextFiveObservationV59,
         crate::rl_session::FastActorDecisionV1,
         Vec<A>,
     ) {
-        let FastActorResponseV1::Decision(expected) = session.current_response() else {
-            panic!("fixture did not expose an actual decision")
-        };
-        let (observation, actions, _) = session
-            .fake_current_decision_input_v50(expected, expected.acting_player)
-            .unwrap();
-        (observation, expected, actions)
+        let decision = session.decision_v59().unwrap();
+        (
+            decision.observation().clone(),
+            decision.expected(),
+            decision.actions().to_vec(),
+        )
     }
 
     fn human_label(
-        observation: &crate::fake_observation_v50::FakeObservationV50,
+        observation: &crate::next_five_observation_v59::NextFiveObservationV59,
         action: &A,
         human: PlayerSeatV1,
     ) -> Result<String, Error> {
         let handles = Handles::from_parts(
-            &observation.projection,
-            &observation.own_hand,
-            &observation.known_hand_cards,
-            &observation.known_library_cards,
-            None,
+            &observation.common.common.projection,
+            &observation.common.common.own_hand,
+            &observation.common.common.known_hand_cards,
+            &observation.common.common.known_library_cards,
+            observation
+                .common
+                .common
+                .extensions
+                .decision_local_library
+                .as_ref(),
         )?;
         let parts = super::super::life_ward_v8::ProjectionPartsV8 {
-            projection: &observation.projection,
-            own_hand: &observation.own_hand,
-            known_library_cards: &observation.known_library_cards,
-            known_hand_cards: &observation.known_hand_cards,
-            known_face_down_cards: &observation.known_face_down_cards,
-            extensions: &observation.extensions,
+            projection: &observation.common.common.projection,
+            own_hand: &observation.common.common.own_hand,
+            known_library_cards: &observation.common.common.known_library_cards,
+            known_hand_cards: &observation.common.common.known_hand_cards,
+            known_face_down_cards: &observation.common.common.known_face_down_cards,
+            extensions: &observation.common.common.extensions,
         };
-        label_parts_v8(action, &parts, &handles, human)
+        label_parts_v59(action, &parts, &handles, human, &observation.next_five)
     }
 
     fn human_label_v59(
-        observation: &crate::fake_observation_v50::FakeObservationV50,
+        observation: &crate::next_five_observation_v59::NextFiveObservationV59,
         action: &A,
         human: PlayerSeatV1,
         facts: &crate::next_five_public_v59::FactsV59,
     ) -> Result<String, Error> {
         let handles = Handles::from_parts(
-            &observation.projection,
-            &observation.own_hand,
-            &observation.known_hand_cards,
-            &observation.known_library_cards,
-            None,
+            &observation.common.common.projection,
+            &observation.common.common.own_hand,
+            &observation.common.common.known_hand_cards,
+            &observation.common.common.known_library_cards,
+            observation
+                .common
+                .common
+                .extensions
+                .decision_local_library
+                .as_ref(),
         )?;
         let parts = super::super::life_ward_v8::ProjectionPartsV8 {
-            projection: &observation.projection,
-            own_hand: &observation.own_hand,
-            known_library_cards: &observation.known_library_cards,
-            known_hand_cards: &observation.known_hand_cards,
-            known_face_down_cards: &observation.known_face_down_cards,
-            extensions: &observation.extensions,
+            projection: &observation.common.common.projection,
+            own_hand: &observation.common.common.own_hand,
+            known_library_cards: &observation.common.common.known_library_cards,
+            known_hand_cards: &observation.common.common.known_hand_cards,
+            known_face_down_cards: &observation.common.common.known_face_down_cards,
+            extensions: &observation.common.common.extensions,
         };
         label_parts_v59(action, &parts, &handles, human, facts)
     }
 
     fn activate_and_restore(
-        session: &mut FastActorSessionV1,
+        session: &mut crate::rl_session::NextFiveSessionV59,
         expected: crate::rl_session::FastActorDecisionV1,
         index: usize,
     ) {
-        let saved = session.snapshot_v1();
-        session
-            .step(expected.episode_id, expected.step, index as u32)
-            .unwrap();
-        session.restore_v1(&saved);
+        let saved = session.snapshot_v59();
+        let decision = session.decision_v59().unwrap();
+        assert_eq!(decision.expected(), expected);
+        session.step_v59(&decision, index as u32).unwrap();
+        session.restore_v59(&saved).unwrap();
+    }
+
+    fn step_next_five(
+        session: &mut crate::rl_session::NextFiveSessionV59,
+        expected: crate::rl_session::FastActorDecisionV1,
+        index: usize,
+    ) {
+        let decision = session.decision_v59().unwrap();
+        assert_eq!(decision.expected(), expected);
+        session.step_v59(&decision, index as u32).unwrap();
     }
 
     fn quiet_actual_step(state: &mut crate::state::GameState, decision: crate::engine::Decision) {
@@ -2501,8 +2517,11 @@ mod next_five_native_label_tests {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready(actor);
             let giada = put(&mut state, actor, "Giada, Font of Hope", Zone::Battlefield);
-            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
-            let (observation, expected, actions) = fake_rows(&session);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, expected, actions) = next_five_rows(&session);
             let human = expected.acting_player;
             let (index, action) = actions
                 .iter()
@@ -2517,7 +2536,8 @@ mod next_five_native_label_tests {
             assert!(label.contains("only to cast Angel spells"), "{label}");
 
             activate_and_restore(&mut session, expected, index);
-            let (restored_observation, restored_expected, restored_actions) = fake_rows(&session);
+            let (restored_observation, restored_expected, restored_actions) =
+                next_five_rows(&session);
             let restored_human = restored_expected.acting_player;
             let (restored_index, restored_action) = restored_actions
                 .iter()
@@ -2542,8 +2562,11 @@ mod next_five_native_label_tests {
             let snack = put(&mut state, actor, "Midnight Snack", Zone::Battlefield);
             state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
             state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 2;
-            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
-            let (observation, expected, actions) = fake_rows(&session);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, expected, actions) = next_five_rows(&session);
             let human = expected.acting_player;
             let (index, action) = actions
                 .iter()
@@ -2565,7 +2588,8 @@ mod next_five_native_label_tests {
             );
 
             activate_and_restore(&mut session, expected, index);
-            let (restored_observation, restored_expected, restored_actions) = fake_rows(&session);
+            let (restored_observation, restored_expected, restored_actions) =
+                next_five_rows(&session);
             let restored_human = restored_expected.acting_player;
             let (restored_index, restored_action) = restored_actions
                 .iter()
@@ -2599,9 +2623,12 @@ mod next_five_native_label_tests {
                 Zone::Battlefield,
             );
             let spell = put(&mut state, actor, "Goblin Negotiation", Zone::Hand);
-            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
 
-            let (_, cast_decision, cast_actions) = fake_rows(&session);
+            let (_, cast_decision, cast_actions) = next_five_rows(&session);
             let cast_index = cast_actions
                 .iter()
                 .position(|action| {
@@ -2611,17 +2638,11 @@ mod next_five_native_label_tests {
                     )
                 })
                 .expect("native Goblin Negotiation cast row");
-            session
-                .step(
-                    cast_decision.episode_id,
-                    cast_decision.step,
-                    cast_index as u32,
-                )
-                .unwrap();
+            step_next_five(&mut session, cast_decision, cast_index as u32);
 
-            let (target_observation, target_decision, target_actions) = fake_rows(&session);
+            let (target_observation, target_decision, target_actions) = next_five_rows(&session);
             let target_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let target_index = target_actions
                 .iter()
                 .position(|action| matches!(action,
@@ -2643,17 +2664,11 @@ mod next_five_native_label_tests {
                 target_label.contains("X is not selected yet"),
                 "{target_label}"
             );
-            session
-                .step(
-                    target_decision.episode_id,
-                    target_decision.step,
-                    target_index as u32,
-                )
-                .unwrap();
+            step_next_five(&mut session, target_decision, target_index as u32);
 
-            let (x_observation, x_decision, x_actions) = fake_rows(&session);
+            let (x_observation, x_decision, x_actions) = next_five_rows(&session);
             let x_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let x_index = x_actions
                 .iter()
                 .position(|action| {
@@ -2677,14 +2692,15 @@ mod next_five_native_label_tests {
                 "{x_label}"
             );
 
-            let saved = session.snapshot_v1();
-            session
-                .step(x_decision.episode_id, x_decision.step, x_index as u32)
-                .unwrap();
-            assert!(session.game_state().engine.pending_cast.is_none());
-            assert_eq!(session.game_state().objects.get(spell).zone, Zone::Stack);
+            let saved = session.snapshot_v59();
+            step_next_five(&mut session, x_decision, x_index as u32);
+            assert!(session.fixture_state_v59().engine.pending_cast.is_none());
+            assert_eq!(
+                session.fixture_state_v59().objects.get(spell).zone,
+                Zone::Stack
+            );
             let paid_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let paid_cast = paid_facts
                 .casts
                 .iter()
@@ -2693,10 +2709,11 @@ mod next_five_native_label_tests {
             assert!(!paid_cast.payment_pending);
             assert_eq!(paid_cast.x, Some(3));
 
-            session.restore_v1(&saved);
-            let (restored_observation, restored_decision, restored_actions) = fake_rows(&session);
+            session.restore_v59(&saved).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
             let restored_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let restored_index = restored_actions
                 .iter()
                 .position(|action| {
@@ -2716,14 +2733,8 @@ mod next_five_native_label_tests {
                 .unwrap(),
                 x_label
             );
-            session
-                .step(
-                    restored_decision.episode_id,
-                    restored_decision.step,
-                    restored_index as u32,
-                )
-                .unwrap();
-            assert!(session.game_state().engine.pending_cast.is_none());
+            step_next_five(&mut session, restored_decision, restored_index as u32);
+            assert!(session.fixture_state_v59().engine.pending_cast.is_none());
         }
     }
 
@@ -2732,10 +2743,13 @@ mod next_five_native_label_tests {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let (state, source, copy_target, host, other_host) =
                 paid_replication_at_own_upkeep(actor);
-            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
-            let (target_observation, target_decision, target_actions) = fake_rows(&session);
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (target_observation, target_decision, target_actions) = next_five_rows(&session);
             let target_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let target_index = target_actions
                 .iter()
                 .position(|action| matches!(action,
@@ -2758,18 +2772,13 @@ mod next_five_native_label_tests {
             );
             assert!(target_label.contains("Bind the Monster"), "{target_label}");
 
-            let saved_target = session.snapshot_v1();
-            session
-                .step(
-                    target_decision.episode_id,
-                    target_decision.step,
-                    target_index as u32,
-                )
-                .unwrap();
-            session.restore_v1(&saved_target);
-            let (restored_observation, restored_decision, restored_actions) = fake_rows(&session);
+            let saved_target = session.snapshot_v59();
+            step_next_five(&mut session, target_decision, target_index as u32);
+            session.restore_v59(&saved_target).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
             let restored_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let restored_target_index = restored_actions
                 .iter()
                 .position(|action| matches!(action,
@@ -2789,20 +2798,19 @@ mod next_five_native_label_tests {
                 .unwrap(),
                 target_label
             );
-            session
-                .step(
-                    restored_decision.episode_id,
-                    restored_decision.step,
-                    restored_target_index as u32,
-                )
-                .unwrap();
+            step_next_five(
+                &mut session,
+                restored_decision,
+                restored_target_index as u32,
+            );
 
             for host_prompt in 0usize..2 {
                 let mut found_host = false;
                 for _ in 0..16 {
-                    let (observation, decision, actions) = fake_rows(&session);
+                    let (observation, decision, actions) = next_five_rows(&session);
                     let facts =
-                        crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                        crate::next_five_public_v59::capture(session.fixture_state_v59(), actor)
+                            .unwrap();
                     if let Some((index, action)) = actions.iter().enumerate().find(|(_, action)| {
                         matches!(action,
                             A::ChooseEffectTarget {
@@ -2858,17 +2866,17 @@ mod next_five_native_label_tests {
                                 .unwrap();
                         assert!(label.contains("Aura host"), "{label}");
 
-                        let saved = session.snapshot_v1();
-                        session
-                            .step(decision.episode_id, decision.step, index as u32)
-                            .unwrap();
+                        let saved = session.snapshot_v59();
+                        step_next_five(&mut session, decision, index as u32);
                         if host_prompt == 1 {
-                            session.restore_v1(&saved);
+                            session.restore_v59(&saved).unwrap();
                             let (restored_observation, restored_decision, restored_actions) =
-                                fake_rows(&session);
-                            let restored_facts =
-                                crate::next_five_public_v59::capture(session.game_state(), actor)
-                                    .unwrap();
+                                next_five_rows(&session);
+                            let restored_facts = crate::next_five_public_v59::capture(
+                                session.fixture_state_v59(),
+                                actor,
+                            )
+                            .unwrap();
                             let restored_index = restored_actions
                                 .iter()
                                 .position(|candidate| candidate == action)
@@ -2883,13 +2891,7 @@ mod next_five_native_label_tests {
                                 .unwrap(),
                                 label
                             );
-                            session
-                                .step(
-                                    restored_decision.episode_id,
-                                    restored_decision.step,
-                                    restored_index as u32,
-                                )
-                                .unwrap();
+                            step_next_five(&mut session, restored_decision, restored_index as u32);
                         }
                         found_host = true;
                         break;
@@ -2898,15 +2900,13 @@ mod next_five_native_label_tests {
                         .iter()
                         .position(|action| matches!(action, A::Pass { actor } if *actor == decision.acting_player))
                         .expect("priority pass before Replication resolves");
-                    session
-                        .step(decision.episode_id, decision.step, pass_index as u32)
-                        .unwrap();
+                    step_next_five(&mut session, decision, pass_index as u32);
                 }
                 assert!(found_host, "native Replication Aura-host choice absent");
             }
             let copied_aura = crate::card_def::card_id_by_name("Bind the Monster").unwrap();
             let copies = session
-                .game_state()
+                .fixture_state_v59()
                 .objects
                 .iter()
                 .filter(|(_, object)| {
@@ -2957,9 +2957,13 @@ mod next_five_native_label_tests {
                 Decision::OrderTriggers { player, pending } if player == actor && pending.len() == 2
             ));
 
-            let mut session = FastActorSessionV1::from_fake_v50_fixture_state(state);
-            let (observation, decision, actions) = fake_rows(&session);
-            let facts = crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            let mut session = crate::rl_session::NextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(state),
+            )
+            .unwrap();
+            let (observation, decision, actions) = next_five_rows(&session);
+            let facts =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let held = facts
                 .triggers
                 .iter()
@@ -3012,11 +3016,10 @@ mod next_five_native_label_tests {
             );
             assert!(label.contains("under its owner's control"), "{label}");
 
-            let saved = session.snapshot_v1();
-            session
-                .step(decision.episode_id, decision.step, order_index as u32)
-                .unwrap();
-            let placed = crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+            let saved = session.snapshot_v59();
+            step_next_five(&mut session, decision, order_index as u32);
+            let placed =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             assert_eq!(placed.triggers.len(), 2);
             assert!(placed.triggers.iter().all(|row| row.family
                 == crate::rules_meaning_next_five_v59::FamilyV59::Infernal
@@ -3024,10 +3027,11 @@ mod next_five_native_label_tests {
                 && row.placement_ordered
                 && row.source.captured_controller == actor.into()));
 
-            session.restore_v1(&saved);
-            let (restored_observation, restored_decision, restored_actions) = fake_rows(&session);
+            session.restore_v59(&saved).unwrap();
+            let (restored_observation, restored_decision, restored_actions) =
+                next_five_rows(&session);
             let restored_facts =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
             let restored_index = restored_actions
                 .iter()
                 .position(|action| action == &actions[order_index])
@@ -3042,16 +3046,102 @@ mod next_five_native_label_tests {
                 .unwrap(),
                 label
             );
-            session
-                .step(
-                    restored_decision.episode_id,
-                    restored_decision.step,
-                    restored_index as u32,
+            step_next_five(&mut session, restored_decision, restored_index as u32);
+            let restored_placed =
+                crate::next_five_public_v59::capture(session.fixture_state_v59(), actor).unwrap();
+            assert_eq!(restored_placed.triggers, placed.triggers);
+        }
+    }
+
+    #[test]
+    fn owning_next_five_human_projects_paid_infernal_order_without_private_meaning_metadata() {
+        use crate::rl_session::FastActorResponseV1;
+
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, vessels) = paid_infernal_pair(actor);
+            let inner = FastActorSessionV1::from_next_five_v59_fixture_state(state);
+            let mut session =
+                crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(inner, actor.into())
+                    .unwrap();
+            let foreign = crate::human_bo3_v1::HumanNextFiveSessionV59::from_session(
+                FastActorSessionV1::from_next_five_v59_fixture_state(ready(actor)),
+                actor.into(),
+            )
+            .unwrap();
+            let snapshot = session.snapshot_v59();
+            assert_eq!(foreign.restore_v59(&snapshot), Err(Error::StaleDecision));
+
+            let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                panic!("paid Infernal fixture should have an ordering decision");
+            };
+            let mut projector = crate::human_bo3_v1::HumanNextFiveProjectorV59::new(actor.into());
+            let visible = projector.project_current(&session, expected).unwrap();
+            let death_facts = &visible.state.next_five.infernal_deaths;
+            assert_eq!(death_facts.len(), 2);
+            assert_eq!(vessels.len(), 2);
+            for death in death_facts {
+                assert_eq!(death.source.original_source.name, "Infernal Vessel");
+                assert_eq!(death.source.original_source.owner, actor.into());
+                assert_eq!(death.owner_on_return, actor.into());
+                assert!(death.captured_not_demon && death.collection_completed);
+            }
+            let encoded = serde_json::to_string(&visible).unwrap();
+            for private_field in [
+                "producer_sha256",
+                "card_db_hash",
+                "root_sha256",
+                "selector",
+                "capability",
+                "model_admitted",
+                "sampler_admitted",
+                "full_engine_admitted",
+                "card_id",
+                "arena_id",
+            ] {
+                assert!(
+                    !encoded.contains(private_field),
+                    "Human V59 output leaked {private_field}"
+                );
+            }
+            let order = visible
+                .actions
+                .iter()
+                .find(|action| action.label.contains("bottom to top"))
+                .expect("actual native trigger order is labeled");
+            let receipt = projector
+                .submit(
+                    &mut session,
+                    crate::human_bo3_v1::HumanActionRequestV1 {
+                        prompt_seq: visible.prompt_seq,
+                        action_index: order.action_index,
+                    },
                 )
                 .unwrap();
-            let restored_placed =
-                crate::next_five_public_v59::capture(session.game_state(), actor).unwrap();
-            assert_eq!(restored_placed.triggers, placed.triggers);
+            assert_eq!(receipt.action_index, order.action_index);
+            session.restore_v59(&snapshot).unwrap();
+            let FastActorResponseV1::Decision(restored_expected) = session.current_response()
+            else {
+                panic!("restored paid Infernal fixture should have an ordering decision");
+            };
+            let restored = projector
+                .project_current(&session, restored_expected)
+                .unwrap();
+            assert_eq!(
+                restored
+                    .actions
+                    .iter()
+                    .map(|row| &row.label)
+                    .collect::<Vec<_>>(),
+                visible
+                    .actions
+                    .iter()
+                    .map(|row| &row.label)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                restored.state.next_five.infernal_deaths,
+                visible.state.next_five.infernal_deaths
+            );
         }
     }
 }

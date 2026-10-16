@@ -523,6 +523,7 @@ fn label(
     handles: &Handles,
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+    next_five: Option<&crate::next_five_public_v59::FactsV59>,
 ) -> Result<String, Error> {
     if let Some(label) = ravenous_facts::label(action, observation, handles, human)? {
         return Ok(label);
@@ -847,7 +848,11 @@ fn label(
     )? {
         return Ok(label);
     }
-    super::labels::label_parts_v8(action, &parts(observation), handles, human)
+    let parts = parts(observation);
+    match next_five {
+        Some(facts) => super::labels::label_parts_v59(action, &parts, handles, human, facts),
+        None => super::labels::label_parts_v8(action, &parts, handles, human),
+    }
 }
 
 pub(super) fn project_base_with_handles(
@@ -856,7 +861,16 @@ pub(super) fn project_base_with_handles(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
 ) -> Result<ProjectionWithHandles, Error> {
-    project_with_handles(observation, actions, human, families, true, None, None)
+    project_with_handles(
+        observation,
+        actions,
+        human,
+        families,
+        true,
+        None,
+        None,
+        None,
+    )
 }
 
 /// Shared by fixed-seat Human and actor-facing V3 transport. The complete
@@ -906,6 +920,7 @@ pub(super) fn project_elenda_base_with_handles(
         true,
         Some(elenda),
         None,
+        None,
     )?;
     let state = exact_state::project(state, observation, &handles)?;
     Ok((state, actions, indexes, handles))
@@ -934,6 +949,46 @@ pub(super) fn project_prepared_base_with_handles(
         families,
         true,
         Some(&observation.common.elenda),
+        Some(observation),
+        None,
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+/// NextFive V59 validates its own nested compatibility artifacts and reuses
+/// only the inherited typed Human component builders below that boundary.
+pub(super) fn project_next_five_base_with_handles(
+    observation: &crate::next_five_observation_v59::NextFiveObservationV59,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
         Some(observation),
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
@@ -964,6 +1019,7 @@ fn project_with_handles(
     limited: bool,
     elenda: Option<&crate::elenda_public_v52::FactsV52>,
     prepared: Option<&crate::prepared_observation_v57::PreparedObservationV57>,
+    next_five: Option<&crate::next_five_observation_v59::NextFiveObservationV59>,
 ) -> Result<ProjectionWithHandles, Error> {
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -971,7 +1027,16 @@ fn project_with_handles(
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    if let Some(prepared) = prepared {
+    if let Some(next_five) = next_five {
+        crate::next_five_observation_v59::validate_artifact(next_five)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &next_five.common.common != observation
+            || Some(&next_five.common.elenda) != elenda
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(prepared) = prepared {
         crate::prepared_observation_v57::validate_artifact(prepared)
             .map_err(|_| Error::InvalidVisibleReference)?;
         if &prepared.common.common != observation || Some(&prepared.common.elenda) != elenda {
@@ -1020,6 +1085,9 @@ fn project_with_handles(
     fake_facts::register(&observation.fake, &mut handles)?;
     ravenous_facts::register(&observation.ravenous, &mut handles)?;
     super::akroma_families_v40::register(families, &mut handles)?;
+    let next_five_facts = next_five
+        .map(|obs| super::next_five_v59::register(&obs.next_five, &mut handles))
+        .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
     }
@@ -1073,9 +1141,20 @@ fn project_with_handles(
     for row in &observation.eaten.payments {
         handles.insert(&row.source_at_payment)?;
     }
-    let prepared_facts = prepared
-        .map(|obs| super::prepared_v57::facts(obs, &mut handles, true))
-        .transpose()?;
+    let prepared_facts = if let Some(obs) = prepared {
+        Some(super::prepared_v57::facts(obs, &mut handles, true)?)
+    } else if let Some(obs) = next_five {
+        Some(super::prepared_v57::facts_parts(
+            &obs.drake,
+            &obs.spinner,
+            &obs.quandary,
+            &obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else {
+        None
+    };
     let initial = state(observation, &mut handles, human, families)?;
     let mut unary = BTreeMap::<String, Vec<String>>::new();
     if let Some(row) = &initial.extensions.eaten.pending {
@@ -1272,7 +1351,11 @@ fn project_with_handles(
         rows.dedup();
     }
     if let Some(facts) = &prepared_facts {
-        handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
+        if let Some(next_five) = &next_five_facts {
+            handles.canonicalize_parts_with_prepared(&initial, unary, &(facts, next_five))?;
+        } else {
+            handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
+        }
     } else {
         handles.canonicalize_parts(&initial, unary)?;
     }
@@ -1288,8 +1371,26 @@ fn project_with_handles(
                     .flatten()
                 {
                     label
+                } else if let Some(label) = next_five
+                    .map(|obs| {
+                        super::prepared_v57::activation_label_next_five(
+                            &obs.action_meanings,
+                            index,
+                            &handles,
+                        )
+                    })
+                    .transpose()?
+                    .flatten()
+                {
+                    label
                 } else if let Some(label) = prepared
                     .map(|obs| super::prepared_v57::choice_label(obs, action, &handles))
+                    .transpose()?
+                    .flatten()
+                {
+                    label
+                } else if let Some(label) = next_five
+                    .map(|obs| super::prepared_v57::choice_label_next_five(obs, action, &handles))
                     .transpose()?
                     .flatten()
                 {
@@ -1300,10 +1401,24 @@ fn project_with_handles(
                 } else if limited {
                     match super::limited_common_v1::label(action, &handles, human)? {
                         Some(label) => label,
-                        None => label(action, observation, &handles, human, families)?,
+                        None => label(
+                            action,
+                            observation,
+                            &handles,
+                            human,
+                            families,
+                            next_five.map(|value| &value.next_five),
+                        )?,
                     }
                 } else {
-                    label(action, observation, &handles, human, families)?
+                    label(
+                        action,
+                        observation,
+                        &handles,
+                        human,
+                        families,
+                        next_five.map(|value| &value.next_five),
+                    )?
                 },
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,
             ))

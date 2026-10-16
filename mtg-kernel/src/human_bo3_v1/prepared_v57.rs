@@ -411,8 +411,29 @@ pub(super) fn facts(
     handles: &mut Handles,
     register: bool,
 ) -> Result<HumanPreparedFactsV57, Error> {
+    facts_parts(
+        &obs.drake,
+        &obs.spinner,
+        &obs.quandary,
+        &obs.phoenix,
+        handles,
+        register,
+    )
+}
+
+/// Field-level inherited family mapper shared only after each owning artifact
+/// has passed its own validator. This avoids constructing or validating a
+/// Prepared V57 envelope for the distinct NextFive V59 observation.
+pub(super) fn facts_parts(
+    drake_facts: &crate::drake_public_v53::FactsV53,
+    spinner_facts: &crate::spinner_public_v54::FactsV54,
+    quandary_facts: &crate::quandary_public_v55::FactsV55,
+    phoenix_facts: &crate::phoenix_public_v56::FactsV56,
+    handles: &mut Handles,
+    register: bool,
+) -> Result<HumanPreparedFactsV57, Error> {
     let mut r = References { handles, register };
-    let battlefield = obs.drake.battlefield.each_ref().map(|rows| {
+    let battlefield = drake_facts.battlefield.each_ref().map(|rows| {
         rows.iter()
             .map(|row| {
                 Ok(HumanPreparedCardV57 {
@@ -436,8 +457,7 @@ pub(super) fn facts(
     });
     let [left, right] = battlefield;
     let drake = HumanDrakeFactsV57 {
-        meanings: obs
-            .drake
+        meanings: drake_facts
             .meanings
             .iter()
             .map(|m| HumanDrakeMeaningV57 {
@@ -447,8 +467,7 @@ pub(super) fn facts(
             })
             .collect(),
         battlefield: [left?, right?],
-        combat: obs
-            .drake
+        combat: drake_facts
             .combat
             .iter()
             .map(|row| {
@@ -463,8 +482,7 @@ pub(super) fn facts(
                 })
             })
             .collect::<Result<_, Error>>()?,
-        activations: obs
-            .drake
+        activations: drake_facts
             .activations
             .iter()
             .map(|row| {
@@ -504,24 +522,21 @@ pub(super) fn facts(
     };
     let spinner = HumanSpinnerFactsV57 {
         meaning: HumanSpinnerMeaningV57 {
-            printed: obs.spinner.meaning.printed.clone(),
-            cast: obs.spinner.meaning.cast.clone(),
-            ordered_rules: obs.spinner.meaning.ordered_rules.clone(),
+            printed: spinner_facts.meaning.printed.clone(),
+            cast: spinner_facts.meaning.cast.clone(),
+            ordered_rules: spinner_facts.meaning.ordered_rules.clone(),
         },
-        current: obs
-            .spinner
+        current: spinner_facts
             .current
             .iter()
             .map(|row| r.current(row))
             .collect::<Result<_, Error>>()?,
-        held: obs
-            .spinner
+        held: spinner_facts
             .held
             .iter()
             .map(|root| r.root(root))
             .collect::<Result<_, Error>>()?,
-        stack: obs
-            .spinner
+        stack: spinner_facts
             .stack
             .iter()
             .map(|row| {
@@ -534,26 +549,23 @@ pub(super) fn facts(
             .collect::<Result<_, Error>>()?,
     };
     let quandary = HumanQuandaryFactsV57 {
-        viewer: obs.quandary.viewer,
+        viewer: quandary_facts.viewer,
         meaning: HumanQuandaryMeaningV57 {
-            printed: obs.quandary.meaning.printed.clone(),
-            cast: obs.quandary.meaning.cast.clone(),
-            ordered_rules: obs.quandary.meaning.ordered_rules.clone(),
+            printed: quandary_facts.meaning.printed.clone(),
+            cast: quandary_facts.meaning.cast.clone(),
+            ordered_rules: quandary_facts.meaning.ordered_rules.clone(),
         },
-        current: obs
-            .quandary
+        current: quandary_facts
             .current
             .iter()
             .map(|row| r.current(row))
             .collect::<Result<_, Error>>()?,
-        held: obs
-            .quandary
+        held: quandary_facts
             .held
             .iter()
             .map(|root| r.root(root))
             .collect::<Result<_, Error>>()?,
-        stack: obs
-            .quandary
+        stack: quandary_facts
             .stack
             .iter()
             .map(|row| {
@@ -622,13 +634,12 @@ pub(super) fn facts(
     };
     let phoenix = HumanPhoenixFactsV57 {
         meaning: HumanPhoenixMeaningV57 {
-            printed: obs.phoenix.meaning.printed.clone(),
-            battlefield_entry: obs.phoenix.meaning.battlefield_entry,
-            ordered_rules: obs.phoenix.meaning.ordered_rules.clone(),
+            printed: phoenix_facts.meaning.printed.clone(),
+            battlefield_entry: phoenix_facts.meaning.battlefield_entry,
+            ordered_rules: phoenix_facts.meaning.ordered_rules.clone(),
         },
-        ferocious_now: obs.phoenix.ferocious_now,
-        current: obs
-            .phoenix
+        ferocious_now: phoenix_facts.ferocious_now,
+        current: phoenix_facts
             .current
             .iter()
             .map(|row| {
@@ -649,8 +660,7 @@ pub(super) fn facts(
                 })
             })
             .collect::<Result<_, Error>>()?,
-        spells: obs
-            .phoenix
+        spells: phoenix_facts
             .spells
             .iter()
             .map(|row| {
@@ -660,8 +670,7 @@ pub(super) fn facts(
                 })
             })
             .collect::<Result<_, Error>>()?,
-        triggers: obs
-            .phoenix
+        triggers: phoenix_facts
             .triggers
             .iter()
             .map(|row| {
@@ -755,12 +764,25 @@ pub(super) fn activation_label(
         Ok(format!("Activate {} [{}]: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",m.source.name,m.source.handle,m.count,m.before,m.after))
     }).transpose()
 }
+pub(super) fn activation_label_next_five(
+    meanings: &[Option<observation::NextFiveActivationV59>],
+    index: usize,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    meanings.get(index).ok_or(Error::InvalidAction)?.as_ref().map(|row| {
+        let source = handles.get(&row.source)?;
+        Ok(format!(
+            "Activate {} [{}]: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",
+            source.name, source.handle, row.count, row.before, row.after
+        ))
+    }).transpose()
+}
 fn trigger_group(
-    obs: &observation::PreparedObservationV57,
+    common: &crate::ravenous_observation_v51::RavenousObservationV51,
     actor: PlayerSeatV1,
 ) -> Result<&[crate::rl::PendingTriggerSemanticV2], Error> {
-    let context = &obs.common.common.projection.surface.engine_context;
-    if obs.common.common.acting_player != actor
+    let context = &common.projection.surface.engine_context;
+    if common.acting_player != actor
         || context.current_stage != crate::rl::EngineDecisionStageV2::PendingTriggers
     {
         return Err(Error::InvalidVisibleReference);
@@ -801,7 +823,8 @@ fn trigger_occurrence(
     ))
 }
 fn order_label(
-    obs: &observation::PreparedObservationV57,
+    common: &crate::ravenous_observation_v51::RavenousObservationV51,
+    trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
@@ -811,7 +834,7 @@ fn order_label(
         order,
     } = action
     {
-        let group = trigger_group(obs, *actor)?;
+        let group = trigger_group(common, *actor)?;
         if pending_sources.len() != group.len()
             || order.len() != group.len()
             || pending_sources
@@ -844,13 +867,8 @@ fn order_label(
         pending_count,
     } = action
     {
-        let group = trigger_group(obs, *actor)?;
-        let stage = obs
-            .common
-            .common
-            .trigger_order
-            .as_ref()
-            .ok_or(Error::InvalidVisibleReference)?;
+        let group = trigger_group(common, *actor)?;
+        let stage = trigger_order.ok_or(Error::InvalidVisibleReference)?;
         let mut selected = vec![false; group.len()];
         for index in ordered_prefix {
             let taken = selected
@@ -897,10 +915,46 @@ pub(super) fn choice_label(
     action: &ActionSemanticV1,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
-    if let Some(label) = order_label(obs, action, handles)? {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
+pub(super) fn choice_label_next_five(
+    obs: &crate::next_five_observation_v59::NextFiveObservationV59,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    choice_label_parts(
+        &obs.common.common,
+        obs.common.common.trigger_order.as_ref(),
+        &obs.spinner,
+        &obs.phoenix,
+        &obs.quandary,
+        action,
+        handles,
+    )
+}
+
+fn choice_label_parts(
+    common: &crate::ravenous_observation_v51::RavenousObservationV51,
+    trigger_order: Option<&crate::policy_surface_v5::TriggerOrderContextV45>,
+    spinner: &crate::spinner_public_v54::FactsV54,
+    phoenix: &crate::phoenix_public_v56::FactsV56,
+    quandary: &crate::quandary_public_v55::FactsV55,
+    action: &ActionSemanticV1,
+    handles: &Handles,
+) -> Result<Option<String>, Error> {
+    if let Some(label) = order_label(common, trigger_order, action, handles)? {
         return Ok(Some(label));
     }
-    for row in &obs.spinner.stack {
+    for row in &spinner.stack {
         if row.stage != crate::spinner_public_v54::StageV54::AwaitingReveal {
             continue;
         }
@@ -924,7 +978,7 @@ pub(super) fn choice_label(
             }
         }
     }
-    for row in &obs.phoenix.triggers {
+    for row in &phoenix.triggers {
         if !matches!(row.stage, phoenix::StageV56::PaymentOffered { .. }) {
             continue;
         }
@@ -949,7 +1003,7 @@ pub(super) fn choice_label(
             }
         }
     }
-    for row in &obs.quandary.stack {
+    for row in &quandary.stack {
         let crate::quandary_public_v55::StageV55::AwaitingPayment {
             payer,
             minimum,
