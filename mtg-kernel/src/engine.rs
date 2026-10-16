@@ -10821,6 +10821,14 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let spinner_owner = match crate::spinner_of_souls_v1::acquire_resume_owner(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let hunter_owner =
         match crate::high_society_hunter_custody_v45::acquire(state, &item, false, false) {
             Ok(owner) => owner,
@@ -10902,6 +10910,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
 
     let progress = if let Some(owner) = hunter_owner.as_ref() {
         crate::high_society_hunter_custody_v45::resume_owned(state, owner)
+    } else if let Some(owner) = spinner_owner {
+        crate::spinner_of_souls_v1::resume_owned(state, owner)
     } else if let Some(owner) = inspiration_owner.as_ref() {
         effect::resume_owned_inspiration_resolution(state, owner)
     } else if let Some(owner) = crystal_owner.as_ref() {

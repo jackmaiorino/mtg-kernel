@@ -351,6 +351,111 @@ fn decline_preserves_library_knowledge_and_rng_before_and_after_answer_restore()
 }
 
 #[test]
+fn paid_public_and_native_removed_row_resume_stages_preserve_guards_both_seats_and_rng_modes() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for v2 in [false, true] {
+            for accept in [false, true] {
+                let mut state = ready(actor, v2);
+                let spinner = source(&mut state, actor);
+                let dead = victim(&mut state, actor);
+                let cards = library(
+                    &mut state,
+                    actor,
+                    &["Forest", "Mountain", "Llanowar Elves", "Island"],
+                );
+                bolt(&mut state, actor.opponent(), dead);
+                await_choice(&mut state, actor, spinner);
+                let waiting = state.engine.pending_effect.as_ref().unwrap();
+                let item = waiting.resolving_item.clone();
+                assert!(waiting.frames.is_empty());
+                assert!(matches!(
+                    waiting.choice,
+                    Some(PendingEffectChoice::ChooseOption { .. })
+                ));
+                assert_eq!(waiting.ctx.controller, actor);
+                assert_eq!(
+                    waiting.ctx.ability_source_contract,
+                    item.v4.ability_source_contract
+                );
+                assert_eq!(state.stack.last(), Some(&item));
+                mtg_kernel::effect::validate_pending_effect_choice(&state).unwrap();
+                let prompt = restore(&state);
+                let before_library = state.players[actor.index()].library.clone();
+                let before_rng = rng(&state);
+                let before_knowledge = knowledge(&state, actor);
+                engine::step(&mut state, Action::ChooseEffectOption(u16::from(accept))).unwrap();
+                let answered = state.engine.pending_effect.as_ref().unwrap();
+                assert!(answered.choice.is_none());
+                assert!(answered.answered_choice_guard.is_none());
+                assert_eq!(answered.resolving_item, item);
+                assert_eq!(
+                    answered.frames,
+                    vec![EffectFrame::Program {
+                        op: if accept {
+                            EffectOp::RevealUntilCardTypeToHandRandomBottomV1 {
+                                player: mtg_kernel::effect::PlayerRef::Controller,
+                                card_type: mtg_kernel::card_def::CardType::Creature,
+                            }
+                        } else {
+                            EffectOp::Sequence(vec![])
+                        },
+                        path: vec![u16::from(accept)],
+                    }]
+                );
+                mtg_kernel::effect::validate_pending_effect_choice(&state).unwrap();
+                assert_eq!(state.stack.last(), Some(&item));
+                assert_eq!(state.players[actor.index()].library, before_library);
+                assert_eq!(rng(&state), before_rng);
+                assert_eq!(knowledge(&state, actor), before_knowledge);
+
+                // A restored public caller cannot claim the engine's genuine
+                // removal. Both prompt and answer must still own their row.
+                for mut missing in [prompt, restore(&state)] {
+                    missing
+                        .stack
+                        .retain(|row| row.v4.stack_item_id != item.v4.stack_item_id);
+                    let before = serde_json::to_vec(&missing).unwrap();
+                    assert!(mtg_kernel::effect::resume_resumable_resolution(&mut missing).is_err());
+                    assert_eq!(serde_json::to_vec(&missing).unwrap(), before);
+                }
+                let mut wrong_path = restore(&state);
+                let EffectFrame::Program { path, .. } =
+                    &mut wrong_path.engine.pending_effect.as_mut().unwrap().frames[0]
+                else {
+                    panic!("native answered program frame")
+                };
+                *path = vec![2];
+                let before = serde_json::to_vec(&wrong_path).unwrap();
+                assert!(mtg_kernel::effect::resume_resumable_resolution(&mut wrong_path).is_err());
+                assert_eq!(serde_json::to_vec(&wrong_path).unwrap(), before);
+
+                // This uses engine Advance, which validates, acquires private
+                // pre-removal authority, removes the row, and resumes natively.
+                state = restore(&state);
+                settle(&mut state);
+                assert!(state.engine.pending_effect.is_none());
+                assert!(state
+                    .stack
+                    .iter()
+                    .all(|row| row.v4.stack_item_id != item.v4.stack_item_id));
+                if accept {
+                    assert_eq!(state.objects.get(cards[2]).zone, Zone::Hand);
+                    assert!(!state.players[actor.index()].library.contains(&cards[2]));
+                    assert_eq!(
+                        state.players[actor.index()].library.len() + 1,
+                        before_library.len()
+                    );
+                } else {
+                    assert_eq!(state.players[actor.index()].library, before_library);
+                    assert_eq!(rng(&state), before_rng);
+                    assert_eq!(knowledge(&state, actor), before_knowledge);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn paid_opponent_token_and_spinner_deaths_do_not_offer_a_reveal() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         for which in 0..3 {
