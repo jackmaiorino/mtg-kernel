@@ -5813,6 +5813,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
+        "Zimone, Paradox Sculptor" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{G}{U}"), AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program {
+                name: "zimone_double_all_counter_kinds_v1",
+                effect: "crate::zimone_paradox_sculptor_v1::double_counters()",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledArtifactsOrCreatures)",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Drake Hatcher" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
             effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },

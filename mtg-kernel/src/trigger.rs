@@ -3596,6 +3596,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Zimone, Paradox Sculptor" {
+        return &crate::zimone_paradox_sculptor_v1::TRIGGERS;
+    }
     let artist = crate::effect::perforating_artist_v1::triggers(card);
     if !artist.is_empty() {
         return artist;
@@ -3920,6 +3923,9 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Zimone, Paradox Sculptor" => TargetSpec::StandardV1(
+            crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledCreatures,
+        ),
         "Extravagant Replication" => TargetSpec::AnotherControlledNonlandPermanent,
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,

@@ -8094,6 +8094,41 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BannerOfKinship.java",
       "is_token": false
+    },
+    {
+      "name": "Zimone, Paradox Sculptor",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{G}{U}",
+      "mana_value": 4,
+      "colors": [
+        "G",
+        "U"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Wizard"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 1,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_zimone_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "beginning_controller_combat_zero_to_two_controlled_creature_counters",
+        "green_blue_tap_double_each_counter_kind_zero_to_two_controlled_artifacts_or_creatures"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/z/ZimoneParadoxSculptor.java",
+      "is_token": false
     }
   ]
 }
