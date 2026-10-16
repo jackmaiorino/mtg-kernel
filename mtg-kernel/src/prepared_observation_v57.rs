@@ -350,6 +350,32 @@ pub(crate) fn observe_parts_v57(
     )
 }
 
+/// Keep a surrounding immutable request's optional history-key frame. This is
+/// the same complete observation body: without a matching frame, key derivation
+/// takes its ordinary uncached path. No validator or binding check is skipped.
+pub(crate) fn observe_parts_v57_in_request(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<PreparedPublicPartsV57, RlContractError> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::PreparedObservePartsInclusive,
+    );
+    observe_parts_v57_in_frame(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::ravenous_observation_v51::observe_parts_complete_prepared_v57,
+    )
+}
+
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
