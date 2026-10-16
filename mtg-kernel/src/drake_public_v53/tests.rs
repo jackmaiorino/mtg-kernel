@@ -798,10 +798,12 @@ fn native_pt_prefix_refuses_overflow_and_uses_public_face_down_form_both_seats()
         let (mut state, drake) = paid(actor, false);
         state.objects.get_mut(drake).counters.plus1_plus1 = i32::MAX;
         let before = serde_json::to_vec(&state).unwrap();
-        assert!(capture(&state)
-            .unwrap_err()
-            .0
-            .contains("native engine range"));
+        assert!(crate::engine::checked_effective_pt(&state, drake).is_err());
+        assert_eq!(crate::engine::validate_battlefield_pt(&state), Err(drake));
+        assert_eq!(
+            capture(&state).unwrap_err().0,
+            format!("native PT envelope exceeded for {drake:?}")
+        );
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
         let mut views = Vec::new();
         for name in ["Drake Hatcher", "Llanowar Elves"] {
