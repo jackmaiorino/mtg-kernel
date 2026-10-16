@@ -76,7 +76,16 @@ def physical_tree(path, allow_atomic_rename=False, use_logical_bound=False):
     logical = stored = count = 0
     directories = [str(root)]
     while directories:
-        with os.scandir(directories.pop()) as entries:
+        directory = directories.pop()
+        try:
+            entries = os.scandir(directory)
+        except FileNotFoundError:
+            if allow_atomic_rename and directory != str(root):
+                # Build writers also remove/rename temporary directories
+                # between their discovery and the later directory scan.
+                continue
+            raise
+        with entries:
             for item in entries:
                 try:
                     metadata = item.stat(follow_symlinks=False)
