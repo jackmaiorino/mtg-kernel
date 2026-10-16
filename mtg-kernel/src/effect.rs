@@ -4237,13 +4237,17 @@ pub fn begin_resumable_resolution(
     if matches!(
         op,
         EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
-    ) || matches!(
-        resolving_item.inline_effect,
-        Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) {
+    ) || tutelage_item_v1(state, &resolving_item)
+        || ctx
+            .stack_item_id
+            .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
+    {
         return Err("Tutelage requires its genuine native pre-removal owner".into());
     }
-    if (aberration_family_item_v1(&resolving_item)
+    if ((aberration_family_item_v1(&resolving_item)
+        || ctx
+            .stack_item_id
+            .is_some_and(|id| aberration_public_family_v1(state, id)))
         && !(authenticated_aberration_ward_v1(state, &resolving_item)
             && resolving_item.inline_effect.as_ref() == Some(op)
             && aberration_context_matches_v1(state, &resolving_item, ctx)))
@@ -4356,7 +4360,7 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
-        (aberration_continuation_v1(p)
+        (aberration_resolving_family_v1(state, p)
             && validate_aberration_ward_continuation_v1(state, p).is_err())
             || p.resolving_item
                 .inline_effect
@@ -4367,10 +4371,11 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     }
 
     if state.engine.pending_effect.as_ref().is_some_and(|pending| {
-        matches!(
-            pending.resolving_item.inline_effect,
-            Some(EffectOp::SphinxsTutelageMillV1 { .. })
-        )
+        tutelage_item_v1(state, &pending.resolving_item)
+            || pending
+                .ctx
+                .stack_item_id
+                .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
     }) {
         return Err("Tutelage continuation requires its genuine native pre-removal owner".into());
     }
@@ -9548,11 +9553,34 @@ fn aberration_family_item_v1(item: &StackItem) -> bool {
                 })
         })
 }
+fn aberration_public_family_v1(state: &GameState, id: StackItemId) -> bool {
+    state
+        .stack
+        .iter()
+        .any(|item| item.v4.stack_item_id == id && aberration_family_item_v1(item))
+}
+fn aberration_resolving_family_v1(state: &GameState, pending: &EffectContinuation) -> bool {
+    aberration_family_item_v1(&pending.resolving_item)
+        || pending
+            .ctx
+            .stack_item_id
+            .is_some_and(|id| aberration_public_family_v1(state, id))
+}
+fn aberration_observed_row_matches_v1(state: &GameState, item: &StackItem) -> bool {
+    // Native legacy Ward is called after its authentic row is removed. Any
+    // still-present row at this id must exactly agree with the supplied row.
+    let mut rows = state
+        .stack
+        .iter()
+        .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id);
+    rows.next().is_none_or(|row| row == item) && rows.next().is_none()
+}
 // Ward is a separate native trigger on the same source, not the printed
 // mill trigger. Recognizing the operation alone cannot grant this exception:
 // validate its printed/granted provenance and its exact triggering targeter.
 fn authenticated_aberration_ward_v1(state: &GameState, item: &StackItem) -> bool {
     aberration_family_item_v1(item)
+        && aberration_observed_row_matches_v1(state, item)
         && matches!(
             item.inline_effect,
             Some(EffectOp::CounterUnlessPaysGeneric { .. })
@@ -9653,7 +9681,7 @@ fn validate_aberration_continuation_v1(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    if !aberration_continuation_v1(pending) {
+    if !aberration_resolving_family_v1(state, pending) {
         return Ok(());
     }
     if authenticated_aberration_ward_v1(state, &pending.resolving_item) {
@@ -18393,7 +18421,10 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if state.engine.halted.is_some() {
         return;
     }
-    if aberration_reveal_context_v1(state, op, ctx)
+    if ctx
+        .stack_item_id
+        .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
+        || aberration_reveal_context_v1(state, op, ctx)
         || state.engine.pending_effect.as_ref().is_some_and(|p| {
             aberration_family_item_v1(&p.resolving_item)
                 && p.ctx.stack_item_id == ctx.stack_item_id
@@ -24780,14 +24811,32 @@ fn tutelage_remaining_v1(
     Ok((player, remaining))
 }
 
+// Selection is deliberately independent of the caller-editable root. A
+// publication selects the original stack incarnation even after its pending
+// program is substituted; it does not authenticate that substituted row.
+// Exact publication/source/program equality remains mandatory below.
+fn tutelage_published_stack_item_v1(state: &GameState, id: StackItemId) -> bool {
+    state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+        event::CommittedEvent::SphinxsTutelagePublishedV1 { item, .. }
+            if item.v4.stack_item_id == id)
+    })
+}
+fn tutelage_item_v1(state: &GameState, item: &StackItem) -> bool {
+    matches!(
+        item.inline_effect,
+        Some(EffectOp::SphinxsTutelageMillV1 { .. })
+    ) || tutelage_published_stack_item_v1(state, item.v4.stack_item_id)
+}
 fn validate_tutelage_continuation_v1(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<(), String> {
-    let selected = matches!(
-        pending.resolving_item.inline_effect,
-        Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    );
+    let selected = tutelage_item_v1(state, &pending.resolving_item)
+        || pending
+            .ctx
+            .stack_item_id
+            .is_some_and(|id| tutelage_published_stack_item_v1(state, id));
     let carries_stage = pending
         .frames
         .iter()
@@ -24973,10 +25022,12 @@ pub(crate) fn acquire_tutelage_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
-    if !matches!(
-        pending.resolving_item.inline_effect,
-        Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) && !aberration_family_item_v1(&pending.resolving_item)
+    if !tutelage_item_v1(state, &pending.resolving_item)
+        && !pending
+            .ctx
+            .stack_item_id
+            .is_some_and(|id| tutelage_published_stack_item_v1(state, id))
+        && !aberration_resolving_family_v1(state, pending)
     {
         return Ok(None);
     }
@@ -24987,7 +25038,7 @@ pub(crate) fn acquire_tutelage_resume_v1(
         }
         return Ok(None);
     }
-    if aberration_family_item_v1(&pending.resolving_item)
+    if aberration_resolving_family_v1(state, pending)
         && !aberration_item_v1(&pending.resolving_item)
     {
         return Err("Aberration private resume lost its exact printed root".into());
@@ -25043,17 +25094,19 @@ pub(crate) fn acquire_tutelage_begin_v1(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<TutelageBeginOwnerV1>, String> {
-    if !matches!(
-        item.inline_effect,
-        Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) && !aberration_family_item_v1(item)
+    if !tutelage_item_v1(state, item)
+        && !aberration_family_item_v1(item)
+        && !aberration_public_family_v1(state, item.v4.stack_item_id)
     {
         return Ok(None);
     }
     if authenticated_aberration_ward_v1(state, item) {
         return Ok(None);
     }
-    if aberration_family_item_v1(item) && !aberration_item_v1(item) {
+    if (aberration_family_item_v1(item)
+        || aberration_public_family_v1(state, item.v4.stack_item_id))
+        && !aberration_item_v1(item)
+    {
         return Err("Aberration private begin lost its exact printed root".into());
     }
     if !aberration_item_v1(item) {
