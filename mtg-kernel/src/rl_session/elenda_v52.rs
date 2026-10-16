@@ -308,6 +308,18 @@ pub(super) fn normalized_origin(
     session: &FastActorSessionV1,
     current: &FastActorCurrentDecisionV1,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, FlatActionDecisionSliceErrorV1> {
+    normalized_origin_parts(session, current).map(|(candidates, _)| candidates)
+}
+type NormalizedOriginPartsV52 = (
+    Vec<CorePolicyActionCandidateV1>,
+    crate::elenda_observation_v52::ElendaPublicPartsV52,
+);
+// Carry the freshly authenticated public values through this one immutable
+// call. They are never stored for another request or used to skip a guard.
+fn normalized_origin_parts(
+    session: &FastActorSessionV1,
+    current: &FastActorCurrentDecisionV1,
+) -> Result<NormalizedOriginPartsV52, FlatActionDecisionSliceErrorV1> {
     crate::elenda_observation_v52::validate_state(&session.state)
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     // A mandatory cast menu is engine-owned, not an interpreter option menu.
@@ -388,7 +400,7 @@ pub(super) fn normalized_origin(
             diagnose_origin_error("elenda_v52.normalized.candidate_operands", error)
         })?;
     }
-    let projection = crate::elenda_observation_v52::observe_v52(
+    let public_parts = crate::elenda_observation_v52::observe_parts_v52(
         &session.state,
         &session.surface,
         (current.actor, &current.origin_decision),
@@ -402,6 +414,7 @@ pub(super) fn normalized_origin(
             FlatActionDecisionSliceErrorV1::InvalidDecisionRelation,
         )
     })?;
+    let projection = &public_parts.0;
     for candidate in &mut original.candidates {
         candidate.semantic = visible_semantic(
             &session.state,
@@ -410,7 +423,7 @@ pub(super) fn normalized_origin(
         )
         .map_err(|error| diagnose_origin_error("elenda_v52.normalized.visible_semantic", error))?;
     }
-    Ok(original.candidates)
+    Ok((original.candidates, public_parts))
 }
 
 pub(super) fn prepare_current(
@@ -669,19 +682,10 @@ impl FastActorSessionV1 {
         if PlayerSeatV1::from(current.actor) != human_seat {
             return Err(FlatActionDecisionSliceErrorV1::ActingPlayerMismatch);
         }
-        let candidates = normalized_origin(self, current)?;
+        let (candidates, (observation, mut families)) = normalized_origin_parts(self, current)?;
         if candidates != current.candidates {
             return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
         }
-        let (observation, mut families) = crate::elenda_observation_v52::observe_parts_v52(
-            &self.state,
-            &self.surface,
-            (current.actor, &current.origin_decision),
-            self.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )
-        .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
         let actions = candidates
             .iter()
             .map(|candidate| {
