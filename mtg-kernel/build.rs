@@ -3513,6 +3513,8 @@ fn fdn_program_for(name: &str) -> Option<Special> {
     Some(match name {
         "Lathril, Blade of the Elves" => program("None", "MoveObject(ThisSource,Battlefield);positive_final_combat_damage_to_player:captured_original_source_controller:that_many_elf_warrior_tokens;tap_source_and_ten_other_untapped_controlled_elves:opponent_loses10_controller_gains10", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Blasphemous Edict" => program("None", "BlasphemousEdictV1(active_nonactive_choose_thirteen_or_all_controlled_effective_creatures;physical_owners_order_actual_graveyard_destinations;one_simultaneous_sacrifice_batch)", "EffectOp::BlasphemousEdictV1"),
+        // Genuine FDN129 native Partial482.
+        "Leyline Axe" => program("None", "openingHand:optional_actual_kept_source_to_battlefield_before_turn_one;MoveObject(ThisSource,Battlefield);equipped:+1/+1,doubleStrike,trample;equip:3", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Genuine FDN194 native Partial481.
         "Etali, Primal Storm" => program("None", "MoveObject(ThisSource,Battlefield);attacks:original_source_controller:each_player_simultaneous_top_library_to_public_exile:optional_nonland_free_casts_any_order_during_resolution:original_exile_incarnations:normal_targets_and_additional_costs:XZero:lands_stay_exiled", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Omniscience" => program("None", "MoveObject(ThisSource,Battlefield);static:originalControllerMayCastNonlandFromOwnHandWithoutManaCost:optionalDistinctPaidRoute:exactActiveSourceAndHandIncarnation:XZero:ordinaryTimingTargetsAndAllAdditionalCosts:noGraveyardOrExilePermission", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -4335,7 +4337,6 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sun-Blessed Healer"
         | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
-        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
         "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")
@@ -5743,7 +5744,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
-        "Black Mage's Rod" | "Embercleave" => &[ActivatedAbilityRecipe {
+        "Black Mage's Rod" | "Embercleave" | "Leyline Axe" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: None,
                 generic: 3,
@@ -7143,7 +7144,7 @@ fn equipment_src(profile: &str) -> String {
 
 fn equipment_for(name: &str) -> &'static str {
     match name {
-        "Embercleave" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), other_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
+        "Embercleave" | "Leyline Axe" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), other_turn_keywords: Keywords(Keywords::DOUBLE_STRIKE.0 | Keywords::TRAMPLE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Celestial Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",
         "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true, granted_activated_ability: None })",
         "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None })",

@@ -104,6 +104,8 @@ pub fn producer_sha256() -> String {
             include_str!("engine/omniscience_cast_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("effect/harvester_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("london_mulligan_v1.rs"),
             include_str!("life_loss_turn_v1.rs"),
             include_str!("soul_shackled_zombie_v1.rs"),
             include_str!("progenitus_v1.rs"),

@@ -1167,6 +1167,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("effect/standard_exile.rs", "Etali, Primal Storm", "exact native top-only free-cast family; new root remains Opaque and old consumers refuse"),
     ("progenitus_v1.rs", "Progenitus", "native all-source protection and mandatory original-zone reveal/shuffle remain Opaque"),
+    ("leyline_axe_v1.rs", "Leyline Axe", "native optional kept-opening-hand checkpoint, equipment and equip; no old consumer permission"),
     ("effect/harvester_v1.rs", "Abyssal Harvester", "native tap activation with exact turn/incarnation target, copiable Nightmare and token-only cleanup remains Opaque"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
@@ -1451,6 +1452,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 
 const RULES_MODULES: &[(&str, &str)] = &[
     ("progenitus_v1.rs", include_str!("../progenitus_v1.rs")),
+    ("leyline_axe_v1.rs", include_str!("../leyline_axe_v1.rs")),
     (
         "effect/harvester_v1.rs",
         include_str!("../effect/harvester_v1.rs"),

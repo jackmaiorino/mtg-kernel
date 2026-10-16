@@ -9089,6 +9089,7 @@ fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> 
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && (crate::progenitus_v1::definition(o.card_def)
+                || crate::leyline_axe_v1::definition(o.card_def)
                 || crate::effect::harvester_v1::definition(o.card_def)
                 || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
@@ -9480,6 +9481,7 @@ fn private_card(
     if state.objects.try_get(id).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && (crate::progenitus_v1::definition(o.card_def)
+                || crate::leyline_axe_v1::definition(o.card_def)
                 || crate::effect::harvester_v1::definition(o.card_def)
                 || crate::engine::omniscience_cast_v1::definition(o.card_def)
                 || crate::effect::sphinx_lore_v1::definition(o.card_def)
