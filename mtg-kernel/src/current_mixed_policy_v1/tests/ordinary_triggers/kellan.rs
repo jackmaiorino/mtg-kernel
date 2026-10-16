@@ -263,6 +263,7 @@ fn run<O: Owner>(actor: PlayerId) {
             .combat_impulse,
         granted.combat_impulse
     );
+    let attack_generation = s.world().objects.get(source).zone_change_count;
     let mut attacked = false;
     for _ in 0..512 {
         if s.world().stack.iter().any(|item| {
@@ -287,7 +288,12 @@ fn run<O: Owner>(actor: PlayerId) {
         }
     }
     assert!(attacked);
-    assert!(s.world().engine.event_history.iter().any(|e|matches!(e,CommittedEvent::DeclaredAttacker{source:host,controller,..}if *host==source && *controller==actor)));
+    // The granted impulse is collected from this genuine first-strike
+    // combat-damage receipt, with the original attacking incarnation.
+    assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
+        CommittedEvent::CombatDamageToPlayer {
+            source: host, source_zone_change_count, player, amount: 3
+        } if *host == source && *source_zone_change_count == attack_generation && *player == actor.opponent())));
     let item = s
         .world()
         .stack
