@@ -5,7 +5,7 @@ use crate::{
         self, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
         CARD_DEFS,
     },
-    effect::EffectOp,
+    effect::{EffectOp, ObjectRef},
     mana::{ManaColor, Pip},
     state::Zone,
     trigger::TriggerCondition,
@@ -203,7 +203,11 @@ pub(crate) fn selected_id(family: FamilyV61) -> Result<u16, String> {
                 vec![ManaColor::B]
             }
         || d.target_spec != TargetSpec::None
-        || (d.spell_effect)().is_some()
+        || (d.spell_effect)()
+            != Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
         || d.is_token
     {
         return Err("V61 complete printing changed".into());

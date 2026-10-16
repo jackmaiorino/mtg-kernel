@@ -534,14 +534,20 @@ pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV61, String> 
             card: card.clone(),
         });
         if live.zone == Zone::Battlefield {
-            let (power, toughness) = crate::engine::checked_effective_pt(state, id)?;
+            let has_pt = crate::engine::effective_base_power(state, id).is_some()
+                || crate::engine::effective_base_toughness(state, id).is_some();
+            let pt = if has_pt {
+                Some(crate::engine::checked_effective_pt(state, id)?)
+            } else {
+                None
+            };
             current.push(CurrentV61 {
                 family,
                 card,
                 printed_abilities_active:
                     crate::continuous_characteristics_v1::printed_abilities_active(state, id),
-                power: Some(power),
-                toughness: Some(toughness),
+                power: pt.map(|(power, _)| power),
+                toughness: pt.map(|(_, toughness)| toughness),
             });
         }
     }
