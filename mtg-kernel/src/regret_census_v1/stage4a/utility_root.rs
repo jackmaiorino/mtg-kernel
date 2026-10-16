@@ -17,6 +17,10 @@
 //! ```
 //! Root can instead be `{"kind":"step","step":N}`; N must still be the
 //! true first divergence of the complete saved executable action arrays.
+//! This initial adapter requires a `new_root` choice whose recorded search
+//! root exactly matches the reconstructed decision, observation, menu and
+//! diagnostic state hashes. `reused` choices have no exact historical root
+//! witness in these rows and are refused.
 //! Mode is `same-action` or `search-vs-plain`. The cap is 1..=2048 per
 //! branch, including its forced root action. Continuation streams are named
 //! by policy role and physical seat, reset AFTER that action. They are fresh
@@ -239,6 +243,52 @@ fn validate_choosers(search: &Value, plain: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// An in-range saved index is insufficient if replay semantics changed.
+/// Bind it to the exact historical decision/menu/state witness emitted by
+/// refresh::Searches::run before the original search. Reused nodes do not
+/// carry such a witness at their later decision in ordinary budget rows.
+fn validate_historical_root(
+    search_row: &Value,
+    search_decision: &Value,
+    reconstructed: &Value,
+) -> Result<(), String> {
+    if search_decision["chooser"] != "new_root" {
+        return Err(
+            "utility reused root refused: no exact historical decision/menu/state witness".into(),
+        );
+    }
+    let index = search_decision["search"]
+        .as_u64()
+        .and_then(|i| usize::try_from(i).ok())
+        .ok_or("utility historical search index missing or invalid")?;
+    let record = search_row["game"]["searches"]
+        .as_array()
+        .and_then(|records| records.get(index))
+        .ok_or("utility historical search root record missing")?;
+    if record["search"] != index as u64 || record["step"] != reconstructed["step"] {
+        return Err("utility historical search record index or step differs".into());
+    }
+    for key in [
+        "step",
+        "physical_decision_id",
+        "substep",
+        "k",
+        "obs_hash",
+        "menu_hash",
+        "state_hash",
+    ] {
+        if reconstructed.get(key).is_none()
+            || record["root"].get(key).is_none()
+            || record["root"][key] != reconstructed[key]
+        {
+            return Err(format!(
+                "utility historical root witness {key} differs or is absent"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 struct Branch {
     first_action: u32,
@@ -361,6 +411,7 @@ fn diagnose(
         candidates(&search_actions, &plain_actions, index, d.legal_action_count)?;
     // Candidates are fixed before privileged state hashes/clones or outcomes.
     let root_identity = bank::decision_identity(&root)?;
+    validate_historical_root(search, search_decision, &root_identity)?;
     let root_core_hash = format!("{:016x}", root.privileged_core_environment_hash());
     let opp = sh
         .labels
@@ -594,6 +645,62 @@ mod tests {
             assert!(validate_choosers(&json!({"chooser":chooser}), &plain).is_err());
         }
         assert!(validate_choosers(&json!({"chooser":"new_root"}), &json!({})).is_err());
+    }
+
+    #[test]
+    fn historical_root_witness_rejects_same_width_menu_reordering_and_missing_fields() {
+        let root = json!({"step":3,"physical_decision_id":2,"substep":0,"k":4,
+            "obs_hash":"historical-observation","menu_hash":"historical-ordered-menu",
+            "state_hash":"historical-state"});
+        let row = json!({"game":{"searches":[{"search":0,"step":3,"root":root}]}});
+        let decision = json!({"chooser":"new_root","search":0});
+        assert!(validate_historical_root(&row, &decision, &root).is_ok());
+        for key in [
+            "step",
+            "physical_decision_id",
+            "substep",
+            "k",
+            "obs_hash",
+            "menu_hash",
+            "state_hash",
+        ] {
+            let mut changed = root.clone();
+            changed[key] = if changed[key].is_string() {
+                json!("changed")
+            } else {
+                json!(99)
+            };
+            assert!(
+                validate_historical_root(&row, &decision, &changed).is_err(),
+                "{key}"
+            );
+            let mut missing = row.clone();
+            missing["game"]["searches"][0]["root"]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(
+                validate_historical_root(&missing, &decision, &root).is_err(),
+                "{key}"
+            );
+        }
+        let mut reordered = root.clone();
+        reordered["menu_hash"] = json!("same-four-actions-different-order");
+        assert_eq!(reordered["k"], root["k"]);
+        assert!(validate_historical_root(&row, &decision, &reordered).is_err());
+        for invalid in [
+            json!({"chooser":"reused","search":0}),
+            json!({"chooser":"new_root","search":1}),
+            json!({"chooser":"new_root"}),
+        ] {
+            assert!(validate_historical_root(&row, &invalid, &root).is_err());
+        }
+        let mut wrong_step = row.clone();
+        wrong_step["game"]["searches"][0]["step"] = json!(2);
+        assert!(validate_historical_root(&wrong_step, &decision, &root).is_err());
+        let mut wrong_index = row.clone();
+        wrong_index["game"]["searches"][0]["search"] = json!(1);
+        assert!(validate_historical_root(&wrong_index, &decision, &root).is_err());
     }
 
     #[test]
