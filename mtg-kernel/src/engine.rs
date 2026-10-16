@@ -79,7 +79,11 @@ mod spell_costs_v1;
 mod standard_cast_convoke;
 #[path = "standard_spell_copy.rs"]
 mod standard_spell_copy;
-#[cfg(test)]
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) use standard_spell_copy::copy_snapshot_assignment_is_legal;
 pub(crate) use standard_spell_copy::{
     copy_snapshot_prefix_can_complete, copy_snapshot_replacement_targets,
