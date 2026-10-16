@@ -1107,6 +1107,10 @@ pub enum LibraryCardFilter {
     ArtifactWithManaValue(u16),
     LandWithBasicLandType,
     ArtifactCreatureOrEnchantmentManaValueAtMost(u16),
+    /// A creature card whose printed mana value does not exceed the bound.
+    /// The caller supplies its already chosen X; this filter does not choose
+    /// or pay X and grants no permission to activate an ability.
+    CreatureManaValueAtMost(u16),
 }
 
 impl LibraryCardFilter {
@@ -17964,6 +17968,9 @@ fn library_filter_matches(
         LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
             def.has_type(CardType::Artifact) && def.mana_value == mana_value
         }
+        LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
+            def.has_type(CardType::Creature) && def.mana_value <= maximum
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => {
             def.mana_value <= maximum
                 && [
@@ -18012,6 +18019,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
+        }
+        LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), u64::from(maximum))
         }
     }
 }
@@ -25142,6 +25152,96 @@ mod tests {
 #[cfg(test)]
 mod filtered_library_search_tests {
     use super::*;
+
+    /// Native filter primitive only. No Fiend Artisan definition, activation,
+    /// payment, or printed-program authority is constructed by this fixture.
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn creature_mana_ceiling_native_primitive_exact_library_restore_and_stale_refusal_both_seats() {
+        let names = [
+            "Llanowar Elves",
+            "Axgard Cavalry",
+            "Lightning Bolt",
+            "Forest",
+        ];
+        let cards = names.map(|name| crate::card_def::card_id_by_name(name).unwrap());
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let state = GameState::new_from_libraries(
+                &cards,
+                &cards,
+                |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+                1126,
+            );
+            let original = bind_library_exact(&state, player);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for maximum in [0, 1, 2, u16::MAX] {
+                let filter = LibraryCardFilter::CreatureManaValueAtMost(maximum);
+                let mut expected: Vec<_> = original
+                    .iter()
+                    .copied()
+                    .filter(|binding| {
+                        let card = state.objects.get(binding.object).card_def;
+                        card == cards[0] && maximum >= 1 || card == cards[1] && maximum >= 2
+                    })
+                    .collect();
+                expected.sort_by_key(|binding| {
+                    crate::card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize]
+                        .name
+                });
+                let before = serde_json::to_vec(&state).unwrap();
+                let found = library_search_candidates(&state, player, filter, &original).unwrap();
+                assert_eq!(found, expected);
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+                assert_eq!(
+                    library_search_candidates(&restored, player, filter, &original).unwrap(),
+                    found
+                );
+                assert_eq!(
+                    serde_json::from_slice::<LibraryCardFilter>(
+                        &serde_json::to_vec(&filter).unwrap()
+                    )
+                    .unwrap(),
+                    filter
+                );
+            }
+            // A stale incarnation cannot become an eligible card just because
+            // the same physical object is later returned to the library.
+            let chosen = original
+                .iter()
+                .find(|binding| state.objects.get(binding.object).card_def == cards[0])
+                .unwrap();
+            let mut stale = state.clone();
+            event::propose_and_commit(
+                &mut stale,
+                event::ProposedEvent::zone_change(chosen.object, Zone::Hand),
+            );
+            event::propose_and_commit(
+                &mut stale,
+                event::ProposedEvent::zone_change(chosen.object, Zone::Library),
+            );
+            let before = serde_json::to_vec(&stale).unwrap();
+            assert!(library_search_candidates(
+                &stale,
+                player,
+                LibraryCardFilter::CreatureManaValueAtMost(u16::MAX),
+                &original,
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&stale).unwrap(), before);
+            let mut forged = state.clone();
+            forged.objects.get_mut(chosen.object).v4.face_index = 1;
+            let before = serde_json::to_vec(&forged).unwrap();
+            assert!(library_search_candidates(
+                &forged,
+                player,
+                LibraryCardFilter::CreatureManaValueAtMost(u16::MAX),
+                &original,
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        }
+    }
 
     #[test]
     fn library_filter_fingerprints_separate_all_variants_and_preserve_merged_tags() {
