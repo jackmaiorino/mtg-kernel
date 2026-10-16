@@ -245,7 +245,9 @@ fn paid_cleanup_discard_precedes_damage_and_duration_expiration_both_seats() {
             &mut state,
             ProposedEvent::damage(creature, Target::Object(creature), 1),
         );
-        for _ in 0..5 {
+        // The native library constructor starts with an empty hand.
+        // Twelve real hand cards leave the exact five-card cleanup obligation.
+        for _ in 0..12 {
             put(&mut state, player, "Forest", Zone::Hand);
         }
         cast(&mut state, player, "Time Stop", &[], 6);
