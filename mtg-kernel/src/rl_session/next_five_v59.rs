@@ -650,25 +650,6 @@ impl FastActorSessionV1 {
         };
         Ok((observation, actions, binding))
     }
-
-    /// Revalidation is read-only. The projector calls this immediately
-    /// before applying its privately mapped index through session.step.
-    pub(crate) fn next_five_validate_bound_decision_v59(
-        &self,
-        expected: FastActorDecisionV1,
-        human_seat: PlayerSeatV1,
-        binding: &NextFiveDecisionBindingV59,
-    ) -> Result<(), FlatActionDecisionSliceErrorV1> {
-        let (_, _, current) = self.next_five_current_decision_input_v59(expected, human_seat)?;
-        if current.expected != binding.expected
-            || current.candidates != binding.candidates
-            || current.observation != binding.observation
-            || current.families != binding.families
-        {
-            return Err(FlatActionDecisionSliceErrorV1::CorruptCurrentBinding);
-        }
-        Ok(())
-    }
 }
 
 /// Sole owner of a V59 decision stream. Private bindings never cross serde.
@@ -807,10 +788,10 @@ impl NextFiveSessionV59 {
             generation: self.generation,
         })
     }
-    pub fn validate_decision_v59(
+    fn validated_current_input(
         &self,
         decision: &NextFiveDecisionV59,
-    ) -> Result<(), RlContractError> {
+    ) -> Result<(NextFiveObservationV59, Vec<ActionSemanticV1>), RlContractError> {
         if !std::sync::Arc::ptr_eq(&self.owner, &decision.owner)
             || decision.generation != self.generation
         {
@@ -818,38 +799,66 @@ impl NextFiveSessionV59 {
                 "foreign or stale NextFive V59 decision".into(),
             ));
         }
-        self.inner
-            .next_five_validate_bound_decision_v59(
-                decision.expected,
-                decision.expected.acting_player,
-                &decision.binding,
-            )
-            .map_err(|error| RlContractError(format!("NextFive V59 binding:{error:?}")))?;
-        let (observation, actions, _) = self
+        let (observation, actions, binding) = self
             .inner
             .next_five_current_decision_input_v59(
                 decision.expected,
                 decision.expected.acting_player,
             )
-            .map_err(|error| RlContractError(format!("NextFive V59 current:{error:?}")))?;
+            .map_err(|error| RlContractError(format!("NextFive V59 binding:{error:?}")))?;
+        if binding != decision.binding {
+            return Err(RlContractError(format!(
+                "NextFive V59 binding:{:?}",
+                FlatActionDecisionSliceErrorV1::CorruptCurrentBinding
+            )));
+        }
         if observation != decision.observation || actions != decision.actions {
             return Err(RlContractError("NextFive V59 public menu changed".into()));
         }
-        Ok(())
+        Ok((observation, actions))
+    }
+    pub fn validate_decision_v59(
+        &self,
+        decision: &NextFiveDecisionV59,
+    ) -> Result<(), RlContractError> {
+        self.validated_current_input(decision).map(|_| ())
     }
     pub fn step_v59(
         &mut self,
         decision: &NextFiveDecisionV59,
         selected_index: u32,
     ) -> Result<FastActorResponseV1, RlContractError> {
-        self.validate_decision_v59(decision)?;
+        self.step_with_current_check(
+            decision,
+            selected_index,
+            |_, _| Ok(()),
+            |error| error,
+            |error| error,
+        )
+    }
+
+    /// A fresh complete input is confined to this exclusive mutable call.
+    /// The callback sees only its public values and cannot retain step authority
+    /// or mutate this session. The core session step still runs all its guards.
+    pub(crate) fn step_with_current_check<E>(
+        &mut self,
+        decision: &NextFiveDecisionV59,
+        selected_index: u32,
+        check: impl FnOnce(&NextFiveObservationV59, &[ActionSemanticV1]) -> Result<(), E>,
+        binding_error: impl FnOnce(RlContractError) -> E,
+        native_error: impl FnOnce(RlContractError) -> E,
+    ) -> Result<FastActorResponseV1, E> {
+        let (observation, actions) = self
+            .validated_current_input(decision)
+            .map_err(binding_error)?;
+        check(&observation, &actions)?;
         if usize::try_from(selected_index)
             .ok()
             .is_none_or(|index| index >= decision.actions.len())
         {
-            return Err(RlContractError(
+            return Err(native_error(RlContractError(
                 "NextFive V59 action index out of range".into(),
-            ));
+            )));
         }
         self.inner
             .step(
@@ -857,6 +866,10 @@ impl NextFiveSessionV59 {
                 decision.expected.step,
                 selected_index,
             )
-            .map_err(|error| RlContractError(format!("NextFive V59 native step:{error:?}")))
+            .map_err(|error| {
+                native_error(RlContractError(format!(
+                    "NextFive V59 native step:{error:?}"
+                )))
+            })
     }
 }
