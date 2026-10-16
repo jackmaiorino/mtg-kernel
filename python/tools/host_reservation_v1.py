@@ -56,7 +56,8 @@ Contract (collab GOALS/opus-search-opponent-20260927.md, amendment 01:35):
    like the outer supervisor and holds the outer lock until it ends, but
    never releases it.
 8. Ordering in every launcher: acquire, then its own Get-CimInstance busy
-   refusal (exempting `exempt-pids` of its token), then spawn.
+   refusal (exempting `exempt-pids` of its token, read again after the scan),
+   then spawn.
 
 Every state change (adopt, handoff, descendant, note, release, reclaim)
 holds the lock file open with share mode read-only, so no other change can
@@ -1461,7 +1462,8 @@ def dispatch(lane: str, work_id: str, release_condition: str, command: list[str]
              busy_pattern: str | None = None, transport_record: dict | None = None, create=None,
              python: str | None = None) -> dict:
     """The launcher sequence: acquire, the busy refusal (exempting this
-    reservation's own work), then WMI creation of the supervisor (Linux:
+    reservation's own work, read again after the scan so that work started
+    during the scan, such as a sibling job's child, is exempt), then WMI creation of the supervisor (Linux:
     spawn_detached) and the handoff. Acquire in the process that dispatches: it is the owner until
     the supervisor adopts, so a separate acquire whose process exits first
     leaves a lock that is reclaimable (its late supervisor then refuses).
@@ -1477,6 +1479,9 @@ def dispatch(lane: str, work_id: str, release_condition: str, command: list[str]
     if busy_pattern:
         try:
             busy = busy_processes(busy_pattern, exempt_pids(token))
+            if busy:  # this reservation's work started during the scan is exempt too
+                late = set(exempt_pids(token))
+                busy = [row for row in busy if int(row["ProcessId"]) not in late]
         except BaseException:
             if not nested:
                 release(token, "cancelled", detail="busy refusal could not run")
