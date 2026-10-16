@@ -1788,11 +1788,6 @@ fn niv_mizzet_visionary_damage_amount_v1(
         || source_object.card_def != damage_source.card_def
         || source_object.owner != damage_source.owner
         || source_object.zone_change_count < damage_source.zone_change_count
-        || (observer_object.zone_change_count == observer.zone_change_count
-            && observer_object.zone == Zone::Battlefield
-            && observer_object.controller != observer.controller)
-        || (source_object.zone_change_count == damage_source.zone_change_count
-            && source_object.controller != damage_source.controller)
     {
         return Err(observer.source);
     }
@@ -4109,11 +4104,12 @@ fn commit_with_entry_batch_and_source_color(
             ));
             return;
         };
+        let (source, recipient, amount) = (*source, *recipient, *amount);
         for capture in niv_mizzet_damage_captures {
-            if capture.damage_source.source != *source
-                || capture.observer.controller == *recipient
+            if capture.damage_source.source != source
+                || capture.observer.controller == recipient
                 || capture.damage_source.controller != capture.observer.controller
-                || *amount <= 0
+                || amount <= 0
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
