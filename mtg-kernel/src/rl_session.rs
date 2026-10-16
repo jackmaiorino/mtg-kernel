@@ -47,6 +47,11 @@ pub(crate) mod test_timing_v1 {
     pub(crate) enum Phase {
         NativeSurfaceApply,
         NativeSurfaceAdvance,
+        PreparedObservePartsInclusive,
+        DrakeWorld,
+        DrakeReplayKeys,
+        DrakeActualEnclosingReplay,
+        FaebloomValidateState,
         #[cfg(all(
             feature = "limited-fdn-fixtures",
             not(feature = "standard-magezero-fixtures")
@@ -85,6 +90,11 @@ pub(crate) mod test_timing_v1 {
             match self {
                 Self::NativeSurfaceApply => "native.surface_apply",
                 Self::NativeSurfaceAdvance => "native.surface_advance",
+                Self::PreparedObservePartsInclusive => "prepared.observe_parts_inclusive",
+                Self::DrakeWorld => "drake.world",
+                Self::DrakeReplayKeys => "drake.replay_keys",
+                Self::DrakeActualEnclosingReplay => "drake.actual_enclosing_replay",
+                Self::FaebloomValidateState => "faebloom.validate_state",
                 #[cfg(all(
                     feature = "limited-fdn-fixtures",
                     not(feature = "standard-magezero-fixtures")

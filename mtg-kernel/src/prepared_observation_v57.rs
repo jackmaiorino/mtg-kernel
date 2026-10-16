@@ -324,6 +324,10 @@ pub(crate) fn observe_parts_v57(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<PreparedPublicPartsV57, RlContractError> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::PreparedObservePartsInclusive,
+    );
     validate_state(state)
         .map_err(|error| diagnostic("prepared.state", error))
         .map_err(RlContractError)?;

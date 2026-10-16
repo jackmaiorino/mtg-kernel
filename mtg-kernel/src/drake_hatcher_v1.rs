@@ -985,6 +985,20 @@ mod tests {
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
         state.priority_player = actor;
         engine::step(&mut state, Action::CastSpell(ordinary)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        assert!(state.engine.pending_cast.is_none());
+        let row = state
+            .stack
+            .iter()
+            .find(|row| row.source == ordinary)
+            .unwrap();
+        assert_eq!(row.kind, crate::state::StackItemKind::Spell);
+        assert_eq!(row.controller, actor);
+        assert!(row.targets.is_empty() && row.v4.target_contracts.is_empty());
+        assert_eq!(state.objects.get(ordinary).zone, Zone::Stack);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
         finish(&mut state);
         assert_eq!(state.objects.get(ordinary).zone, Zone::Graveyard);

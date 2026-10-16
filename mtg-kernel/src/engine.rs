@@ -15874,6 +15874,10 @@ fn execute_resolving_program(
             effect::execute(program, ctx, state);
         }
         return if state.engine.halted.is_some() {
+            #[cfg(test)]
+            if item.is_copy {
+                eprintln!("Permanent-copy resolution refused at atomic printed effect");
+            }
             ResolutionProgress::Suspended
         } else {
             ResolutionProgress::Complete
@@ -16048,7 +16052,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     let targets_legal = match stack_targets_still_legal(item, state) {
         Ok(legal) => legal,
-        Err(_) => {
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Resolution target preflight rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16239,7 +16245,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
 
     let arahbo_owner = match crate::arahbo_v1::before_remove(state, &current) {
         Ok(owner) => owner,
-        Err(_) => {
+        Err(_error) => {
+            #[cfg(test)]
+            eprintln!("Arahbo pre-pop removal rejected: {_error}");
             state.engine.halted = Some((
                 UnsupportedMechanic::InvalidEffectContinuation,
                 resolving_source,
@@ -16362,7 +16370,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let initialized_entry =
         match crate::garruks_uprising_v1::acquire_permanent_entry(state, &current, targets_legal) {
             Ok(owner) => owner,
-            Err(_) => {
+            Err(_error) => {
+                #[cfg(test)]
+                eprintln!("Permanent entry pre-pop acquisition rejected: {_error}");
                 state.engine.halted = Some((
                     UnsupportedMechanic::InvalidEffectContinuation,
                     resolving_source,
