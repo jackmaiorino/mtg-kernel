@@ -1249,6 +1249,149 @@ mod tests {
     }
 
     #[test]
+    fn genuine_paid_replay_prefix_keys_match_original_after_restore_append_change_and_truncation_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, ordinary) = paid_replay_memo_state(actor);
+            let original = state.clone();
+            let history = &state.engine.event_history;
+            let oracle = custody::original_replay_keys_for_test(history);
+            assert!(!oracle.is_empty());
+            custody::clear_replay_prefix_for_test();
+            let (cold, retained, bytes, reused) = custody::replay_prefix_probe_for_test(history);
+            assert_eq!(cold, oracle);
+            assert_eq!(reused, 0);
+            assert!(retained > 0 && retained <= 512);
+            assert!(bytes > 0 && bytes <= 64 * 1024 * 1024);
+            let restored = restored(&state);
+            let (warm, _, _, reused) =
+                custody::replay_prefix_probe_for_test(&restored.engine.event_history);
+            assert_eq!(warm, oracle);
+            assert_eq!(reused, retained);
+            custody::validate(&restored).unwrap();
+
+            let position = history.iter().position(|event| {
+                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
+            }).unwrap();
+            let mut changed = original.clone();
+            let event::CommittedEvent::SpellCast { controller, .. } =
+                &mut changed.engine.event_history[position]
+            else {
+                unreachable!()
+            };
+            *controller = actor.opponent();
+            // Prime the original prefix immediately before the changed request.
+            custody::replay_prefix_probe_for_test(history);
+            let (keys, _, _, reused) =
+                custody::replay_prefix_probe_for_test(&changed.engine.event_history);
+            assert_eq!(reused, position.min(retained));
+            assert_eq!(
+                keys,
+                custody::original_replay_keys_for_test(&changed.engine.event_history)
+            );
+            assert_ne!(keys, oracle);
+            let before = changed.clone();
+            assert!(custody::validate(&changed).is_err());
+            assert_eq!(changed, before);
+
+            // Truncation is a pure key-input probe, not a fabricated native
+            // history claimed to pass custody validation.
+            custody::replay_prefix_probe_for_test(history);
+            let shortened = &history[..position];
+            let (keys, rows, _, reused) = custody::replay_prefix_probe_for_test(shortened);
+            assert_eq!(keys, custody::original_replay_keys_for_test(shortened));
+            assert_eq!(rows, position.min(retained));
+            assert_eq!(reused, rows);
+            assert_eq!(state, original);
+
+            // Complete the already genuinely paid activation through the native
+            // driver. Its real appended history must retain every original key.
+            custody::replay_prefix_probe_for_test(history);
+            finish(&mut state);
+            custody::validate(&state).unwrap();
+            let (keys, _, _, _) =
+                custody::replay_prefix_probe_for_test(&state.engine.event_history);
+            assert_eq!(
+                keys,
+                custody::original_replay_keys_for_test(&state.engine.event_history)
+            );
+            assert!(oracle
+                .iter()
+                .all(|(position, key)| keys.get(position) == Some(key)));
+        }
+    }
+
+    #[test]
+    fn genuine_paid_replay_prefix_rejects_same_serde_nested_runtime_and_limits_retention_both_seats(
+    ) {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (state, ordinary) = paid_replay_memo_state(actor);
+            custody::clear_replay_prefix_for_test();
+            let (keys, retained, _, _) =
+                custody::replay_prefix_probe_for_test(&state.engine.event_history);
+            let nested = state
+                .engine
+                .event_history
+                .iter()
+                .take(retained)
+                .position(|event| {
+                    matches!(
+                        custody::journal(event).map(|row| &row.value),
+                        Some(custody::JournalV1::Enclosing { .. })
+                    )
+                })
+                .expect("a genuine enclosing row is retained before the budget");
+            let mut private = state.clone();
+            let event::CommittedEvent::DrakeJournalV1 { record } =
+                &mut private.engine.event_history[nested]
+            else {
+                unreachable!()
+            };
+            let custody::JournalV1::Enclosing { output, .. } = &mut record.value else {
+                unreachable!()
+            };
+            crate::linked_aura_operation_v1::tamper_drake_saved_output_runtime_for_test(output);
+            assert_eq!(
+                serde_json::to_vec(&private).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+            assert_ne!(private, state);
+            let before = private.clone();
+            let (ineligible, rows, _, reused) =
+                custody::replay_prefix_probe_for_test(&private.engine.event_history);
+            assert_eq!(reused, nested);
+            assert_eq!(rows, nested);
+            assert_eq!(
+                ineligible,
+                custody::original_replay_keys_for_test(&private.engine.event_history)
+            );
+            assert!(ineligible.keys().all(|position| *position < nested as u64));
+            assert_ne!(ineligible, keys);
+            assert!(custody::validate(&private).is_err());
+            assert_eq!(private, before);
+            custody::validate(&state).unwrap();
+            assert_eq!(
+                custody::replay_prefix_probe_for_test(&state.engine.event_history).0,
+                keys
+            );
+
+            // Repeated actual typed ordinary events isolate the count budget;
+            // this input is a key-computation primitive, not native play.
+            let ordinary = state.engine.event_history.iter().find(|event| {
+                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == ordinary)
+            }).unwrap();
+            let primitive = vec![ordinary.clone(); 513];
+            custody::clear_replay_prefix_for_test();
+            let (keys, rows, bytes, _) = custody::replay_prefix_probe_for_test(&primitive);
+            assert_eq!(keys, custody::original_replay_keys_for_test(&primitive));
+            assert_eq!(rows, 512);
+            assert!(bytes <= 64 * 1024 * 1024);
+            let (_, rows, _, reused) = custody::replay_prefix_probe_for_test(&primitive);
+            assert_eq!((rows, reused), (512, 512));
+        }
+    }
+
+    #[test]
     fn fresh_concealed_printing_never_selects_drake_owner_or_refusal_both_seats() {
         use crate::state::FaceDownV1;
         for actor in [PlayerId::P0, PlayerId::P1] {

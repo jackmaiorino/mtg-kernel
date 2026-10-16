@@ -137,8 +137,15 @@ impl FixturePrepared {
 }
 fn act(s: &mut FixturePrepared, choose: impl Fn(&ActionSemanticV1) -> bool) {
     let d = s.encode(expected(s)).unwrap();
+    act_encoded(s, d, choose);
+}
+fn act_encoded(
+    s: &mut FixturePrepared,
+    d: PreparedDecision,
+    choose: impl Fn(&ActionSemanticV1) -> bool,
+) {
     assert_eq!(d.packet.source(), Source::PreparedV57);
-    let native = s.inner.decision_v57().unwrap();
+    let native = &d.backend;
     let i = native
         .actions()
         .iter()
@@ -686,7 +693,8 @@ fn paid_hatcher_real_combat_payment_history_and_exact_width_privacy_both_seats()
             if state(&s).objects.get(h).counters.incubation >= 3 {
                 break;
             }
-            let d = s.inner.decision_v57().unwrap();
+            let encoded = s.encode(expected(&s)).unwrap();
+            let d = &encoded.backend;
             let action=d.actions().iter().find(|a| {
                     matches!(a,ActionSemanticV1::ChooseAttackerInclusion{attacker,include:true,..}if attacker.arena_id==h.0)
                         || matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.iter().any(|r|r.arena_id==h.0))
@@ -694,7 +702,7 @@ fn paid_hatcher_real_combat_payment_history_and_exact_width_privacy_both_seats()
                 .or_else(||d.actions().iter().find(|a| quiet_action(a)))
                 .or_else(||(d.actions().len()==1).then(||&d.actions()[0]))
                 .expect("real combat choice absent").clone();
-            act(&mut s, |candidate| candidate == &action);
+            act_encoded(&mut s, encoded, |candidate| candidate == &action);
         }
         assert_eq!(state(&s).objects.get(h).counters.incubation, 3);
         drain(&mut s);
