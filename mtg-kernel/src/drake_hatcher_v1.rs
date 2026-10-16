@@ -978,6 +978,16 @@ mod tests {
     }
     fn paid_replay_memo_state(actor: PlayerId) -> (GameState, ObjectId) {
         let (mut state, drake) = cast(actor);
+        // This ordinary paid cast occurs while the public Hatcher is already
+        // active, so its actual SpellCast event is inside an enclosing Step.
+        let ordinary = put(&mut state, actor, "Think Twice", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        state.priority_player = actor;
+        engine::step(&mut state, Action::CastSpell(ordinary)).unwrap();
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        finish(&mut state);
+        assert_eq!(state.objects.get(ordinary).zone, Zone::Graveyard);
         damage_three(&mut state, drake, actor);
         finish(&mut state);
         assert_eq!(state.objects.get(drake).counters.incubation, 3);
@@ -990,14 +1000,14 @@ mod tests {
             crate::state::StackItemKind::ActivatedAbility
         );
         custody::validate(&state).unwrap();
-        (state, drake)
+        (state, ordinary)
     }
 
     #[test]
     fn genuine_paid_enclosing_replay_memo_warm_restore_and_ordinary_segment_tamper_both_seats() {
         use custody::{journal, JournalV1 as J};
         for actor in [PlayerId::P0, PlayerId::P1] {
-            let (state, drake) = paid_replay_memo_state(actor);
+            let (state, paid_spell) = paid_replay_memo_state(actor);
             let original = state.clone();
             custody::reset_replay_memo_for_test();
             custody::validate(&state).unwrap();
@@ -1018,7 +1028,7 @@ mod tests {
             assert_eq!(restored_state, state);
 
             let ordinary = state.engine.event_history.iter().position(|event| {
-                matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == drake)
+                    matches!(event, event::CommittedEvent::SpellCast { spell, .. } if *spell == paid_spell)
             }).unwrap();
             let (start, end) = state
                 .engine
