@@ -425,14 +425,17 @@ fn paid_exact_bound_combat_omits_only_native_infeasible_answer_and_rejects_owned
 fn paid_opponent_concealed_identity_changes_do_not_enter_candidate_projection_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
+        let mut alternative = ready(actor);
+        put(&mut state, actor.opponent(), "Counterspell", Zone::Hand);
+        put(
+            &mut alternative,
+            actor.opponent(),
+            "Valkyrie's Call",
+            Zone::Hand,
+        );
+        // Independent initial hidden worlds precede both genuine paid histories.
         paid(&mut state, actor, "Nine-Lives Familiar", None);
-        let secret = put(&mut state, actor.opponent(), "Counterspell", Zone::Hand);
-        let mut alternative = state.clone();
-        let card_def = crate::card_def::card_id_by_name("Valkyrie's Call").unwrap();
-        let hidden = alternative.objects.get_mut(secret);
-        hidden.card_def = card_def;
-        hidden.name = "Valkyrie's Call".into();
-        hidden.v4 = crate::state::ObjectStateV4::from_card_def(card_def);
+        paid(&mut alternative, actor, "Nine-Lives Familiar", None);
         let (_, _, left, _) = current(&mut state);
         let (_, _, right, _) = current(&mut alternative);
         assert_eq!(left, right);

@@ -56,6 +56,8 @@ current-versus-departure power, genuine
 Nine-Lives death and delayed ordering, paid Generous Ent equal-visible library
 permutations, exact combat feasibility and owned-scan refusal, opponent hidden
 identity equivalence, serialization/restore, and read-only origin/state/annotation
-forgeries. Paid Fishing equip also checks incarnation-only relations, unknown
+forgeries. The privacy comparison starts from independent initial hidden worlds,
+then constructs both genuine paid histories without changing a printing afterward.
+Paid Fishing equip also checks incarnation-only relations, unknown
 fields and their absence from printing authority. No test is ignored and no
 printing or native decision is fabricated. Direct combat operands are labelled.
