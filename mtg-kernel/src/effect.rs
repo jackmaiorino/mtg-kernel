@@ -17498,6 +17498,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindWarpExileToTriggerSource => {
             panic!("unmaterialized warp exile");
         }
+        EffectOp::BindAleshaRaidReturn => {
+            panic!("unmaterialized Alesha Raid return");
+        }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
         }
@@ -17675,6 +17678,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let Some(source) = ctx.ability_source_contract else {
                 return;
             };
+            if source.source != ctx.source
+                || source.power_lki != Some(*source_power_lki)
+                || !crate::card_def::CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+            {
+                return;
+            }
             let target_spec =
                 crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower;
             if !crate::engine::effect_target_is_legal_from_ability_source_with_power_lki(
@@ -17682,7 +17693,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 source,
                 ctx.controller,
                 target_spec,
-                ctx.targets,
+                &ctx.targets,
                 0,
                 Some(*source_power_lki),
             ) || !ctx.target_incarnation_matches(0, state)

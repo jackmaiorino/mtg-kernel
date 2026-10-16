@@ -1333,6 +1333,7 @@ mod tests {
                 controller: fiend_owner,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
+                power_lki: None,
                 attached_to: None,
             },
             exiled,

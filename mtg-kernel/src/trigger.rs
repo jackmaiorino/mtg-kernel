@@ -353,10 +353,11 @@ fn materialize_trigger_source_program(
         }
         EffectOp::BindAleshaRaidReturn => {
             EffectOp::AleshaRaidReturn {
-                // This is replaced by last-known source power only if the
-                // original Alesha incarnation leaves. While it remains, the
-                // legal-target builder reads its live effective power.
-                source_power_lki: 0,
+                // Preserve the trigger-time source power independently from
+                // the live-power check. A departure checkpoint updates both
+                // this effect and its exact source contract to departure-time
+                // LKI before the source incarnation changes zones.
+                source_power_lki: crate::engine::effective_power(state, source),
             }
         }
         EffectOp::BindWarpExileToTriggerSource => {
@@ -5303,6 +5304,7 @@ fn triggers_from_events(
                             controller: *controller,
                             zone: Zone::Battlefield,
                             zone_change_count: *source_zone_change_count,
+                            power_lki: None,
                             attached_to: None,
                         }),
                         granted_by: None,
@@ -5589,6 +5591,7 @@ fn triggers_from_events(
                                     controller: *controller_before,
                                     zone: *from,
                                     zone_change_count,
+                                    power_lki: None,
                                     attached_to: None,
                                 }))
                             }
@@ -5596,6 +5599,12 @@ fn triggers_from_events(
                             _ => {
                                 let mut contract = AbilitySourceContractV4::capture(state, id);
                                 contract.controller = event_controller;
+                                if card.name == "Alesha, Who Laughs at Fate"
+                                    && contract.zone == Zone::Battlefield
+                                {
+                                    contract.power_lki =
+                                        Some(crate::engine::effective_power(state, id));
+                                }
                                 Some(contract)
                             }
                         };

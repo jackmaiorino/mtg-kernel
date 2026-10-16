@@ -506,6 +506,7 @@ pub(crate) fn legal_targets(
             controller,
             zone: Zone::Battlefield,
             zone_change_count: generation,
+            power_lki: None,
             attached_to: None,
         },
     )?;

@@ -1008,6 +1008,12 @@ pub struct AbilitySourceContractV4 {
     pub controller: PlayerId,
     pub zone: Zone,
     pub zone_change_count: u32,
+    /// A source-specific power snapshot used only by mechanics whose target
+    /// legality depends on the departed source's last-known power. Ordinary
+    /// contracts leave this absent; Alesha's Raid validator cross-checks it
+    /// against the materialized effect instead of trusting that payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_lki: Option<i32>,
     /// Exact host relation at trigger or activation creation. This is LKI,
     /// not a claim that the source remains attached while the ability waits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1024,6 +1030,7 @@ impl AbilitySourceContractV4 {
             controller: object.controller,
             zone: object.zone,
             zone_change_count: object.zone_change_count,
+            power_lki: None,
             attached_to: object.v4.attached_to,
         }
     }

@@ -147,6 +147,7 @@ pub(crate) fn linked_exile_target_fixture_v1() -> crate::state::GameState {
                 controller: PlayerId::P1,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
+                power_lki: None,
                 attached_to: None,
             },
             exiled,

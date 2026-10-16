@@ -4956,6 +4956,13 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
         if let Some(effect) = item.inline_effect.as_mut() {
             refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
         }
+        refresh_ability_source_power_lki(
+            &mut item.v4.ability_source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
         if let Some(contract) = item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
@@ -4966,13 +4973,85 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
         if let Some(effect) = pending.resolving_item.inline_effect.as_mut() {
             refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
         }
+        refresh_ability_source_power_lki(
+            &mut pending.resolving_item.v4.ability_source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
+        refresh_ability_source_power_lki(
+            &mut pending.ctx.ability_source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
         if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
         refresh(&mut pending.ctx.paid_cost_refs);
     }
+    for pending in &mut state.engine.pending_triggers {
+        let source_contract = pending.source_contract;
+        refresh_alesha_raid_power_lki(
+            &mut pending.effect,
+            source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
+        refresh_ability_source_power_lki(
+            &mut pending.source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
+    }
+    if let Some(pending) = state.legend_pending_v1.as_mut() {
+        for pending in pending {
+            let source_contract = pending.source_contract;
+            refresh_alesha_raid_power_lki(
+                &mut pending.effect,
+                source_contract,
+                id,
+                card_def,
+                generation,
+                power,
+            );
+            refresh_ability_source_power_lki(
+                &mut pending.source_contract,
+                id,
+                card_def,
+                generation,
+                power,
+            );
+        }
+    }
     for (_, object) in state.objects.iter_mut() {
         refresh_binding(&mut object.v4.finalized_cast_binding);
+    }
+}
+
+fn refresh_ability_source_power_lki(
+    contract: &mut Option<crate::state::AbilitySourceContractV4>,
+    object: ObjectId,
+    card_def: u16,
+    generation: u32,
+    power: i32,
+) {
+    let Some(contract) = contract.as_mut() else {
+        return;
+    };
+    if contract.power_lki.is_some()
+        && contract.source == object
+        && contract.card_def == card_def
+        && contract.zone == Zone::Battlefield
+        && contract.zone_change_count == generation
+    {
+        contract.power_lki = Some(power);
     }
 }
 
@@ -5544,6 +5623,7 @@ mod tests {
                 controller: PlayerId::P0,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
+                power_lki: None,
                 attached_to: None,
             },
             exiled,
@@ -5582,6 +5662,7 @@ mod tests {
                 controller: PlayerId::P0,
                 zone: Zone::Battlefield,
                 zone_change_count: 0,
+                power_lki: None,
                 attached_to: None,
             },
             exiled: still_exiled,

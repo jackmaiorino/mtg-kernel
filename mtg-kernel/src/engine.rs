@@ -14041,6 +14041,22 @@ fn validate_bound_trigger_source_objects(
                 return Err("bound-source trigger changed its exact source binding".to_string());
             }
         }
+        EffectOp::AleshaRaidReturn { source_power_lki } => {
+            let Some(contract) = source_contract else {
+                return Err("Alesha Raid lost its source-power authority".to_string());
+            };
+            if contract.source != source
+                || contract.zone != Zone::Battlefield
+                || !card_def::CARD_DEFS
+                    .get(usize::from(contract.card_def))
+                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+                || contract.power_lki != Some(*source_power_lki)
+            {
+                return Err(
+                    "Alesha Raid source power differs from its exact source contract".into(),
+                );
+            }
+        }
         _ => {}
     }
     Ok(())

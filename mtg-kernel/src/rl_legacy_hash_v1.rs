@@ -477,6 +477,7 @@ mod tests {
             controller: PlayerId::P0,
             zone: Zone::Exile,
             zone_change_count: 6,
+            power_lki: None,
             attached_to: None,
         };
         let record = crate::cauldron_grants_v1::CauldronGrantRecordV1(Some(

@@ -227,6 +227,7 @@ pub(crate) fn stack_source_reference(
             controller: source.controller,
             zone: source.zone,
             zone_change_count: source.zone_change_count,
+            power_lki: None,
             attached_to: None,
         }
     } else {
