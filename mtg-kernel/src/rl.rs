@@ -1894,6 +1894,8 @@ pub fn observe_v1(
     acting_player: PlayerId,
     step_index: u64,
 ) -> Result<ObservationV1> {
+    crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+        .map_err(RlContractError)?;
     refuse_chosen_type_mana_v60(state)?;
     crate::effect::require_no_copied_token_abilities_v1(state).map_err(RlContractError)?;
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
@@ -2209,6 +2211,10 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
+    if text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -3644,6 +3650,42 @@ pub(crate) enum CommonProjectionScopeV42 {
     GraveyardReturnV61,
 }
 
+/// Classification of a caller-declared mainboard, never cast permission or a
+/// replacement for Full preflight. No hidden native zones are inspected here.
+pub(crate) fn require_declared_cards_for_scope(
+    scope: CommonProjectionScopeV42,
+    cards: &[u16],
+) -> std::result::Result<(), String> {
+    for &id in cards {
+        let definition = CARD_DEFS
+            .get(usize::from(id))
+            .ok_or("unknown declared card")?;
+        let next_five = matches!(
+            definition.name,
+            "Midnight Snack"
+                | "Extravagant Replication"
+                | "Infernal Vessel"
+                | "Giada, Font of Hope"
+                | "Goblin Negotiation"
+        );
+        let graveyard = matches!(
+            definition.name,
+            "Alesha, Who Laughs at Fate" | "Nine-Lives Familiar"
+        );
+        if (next_five
+            && !matches!(
+                scope,
+                CommonProjectionScopeV42::NextFiveV59
+                    | CommonProjectionScopeV42::GraveyardReturnV61
+            ))
+            || (graveyard && scope != CommonProjectionScopeV42::GraveyardReturnV61)
+        {
+            return Err("declared mainboard requires its distinct complete consumer".into());
+        }
+    }
+    Ok(())
+}
+
 /// Public construction operands confined to one immutable complete-family call.
 /// This is neither validation proof nor executable authority. The only factory
 /// runs the original complete builder, including all private checks, first.
@@ -4492,6 +4534,13 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         proof.require_state(request.0.state)?;
     }
 
+    if request.0.text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
     if !matches!(
         request.0.text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -5062,6 +5111,10 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
+    if text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
+            .map_err(RlContractError)?;
+    }
     if !matches!(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
@@ -5720,7 +5773,7 @@ pub(crate) fn core_policy_action_candidates_fake_scoped_v50(
         accept_panda,
         accept_conqueror,
         accept_fake,
-        false,
+        CommonProjectionScopeV42::ExistingV40,
     )
 }
 fn core_policy_action_candidates_next_five_scoped_v59(
@@ -5730,9 +5783,16 @@ fn core_policy_action_candidates_next_five_scoped_v59(
     accept_panda: bool,
     accept_conqueror: bool,
     accept_fake: bool,
-    accept_next_five: bool,
+    scope: CommonProjectionScopeV42,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    if !accept_next_five {
+    if scope != CommonProjectionScopeV42::GraveyardReturnV61 {
+        crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
+            .map_err(RlContractError)?;
+    }
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::NextFiveV59 | CommonProjectionScopeV42::GraveyardReturnV61
+    ) {
         crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
     }
@@ -5927,6 +5987,11 @@ fn core_surface_action_candidates_v1(
     decision: &SurfaceDecision,
     state: &GameState,
 ) -> Result<Vec<CoreSurfaceActionCandidateV1>> {
+    crate::graveyard_return_public_v61::require_legacy_visible(
+        state,
+        PolicyDecisionV5::Surface(decision.clone()).actor(state),
+    )
+    .map_err(RlContractError)?;
     crate::elenda_public_v52::require_legacy_visible(
         state,
         PolicyDecisionV5::Surface(decision.clone()).actor(state),
@@ -9177,7 +9242,13 @@ pub(crate) fn core_policy_action_candidates_next_five_v59(
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     crate::next_five_observation_v59::validate_state(state).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
-        decision, state, true, true, true, true, true,
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::NextFiveV59,
     )
 }
 
@@ -9188,7 +9259,13 @@ pub(crate) fn core_policy_action_candidates_graveyard_return_v61(
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
     crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
     core_policy_action_candidates_next_five_scoped_v59(
-        decision, state, true, true, true, true, true,
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::GraveyardReturnV61,
     )
 }
 

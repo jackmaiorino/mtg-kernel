@@ -5254,6 +5254,18 @@ impl RlEpisodeSessionV1 {
         foundations_combat: bool,
         london_mulligans: bool,
     ) -> Result<Self, RlSessionError> {
+        for cards in card_ids {
+            crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
+                session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
+            })?;
+        }
+        for cards in card_ids {
+            crate::rl::require_declared_cards_for_scope(
+                crate::rl::CommonProjectionScopeV42::ExistingV40,
+                cards,
+            )
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        }
         let mut state =
             build_deck_pair_state(env_seed, card_ids[0], card_ids[1]).map_err(|error| {
                 session_error(RlSessionErrorCode::UnsupportedDeck, &error.to_string())
@@ -5669,6 +5681,14 @@ impl RlEpisodeSessionV1 {
     }
 
     pub fn restore_v5(&mut self, snapshot: &RlEpisodeSessionSnapshotV5) {
+        if crate::graveyard_return_public_v61::require_legacy_visible(
+            &snapshot.0.state,
+            snapshot.0.current.as_ref().map(|c| c.actor),
+        )
+        .is_err()
+        {
+            return;
+        }
         *self = snapshot.0.clone();
     }
 
@@ -5718,6 +5738,11 @@ impl RlEpisodeSessionV1 {
             }
             Ok(())
         })?;
+        crate::graveyard_return_public_v61::require_legacy_visible(
+            &self.state,
+            self.current.as_ref().map(|c| c.actor),
+        )
+        .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
         let current = self
             .current
             .as_ref()
@@ -5894,6 +5919,20 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        if let Err(error) =
+            crate::graveyard_return_public_v61::require_legacy_visible(&self.state, None)
+        {
+            self.current = None;
+            self.terminal = Some(halted_terminal(
+                &self.deck_ids,
+                self.deck_hashes,
+                self.episode_id,
+                format!("fail_closed:graveyard_return_v61:{error}"),
+                self.policy_step_count,
+                self.physical_decision_count,
+            ));
+            return;
+        }
         // The frozen Episode transport has no original loss-batch facts.
         // Refuse before its policy surface can collect or resolve a real root.
         if crate::bloodthirsty_conqueror_v49::require_legacy_consumer(&self.state).is_err() {
@@ -7619,6 +7658,15 @@ impl FastActorSessionV1 {
     }
 
     pub fn restore_v1(&mut self, snapshot: &FastActorSessionSnapshotV1) {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::GraveyardReturnV61
+            && crate::graveyard_return_public_v61::require_legacy_visible(
+                &snapshot.0.state,
+                snapshot.0.current.as_ref().map(|c| c.actor),
+            )
+            .is_err()
+        {
+            return;
+        }
         if self.flat_action_contract_mode == FlatActionContractModeV1::GraveyardReturnV61 {
             let _ = self.graveyard_return_restore_v61(snapshot);
         } else if self.flat_action_contract_mode == FlatActionContractModeV1::NextFiveV59 {
@@ -7700,6 +7748,13 @@ impl FastActorSessionV1 {
         selected_index: u32,
         apply_path: FastActorApplyPathV1,
     ) -> Result<FastActorResponseV1, RlSessionError> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::GraveyardReturnV61 {
+            crate::graveyard_return_public_v61::require_legacy_visible(
+                &self.state,
+                self.current.as_ref().map(|c| c.actor),
+            )
+            .map_err(|error| session_error(RlSessionErrorCode::StaleEnvironmentBinding, &error))?;
+        }
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61
@@ -8037,6 +8092,22 @@ impl FastActorSessionV1 {
     }
 
     fn advance_to_decision_or_terminal(&mut self) {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::GraveyardReturnV61 {
+            if let Err(error) =
+                crate::graveyard_return_public_v61::require_legacy_visible(&self.state, None)
+            {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:graveyard_return_v61:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
         if !matches!(
             self.flat_action_contract_mode,
             FlatActionContractModeV1::NextFiveV59 | FlatActionContractModeV1::GraveyardReturnV61
@@ -10632,6 +10703,10 @@ fn build_session_deck_pair_state(
 ) -> Result<(SessionDeckHashesV1, crate::state::GameState), RlSessionError> {
     let resolved_decks = resolve_runtime_decks(deck_ids)?;
     let deck_hashes = resolved_decks.map(|deck| deck.runtime_deck_hash);
+    preflight_declared_mainboards_for_scope(
+        crate::rl::CommonProjectionScopeV42::ExistingV40,
+        resolved_decks.map(|deck| deck.card_ids),
+    )?;
     let state = match (randomization, starting_player) {
         (ResetRandomization::Legacy { env_seed }, None) => build_deck_pair_state(
             env_seed,
@@ -10683,6 +10758,23 @@ fn build_session_deck_pair_state(
         .map_err(map_deck_pair_build_error_v2)?,
     };
     Ok((deck_hashes, state))
+}
+
+// Full capability is checked first; scope classification grants no permission.
+fn preflight_declared_mainboards_for_scope(
+    scope: crate::rl::CommonProjectionScopeV42,
+    mainboards: [&[u16]; 2],
+) -> Result<(), RlSessionError> {
+    for cards in mainboards {
+        crate::card_def::preflight_fully_supported_deck(cards).map_err(|error| {
+            map_deck_pair_build_error_v2(crate::rl::DeckPairBuildErrorV2::DeckPreflight(error))
+        })?;
+    }
+    for cards in mainboards {
+        crate::rl::require_declared_cards_for_scope(scope, cards)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+    }
+    Ok(())
 }
 
 /// Exhaustive typed mapping of the v2 deck-pair builder failure vocabulary
@@ -10751,6 +10843,13 @@ fn resolve_explicit_decks(mainboards: &[Vec<u16>; 2]) -> Result<[Vec<u16>; 2], R
                 &format!("seat {seat} explicit deck failed full-support preflight: {error}"),
             )
         })?;
+    }
+    for cards in mainboards {
+        crate::rl::require_declared_cards_for_scope(
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+            cards,
+        )
+        .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
     }
     Ok([mainboards[0].clone(), mainboards[1].clone()])
 }

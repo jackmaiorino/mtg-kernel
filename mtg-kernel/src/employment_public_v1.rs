@@ -109,6 +109,8 @@ pub fn producer_sha256_v1() -> String {
         hash.update([0]);
         hash.update(source.as_bytes());
     }
+    hash.update(b"legacy-graveyard-return-guard/v61\0");
+    hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 fn roots() -> Result<Vec<RootV1>, RlContractError> {

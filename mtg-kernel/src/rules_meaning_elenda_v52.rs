@@ -195,6 +195,8 @@ pub fn producer_sha256() -> String {
             hash.update((source.len() as u64).to_le_bytes());
             hash.update(source.as_bytes());
         }
+        hash.update(b"legacy-graveyard-return-guard/v61\0");
+        hash.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         hash.finalize()
             .iter()
             .map(|byte| format!("{byte:02x}"))

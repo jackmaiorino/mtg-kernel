@@ -69,6 +69,10 @@ impl FastActorSessionV1 {
                 "invalid common Limited reset",
             ));
         }
+        preflight_declared_mainboards_for_scope(
+            crate::rl::CommonProjectionScopeV42::ExistingV40,
+            [&mainboards[0], &mainboards[1]],
+        )?;
         let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],

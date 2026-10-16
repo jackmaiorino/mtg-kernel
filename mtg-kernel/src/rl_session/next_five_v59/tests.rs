@@ -742,3 +742,64 @@ fn paid_goblin_affected_actor_ordering_native_indices_and_full_restore_both_seat
         assert_eq!(gameplay(&owner), result);
     }
 }
+
+#[test]
+fn paid_graveyard_return_sources_refuse_older_session_step_and_terminal_restore_readonly_both_seats(
+) {
+    use crate::graveyard_return_public_v61::tests as graveyard;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut paid = graveyard::ready(actor);
+        let alesha = graveyard::paid(&mut paid, actor, "Alesha, Who Laughs at Fate", None);
+        graveyard::paid(&mut paid, actor, "Snap", Some(alesha));
+        assert_eq!(paid.objects.get(alesha).zone, Zone::Hand);
+        let original = paid.clone();
+        let refused = FastActorSessionV1::from_next_five_v59_fixture_state(paid);
+        assert!(matches!(
+            refused.current_response(),
+            FastActorResponseV1::Terminal(_)
+        ));
+        assert_eq!(refused.state, original);
+        let snapshot = refused.snapshot_v1();
+        let mut old = FastActorSessionV1::from_next_five_v59_fixture_state(graveyard::ready(actor));
+        let before = (
+            old.state.clone(),
+            old.current_response(),
+            old.environment_revision,
+        );
+        assert!(old.next_five_restore_v59(&snapshot).is_err());
+        assert_eq!(
+            (
+                old.state.clone(),
+                old.current_response(),
+                old.environment_revision
+            ),
+            before
+        );
+        old.restore_v1(&snapshot);
+        assert_eq!(
+            (
+                old.state.clone(),
+                old.current_response(),
+                old.environment_revision
+            ),
+            before
+        );
+        // A genuine foreign mechanic arriving after a published old prompt must
+        // refuse before stale bindings or the surface can mutate that world.
+        old.state = original;
+        let before = (
+            old.state.clone(),
+            old.current_response(),
+            old.environment_revision,
+        );
+        assert!(old.step(old.episode_id, old.policy_step_count, 0).is_err());
+        assert_eq!(
+            (
+                old.state.clone(),
+                old.current_response(),
+                old.environment_revision
+            ),
+            before
+        );
+    }
+}

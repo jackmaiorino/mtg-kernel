@@ -194,6 +194,8 @@ pub fn producer_sha256() -> String {
             h.update(source.as_bytes());
         }
         h.update(meaning::producer_sha256().as_bytes());
+        h.update(b"legacy-graveyard-return-guard/v61\0");
+        h.update(crate::graveyard_return_public_v61::producer_sha256().as_bytes());
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     })
     .clone()
