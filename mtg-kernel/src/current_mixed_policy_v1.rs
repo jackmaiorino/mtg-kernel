@@ -121,7 +121,6 @@ pub fn feature_identity() -> String {
             include_str!("effect/nonland_copy_v1.rs"),
             include_str!("effect/crystal_prevention_v1.rs"),
             include_str!("creature_death_capture_v1.rs"),
-            include_str!("rl_variable_cast_v1.rs"),
             include_str!("rl_session/next_five_v59.rs"),
             include_str!("controlled_creature_grants_v1.rs"),
             include_str!("standard_statics_v1.rs"),

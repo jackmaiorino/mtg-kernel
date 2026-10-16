@@ -117,3 +117,7 @@ fn kellan_paid_upgrades_combat_impulse_restore_privacy_next_five_both_seats() {
 fn fiery_paid_optional_equipment_death_replacement_restore_privacy_next_five_both_seats() {
     shared::paid_fiery::<NextFiveSession>();
 }
+#[test]
+fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_next_five_both_seats() {
+    shared::paid_divine::<NextFiveSession>();
+}

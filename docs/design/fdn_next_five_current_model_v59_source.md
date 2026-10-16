@@ -29,9 +29,17 @@ u64 counts, wide counters, current controllers and incarnation relations.
 All 112 inherited test names remain. The genuine nine-trigger regression was
 expanded after CI exposed a physical-decision versus policy-prefix validation
 bug; it now checks every authenticated prefix, both owners, restore and refusal.
-The complete model subtree has 141 source cases: the original 112, five Fiery
-cases, eleven NextFive cases below and thirteen fifth-owner inherited-family
-wrappers. The legendary shared harness also exercises the fifth owner.
+The complete composed model subtree has 148 source cases: the original 112,
+five Fiery cases, eleven NextFive cases below, fourteen fifth-owner
+inherited-family wrappers, and six canonical repair cases (four ordinary Divine
+owner wrappers, the complete Divine printing case, and the canonical semantic
+boolean case). All 141 earlier test names and bodies remain unchanged. The
+legendary shared harness also exercises the fifth owner. The new fifth-owner
+Divine wrapper uses the same genuine W and W+2W paid paths, ordinary one-target
+and kicked zero-/two-target paths, original action bindings, countered stack
+occurrence, hidden-world privacy, and exact saved restores as the four earlier
+owners. Its adapter compares the actual full GameState, response, and
+policy/physical counters against the separate native owner after each action.
 
 1. Five genuine reference decks remain Partial and Full-only reset refuses both seats.
 2. All five genuine paid casts, original action order and restored outcomes.
@@ -52,15 +60,23 @@ a separate native snapshot from the identical pre-restore stream and compare exa
 state, response and both counters. Fixture native clones never become model input.
 
 The root composition includes the owning Human session, Python V6 client,
-Fiery repair and the canonical seven-card runtime repairs through
-`0c701ce316b790fe19963d92b2ddceae7493ed45`. Its distinct limited-v6 CI group
+Fiery repair and the canonical seven-card runtime repairs. This source-only
+integration starts at `4fcc8bc1d0fececccb20306e4c43ed32a79de80b` and normally
+merges canonical seven head `3da0941536f3cf9593649461ff0cd686b8dc0914`.
+Both the complete Divine printing and semantic-boolean conversion are in the
+feature source identity; `rl_variable_cast_v1.rs` occurs exactly once alongside
+the public variable-cast observation and owning session implementation.
+Its distinct limited-v6 CI group
 selects 100 source cases across eleven native/public/owner/Human/transport
 filters, then builds V6 and invokes the original two-worker seed-123 plumbing
-checker. The separate model group selects the complete 141-case subtree.
+checker. The separate model group selects the complete 148-case subtree.
 
 Observed checks include 71 affected Python deck cases and 17 V6 mock protocol
-cases, pinned formatting and diff checks. All NextFive Rust cases, binary and
-checker remain uncompiled/unrun; source counts are not runtime passes. Actual
+cases from the preceding source composition. This integration passed pinned
+1.94.1 formatting, diff checks, and lightweight static checks of source-case
+preservation, complete unique identity inputs, and unchanged catalog sources.
+All 148 Rust source cases at this composed head, binary and checker remain
+uncompiled/unrun; source counts are not runtime passes. Actual
 export/catalog/profile and runtime qualification remain root-owned after
 Native176 releases. No hash guess, profile waiver, Full promotion, trained
 policy or strength claim is made here.
