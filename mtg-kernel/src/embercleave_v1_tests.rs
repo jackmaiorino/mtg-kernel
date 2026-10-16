@@ -318,16 +318,23 @@ fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_seats() {
             if player == actor.opponent())
         );
         step(&mut state, Action::Pass).unwrap();
-        // Six total mana with only one red cannot pay the printed RR. These
-        // additional basic lands are setup in an independent negative world.
-        let mut wrong_colors = state.clone();
+        // Independent native world: exactly one red source and five green
+        // sources, with no spare untapped Mountain for automatic payment.
+        let mut wrong_colors = crate::extra_turn_v1::tests::ready(actor.opponent());
+        let wrong_source = put(&mut wrong_colors, actor, "Embercleave", Zone::Hand);
+        let only_red = put(&mut wrong_colors, actor, "Mountain", Zone::Battlefield);
         let forests = (0..5)
             .map(|_| put(&mut wrong_colors, actor, "Forest", Zone::Battlefield))
             .collect::<Vec<_>>();
+        assert!(
+            matches!(next(&mut wrong_colors), Decision::CastSpellOrPass { player, .. }
+            if player == actor.opponent())
+        );
+        step(&mut wrong_colors, Action::Pass).unwrap();
         for land in forests {
             step(&mut wrong_colors, Action::ActivateManaAbility(land)).unwrap();
         }
-        step(&mut wrong_colors, Action::ActivateManaAbility(lands[0])).unwrap();
+        step(&mut wrong_colors, Action::ActivateManaAbility(only_red)).unwrap();
         assert_eq!(
             wrong_colors.players[actor.index()]
                 .mana_pool
@@ -336,9 +343,17 @@ fn genuine_paid_flash_on_opponents_turn_and_targetless_entry_both_seats() {
                 .sum::<u32>(),
             6
         );
+        assert_eq!(
+            wrong_colors.players[actor.index()].mana_pool[mana::ManaColor::R.pool_index()],
+            1
+        );
+        assert!(wrong_colors.players[actor.index()]
+            .battlefield
+            .iter()
+            .all(|&id| wrong_colors.objects.get(id).tapped));
         assert!(
             matches!(next(&mut wrong_colors), Decision::CastSpellOrPass { player, castable_spells, .. }
-            if player == actor && !castable_spells.contains(&source))
+            if player == actor && !castable_spells.contains(&wrong_source))
         );
         for land in lands {
             step(&mut state, Action::ActivateManaAbility(land)).unwrap();
