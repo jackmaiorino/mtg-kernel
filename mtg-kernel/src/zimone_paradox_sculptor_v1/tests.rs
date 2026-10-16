@@ -80,6 +80,21 @@ fn paid(state: &mut GameState, actor: PlayerId, name: &str) -> ObjectId {
         card_def::CARD_DEFS[usize::from(state.objects.get(source).card_def)].mana_value as usize;
     let before = tapped_lands(state, actor);
     engine::step(state, Action::CastSpell(source)).unwrap();
+    // CastSpell stages the spell. Genuine Advance pays and publishes it
+    // before returning priority to the caster.
+    assert!(matches!(engine::advance_until_decision(state),
+        Decision::CastSpellOrPass { player, .. } if player == actor));
+    assert!(state.engine.pending_cast.is_none());
+    let item = state.stack.last().unwrap();
+    assert_eq!((item.source, item.controller), (source, actor));
+    assert!(item.targets.is_empty());
+    assert!(state
+        .engine
+        .event_history
+        .iter()
+        .any(|event| matches!(event,
+        event::CommittedEvent::SpellCast { spell, controller }
+            if *spell == source && *controller == actor)));
     assert_eq!(state.objects.get(source).zone, Zone::Stack);
     assert_eq!(tapped_lands(state, actor) - before, value);
     assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
