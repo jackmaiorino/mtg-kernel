@@ -10999,6 +10999,14 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
 fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_effect.as_ref().unwrap();
     let item = pending.resolving_item.clone();
+    let tutelage_owner = match effect::acquire_tutelage_resume_v1(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let spinner_owner = match crate::spinner_of_souls_v1::acquire_resume_owner(state, &item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -11086,7 +11094,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     // Acquire last while the exact public row is live. All preceding owner
     // acquisitions are read-only; only this frame's exact row removal may
     // intervene before consuming the private optional owner below.
-    let printed_optional_owner = if spinner_owner.is_none()
+    let printed_optional_owner = if tutelage_owner.is_none()
+        && spinner_owner.is_none()
         && hunter_owner.is_none()
         && inspiration_owner.is_none()
         && squad_owner.is_none()
@@ -11124,7 +11133,9 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    let progress = if let Some(owner) = hunter_owner.as_ref() {
+    let progress = if let Some(owner) = tutelage_owner {
+        effect::resume_owned_tutelage_v1(state, owner)
+    } else if let Some(owner) = hunter_owner.as_ref() {
         crate::high_society_hunter_custody_v45::resume_owned(state, owner)
     } else if let Some(owner) = alesha_owner {
         effect::alesha_optional_v1::resume_owned(state, owner)
@@ -14066,6 +14077,19 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             damage_history_index,
         );
     }
+    if state.stack.last().is_some_and(|item| {
+        matches!(
+            item.inline_effect,
+            Some(EffectOp::SphinxsTutelageMillV1 { .. })
+        )
+    }) {
+        let tutelage_item = state
+            .stack
+            .last()
+            .expect("just published Tutelage trigger")
+            .clone();
+        crate::event::publish_tutelage_v1(state, &tutelage_item)?;
+    }
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -14445,6 +14469,19 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::event::is_sphinxs_tutelage_v1(source_card_def) {
+        crate::event::validate_tutelage_trigger_v1(state, item)?;
+        // Private placement probes have no row yet. Every actual published
+        // row must retain the exact source, target and draw publication.
+        if state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            crate::event::validate_published_tutelage_v1(state, item)?;
+        }
+        return Ok(Some(TargetSpec::TargetOpponent));
+    }
     if card_def::CARD_DEFS
         .get(usize::from(source_card_def))
         .is_some_and(|definition| definition.name == "Niv-Mizzet, Visionary")
@@ -16247,6 +16284,20 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 return ResolutionProgress::Suspended;
             }
         };
+    let tutelage_owner = match if targets_legal {
+        effect::acquire_tutelage_begin_v1(state, &current)
+    } else {
+        Ok(None)
+    } {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let alesha_owner = match effect::alesha_optional_v1::acquire_begin(state, &current) {
         Ok(owner) => owner,
         Err(_) => {
@@ -16344,6 +16395,23 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = tutelage_owner {
+        return match effect::begin_owned_tutelage_v1(state, owner, &ctx) {
+            Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {
+                ResolutionProgress::Complete
+            }
+            Ok(effect::ResumableProgress::Suspended) => {
+                resolution_cast_v1::restore_parent(state, item);
+                ResolutionProgress::Suspended
+            }
+            Ok(effect::ResumableProgress::Complete(_)) | Err(_) => {
+                state.stack.push(item.clone());
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                ResolutionProgress::Suspended
+            }
+        };
+    }
     if let Some(owner) = alesha_owner {
         return match effect::alesha_optional_v1::begin_owned(state, owner, &ctx) {
             Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {

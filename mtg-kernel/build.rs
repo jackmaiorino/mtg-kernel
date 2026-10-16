@@ -3493,6 +3493,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Sphinx's Tutelage" => program("None", "MoveObject(ThisSource,Battlefield);own_successful_draw:captured_original_source_controller:target_opponent:mill2_repeat_iff_two_nonland_cards_share_color;5U:draw1_then_discard1", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Drakuseth, Maw of Flames" => program("None", "MoveObject(ThisSource,Battlefield);attacks:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_contracts:one_damage_batch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Unregistered source recipe. No catalog slot is allocated here.
         "Embercleave" => program("None", "MoveObject(ThisSource,Battlefield);etb:attachExactSourceToTargetControlledCreature;equipped:+1/+1,doubleStrike,trample;equip:3;flash;genericReduction:currentControlledAttackingCreatures", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
@@ -5815,6 +5816,15 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
+        "Sphinx's Tutelage" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana { colored: Some("U"), generic: 5 }],
+            effect: AbilityEffectRecipe::Program {
+                name: "sphinxs_tutelage_draw_one_then_discard_one_v1",
+                effect: "EffectOp::Sequence(vec![EffectOp::DrawCards { player: PlayerRef::Controller, count: 1 }, EffectOp::DiscardCards { player: PlayerRef::Controller, count: 1 }])",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Zimone, Paradox Sculptor" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::ManaCost("{G}{U}"), AbilityCostRecipe::Tap],
             effect: AbilityEffectRecipe::Program {
@@ -7117,6 +7127,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Sphinx's Tutelage" => "successful_controller_draw:one_event_time_observer_roster_per_actual_card:original_source_incarnation_controller:target_opponent_at_announcement:response_window:mill2_as_one_original_pair:owner_ordered_graveyard:repeat_iff_exactly_two_nonland_cards_share_at_least_one_color:zero_one_colorless_land_disjoint_stop:source_departure_or_later_control_does_not_change_captured_trigger",
         "Zimone, Paradox Sculptor" => "beginning_captured_controller_combat:captured_source_incarnation_controller:zero_to_two_distinct_controlled_effective_creature_targets:original_target_slots_and_current_exact_incarnation_legality:put_one_plus_one_counter_on_each_legal_target:normal_counter_placement_replacements:checked_widths",
         "Drakuseth, Maw of Flames" => "source_attacks:captured_source_incarnation_controller:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_target_contracts:individual_legality:one_damage_batch_before_sba",
         "Alesha, Who Laughs at Fate" => "source_attacks:plus_one_counter_exact_source:1;beginning_captured_controller_end_step:intervening_raid_declaration_this_turn:target_own_graveyard_creature_mana_value_at_most_original_source_current_power_or_lki:mandatory_target_before_response_window:captured_controller_costless_may_return_at_resolution:decline_no_zone_change:return_exact_target_graveyard_incarnation_to_owner_battlefield",

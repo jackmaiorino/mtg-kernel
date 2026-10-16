@@ -3113,15 +3113,15 @@ mod tests {
         // earlier ids.
         // The `limited-fdn-fixtures` feature appends six FDN fixture
         // definitions as ids 192-197 after every Pauper definition; later FDN
-        // batches append through id 465 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
+        // batches append through id 466 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
         // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
-        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, and Zimone Partial registrations at 457-465.
+        // followed by source-only Alesha, Nine-Lives Familiar, Valkyrie's Call, Perforating Artist, Niv-Mizzet, Embercleave, Banner of Kinship, Drakuseth, Zimone, and Sphinx's Tutelage Partial registrations at 457-466.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                466
+                467
             } else {
                 192
             }
@@ -3587,6 +3587,7 @@ mod tests {
                 (463, "Banner of Kinship"),
                 (464, "Drakuseth, Maw of Flames"),
                 (465, "Zimone, Paradox Sculptor"),
+                (466, "Sphinx's Tutelage"),
             ]
         } else {
             &[]

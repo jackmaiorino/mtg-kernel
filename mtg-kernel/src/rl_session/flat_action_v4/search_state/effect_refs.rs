@@ -52,7 +52,9 @@ impl Scan<'_> {
     fn op(&self, op: &EffectOp) -> bool {
         use EffectOp::*;
         match op {
-            MaySacrificeNonlandOtherwiseV1 { .. }
+            BindSphinxsTutelageMillV1
+            | SphinxsTutelageMillV1 { .. }
+            | MaySacrificeNonlandOtherwiseV1 { .. }
             | BindAleshaRaidReturn
             | AleshaRaidReturn { .. }
             | BindNineLivesFamiliarReturnV1
@@ -327,7 +329,9 @@ impl Scan<'_> {
     fn f(&self, f: &EffectFrame) -> bool {
         use EffectFrame::*;
         match f {
-            NonlandSacrificePaymentV1 { .. } | AleshaRaidAnswerV1 { .. } => true,
+            NonlandSacrificePaymentV1 { .. }
+            | AleshaRaidAnswerV1 { .. }
+            | SphinxsTutelageMillV1 { .. } => true,
             CopyTarget { choice, selected } => {
                 self.copy(&choice.spell)
                     || self.fs(&choice.remaining)
@@ -580,7 +584,7 @@ impl Scan<'_> {
     fn purpose(&self, p: &EffectTargetSelectionPurpose) -> bool {
         use EffectTargetSelectionPurpose::*;
         match p {
-            NonlandSacrificePaymentV1 { .. } => true,
+            NonlandSacrificePaymentV1 { .. } | SphinxsTutelageMillOrderV1 { .. } => true,
             ChooseNewlyExiledCard { .. } => true,
             CopyTarget { choice } => self.copy(&choice.spell) || self.fs(&choice.remaining),
             DiscardPaymentV1 { choice } => self.bs(&choice.hand) || self.op(&choice.unpaid),
@@ -1033,7 +1037,12 @@ pub(super) fn conflicts(
     if state.engine.event_history.iter().any(|event| {
         matches!(
             event,
-            crate::event::CommittedEvent::KinshipEntryV1 { .. }
+            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+                | crate::event::CommittedEvent::SphinxsTutelageCollectedV1 { .. }
+                | crate::event::CommittedEvent::SphinxsTutelagePublishedV1 { .. }
+                | crate::event::CommittedEvent::SphinxsTutelageMillStartedV1 { .. }
+                | crate::event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
+                | crate::event::CommittedEvent::KinshipEntryV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryOperationStartedV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryColorCapturedV1 { .. }
                 | crate::event::CommittedEvent::BannerEntryColorChosenV1 { .. }
@@ -1202,7 +1211,12 @@ pub(super) fn conflicts(
             | StromkirkCompletedV2 { .. } => true,
             // These are history-only owning records. Reject malformed log
             // transport too, rather than implying sampler admission.
-            KinshipEntryV1 { .. }
+            SphinxsTutelageDrawV1 { .. }
+            | SphinxsTutelageCollectedV1 { .. }
+            | SphinxsTutelagePublishedV1 { .. }
+            | SphinxsTutelageMillStartedV1 { .. }
+            | SphinxsTutelageMillBatchV1 { .. }
+            | KinshipEntryV1 { .. }
             | BannerEntryOperationStartedV1 { .. }
             | BannerEntryColorCapturedV1 { .. }
             | BannerEntryColorChosenV1 { .. }

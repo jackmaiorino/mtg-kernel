@@ -8164,6 +8164,36 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/z/ZimoneParadoxSculptor.java",
       "is_token": false
+    },
+    {
+      "name": "Sphinx's Tutelage",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{U}",
+      "mana_value": 3,
+      "colors": [
+        "U"
+      ],
+      "types": [
+        "Enchantment"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_sphinxs_tutelage_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "successful_controller_draw_event_time_source_capture_target_opponent",
+        "mill_two_repeat_only_two_nonland_shared_color_original_pair",
+        "five_generic_one_blue_draw_one_then_discard_one"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SphinxsTutelage.java",
+      "is_token": false
     }
   ]
 }

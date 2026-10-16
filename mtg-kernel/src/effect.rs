@@ -2688,6 +2688,11 @@ pub enum EffectOp {
     NivMizzetVisionaryDrawV1 {
         damage_history_index: u64,
     },
+    /// Printed template, never executable without the actual draw receipt.
+    BindSphinxsTutelageMillV1,
+    SphinxsTutelageMillV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -3149,6 +3154,11 @@ pub enum EffectFrame {
     AleshaRaidAnswerV1 {
         accept: bool,
     },
+    SphinxsTutelageMillV1 {
+        start_history_index: u64,
+        previous_batch: Option<u64>,
+        ordered: Option<Vec<EffectObjectBinding>>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -3510,6 +3520,10 @@ pub enum EffectTargetSelectionPurpose {
     },
     NonlandSacrificePaymentV1 {
         choice: nonland_sacrifice_payment_v1::ChoiceV1,
+    },
+    SphinxsTutelageMillOrderV1 {
+        start_history_index: u64,
+        previous_batch: Option<u64>,
     },
 }
 
@@ -4137,6 +4151,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         EffectOp::RevealTopAndPartitionByType { .. } => true,
         EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
+        EffectOp::SphinxsTutelageMillV1 { .. } => true,
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
@@ -4219,6 +4234,15 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if matches!(
+        op,
+        EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
+    ) || matches!(
+        resolving_item.inline_effect,
+        Some(EffectOp::SphinxsTutelageMillV1 { .. })
+    ) {
+        return Err("Tutelage requires its genuine native pre-removal owner".into());
+    }
     if alesha_optional_v1::selected(&resolving_item)
         || matches!(op, EffectOp::AleshaRaidReturn { .. })
     {
@@ -4323,6 +4347,15 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|pending| {
+        matches!(
+            pending.resolving_item.inline_effect,
+            Some(EffectOp::SphinxsTutelageMillV1 { .. })
+        )
+    }) {
+        return Err("Tutelage continuation requires its genuine native pre-removal owner".into());
+    }
+
     if state
         .engine
         .pending_effect
@@ -5739,6 +5772,19 @@ fn complete_resumable_target_selection(
             order_resolved: true,
             path,
         }),
+        EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+            start_history_index,
+            previous_batch,
+        } => {
+            continuation
+                .frames
+                .push(EffectFrame::SphinxsTutelageMillV1 {
+                    start_history_index,
+                    previous_batch,
+                    ordered: Some(objects),
+                });
+        }
+
         EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
             continuation.frames.push(EffectFrame::MillLibraryBatch {
                 objects,
@@ -9548,6 +9594,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     exile_top_choose_v1::validate_required_stage(state, pending)?;
     validate_exact_spell_search_continuation(state, pending)?;
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
+    validate_tutelage_continuation_v1(state, pending)?;
     perforating_artist_v1::validate_continuation(state, pending)?;
     alesha_optional_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
@@ -9993,6 +10040,9 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     {
                         return Err("Aura attachment candidates changed".to_string());
                     }
+                }
+                EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. } => {
+                    // Complete prefix, partition, chooser and root validated together above.
                 }
                 EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                     let bindings = selected
@@ -11660,6 +11710,22 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
+                EffectFrame::SphinxsTutelageMillV1 {
+                    start_history_index,
+                    previous_batch,
+                    ordered,
+                } => {
+                    if run_tutelage_batch_v1(
+                        state,
+                        &mut continuation,
+                        start_history_index,
+                        previous_batch,
+                        ordered,
+                    )? {
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
                 EffectFrame::AleshaRaidAnswerV1 { accept } => {
                     if accept {
                         alesha_optional_v1::return_accepted(state, &continuation)?;
@@ -14127,6 +14193,22 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                         path: group_path,
                     });
                 }
+            }
+            EffectOp::SphinxsTutelageMillV1 { .. } => {
+                event::validate_published_tutelage_v1(state, &continuation.resolving_item)?;
+                let player = tutelage_target_v1(&continuation)?;
+                if state.engine.event_history.iter().any(|entry| matches!(entry,
+                    event::CommittedEvent::SphinxsTutelageMillStartedV1 { item, .. }
+                    if item.v4.stack_item_id == continuation.resolving_item.v4.stack_item_id))
+                { return Err("Tutelage resolution already started".into()); }
+                let library = bind_library_top_full_v1(state, player);
+                let start_history_index = state.engine.event_history.len() as u64;
+                state.engine.event_history.push(event::CommittedEvent::SphinxsTutelageMillStartedV1 {
+                    item: Box::new(continuation.resolving_item.clone()), library,
+                });
+                continuation.frames.push(EffectFrame::SphinxsTutelageMillV1 {
+                    start_history_index, previous_batch: None, ordered: None,
+                });
             }
             EffectOp::MillCards { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -18527,6 +18609,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             for _ in 0..count.max(0) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
             }
+        }
+        EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::NivMizzetVisionaryDrawV1 {
             damage_history_index,
@@ -24283,3 +24371,460 @@ mod run_away_together_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 mod divine_variable_targets_tests;
+
+fn bind_library_top_full_v1(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .library
+        .iter()
+        .map(|&object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+fn tutelage_target_v1(pending: &EffectContinuation) -> Result<PlayerId, String> {
+    let [Target::Player(player)] = pending.ctx.targets.as_slice() else {
+        return Err("Tutelage lost its original target opponent".into());
+    };
+    if *player == pending.ctx.controller {
+        return Err("Tutelage target is its controller".into());
+    }
+    Ok(*player)
+}
+
+fn tutelage_pair_repeats_v1(state: &GameState, pair: &[EffectObjectBinding]) -> bool {
+    if pair.len() != 2 {
+        return false;
+    }
+    let a = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[0].object).card_def)];
+    let b = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[1].object).card_def)];
+    !a.has_type(CardType::Land)
+        && !b.has_type(CardType::Land)
+        && a.colors
+            .iter()
+            .any(|color| *color != ManaColor::C && b.colors.contains(color))
+}
+
+/// Reconstruct every completed pair from the original library and the actual
+/// immediately preceding native moves. No current graveyard count, invented
+/// pair, reordered prefix or caller-supplied repeat flag is authority.
+fn tutelage_remaining_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+    start: u64,
+    previous: Option<u64>,
+) -> Result<(PlayerId, Vec<EffectObjectBinding>), String> {
+    event::validate_published_tutelage_v1(state, &pending.resolving_item)?;
+    let player = tutelage_target_v1(pending)?;
+    let start_index = usize::try_from(start).map_err(|_| "Tutelage start overflow")?;
+    let Some(event::CommittedEvent::SphinxsTutelageMillStartedV1 { item, library }) =
+        state.engine.event_history.get(start_index)
+    else {
+        return Err("Tutelage start missing".into());
+    };
+    if item.as_ref() != &pending.resolving_item
+        || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+            event::CommittedEvent::SphinxsTutelageMillStartedV1 { item: other, .. }
+            if other.v4.stack_item_id == item.v4.stack_item_id)
+            })
+            .count()
+            != 1
+        || library.iter().any(|binding| {
+            binding.expected_zone != Zone::Library
+                || state
+                    .objects
+                    .try_get(binding.object)
+                    .is_none_or(|object| object.owner != player)
+        })
+        || library
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != library.len()
+    {
+        return Err("Tutelage original library/row changed".into());
+    }
+    let mut offset = 0;
+    let mut linked = None;
+    let mut cursor = start_index + 1;
+    while cursor < state.engine.event_history.len() {
+        let batch_index = state.engine.event_history[cursor..]
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
+                )
+            })
+            .and_then(|delta| cursor.checked_add(delta))
+            .ok_or("Tutelage pending history has no exact completed batch")?;
+        let event::CommittedEvent::SphinxsTutelageMillBatchV1 {
+            start_history_index,
+            previous_batch,
+            ordered,
+            move_start,
+        } = &state.engine.event_history[batch_index]
+        else {
+            unreachable!()
+        };
+        let pair = &library[offset..library.len().min(offset + 2)];
+        if pair.is_empty()
+            || *start_history_index != start
+            || *previous_batch != linked
+            || usize::try_from(*move_start).ok() != Some(cursor)
+            || batch_index != cursor + pair.len()
+        {
+            return Err("Tutelage batch chain, move range or progress changed".into());
+        }
+        validate_exact_binding_permutation(pair, ordered, "Tutelage original pair order")?;
+        for (index, binding) in ordered.iter().enumerate() {
+            if !matches!(state.engine.event_history.get(cursor + index),
+                Some(event::CommittedEvent::ZoneChange { object, from: Zone::Library, to: Zone::Graveyard, controller_before })
+                if *object == binding.object && *controller_before == player)
+                || state.objects.get(binding.object).zone != Zone::Graveyard
+                || binding.expected_zone_change_count.checked_add(1)
+                    != Some(state.objects.get(binding.object).zone_change_count)
+            {
+                return Err("Tutelage completed native mill/incarnation changed".into());
+            }
+        }
+        // Only a genuine two-card, nonland, color-sharing pair can reach
+        // another suspended iteration. A one-card final mill always stops.
+        if !tutelage_pair_repeats_v1(state, pair) {
+            return Err("Tutelage continuation repeated after its stopping pair".into());
+        }
+        offset += pair.len();
+        linked = Some(batch_index as u64);
+        cursor = batch_index + 1;
+    }
+    if linked != previous {
+        return Err("Tutelage last batch binding changed".into());
+    }
+    let remaining = library[offset..].to_vec();
+    if bind_library_top_full_v1(state, player) != remaining {
+        return Err("Tutelage remaining full library changed".into());
+    }
+    Ok((player, remaining))
+}
+
+fn validate_tutelage_continuation_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let selected = matches!(
+        pending.resolving_item.inline_effect,
+        Some(EffectOp::SphinxsTutelageMillV1 { .. })
+    );
+    let carries_stage = pending
+        .frames
+        .iter()
+        .any(|frame| matches!(frame, EffectFrame::SphinxsTutelageMillV1 { .. }))
+        || matches!(
+            pending.choice,
+            Some(PendingEffectChoice::SelectTargets {
+                purpose: EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. },
+                ..
+            })
+        );
+    if !selected {
+        if carries_stage {
+            return Err("Tutelage stage under an unrelated root".into());
+        }
+        return Ok(());
+    }
+    event::validate_published_tutelage_v1(state, &pending.resolving_item)?;
+    if pending.ctx.x_value != pending.resolving_item.v4.x_value
+        || pending.answered_choice_guard.is_some()
+    {
+        return Err("Tutelage has unrelated answer guard".into());
+    }
+    match (pending.choice.as_ref(), pending.frames.as_slice()) {
+        (
+            None,
+            [EffectFrame::SphinxsTutelageMillV1 {
+                start_history_index,
+                previous_batch,
+                ordered: Some(ordered),
+            }],
+        ) => {
+            let (_, remaining) =
+                tutelage_remaining_v1(state, pending, *start_history_index, *previous_batch)?;
+            if remaining.len() < 2 {
+                return Err("Tutelage answered an absent order prompt".into());
+            }
+            validate_exact_binding_permutation(&remaining[..2], ordered, "Tutelage answer")?;
+            Ok(())
+        }
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                player,
+                path,
+                selected,
+                legal,
+                min_targets,
+                max_targets,
+                ordered: true,
+                purpose:
+                    EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+                        start_history_index,
+                        previous_batch,
+                    },
+            }),
+            [],
+        ) => {
+            let (owner, remaining) =
+                tutelage_remaining_v1(state, pending, *start_history_index, *previous_batch)?;
+            let pair = &remaining[..remaining.len().min(2)];
+            let chosen = selected
+                .iter()
+                .map(|candidate| candidate.expected_object)
+                .collect::<Option<Vec<_>>>()
+                .ok_or("Tutelage chosen bindings missing")?;
+            let expected_legal = pair
+                .iter()
+                .filter(|binding| !chosen.contains(binding))
+                .map(|binding| EffectTargetCandidate {
+                    target: Target::Object(binding.object),
+                    expected_object: Some(*binding),
+                })
+                .collect::<Vec<_>>();
+            if *player != owner
+                || !path.is_empty()
+                || pair.len() != 2
+                || *min_targets != 2
+                || *max_targets != 2
+                || legal != &expected_legal
+                || chosen.len()
+                    != chosen
+                        .iter()
+                        .map(|binding| binding.object)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len()
+                || selected.iter().any(|candidate| {
+                    candidate.expected_object.is_none_or(|binding| {
+                        !pair.contains(&binding)
+                            || candidate.target != Target::Object(binding.object)
+                    })
+                })
+            {
+                return Err("Tutelage graveyard-order prompt changed".into());
+            }
+            Ok(())
+        }
+        _ => Err("Tutelage required mill/order stage changed or erased".into()),
+    }
+}
+
+fn run_tutelage_batch_v1(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    start: u64,
+    previous: Option<u64>,
+    ordered: Option<Vec<EffectObjectBinding>>,
+) -> Result<bool, String> {
+    let (player, remaining) = tutelage_remaining_v1(state, pending, start, previous)?;
+    let pair = remaining[..remaining.len().min(2)].to_vec();
+    if pair.is_empty() {
+        return Ok(false);
+    }
+    let ordered = if let Some(ordered) = ordered {
+        validate_exact_binding_permutation(&pair, &ordered, "Tutelage mill order")?;
+        ordered
+    } else if pair.len() == 2 && crate::engine::graveyard_order_choice_exposed(state, player) {
+        state.reveal_library_top(player, player, pair.len());
+        stage_graveyard_order_choice(
+            pending,
+            player,
+            Vec::new(),
+            pair,
+            EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+                start_history_index: start,
+                previous_batch: previous,
+            },
+        );
+        return Ok(true);
+    } else {
+        pair.clone()
+    };
+    let repeat = tutelage_pair_repeats_v1(state, &pair);
+    let move_start = state.engine.event_history.len() as u64;
+    // Existing native mill semantics move an original pair as one batch;
+    // graveyard order changes move order, never pair membership or color test.
+    commit_zone_change_batch(state, &ordered, Zone::Graveyard, false)?;
+    if state.engine.halted.is_some() {
+        return Err("Tutelage native mill halted".into());
+    }
+    let batch_index = state.engine.event_history.len() as u64;
+    state
+        .engine
+        .event_history
+        .push(event::CommittedEvent::SphinxsTutelageMillBatchV1 {
+            start_history_index: start,
+            previous_batch: previous,
+            ordered,
+            move_start,
+        });
+    if repeat {
+        pending.frames.push(EffectFrame::SphinxsTutelageMillV1 {
+            start_history_index: start,
+            previous_batch: Some(batch_index),
+            ordered: None,
+        });
+    }
+    Ok(false)
+}
+
+/// Consumed private native handoff for the row just removed by the engine.
+/// No public snapshot or cloned continuation can construct this owner.
+pub(crate) struct TutelageResumeOwnerV1 {
+    pending: EffectContinuation,
+    position: usize,
+    remaining_stack: Vec<StackItem>,
+}
+
+pub(crate) fn acquire_tutelage_resume_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<TutelageResumeOwnerV1>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !matches!(
+        pending.resolving_item.inline_effect,
+        Some(EffectOp::SphinxsTutelageMillV1 { .. })
+    ) {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    if pending.resolving_item != *item || pending.choice.is_some() {
+        return Err("Tutelage private resume lost ready original row".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("Tutelage public row missing")?;
+    let mut remaining_stack = state.stack.clone();
+    if remaining_stack.remove(position) != *item
+        || remaining_stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("Tutelage duplicate or changed resolving row".into());
+    }
+    Ok(Some(TutelageResumeOwnerV1 {
+        pending: pending.clone(),
+        position,
+        remaining_stack,
+    }))
+}
+
+pub(crate) fn resume_owned_tutelage_v1(
+    state: &mut GameState,
+    owner: TutelageResumeOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if state.engine.pending_effect.as_ref() != Some(&owner.pending)
+        || state.stack != owner.remaining_stack
+    {
+        return Err("Tutelage removed-row owner changed".into());
+    }
+    state
+        .stack
+        .insert(owner.position, owner.pending.resolving_item.clone());
+    let loaned = state.stack.clone();
+    let result = validate_pending_effect_choice(state).and_then(|()| drive_resumable(state));
+    let returned = std::mem::replace(&mut state.stack, owner.remaining_stack);
+    if returned != loaned {
+        return Err("Tutelage loan changed the original stack".into());
+    }
+    result
+}
+
+pub(crate) struct TutelageBeginOwnerV1 {
+    item: StackItem,
+    remaining_stack: Vec<StackItem>,
+}
+
+pub(crate) fn acquire_tutelage_begin_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<TutelageBeginOwnerV1>, String> {
+    if !matches!(
+        item.inline_effect,
+        Some(EffectOp::SphinxsTutelageMillV1 { .. })
+    ) {
+        return Ok(None);
+    }
+    event::validate_published_tutelage_v1(state, item)?;
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state.engine.pending_effect.is_some() || state.stack.last() != Some(item) {
+        return Err("Tutelage begin lost its original public stack top".into());
+    }
+    let mut remaining_stack = state.stack.clone();
+    remaining_stack.pop();
+    if remaining_stack
+        .iter()
+        .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("Tutelage begin duplicated its public row".into());
+    }
+    Ok(Some(TutelageBeginOwnerV1 {
+        item: item.clone(),
+        remaining_stack,
+    }))
+}
+
+pub(crate) fn begin_owned_tutelage_v1(
+    state: &mut GameState,
+    owner: TutelageBeginOwnerV1,
+    ctx: &ExecCtx,
+) -> Result<ResumableProgress, String> {
+    if state.stack != owner.remaining_stack || state.engine.pending_effect.is_some() {
+        return Err("Tutelage initial removed-row owner changed".into());
+    }
+    let item = owner.item;
+    let expected = ExecCtx {
+        stack_item_id: Some(item.v4.stack_item_id),
+        source: item.source,
+        controller: item.controller,
+        targets: item.targets.clone(),
+        target_contracts: item.v4.target_contracts.clone(),
+        discarded: item.discarded.clone(),
+        paid_cost_refs: item.v4.paid_cost_refs.clone(),
+        hidden_ability_source: item.v4.hidden_ability_source,
+        ability_source_contract: item.v4.ability_source_contract,
+        cauldron_grant: item.v4.cauldron_grant,
+        kicked: item.kicked,
+        optional_additional_cost_paid: item.v4.optional_additional_cost_paid,
+        x_value: item.v4.x_value,
+        niv_damage_origin_v1: event::niv_damage_origin_for_saved_item_v1(state, &item),
+    };
+    if *ctx != expected {
+        return Err("Tutelage native context changed".into());
+    }
+    let op = item.inline_effect.clone().ok_or("Tutelage root missing")?;
+    state.engine.pending_effect = Some(EffectContinuation {
+        resolving_item: item,
+        ctx: ctx.clone(),
+        frames: vec![EffectFrame::Program {
+            op,
+            path: Vec::new(),
+        }],
+        choice: None,
+        answered_choice_guard: None,
+    });
+    drive_resumable(state)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/sphinxs_tutelage_v1_tests.rs"]
+mod sphinxs_tutelage_v1_tests;

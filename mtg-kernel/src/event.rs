@@ -1765,6 +1765,29 @@ pub enum CommittedEvent {
     KinshipEntryV1 {
         journal: Box<crate::banner_of_kinship_v1::entry::JournalV1>,
     },
+    /// Private event-time observer roster for one successful native draw.
+    SphinxsTutelageDrawV1 {
+        draw_history_index: u64,
+        observers: Vec<crate::state::AbilitySourceContractV4>,
+    },
+    SphinxsTutelageCollectedV1 {
+        capture_history_index: u64,
+    },
+    SphinxsTutelagePublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    /// Private original library, captured only after the trigger resolves.
+    SphinxsTutelageMillStartedV1 {
+        item: Box<crate::state::StackItem>,
+        library: Vec<crate::effect::EffectObjectBinding>,
+    },
+    SphinxsTutelageMillBatchV1 {
+        start_history_index: u64,
+        previous_batch: Option<u64>,
+        ordered: Vec<crate::effect::EffectObjectBinding>,
+        move_start: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3785,6 +3808,21 @@ fn commit_with_entry_batch_and_source_color(
     let mut alesha_power_departure = None;
     let mut niv_source_departure = None;
     let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
+    let tutelage_observers = match &event {
+        ProposedEvent::Draw(draw) => state
+            .objects
+            .iter()
+            .filter_map(|(id, object)| {
+                (object.zone == Zone::Battlefield
+                    && object.controller == draw.player
+                    && object.v4.face_index == 0
+                    && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    && is_sphinxs_tutelage_v1(object.card_def))
+                .then(|| crate::state::AbilitySourceContractV4::capture(state, id))
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -4363,6 +4401,22 @@ fn commit_with_entry_batch_and_source_color(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if !tutelage_observers.is_empty()
+        && matches!(
+            state.engine.event_history.get(entry_history_index),
+            Some(CommittedEvent::Draw {
+                object: Some(_),
+                ..
+            })
+        )
+    {
+        let receipt = CommittedEvent::SphinxsTutelageDrawV1 {
+            draw_history_index: entry_history_index as u64,
+            observers: tutelage_observers,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
+    }
     if let Some(source) = niv_source_departure {
         if let Some(departure_history_index) = state
             .engine
@@ -7942,4 +7996,209 @@ pub(crate) mod ravenous_amulet_paid_future_tests {
             assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
         }
     }
+}
+pub(crate) fn is_sphinxs_tutelage_v1(card_def: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.is_executable() && card.name == "Sphinx's Tutelage")
+}
+
+/// Native mutable-world structural validation, not authority over coordinated
+/// raw-history edits. Departed observers retain their event-time controller.
+pub(crate) fn tutelage_observers_v1(
+    state: &GameState,
+    capture_history_index: u64,
+) -> Result<&[crate::state::AbilitySourceContractV4], String> {
+    let index =
+        usize::try_from(capture_history_index).map_err(|_| "Tutelage capture index overflow")?;
+    let Some(CommittedEvent::SphinxsTutelageDrawV1 {
+        draw_history_index,
+        observers,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Tutelage draw capture missing".into());
+    };
+    let draw_index =
+        usize::try_from(*draw_history_index).map_err(|_| "Tutelage draw index overflow")?;
+    let Some(CommittedEvent::Draw {
+        player,
+        object: Some(drawn),
+    }) = state.engine.event_history.get(draw_index)
+    else {
+        return Err("Tutelage indexed draw changed".into());
+    };
+    if state
+        .engine
+        .event_history
+        .iter()
+        .filter(|entry| {
+            matches!(entry,
+        CommittedEvent::SphinxsTutelageDrawV1 { draw_history_index: found, .. }
+        if found == draw_history_index)
+        })
+        .count()
+        != 1
+        || draw_index.checked_add(1) != Some(index)
+        || observers.is_empty()
+        || state
+            .objects
+            .try_get(*drawn)
+            .is_none_or(|object| object.owner != *player)
+        || !observers
+            .windows(2)
+            .all(|pair| pair[0].source < pair[1].source)
+    {
+        return Err("Tutelage draw roster/index changed".into());
+    }
+    for source in observers {
+        let object = state
+            .objects
+            .try_get(source.source)
+            .ok_or("Tutelage source missing")?;
+        if !is_sphinxs_tutelage_v1(source.card_def)
+            || source.zone != Zone::Battlefield
+            || source.controller != *player
+            || source.owner != object.owner
+            || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+            || object.zone_change_count < source.zone_change_count
+            || (object.zone_change_count == source.zone_change_count && object.zone != source.zone)
+        {
+            return Err("Tutelage captured source changed".into());
+        }
+    }
+    Ok(observers)
+}
+
+pub(crate) fn collect_tutelage_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut result = Vec::new();
+    let mut consumed = Vec::new();
+    for event in events {
+        let CommittedEvent::SphinxsTutelageDrawV1 {
+            draw_history_index, ..
+        } = event
+        else {
+            continue;
+        };
+        let index = draw_history_index
+            .checked_add(1)
+            .ok_or("Tutelage capture overflow")?;
+        if state.engine.event_history.get(usize::try_from(index).map_err(|_| "Tutelage index overflow")?) != Some(event)
+            || consumed.contains(&index)
+            || state.engine.event_history.iter().any(|entry| matches!(entry,
+                CommittedEvent::SphinxsTutelageCollectedV1 { capture_history_index } if *capture_history_index == index))
+        { return Err("Tutelage capture erased, duplicated or recollected".into()); }
+        for source in tutelage_observers_v1(state, index)? {
+            result.push(crate::trigger::PendingTrigger {
+                controller: source.controller,
+                source: source.source,
+                effect: crate::effect::EffectOp::SphinxsTutelageMillV1 {
+                    capture_history_index: index,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: crate::card_def::TargetSpec::TargetOpponent,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(*source),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        }
+        consumed.push(index);
+    }
+    for capture_history_index in consumed {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::SphinxsTutelageCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_tutelage_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
+    let Some(crate::effect::EffectOp::SphinxsTutelageMillV1 {
+        capture_history_index,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("Tutelage trigger changed its captured program".into());
+    };
+    let source = item
+        .v4
+        .ability_source_contract
+        .ok_or("Tutelage lost original source")?;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || source.source != item.source || source.controller != item.controller
+        || item.is_copy
+        || item.is_flashback
+        || item.v4.x_value != 0
+        || item.v4.activated_ability_index.is_some() || item.kicked || item.mode_chosen != 0 || item.madness_offer
+        || item.v4.granted_by.is_some() || item.v4.cauldron_grant.0.is_some()
+        || !item.discarded.is_empty() || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
+        || item.v4.target_spec != Some(crate::card_def::TargetSpec::TargetOpponent)
+        || !tutelage_observers_v1(state, *capture_history_index)?.contains(&source)
+        || state.engine.event_history.iter().filter(|entry| matches!(entry,
+            CommittedEvent::SphinxsTutelageCollectedV1 { capture_history_index: found } if found == capture_history_index)).count() != 1
+    { return Err("Tutelage trigger source/controller/recipe changed".into()); }
+    Ok(*capture_history_index)
+}
+
+pub(crate) fn publish_tutelage_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let capture_history_index = validate_tutelage_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| matches!(entry,
+        CommittedEvent::SphinxsTutelagePublishedV1 { capture_history_index: capture, item: old }
+        if *capture == capture_history_index && old.v4.ability_source_contract == item.v4.ability_source_contract))
+    { return Err("Tutelage trigger was already published".into()); }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::SphinxsTutelagePublishedV1 {
+            capture_history_index,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+
+pub(crate) fn validate_published_tutelage_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let capture = validate_tutelage_trigger_v1(state, item)?;
+    let publications = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::SphinxsTutelagePublishedV1 {
+                capture_history_index,
+                item: published,
+            } if published.v4.stack_item_id == item.v4.stack_item_id => {
+                Some((*capture_history_index, published.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if publications.as_slice() != [(capture, item)] {
+        return Err("Tutelage publication/targets changed".into());
+    }
+    Ok(())
 }

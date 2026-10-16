@@ -1012,6 +1012,13 @@ const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
+fn sphinxs_tutelage_template_v1() -> EffectOp {
+    EffectOp::BindSphinxsTutelageMillV1
+}
+const SPHINXS_TUTELAGE_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::ControllerDraws,
+    ..etb_trigger(sphinxs_tutelage_template_v1)
+}];
 const CLINQUANT_SKYMAGE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::ControllerDraws,
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
@@ -3596,6 +3603,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Sphinx's Tutelage" {
+        return &SPHINXS_TUTELAGE_TRIGGERS_V1;
+    }
     if card.name == "Zimone, Paradox Sculptor" {
         return &crate::zimone_paradox_sculptor_v1::TRIGGERS;
     }
@@ -3923,6 +3933,7 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
         return TargetSpec::None;
     };
     match card.name {
+        "Sphinx's Tutelage" => TargetSpec::TargetOpponent,
         "Zimone, Paradox Sculptor" => TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledCreatures,
         ),
@@ -4202,6 +4213,14 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if card.name == "Sphinx's Tutelage"
+        && matches!(
+            effect,
+            EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
+        )
+    {
+        return true;
+    }
     if card.name == "Niv-Mizzet, Visionary"
         && matches!(effect, EffectOp::NivMizzetVisionaryDrawV1 { .. })
     {
@@ -4308,6 +4327,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::event::is_sphinxs_tutelage_v1(card_def) {
+        return matches!(effect, EffectOp::SphinxsTutelageMillV1 { .. })
+            .then_some(TargetSpec::TargetOpponent);
+    }
     if crate::card_def::CARD_DEFS
         .get(usize::from(card_def))
         .is_some_and(|card| card.name == "Nine-Lives Familiar")
@@ -5070,6 +5093,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::event::collect_tutelage_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::event::niv_mizzet_visionary_triggers_v1(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
@@ -5494,6 +5527,10 @@ fn triggers_from_events(
                 if (def.effect)() == crate::drake_hatcher_v1::combat_binder() {
                     // Exact positive final damage and original source were captured
                     // before this batch's later membership/controller changes.
+                    continue;
+                }
+                // Tutelage observes each successful draw at event commit, not this later scene.
+                if crate::event::is_sphinxs_tutelage_v1(definition) {
                     continue;
                 }
                 // These abilities were captured at the actual life-gain commit,

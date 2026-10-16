@@ -268,6 +268,18 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
     validate_state_with_pt(state, true)
 }
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    if state.objects.iter().any(|(_, object)| {
+        matches!(object.zone, Zone::Battlefield | Zone::Stack)
+            && crate::event::is_sphinxs_tutelage_v1(object.card_def)
+    }) || state.engine.event_history.iter().any(|event| {
+        matches!(
+            event,
+            crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
+        )
+    }) {
+        return Err("Tutelage native history requires a distinct complete consumer".into());
+    }
+
     if crate::linked_aura_operation_v1::locally_owned(state) {
         return Err("public facts cannot project a private synchronous operation tail".into());
     }

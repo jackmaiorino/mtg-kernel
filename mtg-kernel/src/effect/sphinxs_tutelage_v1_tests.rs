@@ -1,0 +1,670 @@
+//! Genuine native SPG75 Partial fixtures. No owner/model/transport admission.
+use super::*;
+use crate::{
+    card_def::{self, CardCapability},
+    engine::{self, Action, Decision},
+    event::{CommittedEvent, ProposedEvent},
+    ids::{ObjectId, PlayerId},
+    policy_observation_v6::tests::put,
+    state::{GameState, Step, Zone},
+};
+
+fn id(name: &str) -> u16 {
+    card_def::card_id_by_name(name).unwrap()
+}
+
+fn ready(actor: PlayerId, opponent_library: &[&str]) -> GameState {
+    let own = vec![id("Island"); 48];
+    let other = opponent_library
+        .iter()
+        .map(|name| id(name))
+        .collect::<Vec<_>>();
+    let libraries = if actor == PlayerId::P0 {
+        [&own[..], &other[..]]
+    } else {
+        [&other[..], &own[..]]
+    };
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        libraries[0],
+        libraries[1],
+        crate::rl::card_name,
+        110_466,
+        actor,
+    );
+    state.step = Step::Main1;
+    for player in [actor, actor.opponent()] {
+        for _ in 0..12 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+        for _ in 0..4 {
+            put(&mut state, player, "Forest", Zone::Battlefield);
+        }
+    }
+    // These are original declared hand/setup cards, not post-draw invention.
+    put(&mut state, actor, "Forest", Zone::Hand);
+    put(&mut state, actor, "Island", Zone::Hand);
+    state
+}
+
+fn respond(state: &mut GameState, decision: Decision, reverse: bool) {
+    let action = match decision {
+        Decision::CastSpellOrPass { .. } => Action::Pass,
+        Decision::OrderTriggers { pending, .. } => {
+            Action::OrderTriggers((0..pending.len()).collect())
+        }
+        Decision::ChooseTargets {
+            player,
+            ref legal_targets,
+            ..
+        } => {
+            let target = Target::Player(player.opponent());
+            assert!(legal_targets.contains(&target));
+            Action::ChooseTarget(target)
+        }
+        Decision::ChooseEffectTargets {
+            ref legal_targets,
+            can_finish: false,
+            ..
+        } => {
+            let target = if reverse {
+                legal_targets.last()
+            } else {
+                legal_targets.first()
+            }
+            .copied()
+            .unwrap();
+            Action::ChooseEffectTarget(target)
+        }
+        Decision::Discard {
+            count: 1, choices, ..
+        } => Action::Discard(vec![choices[0]]),
+        other => panic!("Tutelage native fixture decision: {other:?}"),
+    };
+    engine::step(state, action).unwrap();
+    assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+}
+
+fn finish(state: &mut GameState, reverse: bool) {
+    for _ in 0..256 {
+        let decision = engine::advance_until_decision(state);
+        assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+        if state.stack.is_empty()
+            && state.engine.pending_triggers.is_empty()
+            && state.engine.pending_effect.is_none()
+            && state.engine.pending_discard.is_none()
+        {
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+            return;
+        }
+        respond(state, decision, reverse);
+    }
+    panic!("finite original library did not finish Tutelage");
+}
+
+fn taps(state: &GameState, actor: PlayerId) -> usize {
+    state.players[actor.index()]
+        .battlefield
+        .iter()
+        .filter(|object| {
+            let live = state.objects.get(**object);
+            live.tapped && card_def::CARD_DEFS[usize::from(live.card_def)].is_land
+        })
+        .count()
+}
+
+fn paid_tutelage(state: &mut GameState, actor: PlayerId) -> ObjectId {
+    assert!(
+        matches!(engine::advance_until_decision(state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    let source = put(state, actor, "Sphinx's Tutelage", Zone::Hand);
+    let before = taps(state, actor);
+    engine::step(state, Action::CastSpell(source)).unwrap();
+    assert_eq!(state.objects.get(source).zone, Zone::Stack);
+    assert_eq!(taps(state, actor) - before, 3);
+    finish(state, false);
+    assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+    assert!(!state.objects.get(source).tapped);
+    source
+}
+
+fn activate_to_discard(state: &mut GameState, actor: PlayerId, source: ObjectId) {
+    let decision = engine::advance_until_decision(state);
+    if matches!(decision, Decision::CastSpellOrPass { player, .. } if player != actor) {
+        engine::step(state, Action::Pass).unwrap();
+    }
+    assert!(
+        matches!(engine::advance_until_decision(state), Decision::CastSpellOrPass { player, .. } if player == actor)
+    );
+    let before = taps(state, actor);
+    let hand = state.players[actor.index()].hand.len();
+    engine::step(state, Action::ActivateAbility(source, 0)).unwrap();
+    assert_eq!(taps(state, actor) - before, 6);
+    assert!(!state.objects.get(source).tapped);
+    assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+    for _ in 0..12 {
+        let decision = engine::advance_until_decision(state);
+        if matches!(decision, Decision::Discard { player, count: 1, .. } if player == actor) {
+            assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
+            assert!(state
+                .engine
+                .event_history
+                .iter()
+                .any(|event| matches!(event, CommittedEvent::SphinxsTutelageDrawV1 { .. })));
+            return;
+        }
+        respond(state, decision, false);
+    }
+    panic!("paid 5U draw did not reach its genuine discard");
+}
+
+fn to_mill_order(state: &mut GameState) {
+    for _ in 0..24 {
+        let decision = engine::advance_until_decision(state);
+        if matches!(decision, Decision::ChooseEffectTargets { .. }) {
+            assert!(matches!(
+                state.engine.pending_effect.as_ref().unwrap().choice,
+                Some(PendingEffectChoice::SelectTargets {
+                    purpose: EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 { .. },
+                    ..
+                })
+            ));
+            validate_pending_effect_choice(state).unwrap();
+            return;
+        }
+        respond(state, decision, false);
+    }
+    panic!("Tutelage mill ordering missing");
+}
+
+fn restore(state: &GameState) -> GameState {
+    let restored: GameState = serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap();
+    assert_eq!(&restored, state);
+    assert_eq!(restored.state_hash(), state.state_hash());
+    restored
+}
+
+#[test]
+fn exact_partial_printing_and_paid_activation_pair_stops_both_seats() {
+    let definition = &card_def::CARD_DEFS[usize::from(id("Sphinx's Tutelage"))];
+    assert_eq!(id("Sphinx's Tutelage"), 466);
+    assert_eq!(definition.capability, CardCapability::Partial);
+    assert_eq!(definition.mana_value, 3);
+    assert_eq!(
+        (definition.spell_effect)(),
+        Some(EffectOp::MoveObject {
+            object: ObjectRef::ThisSource,
+            to_zone: Zone::Battlefield
+        })
+    );
+    assert_eq!(definition.activated_abilities.len(), 1);
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for (cards, milled) in [
+            (vec![], 0),
+            (vec!["Elvish Mystic"], 1),
+            (vec!["Forest", "Elvish Mystic", "Island"], 2),
+            (vec!["Elvish Mystic", "Think Twice", "Island"], 2),
+            (vec!["Soulstone Sanctuary", "Ravenous Amulet", "Forest"], 2),
+            (
+                vec![
+                    "Zimone, Paradox Sculptor",
+                    "Elvish Mystic",
+                    "Forest",
+                    "Island",
+                ],
+                4,
+            ),
+            (vec!["Think Twice", "Think Twice", "Elvish Mystic"], 3),
+            (
+                vec![
+                    "Elvish Mystic",
+                    "Llanowar Elves",
+                    "Think Twice",
+                    "Think Twice",
+                ],
+                4,
+            ),
+        ] {
+            let mut state = ready(actor, &cards);
+            let source = paid_tutelage(&mut state, actor);
+            assert!(crate::drake_public_v53::capture(&state).is_err());
+            activate_to_discard(&mut state, actor, source);
+            let before_discard = restore(&state);
+            let discard = engine::advance_until_decision(&mut state);
+            respond(&mut state, discard, false);
+            let mut replay = before_discard;
+            let discard = engine::advance_until_decision(&mut replay);
+            respond(&mut replay, discard, false);
+            finish(&mut state, false);
+            finish(&mut replay, false);
+            assert_eq!(state, replay);
+            assert_eq!(
+                state.players[actor.opponent().index()].graveyard.len(),
+                milled
+            );
+            assert_eq!(
+                state.players[actor.opponent().index()].library.len(),
+                cards.len() - milled
+            );
+            assert_eq!(state.players[actor.index()].graveyard.len(), 1);
+            assert_eq!(state.players[actor.index()].hand.len(), 2);
+            assert!(state.players[actor.index()]
+                .graveyard
+                .iter()
+                .all(|object| !state.players[actor.index()].library.contains(object)));
+        }
+    }
+}
+
+#[test]
+fn paid_repeat_original_pair_order_restore_and_readonly_forgery_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(
+            actor,
+            &[
+                "Zimone, Paradox Sculptor",
+                "Elvish Mystic",
+                "Think Twice",
+                "Think Twice",
+                "Forest",
+            ],
+        );
+        let source = paid_tutelage(&mut state, actor);
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        to_mill_order(&mut state);
+        let original = restore(&state);
+        let pending = original.engine.pending_effect.as_ref().unwrap().clone();
+        for kind in 0..10 {
+            let mut forged = original.clone();
+            let continuation = forged.engine.pending_effect.as_mut().unwrap();
+            match kind {
+                0 => continuation.ctx.controller = actor.opponent(),
+                1 => continuation.ctx.source = ObjectId(u32::MAX),
+                2 => continuation.ctx.targets[0] = Target::Player(actor),
+                3 => {
+                    continuation
+                        .resolving_item
+                        .v4
+                        .ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
+                4 => continuation.choice = None,
+                5 => continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: 1,
+                    },
+                    path: vec![],
+                }),
+                6 => {
+                    if let Some(PendingEffectChoice::SelectTargets { path, .. }) =
+                        continuation.choice.as_mut()
+                    {
+                        path.push(0);
+                    }
+                }
+                7 => {
+                    if let Some(PendingEffectChoice::SelectTargets { player, .. }) =
+                        continuation.choice.as_mut()
+                    {
+                        *player = actor;
+                    }
+                }
+                8 => {
+                    if let Some(PendingEffectChoice::SelectTargets { legal, .. }) =
+                        continuation.choice.as_mut()
+                    {
+                        legal.reverse();
+                    }
+                }
+                9 => {
+                    if let Some(PendingEffectChoice::SelectTargets {
+                        purpose:
+                            EffectTargetSelectionPurpose::SphinxsTutelageMillOrderV1 {
+                                previous_batch,
+                                ..
+                            },
+                        ..
+                    }) = continuation.choice.as_mut()
+                    {
+                        *previous_batch = Some(0);
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let before = forged.clone();
+            assert!(
+                validate_pending_effect_choice(&forged).is_err(),
+                "forgery {kind}"
+            );
+            assert_eq!(forged, before);
+        }
+        let mut unowned = original.clone();
+        assert!(resume_resumable_resolution(&mut unowned).is_err());
+        assert_eq!(unowned, original);
+        let mut replay = restore(&original);
+        // Reverse the physical graveyard order, retaining the original color pair.
+        let decision = engine::advance_until_decision(&mut state);
+        respond(&mut state, decision, true);
+        let decision = engine::advance_until_decision(&mut replay);
+        respond(&mut replay, decision, true);
+        assert_eq!(state, replay);
+        validate_pending_effect_choice(&state).unwrap();
+        assert_eq!(
+            pending.resolving_item,
+            state.engine.pending_effect.as_ref().unwrap().resolving_item
+        );
+        finish(&mut state, true);
+        finish(&mut replay, true);
+        assert_eq!(state, replay);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 5);
+    }
+}
+
+#[test]
+fn paid_trigger_survives_genuine_broken_wings_response_and_original_controller_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Elvish Mystic", "Llanowar Elves", "Forest"]);
+        let source = paid_tutelage(&mut state, actor);
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        // Announce its mandatory opponent target, then expose the real response window.
+        for _ in 0..12 {
+            let decision = engine::advance_until_decision(&mut state);
+            if matches!(decision, Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
+            {
+                break;
+            }
+            respond(&mut state, decision, false);
+        }
+        let root = state.stack.last().unwrap().clone();
+        assert!(matches!(
+            root.inline_effect,
+            Some(EffectOp::SphinxsTutelageMillV1 { .. })
+        ));
+        let wings = put(&mut state, actor.opponent(), "Broken Wings", Zone::Hand);
+        let before = taps(&state, actor.opponent());
+        engine::step(&mut state, Action::CastSpell(wings)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        engine::advance_until_decision(&mut state);
+        assert_eq!(taps(&state, actor.opponent()) - before, 3);
+        let mut replay = restore(&state);
+        finish(&mut state, false);
+        finish(&mut replay, false);
+        assert_eq!(state, replay);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 4); // Wings plus three actual mills.
+        assert_eq!(root.controller, actor);
+    }
+}
+
+#[test]
+fn event_time_draw_membership_control_and_generation_native_primitives_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 12]);
+        let source = paid_tutelage(&mut state, actor);
+        let original = crate::state::AbilitySourceContractV4::capture(&state, source);
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        // Genuine native control primitive, not a purported paid control spell.
+        crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor.opponent()));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor.opponent()));
+        let pending = crate::trigger::capture_triggers_without_sba(&mut state);
+        let own = pending
+            .iter()
+            .filter(|trigger| matches!(trigger.effect, EffectOp::SphinxsTutelageMillV1 { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(own.len(), 2);
+        assert_eq!(own[0].source_contract, Some(original));
+        assert_eq!(own[0].controller, actor);
+        assert_eq!(own[1].controller, actor.opponent());
+        assert_eq!(
+            own[1].source_contract.unwrap().zone_change_count,
+            original.zone_change_count
+        );
+        assert_eq!(
+            state.objects.get(source).zone_change_count,
+            original.zone_change_count + 1
+        );
+        // A new entry cannot retroactively observe a previous draw.
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Battlefield),
+        );
+        assert!(crate::trigger::capture_triggers_without_sba(&mut state)
+            .iter()
+            .all(|trigger| !matches!(trigger.effect, EffectOp::SphinxsTutelageMillV1 { .. })));
+        assert_eq!(restore(&state), state);
+    }
+}
+
+#[test]
+fn no_observer_and_empty_failed_draw_preserve_old_event_shape() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &[]);
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        assert_eq!(state.engine.event_history.len(), 1);
+        assert!(matches!(
+            state.engine.event_history[0],
+            CommittedEvent::Draw {
+                object: Some(_),
+                ..
+            }
+        ));
+        let source = paid_tutelage(&mut state, actor);
+        crate::standard_cards_v1::gain_control(&mut state, source, actor.opponent());
+        let before = state.engine.event_history.len();
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor.opponent()));
+        assert!(matches!(
+            state.engine.event_history[before..],
+            [CommittedEvent::Draw { object: None, .. }]
+        ));
+        assert!(state.players[actor.opponent().index()].drew_from_empty);
+    }
+}
+#[test]
+fn paid_repeat_receipt_pair_and_full_library_corruption_refuse_readonly_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(
+            actor,
+            &[
+                "Elvish Mystic",
+                "Llanowar Elves",
+                "Think Twice",
+                "Think Twice",
+                "Forest",
+            ],
+        );
+        let source = paid_tutelage(&mut state, actor);
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        to_mill_order(&mut state);
+        for _ in 0..2 {
+            let decision = engine::advance_until_decision(&mut state);
+            respond(&mut state, decision, true);
+        }
+        to_mill_order(&mut state);
+        let original = restore(&state);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 2);
+        let batch = original
+            .engine
+            .event_history
+            .iter()
+            .position(|event| matches!(event, CommittedEvent::SphinxsTutelageMillBatchV1 { .. }))
+            .unwrap();
+        for kind in 0..8 {
+            let mut forged = original.clone();
+            match kind {
+                0 => {
+                    forged.engine.event_history.remove(batch);
+                }
+                1 => {
+                    let duplicate = forged.engine.event_history[batch].clone();
+                    forged.engine.event_history.push(duplicate);
+                }
+                2 => {
+                    if let CommittedEvent::SphinxsTutelageMillBatchV1 { ordered, .. } =
+                        &mut forged.engine.event_history[batch]
+                    {
+                        ordered.reverse();
+                    }
+                }
+                3 => {
+                    if let CommittedEvent::SphinxsTutelageMillBatchV1 { previous_batch, .. } =
+                        &mut forged.engine.event_history[batch]
+                    {
+                        *previous_batch = Some(batch as u64);
+                    }
+                }
+                4 => {
+                    if let CommittedEvent::SphinxsTutelageMillBatchV1 { move_start, .. } =
+                        &mut forged.engine.event_history[batch]
+                    {
+                        *move_start += 1;
+                    }
+                }
+                5 => {
+                    forged.engine.event_history.swap(batch - 1, batch - 2);
+                }
+                6 => {
+                    forged.players[actor.opponent().index()].library.swap(0, 1);
+                }
+                7 => {
+                    let moved = forged.players[actor.opponent().index()].graveyard[0];
+                    forged.objects.get_mut(moved).zone_change_count += 1;
+                }
+                _ => unreachable!(),
+            }
+            let before = forged.clone();
+            assert!(
+                validate_pending_effect_choice(&forged).is_err(),
+                "batch forgery {kind}"
+            );
+            assert_eq!(forged, before);
+        }
+        let mut replay = restore(&original);
+        finish(&mut state, false);
+        finish(&mut replay, false);
+        assert_eq!(state, replay);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 5);
+    }
+}
+#[test]
+fn genuine_paid_counterspell_keeps_cast_costs_and_grants_no_ability_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 8]);
+        let source = put(&mut state, actor, "Sphinx's Tutelage", Zone::Hand);
+        let before = taps(&state, actor);
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        assert_eq!(taps(&state, actor) - before, 3);
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor.opponent())
+        );
+        let counter = put(&mut state, actor.opponent(), "Counterspell", Zone::Hand);
+        let opposing_taps = taps(&state, actor.opponent());
+        engine::step(&mut state, Action::CastSpell(counter)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        engine::advance_until_decision(&mut state);
+        assert_eq!(taps(&state, actor.opponent()) - opposing_taps, 2);
+        let mut replay = restore(&state);
+        finish(&mut state, false);
+        finish(&mut replay, false);
+        assert_eq!(state, replay);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+        assert_eq!(taps(&state, actor) - before, 3);
+        let before = state.clone();
+        assert!(engine::step(&mut state, Action::ActivateAbility(source, 0)).is_err());
+        assert_eq!(state, before);
+        assert!(!state
+            .engine
+            .event_history
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::SphinxsTutelageDrawV1 { .. })));
+    }
+}
+
+#[test]
+fn paid_deep_analysis_captures_each_real_draw_then_orders_two_native_triggers_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 8]);
+        let source = paid_tutelage(&mut state, actor);
+        let spell = put(&mut state, actor, "Deep Analysis", Zone::Hand);
+        let before = taps(&state, actor);
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Player(actor)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Player(actor))).unwrap();
+        engine::advance_until_decision(&mut state);
+        assert_eq!(taps(&state, actor) - before, 4);
+        let mut saw_order = false;
+        for _ in 0..12 {
+            let decision = engine::advance_until_decision(&mut state);
+            if let Decision::OrderTriggers {
+                player,
+                ref pending,
+            } = decision
+            {
+                assert_eq!(player, actor);
+                assert_eq!(pending.len(), 2);
+                assert!(pending
+                    .iter()
+                    .all(|trigger| trigger.source == source && trigger.controller == actor));
+                let captures = pending
+                    .iter()
+                    .map(|trigger| match trigger.effect {
+                        EffectOp::SphinxsTutelageMillV1 {
+                            capture_history_index,
+                        } => capture_history_index,
+                        _ => panic!("Tutelage real draw lost its captured root"),
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(captures.len(), 2);
+                let saved = restore(&state);
+                engine::step(&mut state, Action::OrderTriggers(vec![1, 0])).unwrap();
+                let mut replay = saved;
+                engine::step(&mut replay, Action::OrderTriggers(vec![1, 0])).unwrap();
+                finish(&mut state, false);
+                finish(&mut replay, false);
+                assert_eq!(state, replay);
+                saw_order = true;
+                break;
+            }
+            respond(&mut state, decision, false);
+        }
+        assert!(saw_order);
+        assert_eq!(state.players[actor.opponent().index()].graveyard.len(), 4);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(event, CommittedEvent::SphinxsTutelageDrawV1 { .. }))
+                .count(),
+            2
+        );
+    }
+}
