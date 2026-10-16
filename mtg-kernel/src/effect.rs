@@ -27079,6 +27079,7 @@ fn execute_copied_token_sacrifice_v1(
 /// Public copy creation and its added abilities have no predecessor schema.
 /// This does not inspect any hidden hand/library identity.
 pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<(), String> {
+    crate::leyline_axe_v1::require_legacy_absence(state)?;
     harvester_v1::require_legacy_absence(state)?;
     if state
         .objects

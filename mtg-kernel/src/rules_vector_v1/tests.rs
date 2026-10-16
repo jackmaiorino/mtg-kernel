@@ -1165,6 +1165,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("leyline_axe_v1.rs", "Leyline Axe", "unregistered native opening-hand checkpoint; no old consumer permission"),
     ("effect/harvester_v1.rs", "Abyssal Harvester", "native tap activation with exact turn/incarnation target, copiable Nightmare and token-only cleanup remains Opaque"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde Token", "source-copy ability inherited by the ordinary token printing"),
@@ -1448,6 +1449,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
 ];
 
 const RULES_MODULES: &[(&str, &str)] = &[
+    ("leyline_axe_v1.rs", include_str!("../leyline_axe_v1.rs")),
     (
         "effect/harvester_v1.rs",
         include_str!("../effect/harvester_v1.rs"),
