@@ -1758,6 +1758,15 @@ pub enum EffectOp {
         target_index: u8,
         token_def: u16,
     },
+    /// Mark Alesha's Raid return as using its original source incarnation's
+    /// live power, with departure-time LKI as the fallback.
+    BindAleshaRaidReturn,
+    /// Return the selected creature card from its controller's graveyard to
+    /// the battlefield if the exact selected graveyard incarnation remains
+    /// legal under the original source incarnation's current power or LKI.
+    AleshaRaidReturn {
+        source_power_lki: i32,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -17489,6 +17498,9 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::BindWarpExileToTriggerSource => {
             panic!("unmaterialized warp exile");
         }
+        EffectOp::BindAleshaRaidReturn => {
+            panic!("unmaterialized Alesha Raid return");
+        }
         EffectOp::BindIncubateToTriggerSpell => {
             panic!("unmaterialized incubate");
         }
@@ -17661,6 +17673,50 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 event::ProposedEvent::zone_change(contract.source, Zone::Battlefield)
             };
             event::propose_and_commit(state, proposed);
+        }
+        EffectOp::AleshaRaidReturn { source_power_lki } => {
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            if source.source != ctx.source
+                || !crate::card_def::CARD_DEFS
+                    .get(usize::from(source.card_def))
+                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+            {
+                return;
+            }
+            let Some(authoritative_power) = crate::engine::alesha_raid_source_power(state, source)
+            else {
+                return;
+            };
+            let live_exact = state.objects.try_get(source.source).is_some_and(|live| {
+                live.zone == crate::state::Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count
+            });
+            if !live_exact && authoritative_power != *source_power_lki {
+                return;
+            }
+            let target_spec =
+                crate::card_def::TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower;
+            if !crate::engine::effect_target_is_legal_from_ability_source_with_power_lki(
+                state,
+                source,
+                ctx.controller,
+                target_spec,
+                &ctx.targets,
+                0,
+                Some(authoritative_power),
+            ) || !ctx.target_incarnation_matches(0, state)
+            {
+                return;
+            }
+            let Some(crate::state::Target::Object(target)) = ctx.targets.get(0) else {
+                return;
+            };
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(*target, Zone::Battlefield),
+            );
         }
         EffectOp::ReturnSourceFromGraveyardUnearthed => {
             let still_there = ctx.ability_source_contract.is_some_and(|contract| {

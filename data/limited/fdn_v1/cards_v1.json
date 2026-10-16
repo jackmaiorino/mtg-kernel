@@ -7918,6 +7918,42 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GoblinNegotiation.java",
       "is_token": false
+    },
+    {
+      "name": "Alesha, Who Laughs at Fate",
+      "engine_capability": "partial",
+      "mana_cost": "{1}{B}{R}",
+      "mana_value": 3,
+      "colors": [
+        "B",
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Human",
+        "Warrior"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_alesha_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "first_strike",
+        "attack_plus_one_counter",
+        "raid_return_creature_from_own_graveyard_mana_value_at_most_current_power"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/a/AleshaWhoLaughsAtFate.java",
+      "is_token": false
     }
   ]
 }

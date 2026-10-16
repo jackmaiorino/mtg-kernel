@@ -1492,6 +1492,19 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
+    /// Engine-produced pre-departure power for one exact Alesha battlefield
+    /// incarnation. Structural validation binds this receipt to the matching
+    /// immediately preceding ZoneChange and effect payload. Because native
+    /// GameState/event history is mutable, coordinated edits to both receipt
+    /// and payload are outside this check; owning consumers must preserve the
+    /// state/snapshot trust boundary before admitting this route.
+    AleshaPowerLkiV1 {
+        source: ObjectId,
+        card_def: u16,
+        zone_change_count: u32,
+        departure_history_index: u64,
+        power: i32,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3030,6 +3043,7 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
+    let mut alesha_power_departure = None;
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -3181,6 +3195,20 @@ fn commit_with_entry_batch_and_source_color(
             #[cfg(feature = "limited-fdn-fixtures")]
             if from == Zone::Battlefield {
                 crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+            }
+            if from == Zone::Battlefield
+                && z.to_zone != Zone::Battlefield
+                && crate::card_def::CARD_DEFS
+                    .get(usize::from(state.objects.get(z.object).card_def))
+                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+            {
+                let source = state.objects.get(z.object);
+                alesha_power_departure = Some((
+                    z.object,
+                    source.card_def,
+                    source.zone_change_count,
+                    crate::engine::effective_power(state, z.object),
+                ));
             }
             commit_zone_change(
                 state,
@@ -3572,6 +3600,23 @@ fn commit_with_entry_batch_and_source_color(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if let Some((source, card_def, zone_change_count, power)) = alesha_power_departure {
+        if zone_change_count
+            .checked_add(1)
+            .is_some_and(|next| state.objects.get(source).zone_change_count == next)
+            && state.objects.get(source).zone != Zone::Battlefield
+        {
+            let receipt = CommittedEvent::AleshaPowerLkiV1 {
+                source,
+                card_def,
+                zone_change_count,
+                departure_history_index: entry_history_index as u64,
+                power,
+            };
+            state.engine.event_log.push(receipt.clone());
+            state.engine.event_history.push(receipt);
+        }
+    }
     if let Some(object) = entry_counter_object {
         if crate::linked_aura_operation_v1::commit_entry_color(
             state,
@@ -4591,7 +4636,7 @@ fn commit_zone_change(
         (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
             .then_some(state.objects.get(id).controller)
     });
-    refresh_paid_creature_power_lki(state, id, from_zone);
+    refresh_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
             let position = state.players[owner.index()]
@@ -4911,10 +4956,10 @@ fn commit_zone_change(
     }
 }
 
-/// Monstrous Emergence keeps the chosen battlefield creature's last-known
-/// power, not merely its power when the casting cost was announced. Capture
-/// that value immediately before the exact paid-cost incarnation leaves.
-fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+/// Refresh the exact battlefield generation's last-known power immediately
+/// before it leaves. Paid-cost bindings, Alesha's waiting Raid, and other
+/// authenticated consumers retain their own generation-scoped copy.
+fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
     if from_zone != Zone::Battlefield {
         return;
     }
@@ -4922,6 +4967,7 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
         return;
     };
     let generation = object.zone_change_count;
+    let card_def = object.card_def;
     let power = crate::engine::effective_power(state, id);
     let refresh = |references: &mut Vec<crate::state::PaidCostRefV4>| {
         for reference in references {
@@ -4951,19 +4997,73 @@ fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zon
     };
     for item in &mut state.stack {
         refresh(&mut item.v4.paid_cost_refs);
+        let source_contract = item.v4.ability_source_contract;
+        if let Some(effect) = item.inline_effect.as_mut() {
+            refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
+        }
         if let Some(contract) = item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
     }
     if let Some(pending) = state.engine.pending_effect.as_mut() {
         refresh(&mut pending.resolving_item.v4.paid_cost_refs);
+        let source_contract = pending.resolving_item.v4.ability_source_contract;
+        if let Some(effect) = pending.resolving_item.inline_effect.as_mut() {
+            refresh_alesha_raid_power_lki(effect, source_contract, id, card_def, generation, power);
+        }
         if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
             refresh_binding(&mut contract.finalized_cast_binding);
         }
         refresh(&mut pending.ctx.paid_cost_refs);
     }
+    for pending in &mut state.engine.pending_triggers {
+        let source_contract = pending.source_contract;
+        refresh_alesha_raid_power_lki(
+            &mut pending.effect,
+            source_contract,
+            id,
+            card_def,
+            generation,
+            power,
+        );
+    }
+    if let Some(pending) = state.legend_pending_v1.as_mut() {
+        for pending in pending {
+            let source_contract = pending.source_contract;
+            refresh_alesha_raid_power_lki(
+                &mut pending.effect,
+                source_contract,
+                id,
+                card_def,
+                generation,
+                power,
+            );
+        }
+    }
     for (_, object) in state.objects.iter_mut() {
         refresh_binding(&mut object.v4.finalized_cast_binding);
+    }
+}
+
+fn refresh_alesha_raid_power_lki(
+    effect: &mut crate::effect::EffectOp,
+    contract: Option<crate::state::AbilitySourceContractV4>,
+    object: ObjectId,
+    card_def: u16,
+    generation: u32,
+    power: i32,
+) {
+    let (Some(contract), crate::effect::EffectOp::AleshaRaidReturn { source_power_lki }) =
+        (contract, effect)
+    else {
+        return;
+    };
+    if contract.source == object
+        && contract.card_def == card_def
+        && contract.zone == Zone::Battlefield
+        && contract.zone_change_count == generation
+    {
+        *source_power_lki = power;
     }
 }
 

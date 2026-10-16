@@ -1416,6 +1416,10 @@ pub enum TargetSpec {
     AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(i32),
     /// Exactly one other nonland permanent controlled by the trigger controller.
     AnotherControlledNonlandPermanent,
+    /// One creature card in the trigger controller's graveyard whose printed
+    /// mana value is at most the original source incarnation's current power,
+    /// or its last-known power after that incarnation leaves.
+    CreatureCardInOwnGraveyardManaValueAtMostSourcePower,
 }
 
 impl TargetSpec {
@@ -1511,6 +1515,7 @@ impl TargetSpec {
             TargetSpec::CreatureThenUpToOneAttachedEquipment => 64,
             TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_) => 103,
             TargetSpec::AnotherControlledNonlandPermanent => 104,
+            TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower => 105,
         }
     }
 }
@@ -3096,11 +3101,12 @@ mod tests {
         // batches append through id 456 (Partial Replication and Midnight Snack, Hatcher and full Drake token, Partial Quandary, Spinner, Phoenix, Elenda, Full Ravenous and Fake, Hunters, Eaten Alive, Panda, Ajani Cat Token, Twinflame, Fish Token, Fishing Pole, Akroma, Herald,
         // Inspiration, Banner, Kellan, Soulstone, Zul, Krenko, Crystal, Fiery, Strongbox, Arahbo, Garruk, Gourmand, Stromkirk, Banishing,
         // Temporal, Bloom, Gutless, Gorehorn and Librarian; earlier ids persist).
-        // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456.
+        // Seven Full candidates retain ids 444-448 and 450-451; five Partial append at 452-456,
+        // followed by the source-only Alesha Partial registration at 457.
         assert_eq!(
             CARD_DEFS.len(),
             if cfg!(feature = "limited-fdn-fixtures") {
-                457
+                458
             } else {
                 192
             }
@@ -3557,6 +3563,7 @@ mod tests {
                 (454, "Infernal Vessel"),
                 (455, "Giada, Font of Hope"),
                 (456, "Goblin Negotiation"),
+                (457, "Alesha, Who Laughs at Fate"),
             ]
         } else {
             &[]

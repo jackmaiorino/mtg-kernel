@@ -1382,6 +1382,7 @@ pub fn stack_target_contract_is_structurally_valid(
                     | TargetSpec::CreatureCardInOwnGraveyard
                     | TargetSpec::NonlandPermanentCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMost(_)
+                    | TargetSpec::CreatureCardInOwnGraveyardManaValueAtMostSourcePower
                     | TargetSpec::AnotherNonBearCreatureCardInOwnGraveyardManaValueAtMost(_)
                     | TargetSpec::PermanentCardInOwnGraveyard
                     | TargetSpec::CardInOwnGraveyardWithAnySubtype(_),
