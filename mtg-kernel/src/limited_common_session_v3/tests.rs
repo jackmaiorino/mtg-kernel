@@ -645,11 +645,29 @@ fn actual_v3_paid_conqueror_season_tokens_damage_gain_and_owning_restore_both_se
         assert_eq!(wire.menu()["actions"], actions);
         assert_eq!(wire.bytes(), bytes);
         for name in ["Bloodthirsty Conqueror", "Doubling Season"] {
-            let reply=wire.send(json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
+            // Both printings are now Full. Exercise the unchanged public
+            // Full-only reset with an independent real forty-card deck.
+            let mut admitted = Wire::new();
+            let reply=admitted.send(json!({"request_type":"reset","expected_card_db_hash":KERNEL_CARDDB_HASH,
                 "episode_id":7,"env_seed":123,"starting_player":crate::rl::PlayerSeatV1::from(actor),
                 "decks":[{"cards":[{"name":"Forest","count":39},{"name":name,"count":1}]},
                          {"cards":[{"name":"Island","count":40}]}],"max_physical_decisions":1000,"max_policy_steps":1000}));
-            assert_eq!(reply["code"], "unsupported_deck");
+            assert_eq!(reply["response_type"], "state", "{reply}");
+            assert!(!admitted.menu()["actions"].as_array().unwrap().is_empty());
+            let id = crate::card_def::card_id_by_name(name).unwrap();
+            assert_eq!(
+                crate::card_def::CARD_DEFS[usize::from(id)].capability,
+                crate::card_def::CardCapability::Full
+            );
+            assert_eq!(
+                admitted
+                    .state()
+                    .objects
+                    .iter()
+                    .filter(|(_, card)| card.owner == PlayerId::P0 && card.card_def == id)
+                    .count(),
+                1
+            );
             assert_eq!(wire.bytes(), bytes);
         }
     }

@@ -566,9 +566,17 @@ fn human_paid_neutral_face_copy_hides_independent_underlying_printings_and_handl
             let mut state = raw(actor, 21);
             // Pool has no admitted printed face-down producer: this initial
             // neutral face is a primitive operand, never a fabricated printing.
-            // Self-Reflection targets a creature the caster controls. No
-            // viewer has looked at this initial neutral-face primitive.
-            let hidden = put(&mut state, actor, printing, Zone::Battlefield);
+            // The caster may inspect its own face-down creature. Keep that
+            // authorized printing constant and vary only the opponent's
+            // independently concealed printing between the two worlds.
+            let hidden = put(&mut state, actor, ELENDA, Zone::Battlefield);
+            let opposing = put(&mut state, actor.opponent(), printing, Zone::Battlefield);
+            state.objects.get_mut(opposing).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
+                disguised: true,
+                lookers: 0,
+                hidden_by: None,
+                hidden_by_source: None,
+            });
             state.objects.get_mut(hidden).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
                 disguised: true,
                 lookers: 0,
@@ -607,7 +615,11 @@ fn human_paid_neutral_face_copy_hides_independent_underlying_printings_and_handl
             assert_eq!(public.state.elenda.current.len(), 1);
             stats(&public, 5, true);
             safe(&public);
-            assert!(public.state.predecessor.known_face_down_cards.is_empty());
+            assert_eq!(public.state.predecessor.known_face_down_cards.len(), 1);
+            assert_eq!(
+                public.state.predecessor.known_face_down_cards[0].name,
+                ELENDA
+            );
             assert!(public
                 .state
                 .predecessor
