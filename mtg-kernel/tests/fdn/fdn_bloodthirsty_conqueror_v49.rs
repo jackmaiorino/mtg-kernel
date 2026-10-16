@@ -501,6 +501,22 @@ fn real_bolt_crystal_and_typed_finite_shield_order_prevent_creature_damage_witho
         for choice in [0, 1] {
             let mut replay = restore(&saved);
             engine::step(&mut replay, Action::ChooseEffectOption(choice)).unwrap();
+            // Choosing the finite shield leaves the actual Barricade replacement
+            // as a mandatory one-option continuation for the same damage event.
+            match next(&mut replay) {
+                Decision::ChooseEffectOption {
+                    player,
+                    source: pending_source,
+                    option_count,
+                } => {
+                    assert_eq!(player, actor);
+                    assert_eq!(pending_source, bolt);
+                    assert_eq!(option_count, 1);
+                    engine::step(&mut replay, Action::ChooseEffectOption(0)).unwrap();
+                }
+                Decision::CastSpellOrPass { .. } => {}
+                other => panic!("unexpected prevention continuation {other:?}"),
+            }
             finish(&mut replay);
             assert_eq!(replay.objects.get(bolt).zone, Zone::Graveyard);
             assert_eq!(replay.objects.get(source).damage, 0);

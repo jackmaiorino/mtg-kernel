@@ -344,7 +344,7 @@ fn own_instant_and_opponent_sorcery_target_but_opponent_instant_refuses_readonly
         for (opponent, name, legal) in [
             (false, "Lightning Bolt", true),
             (true, "Lightning Bolt", false),
-            (true, "Luminous Rebuke", true),
+            (true, "Involuntary Employment", true),
         ] {
             let mut state = ready(actor, 20);
             let mut surface = surface();
@@ -354,8 +354,17 @@ fn own_instant_and_opponent_sorcery_target_but_opponent_instant_refuses_readonly
                 crate::fixture_turn_v1::reach(&mut state, caster, Step::Main1);
             }
             let spell = put(&mut state, caster, name, Zone::Hand);
+            assert_eq!(
+                CARD_DEFS[state.objects.get(spell).card_def as usize]
+                    .types
+                    .contains(&CardType::Instant),
+                name == "Lightning Bolt"
+            );
             state.players[caster.index()].mana_pool = [10; 6];
             priority(&mut surface, &mut state, caster);
+            assert!(matches!(next(&mut surface, &mut state),
+                Decision::CastSpellOrPass { player, castable_spells, .. }
+                    if player == caster && castable_spells.contains(&spell)));
             apply(&mut surface, &mut state, Action::CastSpell(spell));
             assert!(
                 matches!(next(&mut surface, &mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(elenda)) == legal)
@@ -381,14 +390,12 @@ fn own_instant_and_opponent_sorcery_target_but_opponent_instant_refuses_readonly
             next(&mut surface, &mut state);
             state = replay(&state);
             finish_to(&mut surface, &mut state, 0);
+            assert_eq!(state.objects.get(elenda).zone, Zone::Battlefield);
             assert_eq!(
-                state.objects.get(elenda).zone,
-                if opponent && legal {
-                    Zone::Graveyard
-                } else {
-                    Zone::Battlefield
-                }
+                state.objects.get(elenda).controller,
+                if opponent && legal { caster } else { actor }
             );
+            assert_eq!(state.objects.get(elenda).owner, actor);
             if !opponent {
                 assert_eq!(state.objects.get(elenda).damage, 3);
             }

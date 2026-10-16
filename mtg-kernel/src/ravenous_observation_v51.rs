@@ -237,11 +237,9 @@ pub(crate) fn observe_parts_complete_base_v52(
     substep: (u32, u32),
 ) -> Result<RavenousPublicPartsV51, RlContractError> {
     let (actor, origin) = actor_and_origin;
-    if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
-        return Err(RlContractError(
-            "Ravenous V51 observation changed its supplied decision actor or substep".into(),
-        ));
-    }
+    surface
+        .validate_observation_origin_substeps_v45(state, actor, origin, substep)
+        .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
     let ravenous = crate::ravenous_public_v51::battlefield(state)?;
     let roots = crate::akroma_public_v1::roots()?;
@@ -374,11 +372,9 @@ fn observe_parts_complete_current_scope(
         _ => return Err(RlContractError("wrong complete compatibility scope".into())),
     };
     let (actor, origin) = actor_and_origin;
-    if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
-        return Err(RlContractError(
-            "Ravenous V51 observation changed its supplied decision actor or substep".into(),
-        ));
-    }
+    surface
+        .validate_observation_origin_substeps_v45(state, actor, origin, substep)
+        .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
     let ravenous = crate::ravenous_public_v51::battlefield_prepared_v57(state)?;
     let roots = crate::akroma_public_v1::roots()?;

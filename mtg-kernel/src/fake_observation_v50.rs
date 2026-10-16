@@ -189,11 +189,9 @@ pub(crate) fn observe_parts_v50(
     substep: (u32, u32),
 ) -> Result<FakePublicPartsV50, RlContractError> {
     let (actor, origin) = actor_and_origin;
-    if origin.actor(state).is_some_and(|owner| owner != actor) || origin.substep() != substep {
-        return Err(RlContractError(
-            "Fake V50 observation changed its supplied decision actor or substep".into(),
-        ));
-    }
+    surface
+        .validate_observation_origin_substeps_v45(state, actor, origin, substep)
+        .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
     let roots = crate::akroma_public_v1::roots()?;
     let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;

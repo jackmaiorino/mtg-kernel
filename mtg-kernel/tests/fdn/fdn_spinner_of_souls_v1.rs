@@ -173,10 +173,15 @@ fn library(state: &mut GameState, actor: PlayerId, names: &[&str]) -> Vec<Object
     for id in state.players[actor.index()].library.clone() {
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Exile));
     }
-    names
+    // Putting a card into the library prepends it. Insert in reverse so the
+    // fixture's named order is the actual top-to-bottom library order.
+    let mut cards: Vec<_> = names
         .iter()
+        .rev()
         .map(|name| put(state, actor, name, Zone::Library))
-        .collect()
+        .collect();
+    cards.reverse();
+    cards
 }
 
 fn await_choice(state: &mut GameState, actor: PlayerId, spinner: ObjectId) {
@@ -645,6 +650,9 @@ fn v54_paid_control_copy_and_suppression_use_actual_effective_source_both_seats(
             let spinner = source(&mut state, actor);
             let other = actor.opponent();
             put(&mut state, other, "High Fae Trickster", Zone::Battlefield);
+            if mode == 0 {
+                put(&mut state, actor, "High Fae Trickster", Zone::Battlefield);
+            }
             let (name, caster, color, pips, generic) = match mode {
                 0 => ("Involuntary Employment", other, ManaColor::R, 1, 3),
                 1 => ("Witness Protection", other, ManaColor::U, 1, 0),

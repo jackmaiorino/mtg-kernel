@@ -858,40 +858,109 @@ mod paid {
     }
     #[test]
     fn genuine_large_trigger_menu_missing_printed_root_refuses_readonly_instead_of_flattening() {
-        for actor in [PlayerId::P0, PlayerId::P1] {
-            let mut raw = state(actor);
-            for _ in 0..9 {
-                put(&mut raw, actor, "Homunculus Horde", Zone::Battlefield);
-            }
-            raw.players[actor.index()].draws_this_turn = 0;
-            for _ in 0..2 {
-                crate::event::propose_and_commit(
-                    &mut raw,
-                    crate::event::ProposedEvent::draw(actor),
-                );
-            }
-            let waiting = crate::trigger::collect_and_process(&mut raw);
-            assert_eq!(waiting.len(), 9);
-            raw.engine.pending_triggers.extend(waiting);
-            let session = RavenousSession::from_session(
-                FastActorSessionV1::from_ravenous_v51_fixture_state(raw),
-            )
-            .unwrap();
-            let before = session.inner.ravenous_fixture_state().clone();
-            let e = expected(&session.inner);
-            let (_, actions, _) = session
-                .inner
-                .ravenous_current_decision_input_v51(e, e.acting_player)
-                .unwrap();
-            assert!(actions
-                .iter()
-                .any(|a| matches!(a, ActionSemanticV1::ChooseTriggerOrderNext { .. })));
-            let id = crate::card_def::card_id_by_name("Homunculus Horde").unwrap();
-            assert!(
-                matches!(session.encode(e),Err(Error::UnsupportedPrintedRoot(actual))if actual==id)
-            );
-            assert_eq!(session.inner.ravenous_fixture_state(), &before);
+        macro_rules! run {
+            ($owner:ident,$from:ident,$input:ident,$validate:ident,$world:ident) => {
+                for actor in [PlayerId::P0, PlayerId::P1] {
+                    let mut raw = state(actor);
+                    for _ in 0..9 {
+                        put(&mut raw, actor, "Homunculus Horde", Zone::Battlefield);
+                    }
+                    raw.players[actor.index()].draws_this_turn = 0;
+                    for _ in 0..2 {
+                        crate::event::propose_and_commit(
+                            &mut raw,
+                            crate::event::ProposedEvent::draw(actor),
+                        );
+                    }
+                    let waiting = crate::trigger::collect_and_process(&mut raw);
+                    assert_eq!(waiting.len(), 9);
+                    raw.engine.pending_triggers.extend(waiting);
+                    let mut session = $owner::from_session(FastActorSessionV1::$from(raw)).unwrap();
+                    let saved = session.snapshot();
+                    let original = expected(&session.inner);
+                    let original_binding = session.inner.$input(original, original.acting_player).unwrap().2;
+                    let id = crate::card_def::card_id_by_name("Homunculus Horde").unwrap();
+                    for replay in 0..2 {
+                        if replay != 0 {
+                            session.restore(&saved).unwrap();
+                            assert!(expected(&session.inner).environment_revision > original.environment_revision);
+                        }
+                        let initial = session.inner.$world().clone();
+                        let mut previous_binding = None;
+                        for position in 0..9u32 {
+                            let before = session.inner.$world().clone();
+                            let counts = (session.inner.policy_step_count(), session.inner.physical_decision_count());
+                            let e = expected(&session.inner);
+                            assert_eq!((e.substep_index, e.substep_count), (position, 9));
+                            assert_eq!(e.acting_player, actor.into());
+                            let (observation, actions, binding) = session.inner.$input(e, e.acting_player).unwrap();
+                            let order = observation.trigger_order.as_ref().unwrap();
+                            assert_eq!(order.pending_count, 9);
+                            assert_eq!(order.ordered_prefix, (0..position).map(|i| usize::try_from(8-i).unwrap()).collect::<Vec<_>>());
+                            assert_eq!(actions.len(), usize::try_from(9-position).unwrap());
+                            assert!(actions.iter().all(|a| matches!(a,
+                                ActionSemanticV1::ChooseTriggerOrderNext { actor: action_actor, ordered_prefix, pending_count, trigger_index, source }
+                                    if *action_actor == e.acting_player && *pending_count == 9
+                                        && *ordered_prefix == order.ordered_prefix
+                                        && *trigger_index < 9 && !ordered_prefix.contains(trigger_index)
+                                        && source.card_db_id == id)));
+                            session.inner.$validate(e, e.acting_player, &binding).unwrap();
+                            if let Some(stale) = &previous_binding {
+                                assert!(session.inner.$validate(e, e.acting_player, stale).is_err());
+                            }
+                            if replay != 0 {
+                                assert!(session.inner.$validate(e, e.acting_player, &original_binding).is_err());
+                            }
+                            previous_binding = Some(binding.clone());
+                            for forged in [
+                                FastActorDecisionV1 { substep_index: position + 1, ..e },
+                                FastActorDecisionV1 { substep_count: 10, ..e },
+                            ] {
+                                assert!(session.inner.$input(forged, forged.acting_player).is_err());
+                                assert!(session.inner.$validate(forged, forged.acting_player, &binding).is_err());
+                            }
+                            assert!(matches!(session.encode(e), Err(Error::UnsupportedPrintedRoot(actual)) if actual == id));
+                            assert_eq!(session.inner.$world(), &before);
+                            assert_eq!((session.inner.policy_step_count(), session.inner.physical_decision_count()), counts);
+                            // Only the genuine native owner advances after the model
+                            // encoder refused. Each prefix retains its entire binding.
+                            let index = actions.iter().position(|a| matches!(a,
+                                ActionSemanticV1::ChooseTriggerOrderNext { trigger_index, .. }
+                                    if *trigger_index == usize::try_from(8-position).unwrap())).unwrap();
+                            let index = u32::try_from(index).unwrap();
+                            let mut reference = session.inner.clone();
+                            let expected_response = reference.step(e.episode_id, e.step, index).unwrap();
+                            assert_eq!(session.inner.step(e.episode_id, e.step, index).unwrap(), expected_response);
+                            assert_eq!(session.inner.$world(), reference.$world());
+                            assert_eq!((session.inner.policy_step_count(), session.inner.physical_decision_count()),
+                                (reference.policy_step_count(), reference.physical_decision_count()));
+                            if position < 8 {
+                                assert_eq!(session.inner.$world(), &initial);
+                                assert_eq!(session.inner.physical_decision_count(), 0);
+                            }
+                        }
+                        assert_eq!(session.inner.policy_step_count(), 9);
+                        assert_eq!(session.inner.physical_decision_count(), 1);
+                        assert!(session.inner.$world().engine.pending_triggers.is_empty());
+                        assert_eq!(session.inner.$world().stack.len(), 9);
+                    }
+                }
+            };
         }
+        run!(
+            FakeSession,
+            from_fake_v50_fixture_state,
+            fake_current_decision_input_v50,
+            fake_validate_bound_decision_v50,
+            fake_fixture_state
+        );
+        run!(
+            RavenousSession,
+            from_ravenous_v51_fixture_state,
+            ravenous_current_decision_input_v51,
+            ravenous_validate_bound_decision_v51,
+            ravenous_fixture_state
+        );
     }
     #[test]
     fn native_selection_executes_exact_original_candidate_and_foreign_restore_is_readonly_both_seats(

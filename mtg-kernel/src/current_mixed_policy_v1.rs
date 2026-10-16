@@ -206,6 +206,7 @@ pub fn feature_identity() -> String {
             include_str!("akroma_family_public_v40.rs"),
             include_str!("policy_observation_v8.rs"),
             include_str!("policy_surface_v5.rs"),
+            include_str!("policy_surface_v5/hunter_order_v45.rs"),
             include_str!("ravenous_public_v51.rs"),
             include_str!("fake_your_own_death_v50/public_v50.rs"),
             include_str!("standard_creatures_v1.rs"),
