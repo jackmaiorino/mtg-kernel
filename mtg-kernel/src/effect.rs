@@ -4240,6 +4240,7 @@ pub fn begin_resumable_resolution(
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
     if lathril_context_v1(state, ctx.stack_item_id)
+        || lathril_waiting_source_v1(state, ctx)
         || event::lathril_item_selected_v1(state, &resolving_item)
         || matches!(
             op,
@@ -4282,6 +4283,24 @@ fn begin_resumable_resolution_with_inspiration_owner(
     resolving_item: StackItem,
     state: &mut GameState,
     inspiration_owner: Option<&InspirationResolutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
+    begin_resumable_resolution_with_native_row_v1(
+        op,
+        ctx,
+        resolving_item,
+        state,
+        inspiration_owner,
+        None,
+    )
+}
+
+fn begin_resumable_resolution_with_native_row_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    resolving_item: StackItem,
+    state: &mut GameState,
+    inspiration_owner: Option<&InspirationResolutionOwnerV1>,
+    native_row: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
     if crate::high_society_hunter_custody_v45::selected(&resolving_item) {
         return Err("Hunter root requires its genuine private pre-pop owner".into());
@@ -4334,6 +4353,8 @@ fn begin_resumable_resolution_with_inspiration_owner(
     }
     if let Some(owner) = inspiration_owner {
         inspiration_resolution_v1::drive_owned(state, owner)
+    } else if let Some(owner) = native_row {
+        drive_with_native_row_v1(state, owner)
     } else {
         drive_resumable(state)
     }
@@ -11842,6 +11863,59 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
+    drive_resumable_inner_with_native_row_v1(state, None)
+}
+
+// Same guard and boundary order as the ordinary Inspiration -> Gourmand ->
+// Frenzied -> Squad driver chain. Only the lexical row crosses these calls.
+fn drive_with_native_row_v1(
+    state: &mut GameState,
+    owner: &NativeExecutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    if inspiration_resolution_v1::tracked(state)? {
+        return Err("Inspiration resumption requires its genuine private removed-row owner".into());
+    }
+    if vampire_gourmand_resolution_v1::tracked(state)? {
+        return Err("Gourmand resolution requires its genuine private removed-item owner".into());
+    }
+    let frenzied = frenzied_goblin_resolution_v1::tracked(state)?;
+    if frenzied {
+        frenzied_goblin_resolution_v1::validate(state)?;
+    }
+    let squad = squad_rallier_resolution_v1::tracked(state)?;
+    if squad {
+        squad_rallier_resolution_v1::validate(state)?;
+    }
+    let result = drive_resumable_inner_with_native_row_v1(state, Some(owner));
+    if squad && result.is_ok() {
+        squad_rallier_resolution_v1::record_boundary(state)?;
+    }
+    if frenzied && result.is_ok() {
+        frenzied_goblin_resolution_v1::record_boundary(state)?;
+    }
+    result
+}
+
+fn drive_resumable_inner_with_native_row_v1(
+    state: &mut GameState,
+    supplied_owner: Option<&NativeExecutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
+    let resumed_owner;
+    let native_row = if let Some(owner) = supplied_owner {
+        owner.validate_initial_pending(state)?;
+        Some(owner)
+    } else if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(|p| lathril_waiting_source_v1(state, &p.ctx))
+    {
+        validate_pending_effect_choice(state)?;
+        resumed_owner = NativeExecutionOwnerV1::from_validated_pending(state)?;
+        Some(&resumed_owner)
+    } else {
+        None
+    };
     let mut continuation = state
         .engine
         .pending_effect
@@ -15116,10 +15190,11 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     return Err("destroy-then-search target is not a battlefield land".to_string());
                 }
                 let player = live.controller;
-                execute(
+                execute_native_child_v1(
                     &EffectOp::DestroyObject { object },
                     &continuation.ctx,
                     state,
+                    native_row,
                 );
                 let canonical_path = path.clone();
                 let expected_remaining_frames = continuation.frames.clone();
@@ -15527,7 +15602,7 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
-                execute(&leaf, &continuation.ctx, state)
+                execute_native_child_v1(&leaf, &continuation.ctx, state, native_row)
             }
         }
     }
@@ -18336,6 +18411,15 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
 }
 
 pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
+    execute_with_native_row_v1(op, ctx, state, None);
+}
+
+fn execute_with_native_row_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_proof: Option<&NativeExecutionProofV1<'_>>,
+) {
     if state.engine.halted.is_some() {
         return;
     }
@@ -18345,13 +18429,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             .pending_effect
             .as_ref()
             .is_some_and(|pending| event::lathril_item_selected_v1(state, &pending.resolving_item))
-        || (ctx.stack_item_id.is_none()
-            && state.stack.iter().any(|item| {
-                event::lathril_item_selected_v1(state, item)
-                    && (item.source == ctx.source
-                        || item.v4.ability_source_contract.is_some()
-                            && item.v4.ability_source_contract == ctx.ability_source_contract)
-            }))
+        || (lathril_waiting_source_v1(state, ctx)
+            && native_proof.is_none_or(|proof| proof.ctx != ctx))
     {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -18376,10 +18455,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         ));
         return;
     }
+    let native_row = native_proof.map(|proof| proof.owner);
     match op {
         EffectOp::Sequence(ops) => {
             for inner in ops {
-                execute(inner, ctx, state);
+                execute_native_child_v1(inner, ctx, state, native_row);
                 if state.engine.halted.is_some() {
                     break;
                 }
@@ -18396,11 +18476,11 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         }
         EffectOp::Conditional { cond, then, else_ } => {
             let taken = eval_cond(cond, ctx, state);
-            execute(if taken { then } else { else_ }, ctx, state);
+            execute_native_child_v1(if taken { then } else { else_ }, ctx, state, native_row);
         }
         EffectOp::Choice { options, .. } => {
             if let Some(first) = options.first() {
-                execute(first, ctx, state);
+                execute_native_child_v1(first, ctx, state, native_row);
             }
         }
         EffectOp::DealDamage { target, amount } => {
@@ -18460,7 +18540,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     unreachable!("creature source")
                 };
                 if *plus1_plus1 != 0 {
-                    execute(
+                    execute_native_child_v1(
                         &EffectOp::AddCountersToTarget {
                             target_index: source_index as u8,
                             optional: false,
@@ -18470,6 +18550,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         },
                         ctx,
                         state,
+                        native_row,
                     );
                 }
                 if target_legal {
@@ -19083,12 +19164,13 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if ctx.targets.first() == Some(&Target::Object(*other_than)) {
                 return;
             }
-            execute(
+            execute_native_child_v1(
                 &EffectOp::PutPlusOnePlusOneCounter {
                     object: ObjectRef::Target(0),
                 },
                 ctx,
                 state,
+                native_row,
             );
         }
         EffectOp::CastExiledWithoutMana { .. }
@@ -19649,7 +19731,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             ) = (stats(entrant), stats(source))
             {
                 if entrant_power > source_power || entrant_toughness > source_toughness {
-                    execute(then, ctx, state);
+                    execute_native_child_v1(then, ctx, state, native_row);
                 }
             }
         }
@@ -20134,13 +20216,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 ctx,
                 state,
             ) {
-                execute(
+                execute_native_child_v1(
                     &EffectOp::MoveObject {
                         object: ObjectRef::Target(*target_index),
                         to_zone: Zone::Graveyard,
                     },
                     ctx,
                     state,
+                    native_row,
                 );
             }
             if state.engine.halted.is_some() {
@@ -20158,13 +20241,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let mut reward_ctx = ctx.clone();
             reward_ctx.controller = controller;
             for _ in 0..*count {
-                execute(
+                execute_native_child_v1(
                     &EffectOp::CreateToken {
                         token_def: *token_def,
                         controller: PlayerRef::Controller,
                     },
                     &reward_ctx,
                     state,
+                    native_row,
                 );
             }
         }
@@ -20211,7 +20295,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let controller = state.objects.get(id).controller;
-            execute(&EffectOp::DestroyObject { object: *object }, ctx, state);
+            execute_native_child_v1(
+                &EffectOp::DestroyObject { object: *object },
+                ctx,
+                state,
+                native_row,
+            );
             if crate::doubling_season_v48::requires_successor(state) {
                 if state.engine.halted.is_none() {
                     event::propose_and_commit_batch(
@@ -20868,7 +20957,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 // immediately (Glint Hawk with no artifact to return), or
                 // no-ops for every pre-existing consumer (`otherwise: None`).
                 if let Some(otherwise) = otherwise {
-                    execute(otherwise, ctx, state);
+                    execute_native_child_v1(otherwise, ctx, state, native_row);
                 }
                 return;
             }
@@ -20995,13 +21084,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     let mut token_ctx = ctx.clone();
                     token_ctx.source = object;
                     token_ctx.ability_source_contract = None;
-                    execute(
+                    execute_native_child_v1(
                         &EffectOp::GrantKeywordTargetUntilEndOfTurn {
                             object: ObjectRef::ThisSource,
                             keyword: Keywords::HASTE,
                         },
                         &token_ctx,
                         state,
+                        native_row,
                     );
                 }
             }
@@ -25073,6 +25163,208 @@ mod sphinxs_tutelage_v1_tests;
 ))]
 #[path = "effect/consuming_aberration_v1_tests.rs"]
 mod consuming_aberration_v1_tests;
+
+fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    state.stack.iter().any(|item| {
+        event::lathril_item_selected_v1(state, item)
+            && (item.source == ctx.source
+                || item.v4.ability_source_contract.is_some()
+                    && item.v4.ability_source_contract == ctx.ability_source_contract)
+    })
+}
+
+/// A lexical native execution frame, never serialized, cloned or stored in a
+/// world. Only the actual unique top row can mint its initial removed-row form.
+pub(crate) struct NativeExecutionOwnerV1 {
+    item: StackItem,
+    ctx: ExecCtx,
+    root: Box<EffectOp>,
+    remaining_stack: Vec<StackItem>,
+}
+
+// Borrowed only within the native dispatch. A recursive instruction can bind
+// its own natively derived context (for example a reward's controller), while
+// retaining the original row owner. Neither component can be supplied publicly.
+struct NativeExecutionProofV1<'a> {
+    owner: &'a NativeExecutionOwnerV1,
+    ctx: &'a ExecCtx,
+}
+
+fn validated_native_execution_root_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<Box<EffectOp>, String> {
+    // Native stack validation includes genuine Ward and granted abilities,
+    // whose roots need not occur in the source's printed trigger table.
+    crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)?;
+    if let Some(root) = &pending.resolving_item.inline_effect {
+        Ok(Box::new(root.clone()))
+    } else {
+        validated_definition_owned_root_effect(state, pending)
+    }
+}
+
+impl NativeExecutionOwnerV1 {
+    fn validate_entry(
+        &self,
+        state: &GameState,
+        item: &StackItem,
+        ctx: &ExecCtx,
+        program: &EffectOp,
+    ) -> Result<(), String> {
+        if *item != self.item
+            || *ctx != self.ctx
+            || *program != *self.root
+            || state.stack != self.remaining_stack
+            || state.engine.pending_effect.is_some()
+        {
+            return Err(
+                "native execution frame lost its original row/context/stack/program".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_initial_pending(&self, state: &GameState) -> Result<(), String> {
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or("native execution input lost")?;
+        if pending.resolving_item != self.item
+            || pending.ctx != self.ctx
+            || state.stack != self.remaining_stack
+            || pending.choice.is_some()
+            || pending.answered_choice_guard.is_some()
+            || pending.frames
+                != [EffectFrame::Program {
+                    op: (*self.root).clone(),
+                    path: vec![],
+                }]
+        {
+            return Err("native initial execution frame changed before its driver".into());
+        }
+        Ok(())
+    }
+
+    // Called only after the ordinary complete native pending validator. The
+    // row must still be its exact published resolving member; no re-advance or
+    // caller-provided operation can stand in for that validation.
+    fn from_validated_pending(state: &GameState) -> Result<Self, String> {
+        let pending = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or("native pending row lost")?;
+        let mut expected = crystal_prevention_v1::context(&pending.resolving_item);
+        expected.niv_damage_origin_v1 =
+            event::niv_damage_origin_for_saved_item_v1(state, &pending.resolving_item);
+        let root = validated_native_execution_root_v1(state, pending)?;
+        if pending.ctx != expected
+            || pending.frames.iter().any(|frame| {
+                matches!(frame, EffectFrame::Program { op, path }
+                if effect_op_at_structural_path(&root, path) != Some(op))
+            })
+        {
+            return Err(
+                "native resumed execution lost its full context or original program paths".into(),
+            );
+        }
+        Ok(Self {
+            item: pending.resolving_item.clone(),
+            ctx: pending.ctx.clone(),
+            root,
+            remaining_stack: state.stack.clone(),
+        })
+    }
+}
+
+pub(crate) fn acquire_native_execution_owner_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<NativeExecutionOwnerV1>, String> {
+    let mut ctx = crystal_prevention_v1::context(item);
+    ctx.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, item);
+    if !lathril_waiting_source_v1(state, &ctx) || event::lathril_item_selected_v1(state, item) {
+        return Ok(None);
+    }
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state.engine.pending_effect.is_some()
+        || state.stack.last() != Some(item)
+        || state
+            .stack
+            .iter()
+            .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+            .count()
+            != 1
+    {
+        return Err("native execution owner requires the unique actual stack top".into());
+    }
+    let pending = EffectContinuation {
+        resolving_item: item.clone(),
+        ctx: ctx.clone(),
+        frames: vec![],
+        choice: None,
+        answered_choice_guard: None,
+    };
+    let root = validated_native_execution_root_v1(state, &pending)?;
+    let mut remaining_stack = state.stack.clone();
+    remaining_stack.pop();
+    Ok(Some(NativeExecutionOwnerV1 {
+        item: item.clone(),
+        ctx,
+        root,
+        remaining_stack,
+    }))
+}
+
+pub(crate) fn execute_owned_native_row_v1(
+    state: &mut GameState,
+    item: &StackItem,
+    ctx: &ExecCtx,
+    program: &EffectOp,
+    owner: NativeExecutionOwnerV1,
+) -> Result<(), String> {
+    owner.validate_entry(state, item, ctx, program)?;
+    if crate::linked_aura_operation_v1::needs_event_owner(state) {
+        return Err("native execution frame lost its enclosing event owner".into());
+    }
+    let proof = NativeExecutionProofV1 { owner: &owner, ctx };
+    execute_with_native_row_v1(program, ctx, state, Some(&proof));
+    Ok(())
+}
+
+pub(crate) fn begin_owned_native_row_v1(
+    state: &mut GameState,
+    item: &StackItem,
+    ctx: &ExecCtx,
+    program: &EffectOp,
+    owner: NativeExecutionOwnerV1,
+) -> Result<ResumableProgress, String> {
+    owner.validate_entry(state, item, ctx, program)?;
+    begin_resumable_resolution_with_native_row_v1(
+        program,
+        ctx,
+        item.clone(),
+        state,
+        None,
+        Some(&owner),
+    )
+}
+
+fn execute_native_child_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_row: Option<&NativeExecutionOwnerV1>,
+) {
+    if let Some(owner) = native_row {
+        let proof = NativeExecutionProofV1 { owner, ctx };
+        execute_with_native_row_v1(op, ctx, state, Some(&proof));
+    } else {
+        execute(op, ctx, state);
+    }
+}
 
 // Published occurrence, not a caller-editable root/kind, selects this family.
 fn lathril_context_v1(state: &GameState, stack_id: Option<crate::ids::StackItemId>) -> bool {

@@ -15838,11 +15838,19 @@ fn execute_resolving_program(
         Option<&effect::crystal_prevention_v1::OwnerV1>,
         Option<&effect::InspirationResolutionOwnerV1>,
         Option<&crate::high_society_hunter_custody_v45::OwnerV45>,
+        Option<effect::NativeExecutionOwnerV1>,
     ),
 ) -> ResolutionProgress {
-    let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner) = extra_owners;
+    let (gourmand_owner, crystal_owner, inspiration_owner, hunter_owner, native_row) = extra_owners;
     if crystal_owner.is_none() && !effect::contains_player_choice(program) {
-        effect::execute(program, ctx, state);
+        if let Some(owner) = native_row {
+            if effect::execute_owned_native_row_v1(state, item, ctx, program, owner).is_err() {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            }
+        } else {
+            effect::execute(program, ctx, state);
+        }
         return if state.engine.halted.is_some() {
             ResolutionProgress::Suspended
         } else {
@@ -15862,6 +15870,8 @@ fn execute_resolving_program(
         effect::begin_owned_frenzied_goblin_resolution(state, program, ctx, owner)
     } else if let Some(owner) = gourmand_owner {
         effect::begin_owned_vampire_gourmand_resolution(state, program, ctx, owner)
+    } else if let Some(owner) = native_row {
+        effect::begin_owned_native_row_v1(state, item, ctx, program, owner)
     } else {
         effect::begin_resumable_resolution(program, ctx, item.clone(), state)
     };
@@ -16382,6 +16392,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let native_execution_owner = match effect::acquire_native_execution_owner_v1(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let item = state
         .stack
         .pop()
@@ -16826,6 +16846,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                         crystal_owner.as_ref(),
                         inspiration_owner.as_ref(),
                         hunter_owner.as_ref(),
+                        native_execution_owner,
                     ),
                 )
             };
@@ -16917,6 +16938,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
                 crystal_owner.as_ref(),
                 inspiration_owner.as_ref(),
                 hunter_owner.as_ref(),
+                native_execution_owner,
             ),
         ) == ResolutionProgress::Suspended
         {

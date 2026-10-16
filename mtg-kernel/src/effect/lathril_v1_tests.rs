@@ -536,6 +536,28 @@ fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
         direct.engine.halted = None;
         assert_eq!(direct, unchanged);
 
+        // A nonempty but unissued ID is no authority either. Only the private
+        // native row owner can execute a different genuine row above this one.
+        let mut unknown_ctx = ctx.clone();
+        unknown_ctx.stack_item_id = Some(crate::ids::StackItemId(u64::MAX));
+        assert!(state
+            .stack
+            .iter()
+            .all(|item| Some(item.v4.stack_item_id) != unknown_ctx.stack_item_id));
+        let mut direct = state.clone();
+        execute(&draw, &unknown_ctx, &mut direct);
+        assert!(direct.engine.halted.is_some());
+        direct.engine.halted = None;
+        assert_eq!(direct, state);
+        let mut unknown_item = row.clone();
+        unknown_item.v4.stack_item_id = unknown_ctx.stack_item_id.unwrap();
+        unknown_item.kind = StackItemKind::Spell;
+        unknown_item.inline_effect = Some(draw.clone());
+        assert!(
+            begin_resumable_resolution(&draw, &unknown_ctx, unknown_item, &mut direct).is_err()
+        );
+        assert_eq!(direct, state);
+
         // A different genuine activation by that same source remains ordinary,
         // even while this combat trigger and its original public row wait below it.
         let mut activated = state.clone();
@@ -558,6 +580,34 @@ fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
         );
         assert!(activated.stack.iter().any(|item| item == &row));
         let life = activated.players.each_ref().map(|player| player.life);
+        // The private frame also refuses a foreign context or remaining stack
+        // before any effect, even when acquired from this real paid drain row.
+        let drain = activated.stack.last().unwrap().clone();
+        for mode in 0..3 {
+            let owner = acquire_native_execution_owner_v1(&activated, &drain)
+                .unwrap()
+                .unwrap();
+            let mut context = crystal_prevention_v1::context(&drain);
+            context.niv_damage_origin_v1 =
+                event::niv_damage_origin_for_saved_item_v1(&activated, &drain);
+            let mut removed = activated.clone();
+            assert_eq!(removed.stack.pop(), Some(drain.clone()));
+            match mode {
+                0 => context.controller = actor.opponent(),
+                1 => context.stack_item_id = Some(crate::ids::StackItemId(u64::MAX)),
+                _ => removed.stack.clear(),
+            }
+            let unchanged = removed.clone();
+            assert!(execute_owned_native_row_v1(
+                &mut removed,
+                &drain,
+                &context,
+                drain.inline_effect.as_ref().unwrap(),
+                owner
+            )
+            .is_err());
+            assert_eq!(removed, unchanged);
+        }
         finish(&mut activated);
         assert_eq!(
             activated.players[actor.index()].life,
@@ -672,6 +722,66 @@ fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
         assert!(crate::optional_trigger_public_v1::validate_state(&state).is_err());
         let restored = restore(&state);
         assert_eq!(state, restored);
+    }
+}
+
+#[test]
+fn paid_longbow_granted_other_row_above_combat_trigger_keeps_native_owner_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid(actor);
+        let equipment = cast(&mut state, actor, "Viridian Longbow", None, 1);
+        finish(&mut state);
+        let before = taps(&state, actor);
+        engine::step(&mut state, Action::ActivateAbility(equipment, 0)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Object(source)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(source))).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        assert_eq!(taps(&state, actor) - before, 3);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        finish(&mut state);
+        assert_eq!(
+            state.objects.get(equipment).v4.attached_to.unwrap().object,
+            source
+        );
+        advance_to_next_main_for(&mut state, actor);
+        publish_from_primitive(&mut state, source, actor.opponent(), 2);
+        let combat = state.stack.last().unwrap().clone();
+        assert_eq!(
+            card_def::CARD_DEFS[usize::from(id(NAME))]
+                .activated_abilities
+                .len(),
+            1
+        );
+        engine::step(&mut state, Action::ActivateAbility(source, 1)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { ref legal_targets, .. } if legal_targets.contains(&Target::Player(actor.opponent())))
+        );
+        engine::step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let ping = state.stack.last().unwrap();
+        assert_eq!(
+            (ping.source, ping.controller, ping.kind),
+            (source, actor, StackItemKind::ActivatedAbility)
+        );
+        assert_ne!(ping.v4.stack_item_id, combat.v4.stack_item_id);
+        assert!(state.stack.iter().any(|row| row == &combat));
+        assert!(state.objects.get(source).tapped);
+        let mut restored = restore(&state);
+        finish(&mut state);
+        finish(&mut restored);
+        assert_eq!(state, restored);
+        assert_eq!(tokens(&state, actor), 2);
+        assert_eq!(state.players[actor.opponent().index()].life, 17);
     }
 }
 
