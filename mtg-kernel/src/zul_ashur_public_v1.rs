@@ -1,5 +1,6 @@
 //! Captured public identities are distinct from later live or hidden incarnations.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{GameState, StackTargetContractV4};
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,11 @@ pub struct PermissionV1 {
 pub fn facts_v1(state: &GameState) -> Result<Vec<PermissionV1>, RlContractError> {
     crate::zul_ashur_v1::validate_state(state).map_err(RlContractError)?;
     let mut facts = Vec::new();
-    for e in &state.engine.event_history {
+    for e in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ZulAshurInstalledV1])
+    {
         let CommittedEvent::ZulAshurInstalledV1 { installation: i } = e else {
             continue;
         };
@@ -46,7 +51,7 @@ pub fn facts_v1(state: &GameState) -> Result<Vec<PermissionV1>, RlContractError>
                 "Zul original graveyard target absent".into(),
             ));
         };
-        let expired=state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::ZulAshurExpiredV1{expiry} if expiry.installation==i.index));
+        let expired=state.engine.event_history.scan_for_v1(&[EventKindV1::ZulAshurExpiredV1]).iter().any(|e|matches!(e,CommittedEvent::ZulAshurExpiredV1{expiry} if expiry.installation==i.index));
         facts.push(PermissionV1 {
             source_at_activation: CardStableRefV1 {
                 arena_id: s.source.0,

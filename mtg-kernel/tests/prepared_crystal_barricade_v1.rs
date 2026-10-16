@@ -2130,8 +2130,10 @@ fn real_fixed_and_chosen_power_damage_require_independent_positive_or_prevented_
                     })
                     .unwrap();
                 let mut bad = before_resolution;
-                bad.engine.event_history =
-                    state.engine.event_history[..=initial.history_index as usize].to_vec();
+                bad.engine.event_history = state.engine.event_history
+                    [..=initial.history_index as usize]
+                    .to_vec()
+                    .into();
                 let mut step = actual_step;
                 step.damage_history.clear();
                 step.damage_operation = None;
@@ -2687,8 +2689,10 @@ fn real_fight_without_menu_commits_both_powers_lifelink_and_requires_preparation
                 })
                 .unwrap();
             let mut bad = before_resolution;
-            bad.engine.event_history =
-                state.engine.event_history[..=initial.history_index as usize].to_vec();
+            bad.engine.event_history = state.engine.event_history
+                [..=initial.history_index as usize]
+                .to_vec()
+                .into();
             let mut step = actual_step;
             step.damage_history.clear();
             let capture = step.batch_capture.as_mut().unwrap();

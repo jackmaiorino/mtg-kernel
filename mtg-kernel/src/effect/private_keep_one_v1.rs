@@ -1,5 +1,6 @@
 //! Authenticated terminal Raid look: keep zero or one, graveyard the rest.
 use super::*;
+use crate::event_history_v1::EventKindV1;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PrivateKeepOneBindingV1 {
     pub player: PlayerId,
@@ -41,7 +42,10 @@ pub(super) fn validate_recipe(
 }
 fn captured(state: &GameState, stack: StackItemId) -> Result<&PrivateKeepOneBindingV1, String> {
     let mut found = None;
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::PrivateKeepOneLibraryCapturedV1,
+        EventKindV1::PrivateKeepOneLibraryConsumedV1,
+    ]) {
         match event {
             event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
                 if binding.stack_item_id == Some(stack) =>
@@ -90,11 +94,17 @@ pub(super) fn capture(
     ctx: &ExecCtx,
 ) -> Result<PrivateKeepOneBindingV1, String> {
     if let Some(stack) = ctx.stack_item_id {
-        if state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        if state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::PrivateKeepOneLibraryCapturedV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
                 if binding.stack_item_id == Some(stack))
-        }) {
+            })
+        {
             return Err("keep-one look already captured this resolution".into());
         }
     }
@@ -225,7 +235,7 @@ pub(super) fn validate_required_stage(
         .ctx
         .stack_item_id
         .ok_or("Gutless Plunderer lost its resolving stack incarnation")?;
-    let has_capture = state.engine.event_history.iter().any(|event| matches!(event,
+    let has_capture = state.engine.event_history.scan_for_v1(&[EventKindV1::PrivateKeepOneLibraryCapturedV1]).iter().any(|event| matches!(event,
         event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding } if binding.stack_item_id == Some(stack)));
     let initial = !has_capture
         && pending.choice.is_none()
@@ -268,7 +278,17 @@ pub(super) fn validate_closed(
     let mut captures = Vec::new();
     let mut consumed = Vec::new();
     let mut skipped = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::PrivateKeepOneLibraryCapturedV1,
+            EventKindV1::PrivateKeepOneLibraryConsumedV1,
+            EventKindV1::PrivateKeepOneRaidSkippedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             event::CommittedEvent::PrivateKeepOneLibraryCapturedV1 { binding }
                 if binding.stack_item_id == Some(stack) =>

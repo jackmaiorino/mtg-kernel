@@ -1,4 +1,5 @@
 //! Separate event-time Arahbo transport. This is not V8/V9 or model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -221,7 +222,11 @@ pub(crate) fn facts(
     let mut entry_occurrences = Vec::new();
     let mut event_order = 0_u64;
     let mut previous_entry = None;
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::ArahboTokenCaptureV1])
+    {
         let crate::event::CommittedEvent::ArahboTokenCaptureV1 { capture } = event else {
             continue;
         };
@@ -262,6 +267,7 @@ pub(crate) fn facts(
         let completed = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::ArahboTokenCompletedV1])
             .iter()
             .find_map(|event| match event {
                 crate::event::CommittedEvent::ArahboTokenCompletedV1 {
@@ -290,6 +296,7 @@ pub(crate) fn facts(
                 let snapshot = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ArahboEntryObservationV1])
                     .iter()
                     .find_map(|event| match event {
                         crate::event::CommittedEvent::ArahboEntryObservationV1 {

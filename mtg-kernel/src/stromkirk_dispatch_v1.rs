@@ -1,6 +1,7 @@
 //! Mandatory ownership of each genuine captured end-step occurrence.
 use crate::effect::{EffectCond, EffectOp};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::ObjectId;
 use crate::state::{
     AbilitySourceContractV4, GameObject, GameState, StackItem, StackItemKind, Target, Zone,
@@ -99,6 +100,7 @@ fn capture_indices(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkTriggerCaptureV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| {
@@ -113,6 +115,7 @@ fn collected_indices(state: &GameState, capture: u64) -> Vec<usize> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkCollectedV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -209,6 +212,7 @@ fn publication(state: &GameState, capture: u64) -> Result<Option<(usize, &StackI
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkPublishedV2])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {
@@ -255,7 +259,7 @@ fn validate_item(state: &GameState, capture: u64, item: &StackItem) -> Result<()
     else {
         return Err("Stromkirk publication lost its targeted permanent".into());
     };
-    if item.targets[0] != Target::Object(object) || !state.engine.event_history.iter().any(|e| matches!(e,
+    if item.targets[0] != Target::Object(object) || !state.engine.event_history.scan_for_v1(&[EventKindV1::Targeted]).iter().any(|e| matches!(e,
         CommittedEvent::Targeted { target, target_zone_change_count, targeting_stack_item, targeting_controller }
             if *target == object && *target_zone_change_count == zone_change_count
                 && *targeting_stack_item == item.v4.stack_item_id && *targeting_controller == item.controller)) {
@@ -615,6 +619,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let completions: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::StromkirkCompletedV2])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -628,6 +633,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let operations: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::StromkirkOperationV2])
             .iter()
             .enumerate()
             .filter_map(|(at, e)| match e {
@@ -641,7 +647,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 _ => None,
             })
             .collect();
-        let removals: Vec<_> = state.engine.event_history.iter().enumerate().filter(|(_,e)| matches!(e,
+        let removals: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::StromkirkCounterRemovedV2, EventKindV1::StromkirkPlacementRemovedV2, EventKindV1::StromkirkResolutionRemovedV2]).iter().enumerate().filter(|(_,e)| matches!(e,
             CommittedEvent::StromkirkPlacementRemovedV2 { capture_history_index, .. }
             | CommittedEvent::StromkirkResolutionRemovedV2 { capture_history_index, .. }
             | CommittedEvent::StromkirkCounterRemovedV2 { capture_history_index, .. } if *capture_history_index == capture)).collect();

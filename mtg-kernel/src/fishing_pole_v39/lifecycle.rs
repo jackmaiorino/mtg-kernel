@@ -3,6 +3,7 @@ use super::selected_definition;
 use crate::card_def::{CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{AbilitySourceContractV4, GameState, StackItem, StackItemKind, Zone};
 use crate::trigger::PendingTrigger;
@@ -221,7 +222,7 @@ pub(crate) fn collect(
         let [index] = occurrences.as_slice() else {
             return Err(pole.source);
         };
-        if capture(state, *index).is_err() || state.engine.event_history.iter().any(|e| matches!(e,
+        if capture(state, *index).is_err() || state.engine.event_history.scan_for_v1(&[EventKindV1::FishingPoleJournalV39]).iter().any(|e| matches!(e,
             CommittedEvent::FishingPoleJournalV39 {journal} if matches!(journal.as_ref(),JournalV39::Collected {capture} if *capture == *index))) {
             return Err(pole.source);
         }
@@ -250,6 +251,7 @@ fn publications(state: &GameState, origin: u64) -> Vec<(u64, &StackItem)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .enumerate()
         .filter_map(|(i, event)| match event {
@@ -433,6 +435,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let pubs = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
@@ -454,7 +457,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         return Err("Fishing live row lacks original publication".into());
     };
     shape(state, *origin, item)?;
-    if *original != item || state.engine.event_history.iter().any(|event| matches!(event,
+    if *original != item || state.engine.event_history.scan_for_v1(&[EventKindV1::FishingPoleJournalV39]).iter().any(|event| matches!(event,
         CommittedEvent::FishingPoleJournalV39 {journal} if matches!(journal.as_ref(),JournalV39::Removed {origin: removed,..} if *removed == *origin))) {
         return Err("Fishing live row changed or replayed".into());
     }
@@ -474,6 +477,7 @@ pub(crate) fn public_stack_source(
     let origins = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
@@ -520,6 +524,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     let origin = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .find_map(|e| match e {
             CommittedEvent::FishingPoleJournalV39 { journal } => match journal.as_ref() {
@@ -675,6 +680,7 @@ pub(crate) fn complete(
     let removals = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
@@ -799,6 +805,7 @@ fn rows(state: &GameState) -> impl Iterator<Item = (u64, &JournalV39)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::FishingPoleJournalV39])
         .iter()
         .enumerate()
         .filter_map(|(i, event)| match event {
@@ -812,6 +819,10 @@ fn bait_history_v1(state: &GameState) -> Vec<(ObjectId, u32)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[
+            EventKindV1::BaitTransferInputV48,
+            EventKindV1::FishingPoleJournalV39,
+        ])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::BaitTransferInputV48 { input } => {

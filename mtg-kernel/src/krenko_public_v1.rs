@@ -1,5 +1,6 @@
 //! Authenticated public counts and outcomes; historical member identities stay private.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::rl::{CardStableRefV1, PlayerSeatV1, RlContractError};
 use crate::state::{GameState, Zone};
 use serde::{Deserialize, Serialize};
@@ -98,7 +99,11 @@ pub fn facts_v1(state: &GameState) -> Result<FactsV1, RlContractError> {
         }
     }
     let mut activations = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::KrenkoPaidV1])
+    {
         let CommittedEvent::KrenkoPaidV1 { paid } = event else {
             continue;
         };
@@ -107,19 +112,31 @@ pub fn facts_v1(state: &GameState) -> Result<FactsV1, RlContractError> {
             .v4
             .ability_source_contract
             .ok_or_else(|| RlContractError("Krenko source lost".into()))?;
-        let removed = state.engine.event_history.iter().find_map(|e| match e {
-            CommittedEvent::KrenkoRemovedV1 { removed } if removed.paid == paid.index => {
-                Some(removed.as_ref())
-            }
-            _ => None,
-        });
-        let completion = removed.and_then(|r| {
-            state.engine.event_history.iter().find_map(|e| match e {
-                CommittedEvent::KrenkoCompletedV1 { completed } if completed.removed == r.index => {
-                    Some(completed.as_ref())
+        let removed = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::KrenkoRemovedV1])
+            .iter()
+            .find_map(|e| match e {
+                CommittedEvent::KrenkoRemovedV1 { removed } if removed.paid == paid.index => {
+                    Some(removed.as_ref())
                 }
                 _ => None,
-            })
+            });
+        let completion = removed.and_then(|r| {
+            state
+                .engine
+                .event_history
+                .scan_for_v1(&[EventKindV1::KrenkoCompletedV1])
+                .iter()
+                .find_map(|e| match e {
+                    CommittedEvent::KrenkoCompletedV1 { completed }
+                        if completed.removed == r.index =>
+                    {
+                        Some(completed.as_ref())
+                    }
+                    _ => None,
+                })
         });
         let sample = completion
             .and_then(|c| c.sample)

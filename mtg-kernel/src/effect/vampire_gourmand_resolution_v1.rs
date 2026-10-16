@@ -3,6 +3,7 @@
 use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, VampireGourmandStartedBindingV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -189,7 +190,13 @@ fn tracked(state: &GameState) -> Result<bool, String> {
 
 fn history(state: &GameState) -> Result<Vec<&VampireGourmandResolutionReceiptV1>, String> {
     let mut receipts: Vec<&VampireGourmandResolutionReceiptV1> = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandResolutionBoundaryV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::VampireGourmandResolutionBoundaryV1 { receipt } = event else {
             continue;
         };
@@ -261,7 +268,13 @@ fn validate_cost_operations(
     receipts: &[&VampireGourmandResolutionReceiptV1],
 ) -> Result<(), String> {
     let mut used = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::VampireGourmandCostOperationV2 { operation } = event else {
             continue;
         };
@@ -431,7 +444,7 @@ fn validate_cost_operations(
         let previous = receipt
             .previous_history_index
             .ok_or("Gourmand completion has no prior selection")?;
-        if state.engine.event_history.iter().filter(|e| matches!(e,
+        if state.engine.event_history.scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2]).iter().filter(|e| matches!(e,
             CommittedEvent::VampireGourmandCostOperationV2 { operation }
                 if operation.boundary_history_index == previous && operation.history_index < receipt.history_index)).count() != 1
             || state.stack.iter().any(|i| i.v4.stack_item_id == receipt.stack_item_id) {
@@ -445,7 +458,13 @@ fn validate_restrictions(state: &GameState) -> Result<Vec<u32>, String> {
     let mut active = Vec::new();
     let mut used_expiries = Vec::new();
     let mut used_batches = Vec::new();
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::VampireGourmandCostOperationV2])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::VampireGourmandCostOperationV2 { operation } = event else {
             continue;
         };
@@ -461,6 +480,7 @@ fn validate_restrictions(state: &GameState) -> Result<Vec<u32>, String> {
         let expired: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::VampireGourmandExpiredV2])
             .iter()
             .enumerate()
             .filter_map(|(index, e)| {
@@ -508,7 +528,16 @@ fn validate_restrictions(state: &GameState) -> Result<Vec<u32>, String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::VampireGourmandCleanupV2,
+            EventKindV1::VampireGourmandExpiredV2,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::VampireGourmandExpiredV2 { .. } if !used_expiries.contains(&at) =>
                 return Err("orphan Gourmand expiry".into()),

@@ -1,6 +1,7 @@
 //! Private committed installation and cleanup authority for the new opcode.
 use super::*;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, GameObject, Step};
 use serde::{Deserialize, Serialize};
 
@@ -99,6 +100,7 @@ fn targeted_before(state: &GameState, item: &StackItem, before: usize) -> Result
     let events: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::Targeted])
         .iter()
         .enumerate()
         .filter(|(_, event)| {
@@ -153,6 +155,7 @@ pub(super) fn install(state: &mut GameState, ctx: &ExecCtx, object: ObjectId, ti
         state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::TemporaryControlResolutionV1])
             .iter()
             .enumerate()
             .rev()
@@ -218,6 +221,7 @@ pub(super) fn expire(state: &mut GameState) {
     let installations: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::TemporaryControlInstalledV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| {

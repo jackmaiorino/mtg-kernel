@@ -1,6 +1,7 @@
 //! Exact one-of-created-token attachment under the genuine enclosing operation.
 //! The original Equipment remains a single object when token creation doubles.
 use crate::effect::EffectObjectBinding;
+use crate::event_history_v1::EventKindV1;
 use crate::linked_aura_operation_v1::{GeneralAnswerV36, GeneralChoiceV36, OperationV1};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use serde::{Deserialize, Serialize};
@@ -139,7 +140,13 @@ pub(crate) fn validate_journals(state: &GameState) -> Result<(), String> {
     }) {
         return Err("private token attachment history injected into event log".into());
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
+        .iter()
+        .enumerate()
+    {
         let crate::event::CommittedEvent::TokenAttachmentJournalV48 { journal } = event else {
             continue;
         };
@@ -148,6 +155,7 @@ pub(crate) fn validate_journals(state: &GameState) -> Result<(), String> {
                 let closed = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
                     .iter()
                     .enumerate()
                     .filter_map(|(i, e)| match e {
