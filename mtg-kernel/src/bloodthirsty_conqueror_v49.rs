@@ -160,7 +160,7 @@ fn enabled() -> bool {
             .any(|(id, _)| owns_definition(id as u16))
     })
 }
-fn observers(state: &GameState) -> Vec<AbilitySourceContractV4> {
+pub(crate) fn observers(state: &GameState) -> Vec<AbilitySourceContractV4> {
     state
         .objects
         .iter()

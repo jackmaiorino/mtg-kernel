@@ -688,6 +688,7 @@ pub(crate) fn ordinary_nondamage(op: &EffectOp) -> bool {
         // triggers from the returned card are separately published roots.
         // Conqueror custody authenticates a mandatory gain-only root.
         EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::ConquerorGainFromWideCaptureV59 { .. }
         | EffectOp::DrakeIncubationFromCaptureV1 { .. }
         | EffectOp::DrakeCreateTokenFromPaidV1
         | EffectOp::LoseLifeEqualControllerTurnGainsV1 => true,

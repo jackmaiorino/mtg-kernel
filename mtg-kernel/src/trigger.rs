@@ -4125,6 +4125,9 @@ pub(crate) fn required_optional_additional_cost_for_trigger(
 /// Authenticates the finite set of effects a definition-owned trigger can
 /// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
 pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: &EffectOp) -> bool {
+    if crate::snack_wide_life_v59::custody::binding(effect).is_some() {
+        return *template == crate::bloodthirsty_conqueror_v49::recipe();
+    }
     if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
         return *template == crate::bloodthirsty_conqueror_v49::recipe();
     }
@@ -4458,6 +4461,10 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             | EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. } => Some(TargetSpec::None),
             _ => None,
         };
+    }
+    if crate::snack_wide_life_v59::custody::binding(effect).is_some() {
+        return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
+            .then_some(TargetSpec::None);
     }
     if crate::bloodthirsty_conqueror_v49::custody::binding(effect).is_some() {
         return crate::bloodthirsty_conqueror_v49::owns_definition(card_def)
@@ -5292,6 +5299,16 @@ fn triggers_from_events(
         }
     }
     match crate::bloodthirsty_conqueror_v49::collect(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(source) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            ));
+            return Vec::new();
+        }
+    }
+    match crate::snack_wide_life_v59::collect(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(source) => {
             state.engine.halted = Some((
@@ -6392,8 +6409,9 @@ fn trigger_matches(
             battlefield_entry_object(event) == Some(source)
                 && state.player_attacked_this_turn_v1(controller)
         }
-        (TriggerCondition::ControllerGainsLife, CommittedEvent::LifeGain { player, amount }) => {
-            *player == controller && *amount > 0
+        (TriggerCondition::ControllerGainsLife, event) => {
+            crate::snack_wide_life_v59::positive_gain(event)
+                .is_some_and(|(player, _)| player == controller)
         }
         (
             TriggerCondition::ControllerAddedPlusOneCountersToSelf { .. },

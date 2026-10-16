@@ -164,6 +164,7 @@ pub fn stack_source_reference(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     let Some(_) = item
         .inline_effect
         .as_ref()
@@ -200,6 +201,7 @@ pub fn pending_source_reference(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     let Some(_) = conqueror::custody::binding(&pending.effect) else {
         return Ok(None);
     };
@@ -261,6 +263,7 @@ pub fn meanings() -> Result<Vec<meaning::MeaningV49>, RlContractError> {
     Ok(meanings)
 }
 pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     conqueror::validate(state).map_err(RlContractError)?;
     let meanings = meanings()?;
     let batches = state

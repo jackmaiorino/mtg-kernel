@@ -161,6 +161,7 @@ pub fn stack_source_reference(
     state: &GameState,
     item: &StackItem,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     let Some(capture) = item.inline_effect.as_ref().and_then(binding) else {
         return Ok(None);
     };
@@ -176,6 +177,7 @@ pub fn pending_source_reference(
     state: &GameState,
     pending: &PendingTrigger,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     let Some(capture) = binding(&pending.effect) else {
         return Ok(None);
     };
@@ -225,6 +227,7 @@ fn original_target(
     }
 }
 pub fn capture(state: &GameState) -> Result<FactsV47, RlContractError> {
+    crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
     panda::validate_state(state).map_err(RlContractError)?;
     let mut meanings = Vec::new();
     for (id, _) in crate::card_def::CARD_DEFS.iter().enumerate() {

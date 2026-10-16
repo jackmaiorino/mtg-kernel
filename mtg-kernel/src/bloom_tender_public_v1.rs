@@ -74,6 +74,13 @@ pub fn producer_sha256_v1() -> String {
             include_str!("progenitus_v1.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
             include_str!("effect/standard_exile.rs"),
+            include_str!("snack_wide_life_v59.rs"),
+            include_str!("snack_wide_life_v59/custody.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("midnight_snack_v1.rs"),
         ] {
             h.update(source.as_bytes());
             h.update([0]);

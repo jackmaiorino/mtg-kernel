@@ -129,6 +129,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::RevealUntilCardTypeToHandRandomBottomV1 { .. }
         | EffectOp::LoseLifeEachOpponentEqualSourceSoulV1
         | EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::ConquerorGainFromWideCaptureV59 { .. }
         | EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. } => out.atoms.push(Atom::Opaque),
         EffectOp::KrenkoCreateGoblinsV1

@@ -155,14 +155,14 @@ pub(crate) fn record_gain(state: &mut GameState, index: usize) {
     if !enabled() {
         return;
     }
-    let Some(CommittedEvent::LifeGain { player, amount }) = state.engine.event_history.get(index)
+    let Some((player, amount)) = state
+        .engine
+        .event_history
+        .get(index)
+        .and_then(crate::snack_wide_life_v59::positive_gain)
     else {
         return;
     };
-    let (player, amount) = (*player, *amount);
-    if amount <= 0 {
-        return;
-    }
     let observers = state
         .objects
         .iter()
@@ -170,10 +170,18 @@ pub(crate) fn record_gain(state: &mut GameState, index: usize) {
         .map(|(id, _)| AbilitySourceContractV4::capture(state, id))
         .collect::<Vec<_>>();
     for source in observers {
-        let capture = CommittedEvent::FiendishPandaLifeGainCaptureV1 {
-            source,
-            gain_history_index: index as u64,
-            amount,
+        let capture = if let Ok(amount) = i32::try_from(amount) {
+            CommittedEvent::FiendishPandaLifeGainCaptureV1 {
+                source,
+                gain_history_index: index as u64,
+                amount,
+            }
+        } else {
+            CommittedEvent::FiendishPandaWideGainCaptureV59 {
+                source,
+                gain_history_index: index as u64,
+                amount,
+            }
         };
         state.engine.event_history.push(capture.clone());
         state.engine.event_log.push(capture);
@@ -200,6 +208,27 @@ fn root_at(
                 || !matches!(state.engine.event_history.get(original), Some(CommittedEvent::LifeGain { player, amount: actual }) if *player == source.controller && actual == amount)
             {
                 return Err("Panda original positive controller gain changed".into());
+            }
+            (
+                *source,
+                original,
+                EffectOp::FiendishPandaCounterFromCaptureV1 {
+                    capture_history_index: index as u64,
+                },
+                TargetSpec::None,
+            )
+        }
+        CommittedEvent::FiendishPandaWideGainCaptureV59 {
+            source,
+            gain_history_index,
+            amount,
+        } => {
+            let original = usize::try_from(*gain_history_index)
+                .map_err(|_| "Panda wide gain index exceeds usize")?;
+            if *amount <= i32::MAX.unsigned_abs()
+                || !matches!(state.engine.event_history.get(original), Some(CommittedEvent::LifeGainWideV59 { player, amount: actual }) if *player == source.controller && actual == amount)
+            {
+                return Err("Panda original wide controller gain changed".into());
             }
             (
                 *source,
@@ -237,6 +266,10 @@ fn root_at(
         return Err("Panda source or occurrence ordering changed".into());
     }
     crate::engine::validate_historical_ability_source_contract(state, source)?;
+    if state.engine.event_history[..index].iter().any(|prior| matches!((prior, event),
+        (CommittedEvent::FiendishPandaWideGainCaptureV59 { source: a, gain_history_index: x, .. }, CommittedEvent::FiendishPandaWideGainCaptureV59 { source: b, gain_history_index: y, .. }) if a == b && x == y)) {
+        return Err("Panda wide occurrence captured twice".into());
+    }
     if state.engine.event_history[..index]
         .iter()
         .any(|prior| match (prior, event) {
@@ -299,6 +332,7 @@ pub(crate) fn collect(
             matches!(
                 e,
                 CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+                    | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
                     | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
             )
             .then_some(i)
@@ -418,6 +452,7 @@ pub(crate) fn require_legacy_supported(
         matches!(
             e,
             CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+                | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
                 | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
                 | CommittedEvent::FiendishPandaCaptureCollectedV1 { .. }
                 | CommittedEvent::FiendishPandaJournalV1 { .. }
@@ -449,6 +484,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for (index, event) in state.engine.event_history.iter().enumerate() {
         match event {
             CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+            | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
             | CommittedEvent::FiendishPandaDeathCaptureV1 { .. } => {
                 root_at(state, index)?;
             }

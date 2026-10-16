@@ -765,6 +765,7 @@ pub mod rules_meaning_artist_v64;
 pub mod rules_meaning_chosen_type_v66;
 pub mod rules_meaning_graveyard_return_v61;
 pub mod rules_meaning_valkyries_call_v62;
+pub mod snack_wide_life_v59;
 pub mod valkyries_call_public_v62;
 pub mod valkyries_call_v1;
 

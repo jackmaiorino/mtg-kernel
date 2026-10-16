@@ -144,6 +144,13 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
             include_str!("effect/inspiration_resolution_v1.rs"),
             include_str!("effect/standard_exile.rs"),
+            include_str!("snack_wide_life_v59.rs"),
+            include_str!("snack_wide_life_v59/custody.rs"),
+            include_str!("bloodthirsty_conqueror_v49.rs"),
+            include_str!("fiendish_panda_v1.rs"),
+            include_str!("fiendish_panda_v1/custody.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            include_str!("midnight_snack_v1.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());
@@ -179,6 +186,7 @@ pub fn commitment(value: &RavenousObservationV51) -> Result<String, RlContractEr
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::require_legacy(state)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
     if !cfg!(all(
@@ -201,6 +209,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn validate_state_complete_prepared_v57(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::require_legacy(state)?;
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")

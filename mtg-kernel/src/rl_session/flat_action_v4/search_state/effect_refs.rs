@@ -71,6 +71,7 @@ impl Scan<'_> {
             | CreateAttachedAuraCopyV1 {..}
             | FiendishPandaCounterFromCaptureV1 { .. }
             | ConquerorGainFromCaptureV49 { .. }
+            | ConquerorGainFromWideCaptureV59 { .. }
             | FiendishPandaReturnFromCaptureV1 { .. } => true,
             AshrootAttackBoostV1 { source } => self.raw(source.object),
             WildwoodCounterFromReceiptV1 { capture_history_index, .. } => usize::try_from(*capture_history_index).ok().and_then(|index| self.state.engine.event_history.get(index)).is_none_or(|event| {
@@ -1457,6 +1458,7 @@ pub(super) fn conflicts(
             | VampireGourmandCounterRemovedV2 { .. }
             | VampireGourmandCounterClosedV2 { .. }
             | DifferentControllerTargetDepartureV1 { .. }
+            | LifeLossWideV59 { .. } | LifeGainWideV59 { .. }
             | LifeLoss { .. }
             | LifeGain { .. }
             | LifeGainTurnBeganV1 { .. }
@@ -1484,7 +1486,7 @@ pub(super) fn conflicts(
                 | FiendishPandaCaptureCollectedV1 { .. }
                 | FiendishPandaJournalV1 { .. }
                 | TokenCreationReplacementV48 { .. } | PlusCounterReplacementV48 { .. } | TokenCreationInputV48 { .. } | TokenAttachmentJournalV48 { .. } | BaitTransferInputV48 { .. } | BaitTransferAppliedV48 { .. }
-                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. }
+                | PlusCounterInputV48 { .. } | ConquerorLossBatchV49 { .. } | ConquerorCapturedV49 { .. } | ConquerorCollectedV49 { .. } | ConquerorJournalV49 { .. } | ConquerorObserverInputV49 { .. } | ConquerorObserverInputV59 { .. } | ConquerorLossBatchV59 { .. } | ConquerorCapturedV59 { .. } | ConquerorCollectedV59 { .. } | ConquerorJournalV59 { .. } | FiendishPandaWideGainCaptureV59 { .. }
                 | SoulCounterInputV1 { .. } | RavenousPaymentV1 { .. } | RavenousRemovedV1 { .. } | RavenousCompletedV1 { .. } => true,
         }
     })

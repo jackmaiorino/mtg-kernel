@@ -185,6 +185,25 @@ pub fn producer_sha256_v1() -> String {
                 "effect/standard_exile.rs",
                 include_str!("effect/standard_exile.rs"),
             ),
+            (
+                "snack_wide_life_v59.rs",
+                include_str!("snack_wide_life_v59.rs"),
+            ),
+            (
+                "snack_wide_life_v59/custody.rs",
+                include_str!("snack_wide_life_v59/custody.rs"),
+            ),
+            (
+                "bloodthirsty_conqueror_v49.rs",
+                include_str!("bloodthirsty_conqueror_v49.rs"),
+            ),
+            ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
+            (
+                "fiendish_panda_v1/custody.rs",
+                include_str!("fiendish_panda_v1/custody.rs"),
+            ),
+            ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
+            ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
         ] {
             hash.update(path.as_bytes());
             hash.update([0]);

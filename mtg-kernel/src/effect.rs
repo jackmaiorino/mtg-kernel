@@ -2742,6 +2742,10 @@ pub enum EffectOp {
     /// Simultaneously exile each player's top card, then optionally cast the
     /// nonlands in any order during this resolution.
     ExileTopEachPlayerThenCastV1,
+    /// Exact wide-life successor. Frozen V49 capture amounts stay unchanged.
+    ConquerorGainFromWideCaptureV59 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -20738,7 +20742,8 @@ fn execute_with_native_row_v1(
         }
         EffectOp::FiendishPandaCounterFromCaptureV1 { .. }
         | EffectOp::FiendishPandaReturnFromCaptureV1 { .. }
-        | EffectOp::ConquerorGainFromCaptureV49 { .. } => {
+        | EffectOp::ConquerorGainFromCaptureV49 { .. }
+        | EffectOp::ConquerorGainFromWideCaptureV59 { .. } => {
             if crate::fiendish_panda_v1::execute(state, ctx, op).is_err() {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

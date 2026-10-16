@@ -37,3 +37,33 @@ remain. The next prerequisite must preserve one loss occurrence and Conqueror's
 exact corresponding gain using a distinct successor to frozen V49, never split
 or omit those events. All five metadata capabilities remain Partial. Rust and
 native execution of this checkpoint remain uncompiled/unrun.
+
+
+The next native-only checkpoint adds distinct `LifeLossWideV59` and
+`LifeGainWideV59` events. A positive difference between two native i32 life
+values fits u32 exactly; final life still checks i32 before the actual source
+row is removed. Snack issues one loss occurrence, and the distinct Conqueror
+successor owns one corresponding gain occurrence with its original captured
+controller. Frozen V49 types, ordinary Conqueror journals and ordinary Panda
+capture fields remain unchanged. A legal counter does not evaluate a future
+gain that will never resolve. The exact turn aggregate now includes the wide
+positive events and remains below 2^95 on supported targets.
+
+The successor authenticates the actual observer input, loss interval, original
+source, held/published row, private pre-pop owner, removal and complete gain
+output. Panda's separate wide-gain capture feeds its existing amount-independent
+one-counter native owner. First-gain and loss-turn bookkeeping process each
+wide event once; losses still set the flag consumed by Harvester. Unsupported
+feature pools and raw wide batches refuse before member writes. The actual
+Snack and Conqueror issuers are scalar. Every direct core producer binds both
+new semantic child files with its existing ordered framing.
+
+Four new source groups use genuinely paid Snack/Conqueror/Panda histories at
+both seats, exact 2.2-billion loss/gain, serialized replay, forged capture/log
+refusals, an actual published-row counter and an explicit first-gain primitive.
+Herald protection and countering setup operands are labelled as primitives.
+Legacy public captures refuse wide histories. Explicit NextFive supplemental
+facts and the owning/model/Human/V6 bridge remain follow-on source work before
+five-card Full admission; the temporary native checkpoint does not claim that
+those consumers can yet execute a wide history. All five printings stay Partial.
+Formatting/static checks alone do not establish Rust compilation or runtime.

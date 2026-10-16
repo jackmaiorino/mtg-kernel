@@ -46,6 +46,7 @@ pub(crate) fn reset_at_untap(state: &mut GameState) {
 pub(crate) fn committed_loss_player(event: &CommittedEvent) -> Option<PlayerId> {
     match event {
         CommittedEvent::LifeLoss { player, amount } if *amount > 0 => Some(*player),
+        CommittedEvent::LifeLossWideV59 { player, amount } if *amount > 0 => Some(*player),
         CommittedEvent::Damage {
             target: crate::state::Target::Player(player),
             amount,

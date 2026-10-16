@@ -327,6 +327,14 @@ pub struct LifeLossProposed {
     pub touched_by: Vec<ReplacementId>,
 }
 
+/// Only the distinct Limited life successor constructs these exact operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WideLifeProposedV59 {
+    pub(crate) player: PlayerId,
+    pub(crate) amount: u32,
+    touched_by: Vec<ReplacementId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LifeGainProposed {
     pub player: PlayerId,
@@ -393,6 +401,8 @@ pub enum ProposedEvent {
     ManaAdd(ManaAddProposed),
     CreateToken(CreateTokenProposed),
     Transform(TransformProposed),
+    LifeLossWideV59(WideLifeProposedV59),
+    LifeGainWideV59(WideLifeProposedV59),
 }
 
 impl ProposedEvent {
@@ -565,6 +575,20 @@ impl ProposedEvent {
     pub fn life_payment(player: PlayerId, amount: i32) -> ProposedEvent {
         Self::life_loss(player, amount)
     }
+    pub(crate) fn life_loss_wide_v59(player: PlayerId, amount: u32) -> Self {
+        Self::LifeLossWideV59(WideLifeProposedV59 {
+            player,
+            amount,
+            touched_by: Vec::new(),
+        })
+    }
+    pub(crate) fn life_gain_wide_v59(player: PlayerId, amount: u32) -> Self {
+        Self::LifeGainWideV59(WideLifeProposedV59 {
+            player,
+            amount,
+            touched_by: Vec::new(),
+        })
+    }
     pub fn life_gain(player: PlayerId, amount: i32) -> ProposedEvent {
         ProposedEvent::LifeGain(LifeGainProposed {
             player,
@@ -627,6 +651,7 @@ impl ProposedEvent {
             ProposedEvent::Damage(e) => &e.touched_by,
             ProposedEvent::ZoneChange(e) => &e.touched_by,
             ProposedEvent::LifeLoss(e) => &e.touched_by,
+            ProposedEvent::LifeLossWideV59(e) | ProposedEvent::LifeGainWideV59(e) => &e.touched_by,
             ProposedEvent::LifeGain(e) => &e.touched_by,
             ProposedEvent::Draw(e) => &e.touched_by,
             ProposedEvent::Tap(e) => &e.touched_by,
@@ -641,6 +666,9 @@ impl ProposedEvent {
             ProposedEvent::Damage(e) => &mut e.touched_by,
             ProposedEvent::ZoneChange(e) => &mut e.touched_by,
             ProposedEvent::LifeLoss(e) => &mut e.touched_by,
+            ProposedEvent::LifeLossWideV59(e) | ProposedEvent::LifeGainWideV59(e) => {
+                &mut e.touched_by
+            }
             ProposedEvent::LifeGain(e) => &mut e.touched_by,
             ProposedEvent::Draw(e) => &mut e.touched_by,
             ProposedEvent::Tap(e) => &mut e.touched_by,
@@ -1937,6 +1965,35 @@ pub enum CommittedEvent {
         move_history_index: Option<u64>,
         source: crate::state::AbilitySourceContractV4,
     },
+    LifeLossWideV59 {
+        player: PlayerId,
+        amount: u32,
+    },
+    LifeGainWideV59 {
+        player: PlayerId,
+        amount: u32,
+    },
+    ConquerorObserverInputV59 {
+        input: Box<crate::snack_wide_life_v59::ObserverInputV59>,
+    },
+    ConquerorLossBatchV59 {
+        batch: Box<crate::snack_wide_life_v59::BatchV59>,
+    },
+    ConquerorCapturedV59 {
+        batch_history_index: u64,
+        observer_index: u64,
+    },
+    ConquerorCollectedV59 {
+        capture_history_index: u64,
+    },
+    ConquerorJournalV59 {
+        journal: Box<crate::snack_wide_life_v59::custody::JournalV59>,
+    },
+    FiendishPandaWideGainCaptureV59 {
+        source: crate::state::AbilitySourceContractV4,
+        gain_history_index: u64,
+        amount: u32,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3221,7 +3278,34 @@ pub(crate) fn damage_color_mask(state: &GameState, damage: &DamageProposed) -> u
 /// Convenience: replace/prevent then commit if anything survived. Lifelink
 /// is evaluated from the final damage amount and source immediately before
 /// that damage is committed.
+fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool {
+    let input = match event {
+        ProposedEvent::LifeLossWideV59(e) => Some((e, false)),
+        ProposedEvent::LifeGainWideV59(e) => Some((e, true)),
+        _ => None,
+    };
+    if let Some((e, gain)) = input {
+        if crate::snack_wide_life_v59::checked_life(
+            state.players[e.player.index()].life,
+            e.amount,
+            gain,
+        )
+        .is_err()
+        {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return false;
+        }
+    }
+    true
+}
+
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
     if unsupported_partial_token_v1(&event) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3241,6 +3325,9 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn propose_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
     if unsupported_partial_token_v1(&event) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3730,6 +3817,9 @@ pub(crate) fn propose_and_commit_gorehorn_owned(
 /// Applies the (possibly rewritten) proposal to `GameState` and appends the
 /// resulting `CommittedEvent` to the event log for this resolution.
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
     if unsupported_partial_token_v1(&event) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3749,6 +3839,9 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
 }
 
 pub(crate) fn commit_without_linked_aura_v1(state: &mut GameState, event: ProposedEvent) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
     if unsupported_partial_token_v1(&event) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -3885,6 +3978,12 @@ fn commit_with_entry_batch_and_source_color(
     entry_context: EntryContextWithSourceColorV1<'_>,
     mut progenitus_completions: Option<&mut Vec<crate::progenitus_v1::CompletionV1>>,
 ) {
+    if !preflight_wide_life_v59(state, &event) {
+        return;
+    }
+    let wide_conqueror = matches!(&event, ProposedEvent::LifeLossWideV59(_))
+        .then(|| crate::snack_wide_life_v59::RecorderV59::capture(state))
+        .flatten();
     let (
         mut entry_context,
         frozen_source_color,
@@ -4425,6 +4524,9 @@ fn commit_with_entry_batch_and_source_color(
     }
     crate::banishing_light_v1::record_entry(state, entry_history_index);
     crate::life_loss_turn_v1::capture_committed_loss_at(state, entry_history_index);
+    if let Some(batch) = wide_conqueror {
+        batch.finish(state);
+    }
     if let Some(batch) = conqueror_single {
         batch.finish(state);
     }
@@ -5182,6 +5284,30 @@ fn materialize_event_v1(
                 amount,
             }
         }
+        ProposedEvent::LifeLossWideV59(l) => {
+            state.players[l.player.index()].life = crate::snack_wide_life_v59::checked_life(
+                state.players[l.player.index()].life,
+                l.amount,
+                false,
+            )
+            .expect("preflighted wide loss");
+            CommittedEvent::LifeLossWideV59 {
+                player: l.player,
+                amount: l.amount,
+            }
+        }
+        ProposedEvent::LifeGainWideV59(g) => {
+            state.players[g.player.index()].life = crate::snack_wide_life_v59::checked_life(
+                state.players[g.player.index()].life,
+                g.amount,
+                true,
+            )
+            .expect("preflighted wide gain");
+            CommittedEvent::LifeGainWideV59 {
+                player: g.player,
+                amount: g.amount,
+            }
+        }
         ProposedEvent::LifeGain(g) => {
             if g.amount <= 0 {
                 return None;
@@ -5482,7 +5608,30 @@ struct MaterializedEventV1 {
 /// all of it happens at once); the caller is responsible for running SBAs
 /// / trigger collection exactly once after the whole batch (see
 /// `engine::deal_combat_damage`), not per event.
+// The two genuine wide issuers are scalar Snack resolution and its exact
+// Conqueror successor. No native batch issuer currently owns a wide operation.
+// Refuse unsupported raw batches before replacement, entry or member writes.
+fn preflight_wide_batch_v59(state: &mut GameState, events: &[ProposedEvent]) -> bool {
+    if events.iter().any(|event| {
+        matches!(
+            event,
+            ProposedEvent::LifeLossWideV59(_) | ProposedEvent::LifeGainWideV59(_)
+        )
+    }) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ObjectId(0),
+        ));
+        return false;
+    }
+    true
+}
+
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    if !preflight_wide_batch_v59(state, &events) {
+        return;
+    }
+
     if let Err(source) = crate::progenitus_v1::preview(state, &events) {
         halt_zone_pt_v1(state, source);
         return;
@@ -5568,6 +5717,9 @@ fn batch_with_aura_token_hosts_v1(
     kykar_permit: Option<&crate::effect::kykar_v1::TokenPermitV1<'_, '_>>,
     spirit_copy_permit: Option<&crate::effect::SpiritCopyPermitV1<'_, '_>>,
 ) {
+    if !preflight_wide_batch_v59(state, &events) {
+        return;
+    }
     if events.iter().any(unsupported_partial_token_v1)
         && kykar_permit.is_none_or(|p| !p.allows(state, &events))
         && spirit_copy_permit.is_none_or(|p| !p.allows(state, &events))
@@ -5820,6 +5972,9 @@ fn commit_batch_survivors(
     context: EntryBatchCommitContextV1,
     prepared_zone_plan: Option<FinalZonePtPlanV1>,
 ) {
+    if !preflight_wide_batch_v59(state, &survivors) {
+        return;
+    }
     if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
         || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
     {

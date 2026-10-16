@@ -141,9 +141,10 @@ pub(crate) fn exact_definition(d: &crate::card_def::CardDef) -> bool {
 
 /// Read the existing independently validated current-turn boundary. No running
 /// total, first-gain ordinal, public projection, or new journal is authority.
-// Each positive event is at most i32::MAX. A Vec allocation contains at most
+// Each positive gain event is at most u32::MAX, including the distinct wide
+// successor. A Vec allocation contains at most
 // isize::MAX bytes, hence fewer than 2^63 events on supported <=64-bit targets.
-// The exact positive sum is below 2^94 even without a narrower journal index.
+// The exact positive sum is below 2^95 even without a narrower journal index.
 pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<u128, String> {
     crate::life_loss_turn_v1::validate(state)?;
     let boundary = state
@@ -162,14 +163,12 @@ pub(crate) fn gained_this_turn(state: &GameState, player: PlayerId) -> Result<u1
     }
     state.engine.event_history[boundary + 1..]
         .iter()
-        .try_fold(0_u128, |total, e| match e {
-            CommittedEvent::LifeGain {
-                player: gained,
-                amount,
-            } if *gained == player && *amount > 0 => total
-                .checked_add(u128::from(amount.unsigned_abs()))
-                .ok_or_else(|| "Midnight Snack gain sum overflow".into()),
-            _ => Ok(total),
+        .filter_map(crate::snack_wide_life_v59::positive_gain)
+        .filter(|(gained, _)| *gained == player)
+        .try_fold(0_u128, |total, (_, amount)| {
+            total
+                .checked_add(u128::from(amount))
+                .ok_or_else(|| "Midnight Snack gain sum overflow".into())
         })
 }
 
@@ -186,7 +185,7 @@ fn legal_loss(
     state: &GameState,
     controller: PlayerId,
     targets: &[crate::state::Target],
-) -> Result<(PlayerId, i32), String> {
+) -> Result<(PlayerId, u32), String> {
     let [crate::state::Target::Player(target)] = targets else {
         return Err("Midnight Snack lost original opponent target".into());
     };
@@ -194,13 +193,10 @@ fn legal_loss(
         return Err("Midnight Snack target changed".into());
     }
     let total = gained_this_turn(state, controller)?;
-    // The existing one-event life-loss representation is checked separately
-    // from the exact turn aggregate. Its wide successor remains separate work.
-    let total = i32::try_from(total).map_err(|_| "Midnight Snack loss requires wide event")?;
-    state.players[target.index()]
-        .life
-        .checked_sub(total)
-        .ok_or("Midnight Snack life-total overflow")?;
+    let total = u32::try_from(total)
+        .map_err(|_| "Midnight Snack loss exceeds any native i32 life difference")?;
+    i32::try_from(i64::from(state.players[target.index()].life) - i64::from(total))
+        .map_err(|_| "Midnight Snack life-total overflow")?;
     Ok((*target, total))
 }
 pub(crate) fn acquire(
@@ -257,7 +253,12 @@ pub(crate) fn resolve(
         return Ok(());
     }
     let (target, total) = legal_loss(state, ctx.controller, &ctx.targets)?;
-    event::propose_and_commit(state, ProposedEvent::life_loss(target, total));
+    let event = if let Ok(amount) = i32::try_from(total) {
+        ProposedEvent::life_loss(target, amount)
+    } else {
+        ProposedEvent::life_loss_wide_v59(target, total)
+    };
+    event::propose_and_commit(state, event);
     Ok(())
 }
 

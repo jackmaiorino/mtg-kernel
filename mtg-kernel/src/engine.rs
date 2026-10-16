@@ -9918,6 +9918,7 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
     if crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)
         .is_err()
         || crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+        || crate::snack_wide_life_v59::validate(state).is_err()
         || crate::doubling_season_v48::validate_token_journals(state).is_err()
     {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
@@ -10014,7 +10015,9 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         let (mechanic, source) = state.engine.halted.expect("PT refusal halted");
         return Decision::Halted { mechanic, source };
     }
-    if crate::bloodthirsty_conqueror_v49::validate(state).is_err() {
+    if crate::bloodthirsty_conqueror_v49::validate(state).is_err()
+        || crate::snack_wide_life_v59::validate(state).is_err()
+    {
         let mechanic = UnsupportedMechanic::InvalidEffectContinuation;
         let source = ObjectId(0);
         state.engine.halted = Some((mechanic, source));
@@ -14455,6 +14458,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
     crate::high_society_hunter_custody_v45::publish(state, &finalized)?;
     crate::fiendish_panda_v1::custody::publish(state, &finalized)?;
     crate::bloodthirsty_conqueror_v49::custody::publish(state, &finalized)?;
+    crate::snack_wide_life_v59::custody::publish(state, &finalized)?;
     crate::cerberus_capture_v1::publish(state, &finalized)?;
     crate::banishing_light_v1::publish(state, &finalized)?;
     crate::stromkirk_dispatch_v1::publish(state, &finalized)?;
@@ -14956,6 +14960,7 @@ fn triggered_stack_item_expected_target_spec(
         inline_effect,
         ability_source_contract,
     )?;
+    crate::snack_wide_life_v59::validate_source(state, inline_effect, ability_source_contract)?;
     crate::arahbo_v1::validate_source(state, inline_effect, ability_source_contract)?;
     crate::fishing_pole_v39::lifecycle::validate_source(
         state,
@@ -15876,6 +15881,7 @@ pub(crate) fn counter_stack_item_by_id(
     let panda_counter_owner = crate::fiendish_panda_v1::custody::acquire(state, &item)?;
     let conqueror_counter_owner =
         crate::bloodthirsty_conqueror_v49::custody::acquire(state, &item)?;
+    let wide_conqueror_counter_owner = crate::snack_wide_life_v59::custody::acquire(state, &item)?;
     let stromkirk_counter_owner = crate::stromkirk_dispatch_v1::acquire(state, &item)?;
     let gourmand_counter_owner =
         crate::vampire_gourmand_dispatch_v2::acquire_counter(state, &item)?;
@@ -16027,6 +16033,11 @@ pub(crate) fn counter_stack_item_by_id(
     crate::bloodthirsty_conqueror_v49::custody::counter_removed(
         state,
         conqueror_counter_owner.as_ref(),
+        &item,
+    )?;
+    crate::snack_wide_life_v59::custody::counter_removed(
+        state,
+        wide_conqueror_counter_owner.as_ref(),
         &item,
     )?;
     crate::raid_entry_custody_v1::record_countered(state, raid_counter_owner)?;
@@ -16391,6 +16402,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let wide_conqueror_owner =
+        match crate::snack_wide_life_v59::custody::acquire_for_resolution(state, item) {
+            Ok(owner) => owner,
+            Err(_) => {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    resolving_source,
+                ));
+                return ResolutionProgress::Suspended;
+            }
+        };
     let panda_owner = match crate::fiendish_panda_v1::custody::acquire(state, item) {
         Ok(owner) => owner,
         Err(_) => {
@@ -17003,6 +17025,22 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     }
     if let Some(owner) = conqueror_owner.as_ref() {
         if crate::bloodthirsty_conqueror_v49::custody::resolve_owned(
+            state,
+            owner,
+            &item,
+            &ctx,
+            targets_legal,
+        )
+        .is_err()
+        {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
+    if let Some(owner) = wide_conqueror_owner.as_ref() {
+        if crate::snack_wide_life_v59::custody::resolve_owned(
             state,
             owner,
             &item,
@@ -20248,6 +20286,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::drake_hatcher_v1::custody::validate(state)?;
     crate::fake_your_own_death_v50::spell_custody::validate_retained_grant_history(state)?;
     crate::bloodthirsty_conqueror_v49::validate(state)?;
+    crate::snack_wide_life_v59::validate(state)?;
     crate::doubling_season_v48::validate_token_journals(state)?;
     crate::fiendish_panda_v1::validate_state(state)?;
     crate::effect::sphinx_lore_v1::validate_state(state)?;

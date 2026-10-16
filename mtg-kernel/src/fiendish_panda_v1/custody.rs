@@ -137,6 +137,7 @@ fn captures(state: &GameState) -> Vec<u64> {
             matches!(
                 e,
                 CommittedEvent::FiendishPandaLifeGainCaptureV1 { .. }
+                    | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
                     | CommittedEvent::FiendishPandaDeathCaptureV1 { .. }
             )
             .then_some(at as u64)
