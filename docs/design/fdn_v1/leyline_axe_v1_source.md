@@ -1,4 +1,4 @@
-# Leyline Axe native prerequisites, unregistered
+# Leyline Axe native Partial482
 
 Frozen FDN129, Scryfall b9c03336-a321-4c06-94d1-809f328fabd8,
 Oracle4f597675-0f6d-438c-990c-337171927a5e. Pinned Mage
@@ -9,10 +9,11 @@ The exact printing costs4, is artifact Equipment, gives equipped creature
 +1/+1, double strike and trample, equip3, and may begin on the battlefield
 if in its controller's kept opening hand.
 
-This checkpoint is an unregistered prerequisite. No native ID or placeholder
-row is appended while the genuine480/481 prerequisites are being completed.
-There is no paid Leyline fixture claim until actual registration and native
-paid fixture source are composed. No Full/owning/model/Human/wire admission.
+Actual Progenitus480 and Etali481 are composed before this real Partial482
+registration. The eight new native fixture groups use genuine initial event
+draws/London answers, paid4 casting, paid3 equip and paid Counterspell;
+lands/hosts and zone/control response primitives are labelled setup. No
+Full/owning/model/Human/wire admission.
 
 A distinct native checkpoint starts only after the actual fourteen opening
 draws, or completed native London keeps/bottoms, before turn one. The native
@@ -26,8 +27,14 @@ updates are atomic and restored input is validated before answering. The
 original protocol/enum prefixes and absent GameState serde/Hash are retained.
 Old projections refuse the unrepresented checkpoint, visible/effective Axe,
 and actual accepted opening entries, without examining hidden libraries or
-unrevealed opposing hand identities. Ordinary equipment mechanics will reuse
+unrevealed opposing hand identities. Ordinary equipment mechanics reuse
 the existing exact equip/attachment and combat-wave implementation.
 
 All Rust source remains uncompiled and unrun. Pinned formatting and static
 checks address source structure only, not native qualification.
+
+Source verification: pinned1.94.1 whole-workspace and explicit-child formatting,
+diff check, original290 registry-row prefix, unchanged frozen pool, original
+CommittedEvent prefix and100 explicit producer input pairs passed. Actual
+Python206 Limited tests and6 pool tests passed; all eight Rust groups remain
+uncompiled and unrun. These checks grant no consumer or Full admission.

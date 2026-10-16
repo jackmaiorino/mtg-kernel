@@ -16,6 +16,14 @@ pub struct OpeningV1 {
     input_history_index: u64,
     next: u32,
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "leyline_axe_v1_tests.rs"]
+mod tests;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputV1 {
