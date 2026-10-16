@@ -59,6 +59,18 @@ All Rust remains uncompiled and unrun.
 Existing Aegis handling of Electroduplicate's separate sacrifice multiplicity
 is unchanged and is not newly qualified by this checkpoint.
 
+The additional both-seat `genuine_paid_nightmare_native_aegis_layer_save_restore_and_paid_copy_values_both_seats`
+source fixture creates its Nightmare through a paid Harvester cast and native
+activation, then exercises the existing Aegis copy-value primitive with a paid
+Viridian Longbow as a physical stand-in. Attachment and linked donor exile are
+explicit native setup primitives, not a printed Longbow or paid Aegis ability.
+It checks both native `NightmareCopyLayerV1` transitions, unchanged physical
+host incarnation/owner, serialized restore and replay, stale operands and
+readonly layer corruption. Paid Self-Reflection sees the current plain copied
+form during the layer and the restored Nightmare exception afterward. This
+adds no public permission, catalog capability or runtime qualification. Rust
+remains uncompiled and unrun; sample harvesting has not been executed.
+
 The 100 existing engine/optional-trigger producer source arrays explicitly include
 the new helper and its consumed life-loss and Soul entry inputs exactly once,
 without changing their existing framing or source order.
