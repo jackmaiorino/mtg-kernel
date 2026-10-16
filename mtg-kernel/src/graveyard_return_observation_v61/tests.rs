@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    engine::{self, Action},
+    engine::{self, Action, Decision},
     graveyard_return_public_v61::tests::{announce, paid, quiet, ready, settle},
     policy_observation_v6::tests::put,
     state::{GameState, Target, Zone},
@@ -233,6 +233,11 @@ fn paid_raid_prompt_published_original_and_departure_lki_keep_exact_sources_both
         wrong.controller = actor.opponent();
         assert!(pending_source_reference(&state, &wrong).is_err());
         engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+        // Choosing records the answer; the native driver publishes the root.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
         let item = state.stack.iter().find(|i| i.source == alesha).unwrap();
         assert_eq!(
             stack_source_reference(&state, item)

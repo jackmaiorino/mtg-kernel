@@ -135,12 +135,23 @@ fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), 
         })
         || state.engine.event_history.iter().any(|e| match e {
             E::ControlledCreatureDeathCaptureV1 { source, .. } => unsupported(source.card_def),
-            // A genuine ordinary cast publicly announced its physical printing.
-            // This does not reveal any later hidden incarnation in the DTO.
-            E::SpellCast { spell, .. } => state
-                .objects
-                .try_get(*spell)
-                .is_some_and(|o| unsupported(o.card_def)),
+            // Native SpellCast is logged only after successful finalization,
+            // never for an uncast spell copy. Its bare marker does not identify
+            // a disguised printing. The native face-down cast route requires
+            // this exact definition-owned alternative, so only definitions
+            // without that route can supply historical public identity here.
+            // A later zone change keeps the physical definition, not its old
+            // incarnation metadata; no later hidden reference is published.
+            E::SpellCast { spell, .. } => state.objects.try_get(*spell).is_some_and(|o| {
+                unsupported(o.card_def)
+                    && crate::card_def::CARD_DEFS
+                        .get(usize::from(o.card_def))
+                        .is_some_and(|d| {
+                            !d.alt_cost.is_some_and(|alt| {
+                                alt.condition == crate::card_def::AltCostCondition::DisguiseFromHand
+                            })
+                        })
+            }),
             _ => false,
         });
     if visible || retained {
