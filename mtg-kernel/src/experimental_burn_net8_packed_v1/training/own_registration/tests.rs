@@ -602,11 +602,24 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
             assert_eq!(after.1, initial);
         } else {
             assert_eq!(after.1.adam_step, 1);
-            assert!(after.1.weights.iter().any(|v| *v != 0));
+            assert!(after.1.weights.iter().any(|v| f32::from_bits(*v) != 0.0));
         }
         // Learned nonzero W is checked against the CPU successor before its
         // next update. Baseline takes this same path with the projection off.
         let learned_cpu = cpu_packet_outputs(&after.0, &after.1, &views, &rows, &expected);
+        if let Some(mode) = arm {
+            let without_projection = cpu_packet_outputs(
+                &after.0,
+                &ProjectionSnapshot::zero(mode).unwrap(),
+                &views,
+                &rows,
+                &expected,
+            );
+            assert_ne!(
+                learned_cpu, without_projection,
+                "learned W has no CPU output effect"
+            );
+        }
         let uploaded = RegistrationBatch::upload(&rows, &batch, state.mode).unwrap();
         let model = RegistrationModel {
             base: state.legacy.model.clone(),
@@ -661,6 +674,10 @@ fn registration_cuda_zero_w_inherited_gradient_update_and_resume_parity() {
         }
         let uninterrupted = state.snapshot().unwrap();
         let resumed = resumed_state.snapshot().unwrap();
+        for result in [&uninterrupted, &resumed] {
+            assert_eq!(result.0.adam_step, legacy.adam_step + 2);
+            assert_eq!(result.1.adam_step, if arm.is_some() { 2 } else { 0 });
+        }
         assert_eq!(
             snapshot::encode(&uninterrupted.0, &uninterrupted.1).unwrap(),
             snapshot::encode(&resumed.0, &resumed.1).unwrap(),
