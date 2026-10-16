@@ -439,6 +439,7 @@ fn paid_combat_capture_publication_restore_departure_and_single_consumption_both
 fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, source) = paid(actor);
+        advance_to_next_main_for(&mut state, actor);
         publish_from_primitive(&mut state, source, actor.opponent(), 3);
         let row = state.stack.last().unwrap().clone();
         let capture = event::validate_lathril_trigger_v1(&state, &row).unwrap();
@@ -494,6 +495,84 @@ fn paid_capture_direct_api_and_readonly_history_row_forgeries_both_seats() {
             assert!(resume_resumable_resolution(&mut direct).is_err());
             assert_eq!(direct, unchanged);
         }
+        // Retain the genuine supplied/public item stamp and publication while
+        // erasing the independent context stamp and changing root, kind and stage.
+        // This formerly selected the public Draw driver instead of refusing.
+        let draw = EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        };
+        let mut erased_ctx = ctx.clone();
+        erased_ctx.stack_item_id = None;
+        let mut changed_item = row.clone();
+        changed_item.kind = StackItemKind::Spell;
+        changed_item.inline_effect = Some(draw.clone());
+        let mut direct = state.clone();
+        assert!(
+            begin_resumable_resolution(&draw, &erased_ctx, changed_item.clone(), &mut direct)
+                .is_err()
+        );
+        assert_eq!(direct, state);
+        execute(&draw, &erased_ctx, &mut direct);
+        assert!(direct.engine.halted.is_some());
+        direct.engine.halted = None;
+        assert_eq!(direct, state);
+        direct.engine.pending_effect = Some(EffectContinuation {
+            resolving_item: changed_item,
+            ctx: erased_ctx.clone(),
+            frames: vec![EffectFrame::Program {
+                op: draw.clone(),
+                path: vec![],
+            }],
+            choice: None,
+            answered_choice_guard: None,
+        });
+        let unchanged = direct.clone();
+        assert!(validate_pending_effect_choice(&direct).is_err());
+        assert!(resume_resumable_resolution(&mut direct).is_err());
+        assert_eq!(direct, unchanged);
+        execute(&draw, &erased_ctx, &mut direct);
+        assert!(direct.engine.halted.is_some());
+        direct.engine.halted = None;
+        assert_eq!(direct, unchanged);
+
+        // A different genuine activation by that same source remains ordinary,
+        // even while this combat trigger and its original public row wait below it.
+        let mut activated = state.clone();
+        let elves = create_elves(&mut activated, actor); // explicit native token setup
+        engine::step(&mut activated, Action::ActivateAbility(source, 0)).unwrap();
+        for &elf in &elves[..10] {
+            assert!(
+                matches!(engine::advance_until_decision(&mut activated), Decision::ChooseCostTargets { ref candidates, .. } if candidates.contains(&elf))
+            );
+            engine::step(&mut activated, Action::ChooseCostTarget(elf)).unwrap();
+        }
+        engine::advance_until_decision(&mut activated);
+        assert_eq!(
+            activated.stack.last().unwrap().kind,
+            StackItemKind::ActivatedAbility
+        );
+        assert_ne!(
+            activated.stack.last().unwrap().v4.stack_item_id,
+            row.v4.stack_item_id
+        );
+        assert!(activated.stack.iter().any(|item| item == &row));
+        let life = activated.players.each_ref().map(|player| player.life);
+        finish(&mut activated);
+        assert_eq!(
+            activated.players[actor.index()].life,
+            life[actor.index()] + 10
+        );
+        assert_eq!(
+            activated.players[actor.opponent().index()].life,
+            life[actor.opponent().index()] - 10
+        );
+        assert_eq!(tokens(&activated, actor), 14);
+        assert!(activated.objects.get(source).tapped);
+        assert!(elves[..10]
+            .iter()
+            .all(|&elf| activated.objects.get(elf).tapped));
+
         for mode in 0..10 {
             let mut forged = state.clone();
             match mode {

@@ -4240,6 +4240,7 @@ pub fn begin_resumable_resolution(
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
     if lathril_context_v1(state, ctx.stack_item_id)
+        || event::lathril_item_selected_v1(state, &resolving_item)
         || matches!(
             op,
             EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
@@ -4369,10 +4370,7 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         lathril_context_v1(state, p.ctx.stack_item_id)
-            || matches!(
-                p.resolving_item.inline_effect,
-                Some(EffectOp::LathrilCombatTokensV1 { .. })
-            )
+            || event::lathril_item_selected_v1(state, &p.resolving_item)
     }) {
         return Err("Lathril has no public resumable continuation".into());
     }
@@ -9664,10 +9662,7 @@ fn validate_aberration_continuation_v1(
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         lathril_context_v1(state, p.ctx.stack_item_id)
-            || matches!(
-                p.resolving_item.inline_effect,
-                Some(EffectOp::LathrilCombatTokensV1 { .. })
-            )
+            || event::lathril_item_selected_v1(state, &p.resolving_item)
     }) {
         return Err("Lathril has no public resumable continuation".into());
     }
@@ -18344,7 +18339,20 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if state.engine.halted.is_some() {
         return;
     }
-    if lathril_context_v1(state, ctx.stack_item_id) {
+    if lathril_context_v1(state, ctx.stack_item_id)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(|pending| event::lathril_item_selected_v1(state, &pending.resolving_item))
+        || (ctx.stack_item_id.is_none()
+            && state.stack.iter().any(|item| {
+                event::lathril_item_selected_v1(state, item)
+                    && (item.source == ctx.source
+                        || item.v4.ability_source_contract.is_some()
+                            && item.v4.ability_source_contract == ctx.ability_source_contract)
+            }))
+    {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             ctx.source,
