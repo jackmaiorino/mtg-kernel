@@ -268,8 +268,12 @@ fn counters(
         revival,
         fellowship,
     } = live.counters;
-    if fellowship != 0 {
+    if fellowship != 0 && scope != crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
         return Err(error("V53 does not expose fellowship counters"));
+    }
+    if scope == crate::optional_trigger_public_v1::CounterScopeV61::CallV62 {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
+            .map_err(error)?;
     }
     if scope == crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61 {
         crate::graveyard_return_public_v61::counter_values(state, id).map_err(error)?;
@@ -636,6 +640,12 @@ pub(crate) fn capture_complete_v61(state: &GameState) -> Result<FactsV53, RlCont
     capture_scoped(
         state,
         crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61,
+    )
+}
+pub(crate) fn capture_complete_call_v62(state: &GameState) -> Result<FactsV53, RlContractError> {
+    capture_scoped(
+        state,
+        crate::optional_trigger_public_v1::CounterScopeV61::CallV62,
     )
 }
 fn capture_scoped(

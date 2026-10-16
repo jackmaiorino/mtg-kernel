@@ -462,6 +462,24 @@ pub(crate) fn observe_parts_complete_graveyard_return_v61(
         crate::rl::CommonProjectionScopeV42::GraveyardReturnV61,
     )
 }
+pub(crate) fn observe_parts_complete_call_v62(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &crate::policy_surface_v5::PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<RavenousPublicPartsV51, RlContractError> {
+    observe_parts_complete_current_scope(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::rl::CommonProjectionScopeV42::CallV62,
+    )
+}
 fn observe_parts_complete_current_scope(
     state: &GameState,
     surface: &PolicySurfaceV5,
@@ -534,6 +552,10 @@ fn observe_parts_complete_current_scope_using_family_builder(
         crate::rl::CommonProjectionScopeV42::GraveyardReturnV61 => (
             crate::graveyard_return_observation_v61::COMMON_SCHEMA,
             crate::graveyard_return_observation_v61::producer_sha256(),
+        ),
+        crate::rl::CommonProjectionScopeV42::CallV62 => (
+            crate::call_observation_v62::COMMON_SCHEMA,
+            crate::call_observation_v62::producer_sha256(),
         ),
         _ => return Err(RlContractError("wrong complete compatibility scope".into())),
     };
@@ -705,6 +727,12 @@ impl RavenousObservationV51 {
         self.validate_artifact_identity(
             crate::graveyard_return_observation_v61::COMMON_SCHEMA,
             &crate::graveyard_return_observation_v61::producer_sha256(),
+        )
+    }
+    pub(crate) fn validate_call_compatibility_v62(&self) -> Result<(), RlContractError> {
+        self.validate_artifact_identity(
+            crate::call_observation_v62::COMMON_SCHEMA,
+            &crate::call_observation_v62::producer_sha256(),
         )
     }
     fn validate_artifact_identity(

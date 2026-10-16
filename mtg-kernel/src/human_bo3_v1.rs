@@ -389,3 +389,12 @@ mod tests;
 pub use eaten_v46::{
     HumanDecisionEatenV46, HumanEatenProjectorV46, HumanEatenSessionV46, HumanEatenSnapshotV46,
 };
+
+pub mod call_v62;
+mod limited_call_v8;
+pub use call_v62::{
+    HumanCallProjectorV62, HumanCallSessionV62, HumanCallSnapshotV62, HumanDecisionCallV62,
+    HumanVisibleStateCallV62,
+};
+pub(crate) use limited_call_v8::project_limited_call_v8;
+pub use limited_call_v8::LimitedCallDecisionV8;

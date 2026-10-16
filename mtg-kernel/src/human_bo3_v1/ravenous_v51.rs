@@ -527,6 +527,7 @@ fn label(
     graveyard_return: Option<
         &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
     >,
+    call: Option<&crate::call_observation_v62::CallObservationV62>,
 ) -> Result<String, Error> {
     if let Some(label) = ravenous_facts::label(action, observation, handles, human)? {
         return Ok(label);
@@ -852,6 +853,9 @@ fn label(
         return Ok(label);
     }
     let parts = parts(observation);
+    if let Some(obs) = call {
+        return super::labels::label_parts_call_v62(action, &parts, handles, human, obs);
+    }
     if let Some(obs) = graveyard_return {
         return super::labels::label_parts_graveyard_return_v61(
             action, &parts, handles, human, obs,
@@ -875,6 +879,7 @@ pub(super) fn project_base_with_handles(
         human,
         families,
         true,
+        None,
         None,
         None,
         None,
@@ -931,6 +936,7 @@ pub(super) fn project_elenda_base_with_handles(
         None,
         None,
         None,
+        None,
     )?;
     let state = exact_state::project(state, observation, &handles)?;
     Ok((state, actions, indexes, handles))
@@ -960,6 +966,7 @@ pub(super) fn project_prepared_base_with_handles(
         true,
         Some(&observation.common.elenda),
         Some(observation),
+        None,
         None,
         None,
     )?;
@@ -1002,6 +1009,7 @@ pub(super) fn project_next_five_base_with_handles(
         None,
         Some(observation),
         None,
+        None,
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
     let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
@@ -1018,6 +1026,46 @@ pub(super) fn project_next_five_base_with_handles(
 
 /// The complete V61 validator owns all compatibility artifacts. No legacy
 /// validator or predecessor envelope grants access to revival-bearing state.
+pub(super) fn project_call_base_with_handles(
+    candidates: &crate::call_candidates_v62::CallCandidatesV62,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        None,
+        Some(candidates),
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
 pub(super) fn project_graveyard_return_base_with_handles(
     candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
     actions: &[ActionSemanticV1],
@@ -1043,6 +1091,7 @@ pub(super) fn project_graveyard_return_base_with_handles(
         None,
         None,
         Some(candidates),
+        None,
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
     let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
@@ -1076,15 +1125,28 @@ fn project_with_handles(
     graveyard_candidates: Option<
         &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
     >,
+    call_candidates: Option<&crate::call_candidates_v62::CallCandidatesV62>,
 ) -> Result<ProjectionWithHandles, Error> {
     let graveyard_return = graveyard_candidates.map(|v| &v.observation);
+    let call = call_candidates.map(|v| &v.observation);
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    if let Some(obs) = graveyard_return {
+    if let Some(obs) = call {
+        crate::call_observation_v62::validate_artifact(obs)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &obs.common.common != observation
+            || Some(&obs.common.elenda) != elenda
+            || graveyard_return.is_some()
+            || next_five.is_some()
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(obs) = graveyard_return {
         crate::graveyard_return_observation_v61::validate_artifact(obs)
             .map_err(|_| Error::InvalidVisibleReference)?;
         if &obs.common.common != observation
@@ -1155,10 +1217,20 @@ fn project_with_handles(
     let next_five_facts = next_five
         .map(|o| &o.next_five)
         .or_else(|| graveyard_return.map(|o| &o.next_five))
+        .or_else(|| call.map(|o| &o.next_five))
         .map(|facts| super::next_five_v59::register(facts, &mut handles))
         .transpose()?;
     let graveyard_facts = graveyard_return
         .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
+        .transpose()?;
+    let graveyard_facts = match graveyard_facts {
+        Some(v) => Some(v),
+        None => call
+            .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
+            .transpose()?,
+    };
+    let call_facts = call
+        .map(|obs| super::call_v62::call_facts(&obs.call, &mut handles))
         .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
@@ -1213,7 +1285,16 @@ fn project_with_handles(
     for row in &observation.eaten.payments {
         handles.insert(&row.source_at_payment)?;
     }
-    let prepared_facts = if let Some(obs) = graveyard_return {
+    let prepared_facts = if let Some(obs) = call {
+        Some(super::prepared_v57::facts_parts(
+            &obs.drake,
+            &obs.spinner,
+            &obs.quandary,
+            &obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else if let Some(obs) = graveyard_return {
         Some(super::prepared_v57::facts_parts(
             &obs.drake,
             &obs.spinner,
@@ -1434,11 +1515,19 @@ fn project_with_handles(
     if let Some(facts) = &prepared_facts {
         if let Some(next_five) = &next_five_facts {
             if let Some(graveyard) = &graveyard_facts {
-                handles.canonicalize_parts_with_prepared(
-                    &initial,
-                    unary,
-                    &(facts, next_five, graveyard),
-                )?;
+                if let Some(call) = &call_facts {
+                    handles.canonicalize_parts_with_prepared(
+                        &initial,
+                        unary,
+                        &(facts, next_five, graveyard, call),
+                    )?;
+                } else {
+                    handles.canonicalize_parts_with_prepared(
+                        &initial,
+                        unary,
+                        &(facts, next_five, graveyard),
+                    )?;
+                }
             } else {
                 handles.canonicalize_parts_with_prepared(&initial, unary, &(facts, next_five))?;
             }
@@ -1454,7 +1543,11 @@ fn project_with_handles(
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                if let Some(row)=graveyard_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
+                if let Some(row)=call_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
+                    let source=handles.name(&row.source)?;
+                    format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
+                } else if let Some(label) = call.map(|obs|super::call_v62::choice_label(obs,action,&handles)).transpose()?.flatten() { label
+                } else if let Some(row)=graveyard_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
                     let source=handles.name(&row.source)?;
                     format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
                 } else if let Some(label) = graveyard_return.map(|obs|super::graveyard_return_v61::choice_label(obs,action,&handles)).transpose()?.flatten() {
@@ -1503,6 +1596,7 @@ fn project_with_handles(
                             families,
                             next_five.map(|value| &value.next_five),
                             graveyard_return,
+                            call,
                         )?,
                     }
                 } else {
@@ -1514,6 +1608,7 @@ fn project_with_handles(
                         families,
                         next_five.map(|value| &value.next_five),
                         graveyard_return,
+                        call,
                     )?
                 },
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,

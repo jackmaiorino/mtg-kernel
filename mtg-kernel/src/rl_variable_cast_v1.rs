@@ -90,6 +90,7 @@ pub(crate) fn candidates_conqueror_scoped_v49(
         accept_panda,
         accept_conqueror,
         false,
+        false,
     )
 }
 
@@ -109,6 +110,7 @@ pub(crate) fn candidates_fake_scoped_v50(
         (accept_hunter, accept_panda, accept_conqueror, accept_fake),
         false,
         false,
+        false,
     )
 }
 pub(crate) fn candidates_next_five_v59(
@@ -122,6 +124,7 @@ pub(crate) fn candidates_next_five_v59(
         decision,
         (true, true, true, true),
         true,
+        false,
         false,
     )
 }
@@ -138,6 +141,23 @@ pub(crate) fn candidates_graveyard_return_v61(
         (true, true, true, true),
         true,
         true,
+        false,
+    )
+}
+pub(crate) fn candidates_call_v62(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    decision: &PolicyDecisionV5,
+) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
+    crate::call_observation_v62::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope(
+        state,
+        surface,
+        decision,
+        (true, true, true, true),
+        true,
+        true,
+        true,
     )
 }
 fn candidates_current_scope(
@@ -147,6 +167,7 @@ fn candidates_current_scope(
     capabilities: (bool, bool, bool, bool),
     accept_next_five: bool,
     accept_graveyard_return: bool,
+    accept_call: bool,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
     let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
 
@@ -349,7 +370,9 @@ fn candidates_current_scope(
                 }
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
-                let old = if accept_graveyard_return {
+                let old = if accept_call {
+                    crate::rl::core_policy_action_candidates_call_v62(decision, state)?
+                } else if accept_graveyard_return {
                     crate::rl::core_policy_action_candidates_graveyard_return_v61(decision, state)?
                 } else if accept_next_five {
                     crate::rl::core_policy_action_candidates_next_five_v59(decision, state)?

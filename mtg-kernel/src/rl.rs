@@ -2023,6 +2023,7 @@ enum ObservationTextModeV2 {
     PreparedV57Artifact,
     NextFiveV59Artifact,
     GraveyardReturnV61Artifact,
+    CallV62Artifact,
 }
 
 impl ObservationTextModeV2 {
@@ -2031,6 +2032,7 @@ impl ObservationTextModeV2 {
             Self::PreparedV57Artifact => Some(CommonProjectionScopeV42::PreparedV57),
             Self::NextFiveV59Artifact => Some(CommonProjectionScopeV42::NextFiveV59),
             Self::GraveyardReturnV61Artifact => Some(CommonProjectionScopeV42::GraveyardReturnV61),
+            Self::CallV62Artifact => Some(CommonProjectionScopeV42::CallV62),
             _ => None,
         }
     }
@@ -2041,7 +2043,8 @@ impl ObservationTextModeV2 {
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
-            | Self::GraveyardReturnV61Artifact => KERNEL_VERSION.to_string(),
+            | Self::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact => KERNEL_VERSION.to_string(),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2052,7 +2055,8 @@ impl ObservationTextModeV2 {
             | Self::RavenousV51Artifact
             | Self::PreparedV57Artifact
             | Self::NextFiveV59Artifact
-            | Self::GraveyardReturnV61Artifact => card_name(card_id),
+            | Self::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact => card_name(card_id),
             Self::FlatForbiddenElided => String::new(),
         }
     }
@@ -2211,7 +2215,17 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
-    if text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+    if text_mode != ObservationTextModeV2::CallV62Artifact {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+    ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -2219,6 +2233,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -2230,6 +2245,7 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
             | ObservationTextModeV2::PreparedV57Artifact
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -3648,6 +3664,7 @@ pub(crate) enum CommonProjectionScopeV42 {
     PreparedV57,
     NextFiveV59,
     GraveyardReturnV61,
+    CallV62,
 }
 
 /// Classification of a caller-declared mainboard, never cast permission or a
@@ -3677,8 +3694,16 @@ pub(crate) fn require_declared_cards_for_scope(
                 scope,
                 CommonProjectionScopeV42::NextFiveV59
                     | CommonProjectionScopeV42::GraveyardReturnV61
+                    | CommonProjectionScopeV42::CallV62
             ))
-            || (graveyard && scope != CommonProjectionScopeV42::GraveyardReturnV61)
+            || (graveyard
+                && !matches!(
+                    scope,
+                    CommonProjectionScopeV42::GraveyardReturnV61
+                        | CommonProjectionScopeV42::CallV62
+                ))
+            || (id == 459 && scope != CommonProjectionScopeV42::CallV62)
+            || (scope == CommonProjectionScopeV42::CallV62 && id >= 460)
         {
             return Err("declared mainboard requires its distinct complete consumer".into());
         }
@@ -3836,6 +3861,7 @@ fn common_family_observation_storage_with_proof(
         CommonProjectionScopeV42::GraveyardReturnV61 => {
             crate::graveyard_return_observation_v61::validate_state(state)
         }
+        CommonProjectionScopeV42::CallV62 => crate::call_observation_v62::validate_state(state),
         CommonProjectionScopeV42::PreparedV57 => {
             crate::prepared_observation_v57::validate_state(state)
         }
@@ -3867,6 +3893,7 @@ fn common_family_observation_storage_with_proof(
             | CommonProjectionScopeV42::PreparedV57
             | CommonProjectionScopeV42::NextFiveV59
             | CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
     );
     build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         (
@@ -3878,7 +3905,9 @@ fn common_family_observation_storage_with_proof(
                 physical_decision_id: physical,
                 substep_index: substep.0,
                 substep_count: substep.1,
-                text_mode: if scope == CommonProjectionScopeV42::GraveyardReturnV61 {
+                text_mode: if scope == CommonProjectionScopeV42::CallV62 {
+                    ObservationTextModeV2::CallV62Artifact
+                } else if scope == CommonProjectionScopeV42::GraveyardReturnV61 {
                     ObservationTextModeV2::GraveyardReturnV61Artifact
                 } else if scope == CommonProjectionScopeV42::NextFiveV59 {
                     ObservationTextModeV2::NextFiveV59Artifact
@@ -3908,6 +3937,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::PreparedV57
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
                     ),
                     matches!(
                         scope,
@@ -3921,6 +3951,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::PreparedV57
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
                     ),
                     matches!(
                         scope,
@@ -3933,6 +3964,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::PreparedV57
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
                     ),
                     matches!(
                         scope,
@@ -3944,6 +3976,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::PreparedV57
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
                     ),
                     matches!(
                         scope,
@@ -3954,6 +3987,7 @@ fn common_family_observation_storage_with_proof(
                             | CommonProjectionScopeV42::PreparedV57
                             | CommonProjectionScopeV42::NextFiveV59
                             | CommonProjectionScopeV42::GraveyardReturnV61
+                            | CommonProjectionScopeV42::CallV62
                     ),
                 ),
                 matches!(
@@ -3964,6 +3998,7 @@ fn common_family_observation_storage_with_proof(
                         | CommonProjectionScopeV42::PreparedV57
                         | CommonProjectionScopeV42::NextFiveV59
                         | CommonProjectionScopeV42::GraveyardReturnV61
+                        | CommonProjectionScopeV42::CallV62
                 ),
             ),
         ),
@@ -3986,6 +4021,7 @@ fn common_family_observation_storage_with_proof(
                 | CommonProjectionScopeV42::PreparedV57
                 | CommonProjectionScopeV42::NextFiveV59
                 | CommonProjectionScopeV42::GraveyardReturnV61
+                | CommonProjectionScopeV42::CallV62
         ),
         conqueror_proof,
     )
@@ -4534,7 +4570,17 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         proof.require_state(request.0.state)?;
     }
 
-    if request.0.text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+    if request.0.text_mode != ObservationTextModeV2::CallV62Artifact {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            request.0.state,
+            Some(request.0.acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        request.0.text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+    ) {
         crate::graveyard_return_public_v61::require_legacy_visible(
             request.0.state,
             Some(request.0.acting_player),
@@ -4545,6 +4591,7 @@ fn build_policy_observation_storage_common_fishing_v39_conqueror_v49_fake_v50(
         request.0.text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(
             request.0.state,
@@ -5111,7 +5158,17 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
     crate::effect::curator_v1::refuse_legacy(state).map_err(RlContractError)?;
     crate::effect::loot_v1::refuse_legacy(state).map_err(RlContractError)?;
 
-    if text_mode != ObservationTextModeV2::GraveyardReturnV61Artifact {
+    if text_mode != ObservationTextModeV2::CallV62Artifact {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            Some(acting_player),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        text_mode,
+        ObservationTextModeV2::GraveyardReturnV61Artifact | ObservationTextModeV2::CallV62Artifact
+    ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
     }
@@ -5119,6 +5176,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
         text_mode,
         ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5130,6 +5188,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             | ObservationTextModeV2::PreparedV57Artifact
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::ravenous_amulet_v1::require_legacy_consumer(state, Some(acting_player))
             .map_err(RlContractError)?;
@@ -5408,6 +5467,7 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
                                     | ObservationTextModeV2::PreparedV57Artifact
                                     | ObservationTextModeV2::NextFiveV59Artifact
                                     | ObservationTextModeV2::GraveyardReturnV61Artifact
+                                    | ObservationTextModeV2::CallV62Artifact
                             ) && crate::ravenous_amulet_v1::definition(object.card_def)
                             {
                                 return Err(RlContractError(
@@ -5785,13 +5845,25 @@ fn core_policy_action_candidates_next_five_scoped_v59(
     accept_fake: bool,
     scope: CommonProjectionScopeV42,
 ) -> Result<Vec<CorePolicyActionCandidateV1>> {
-    if scope != CommonProjectionScopeV42::GraveyardReturnV61 {
+    if scope != CommonProjectionScopeV42::CallV62 {
+        crate::graveyard_return_public_v61::require_call_legacy_visible_v62(
+            state,
+            decision.actor(state),
+        )
+        .map_err(RlContractError)?;
+    }
+    if !matches!(
+        scope,
+        CommonProjectionScopeV42::GraveyardReturnV61 | CommonProjectionScopeV42::CallV62
+    ) {
         crate::graveyard_return_public_v61::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
     }
     if !matches!(
         scope,
-        CommonProjectionScopeV42::NextFiveV59 | CommonProjectionScopeV42::GraveyardReturnV61
+        CommonProjectionScopeV42::NextFiveV59
+            | CommonProjectionScopeV42::GraveyardReturnV61
+            | CommonProjectionScopeV42::CallV62
     ) {
         crate::next_five_public_v59::require_legacy_visible(state, decision.actor(state))
             .map_err(RlContractError)?;
@@ -9167,6 +9239,7 @@ fn public_card_v2(
                 | ObservationTextModeV2::PreparedV57Artifact
                 | ObservationTextModeV2::NextFiveV59Artifact
                 | ObservationTextModeV2::GraveyardReturnV61Artifact
+                | ObservationTextModeV2::CallV62Artifact
         ) && object.zone == Zone::Battlefield)
     {
         return Err(RlContractError(
@@ -9195,6 +9268,9 @@ pub(crate) fn public_card_graveyard_return_compat_v61(
     id: ObjectId,
 ) -> Result<CardPublicV2> {
     public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::GraveyardReturnV61Artifact)
+}
+pub(crate) fn public_card_call_compat_v62(state: &GameState, id: ObjectId) -> Result<CardPublicV2> {
+    public_card_v2_non_soul_fields(state, id, ObservationTextModeV2::CallV62Artifact)
 }
 pub(crate) fn policy_observation_extensions_prepared_v57(
     state: &GameState,
@@ -9270,6 +9346,21 @@ pub(crate) fn core_policy_action_candidates_graveyard_return_v61(
         CommonProjectionScopeV42::GraveyardReturnV61,
     )
 }
+pub(crate) fn core_policy_action_candidates_call_v62(
+    decision: &PolicyDecisionV5,
+    state: &GameState,
+) -> Result<Vec<CorePolicyActionCandidateV1>> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    core_policy_action_candidates_next_five_scoped_v59(
+        decision,
+        state,
+        true,
+        true,
+        true,
+        true,
+        CommonProjectionScopeV42::CallV62,
+    )
+}
 
 fn public_card_v2_non_soul_fields(
     state: &GameState,
@@ -9281,6 +9372,7 @@ fn public_card_v2_non_soul_fields(
         ObservationTextModeV2::PreparedV57Artifact
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -9288,7 +9380,10 @@ fn public_card_v2_non_soul_fields(
         .objects
         .try_get(id)
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
-    if text_mode == ObservationTextModeV2::GraveyardReturnV61Artifact {
+    if text_mode == ObservationTextModeV2::CallV62Artifact {
+        crate::graveyard_return_public_v61::counter_values_call_compat_v62(state, id)
+            .map_err(RlContractError)?;
+    } else if text_mode == ObservationTextModeV2::GraveyardReturnV61Artifact {
         crate::graveyard_return_public_v61::counter_values(state, id).map_err(RlContractError)?;
     } else {
         require_legacy_public_counter_schema(state, id)?;
@@ -9304,6 +9399,7 @@ fn public_card_v2_non_soul_fields(
                 | ObservationTextModeV2::PreparedV57Artifact
                 | ObservationTextModeV2::NextFiveV59Artifact
                 | ObservationTextModeV2::GraveyardReturnV61Artifact
+                | ObservationTextModeV2::CallV62Artifact
         ) && (object.v4.face_index == 1
             || card_effective_identity_v1(state, id).is_some()
             || crate::continuous_characteristics_v1::creature_override(state, id).is_some())
@@ -9430,6 +9526,7 @@ fn private_card(
         ObservationTextModeV2::PreparedV57Artifact
             | ObservationTextModeV2::NextFiveV59Artifact
             | ObservationTextModeV2::GraveyardReturnV61Artifact
+            | ObservationTextModeV2::CallV62Artifact
     ) {
         crate::drake_hatcher_v1::require_public_counter(state, id).map_err(RlContractError)?;
     }
@@ -10659,6 +10756,9 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                 let prepared_source = match prepared_scope {
                     Some(CommonProjectionScopeV42::NextFiveV59) => {
                         crate::next_five_observation_v59::pending_source_reference(state, p)?
+                    }
+                    Some(CommonProjectionScopeV42::CallV62) => {
+                        crate::call_observation_v62::pending_source_reference(state, p)?
                     }
                     Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
                         crate::graveyard_return_observation_v61::pending_source_reference(state, p)?
@@ -11993,6 +12093,9 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     let prepared_source = match prepared_scope {
         Some(CommonProjectionScopeV42::NextFiveV59) => {
             crate::next_five_observation_v59::stack_source_reference(state, item)?
+        }
+        Some(CommonProjectionScopeV42::CallV62) => {
+            crate::call_observation_v62::stack_source_reference(state, item)?
         }
         Some(CommonProjectionScopeV42::GraveyardReturnV61) => {
             crate::graveyard_return_observation_v61::stack_source_reference(state, item)?
