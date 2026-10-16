@@ -31722,6 +31722,14 @@ mod tests {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
+#[path = "engine/harvester_cast_reversal_v1_tests.rs"]
+mod harvester_cast_reversal_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 mod divine_variable_targeting_tests;
 
 #[cfg(all(
