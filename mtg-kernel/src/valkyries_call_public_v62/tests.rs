@@ -385,6 +385,7 @@ fn independent_hidden_worlds_neutral_face_down_and_all17_counter_storage_primiti
                 disguised: false,
                 lookers: 0,
                 hidden_by: None,
+                hidden_by_source: None,
             });
             let call = paid(&mut state, actor, "Valkyrie's Call", None);
             (state, call, concealed)
