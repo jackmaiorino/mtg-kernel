@@ -3007,6 +3007,7 @@ fn build_policy_observation_common_v6(
 
 /// Shared storage has no schema or commitment identity. Only the existing
 /// gated entry point above may turn this into a predecessor observation.
+#[derive(Clone)]
 pub(crate) struct PolicyObservationStorageV6 {
     pub kernel_version: String,
     pub surface_version: u32,
@@ -3583,6 +3584,89 @@ pub(crate) enum CommonProjectionScopeV42 {
     RavenousV51,
     PreparedV57,
 }
+
+/// Public construction operands confined to one immutable complete-family call.
+/// This is neither validation proof nor executable authority. The only factory
+/// runs the original complete builder, including all private checks, first.
+/// No world, surface, proof or input binding is cloned or retained across calls.
+pub(crate) struct BorrowedCommonObservationV42<'a> {
+    scope: CommonProjectionScopeV42,
+    state: &'a GameState,
+    surface: &'a PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    storage: PolicyObservationStorageV6,
+}
+impl<'a> BorrowedCommonObservationV42<'a> {
+    pub(crate) fn build(
+        request: (CommonProjectionScopeV42, &'a GameState),
+        surface: &'a PolicySurfaceV5,
+        actor: PlayerId,
+        step: u64,
+        physical: u64,
+        substep: (u32, u32),
+    ) -> Result<Self> {
+        let storage = common_family_observation_storage_scoped(
+            request, surface, actor, step, physical, substep,
+        )?;
+        Ok(Self {
+            scope: request.0,
+            state: request.1,
+            surface,
+            actor,
+            step,
+            physical,
+            substep,
+            storage,
+        })
+    }
+    pub(crate) fn projection(&self) -> &PublicObservationProjectionV5 {
+        &self.storage.projection
+    }
+    fn matches(
+        &self,
+        request: (CommonProjectionScopeV42, &GameState),
+        surface: &PolicySurfaceV5,
+        actor: PlayerId,
+        step: u64,
+        physical: u64,
+        substep: (u32, u32),
+    ) -> bool {
+        matches!(
+            self.scope,
+            CommonProjectionScopeV42::RavenousV51 | CommonProjectionScopeV42::PreparedV57
+        ) && self.scope == request.0
+            && std::ptr::eq(self.state, request.1)
+            && std::ptr::eq(self.surface, surface)
+            && self.actor == actor
+            && self.step == step
+            && self.physical == physical
+            && self.substep == substep
+    }
+}
+
+/// Families keep their own checks and transforms. Only an exact later read of
+/// an already successful immutable request can clone its public construction.
+/// Standalone, other-scope and foreign/mismatched requests take the old path.
+pub(crate) fn common_family_observation_storage_from_borrowed(
+    request: (CommonProjectionScopeV42, &GameState),
+    surface: &PolicySurfaceV5,
+    actor: PlayerId,
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    common: Option<&BorrowedCommonObservationV42<'_>>,
+) -> Result<PolicyObservationStorageV6> {
+    if let Some(common) =
+        common.filter(|c| c.matches(request, surface, actor, step, physical, substep))
+    {
+        return Ok(common.storage.clone());
+    }
+    common_family_observation_storage_scoped(request, surface, actor, step, physical, substep)
+}
+
 pub(crate) fn common_family_observation_storage_scoped(
     request: (CommonProjectionScopeV42, &GameState),
     surface: &PolicySurfaceV5,
@@ -13163,5 +13247,157 @@ mod soul_counter_representation_v1_tests {
         assert!(public_card(&state, source).is_err());
         assert!(public_card_v2(&state, source, ObservationTextModeV2::FullArtifact).is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod borrowed_common_observation_v42_tests {
+    use super::*;
+
+    fn same_result(
+        left: Result<PolicyObservationStorageV6>,
+        right: Result<PolicyObservationStorageV6>,
+    ) {
+        match (left, right) {
+            (Ok(left), Ok(right)) => assert_eq!(
+                serde_json::to_vec(&left.into_legacy()).unwrap(),
+                serde_json::to_vec(&right.into_legacy()).unwrap(),
+            ),
+            (Err(left), Err(right)) => assert_eq!(left.0, right.0),
+            _ => panic!("borrowed construction and full construction disagree"),
+        }
+    }
+
+    #[test]
+    fn exact_request_reuses_only_public_storage_and_all_foreign_requests_fully_rebuild_both_seats()
+    {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let state = crate::extra_turn_v1::tests::ready(actor);
+            let surface = PolicySurfaceV5::new();
+            let legacy_frame = BorrowedCommonObservationV42::build(
+                (CommonProjectionScopeV42::DivineV44, &state),
+                &surface,
+                actor,
+                3,
+                7,
+                (0, 1),
+            )
+            .unwrap();
+            assert!(!legacy_frame.matches(
+                (CommonProjectionScopeV42::DivineV44, &state),
+                &surface,
+                actor,
+                3,
+                7,
+                (0, 1),
+            ));
+            same_result(
+                common_family_observation_storage_from_borrowed(
+                    (CommonProjectionScopeV42::DivineV44, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                    Some(&legacy_frame),
+                ),
+                common_family_observation_storage_scoped(
+                    (CommonProjectionScopeV42::DivineV44, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                ),
+            );
+            for scope in [
+                CommonProjectionScopeV42::PreparedV57,
+                CommonProjectionScopeV42::RavenousV51,
+            ] {
+                let frame = BorrowedCommonObservationV42::build(
+                    (scope, &state),
+                    &surface,
+                    actor,
+                    3,
+                    7,
+                    (0, 1),
+                )
+                .unwrap();
+                assert!(frame.matches((scope, &state), &surface, actor, 3, 7, (0, 1)));
+                let original = serde_json::to_vec(&state).unwrap();
+                let restored: GameState = serde_json::from_slice(&original).unwrap();
+                let mut foreign = restored.clone();
+                foreign.players[actor.opponent().index()].life -= 1;
+                let foreign_surface = surface.clone();
+                let other_scope = if scope == CommonProjectionScopeV42::PreparedV57 {
+                    CommonProjectionScopeV42::RavenousV51
+                } else {
+                    CommonProjectionScopeV42::PreparedV57
+                };
+                let requests = [
+                    (scope, &state, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &restored, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &foreign, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &state, &foreign_surface, actor, 3, 7, (0, 1)),
+                    (other_scope, &state, &surface, actor, 3, 7, (0, 1)),
+                    (scope, &state, &surface, actor.opponent(), 3, 7, (0, 1)),
+                    (scope, &state, &surface, actor, 4, 7, (0, 1)),
+                    (scope, &state, &surface, actor, 3, 8, (0, 1)),
+                    (scope, &state, &surface, actor, 3, 7, (1, 2)),
+                    (scope, &state, &surface, actor, 3, 7, (0, 0)),
+                ];
+                for (index, (scope, world, surface, actor, step, physical, substep)) in
+                    requests.into_iter().enumerate()
+                {
+                    assert_eq!(
+                        frame.matches((scope, world), surface, actor, step, physical, substep),
+                        index == 0
+                    );
+                    same_result(
+                        common_family_observation_storage_from_borrowed(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                            Some(&frame),
+                        ),
+                        common_family_observation_storage_scoped(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                        ),
+                    );
+                    same_result(
+                        common_family_observation_storage_from_borrowed(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                            None,
+                        ),
+                        common_family_observation_storage_scoped(
+                            (scope, world),
+                            surface,
+                            actor,
+                            step,
+                            physical,
+                            substep,
+                        ),
+                    );
+                }
+                assert_eq!(original, serde_json::to_vec(&state).unwrap());
+            }
+        }
     }
 }

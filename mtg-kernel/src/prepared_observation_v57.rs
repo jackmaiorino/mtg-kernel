@@ -89,6 +89,25 @@ pub fn producer_sha256() -> String {
             include_str!("state.rs"),
             include_str!("trigger.rs"),
             include_str!("policy_surface_v5.rs"),
+            include_str!("wildwood_public_v1.rs"),
+            include_str!("authority_public_v1.rs"),
+            include_str!("employment_public_v1.rs"),
+            include_str!("cerberus_public_v1.rs"),
+            include_str!("librarian_public_v1.rs"),
+            include_str!("extra_turn_public_v1.rs"),
+            include_str!("ashroot_public_v1.rs"),
+            include_str!("banishing_public_v1.rs"),
+            include_str!("stromkirk_public_v1.rs"),
+            include_str!("gourmand_public_v1.rs"),
+            include_str!("garruk_public_v1.rs"),
+            include_str!("arahbo_public_v1.rs"),
+            include_str!("strongbox_public_v1.rs"),
+            include_str!("fiery_observation_v1.rs"),
+            include_str!("krenko_observation_v1.rs"),
+            include_str!("zul_ashur_observation_v1.rs"),
+            include_str!("banner_observation_v1.rs"),
+            include_str!("inspiration_observation_v1.rs"),
+            include_str!("fishing_pole_observation_v39.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
@@ -320,12 +339,74 @@ pub(crate) fn observe_parts_v57(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<PreparedPublicPartsV57, RlContractError> {
+    observe_parts_v57_using_inherited(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::ravenous_observation_v51::observe_parts_complete_prepared_v57,
+    )
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn observe_parts_v57_fully_rebuilt(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+) -> Result<PreparedPublicPartsV57, RlContractError> {
+    observe_parts_v57_using_inherited(
+        state,
+        surface,
+        actor_and_origin,
+        step,
+        physical,
+        substep,
+        crate::ravenous_observation_v51::observe_parts_complete_prepared_v57_fully_rebuilt,
+    )
+}
+
+type InheritedPartsBuilderV57 =
+    fn(
+        &GameState,
+        &PolicySurfaceV5,
+        (PlayerId, &PolicyDecisionV5),
+        u64,
+        u64,
+        (u32, u32),
+    ) -> Result<crate::ravenous_observation_v51::RavenousPublicPartsV51, RlContractError>;
+
+fn observe_parts_v57_using_inherited(
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+    actor_and_origin: (PlayerId, &PolicyDecisionV5),
+    step: u64,
+    physical: u64,
+    substep: (u32, u32),
+    build_inherited: InheritedPartsBuilderV57,
+) -> Result<PreparedPublicPartsV57, RlContractError> {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::PreparedObservePartsInclusive,
     );
     crate::drake_hatcher_v1::custody::with_observation_replay_keys(state, |state| {
-        observe_parts_v57_in_frame(state, surface, actor_and_origin, step, physical, substep)
+        observe_parts_v57_in_frame(
+            state,
+            surface,
+            actor_and_origin,
+            step,
+            physical,
+            substep,
+            build_inherited,
+        )
     })
 }
 fn observe_parts_v57_in_frame(
@@ -335,20 +416,14 @@ fn observe_parts_v57_in_frame(
     step: u64,
     physical: u64,
     substep: (u32, u32),
+    build_inherited: InheritedPartsBuilderV57,
 ) -> Result<PreparedPublicPartsV57, RlContractError> {
     validate_state(state)
         .map_err(|error| diagnostic("prepared.state", error))
         .map_err(RlContractError)?;
     let (inherited, families) =
-        crate::ravenous_observation_v51::observe_parts_complete_prepared_v57(
-            state,
-            surface,
-            actor_and_origin,
-            step,
-            physical,
-            substep,
-        )
-        .map_err(|error| diagnostic("prepared.inherited", error))?;
+        build_inherited(state, surface, actor_and_origin, step, physical, substep)
+            .map_err(|error| diagnostic("prepared.inherited", error))?;
     let mut common = crate::elenda_observation_v52::ElendaObservationV52 {
         schema: ELENDA_COMPAT_SCHEMA.into(),
         producer_sha256: producer_sha256(),
