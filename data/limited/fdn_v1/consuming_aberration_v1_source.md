@@ -22,9 +22,11 @@ uses the current controller on battlefield/stack and owner in other zones.
 It counts every physical graveyard card, regardless of card type, excluding
 transient tokens and spell copies. Checked native i32 conversion has no i16
 narrowing or saturation. Earlier layer7b base settings and face-down forms
-win, and existing additive layers follow. Checked P/T paths propagate overflow
-before a mutation; legacy optional base queries return no numeric value on
-that overflow. No CardDef field or serialized state/enum variant is added.
+win, and existing additive layers follow. Checked P/T queries propagate overflow
+without changing the queried world;
+legacy optional base queries return no numeric value on that overflow.
+This does not establish atomicity of graveyard-changing native transitions.
+No CardDef field or serialized state/enum variant is added.
 
 The cast trigger uses the existing pre-SBA generic capture. finalize_cast
 captures immediately after genuine paid cast publication; resolution-cast
@@ -34,8 +36,12 @@ The existing RevealUntilCardTypeAndMill operation binds the actual original
 library prefix, publicly reveals only those cards, and lets its owner order
 that batch. This printing adds a scoped required waiting/answered stage and
 consumes an exact existing StandardSelection guard for the answered prefix.
-Other printings retain their existing mill stages. A later source departure,
-control change or suppression cannot retarget the original opponent.
+The existing move-only native Tutelage row owner also selects only this exact
+printed trigger, keeping its complete original row/context/pending/remaining-stack
+capture and loan cleanup. Tutelage's draw publication guard remains specific to
+Tutelage. Public generic begin/resume and synchronous execution cannot substitute
+for that native handoff. Other printings retain their existing mill stages.
+A later source departure, control change or suppression cannot retarget the original opponent.
 Validation is the existing native mutable-world structural contract, not
 cryptographic authentication against coordinated rewrites of an entire world.
 
@@ -47,9 +53,13 @@ its new native CDA fact and reveal-mill body remain truthfully opaque in V1.
 Keyed-name inventories classify the changed native paths. All three native
 inventory assertions and Python exact Partial/refusal inventories append467.
 Old RL card rows and public native appendices refuse this unrepresented
-printing/root; no owning/model/Human/transport/Full/profile admission is added.
+visible printing/root. The new family name checks do not inspect hidden face-down
+printing identity; separately captured face-up roots/history still refuse. A neutral
+projection-only primitive verifies both hidden printings match the older neutral
+face-down row, without claiming a legal paid manifest/disguise route for them.
+No owning/model/Human/transport/Full/profile admission is added.
 
-Seven native source fixture groups cover both-seat real3UB payment, ordinary
+Eight native source fixture groups cover both-seat real3UB payment, ordinary
 publication and lack of self-trigger, paid Think Twice/permanent casts,
 first-land/empty/all-nonland libraries, original public prefix and hidden
 suffix, graveyard order, waiting/answered restore and readonly forgeries,
@@ -64,3 +74,17 @@ printing/deck-refusal case accompany these groups.
 This is source-only implementation. All new Rust is uncompiled and unrun.
 Formatting, Python and static audits are not native qualification or evidence
 of complete consumer support.
+
+Known unresolved Partial boundary before any Full qualification: shared native
+zone-transition P/T atomicity. Concrete reproducer: genuinely pay3UB for an
+Aberration with one opponent graveyard card; use a labelled native numeric
+counter setup of i32::MAX-1 plus counters, then genuinely pay1U for Think Twice
+while the opponent's original top library card is Forest. The new cast trigger
+mills that Forest, raising the CDA base from1 to2 and overflowing final P/T.
+The shared zone-change batch currently writes the graveyard change before the
+next engine P/T guard halts. The checked-query fixture does not prove that this
+batch refuses before mutation. A correct shared fix must check the final genuine
+batch, including simultaneous departures/entries and entry owner/context, rather
+than reject valid intermediate count prefixes or approximate other layers.
+The next Full-work owner must implement and run that transition regression.
+This source remains uncompiled Partial with that boundary explicitly unresolved.

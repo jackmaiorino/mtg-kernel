@@ -4243,6 +4243,9 @@ pub fn begin_resumable_resolution(
     ) {
         return Err("Tutelage requires its genuine native pre-removal owner".into());
     }
+    if aberration_item_v1(&resolving_item) || aberration_reveal_context_v1(state, op, ctx) {
+        return Err("Aberration requires its genuine native pre-removal owner".into());
+    }
     if alesha_optional_v1::selected(&resolving_item)
         || matches!(op, EffectOp::AleshaRaidReturn { .. })
     {
@@ -4347,6 +4350,16 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        aberration_continuation_v1(p)
+            || p.resolving_item
+                .inline_effect
+                .as_ref()
+                .is_some_and(|op| aberration_reveal_context_v1(state, op, &p.ctx))
+    }) {
+        return Err("Aberration continuation requires its genuine native pre-removal owner".into());
+    }
+
     if state.engine.pending_effect.as_ref().is_some_and(|pending| {
         matches!(
             pending.resolving_item.inline_effect,
@@ -9516,15 +9529,43 @@ pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), S
     vampire_gourmand_resolution_v1::validate(state)
 }
 
-fn aberration_continuation_v1(pending: &EffectContinuation) -> bool {
-    pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility
-        && pending.resolving_item.v4.granted_by.is_none()
-        && pending.ctx.ability_source_contract.is_some_and(|source| {
+fn aberration_item_v1(item: &StackItem) -> bool {
+    item.kind == crate::state::StackItemKind::TriggeredAbility
+        && item.inline_effect
+            == Some(EffectOp::RevealUntilCardTypeAndMill {
+                player: PlayerRef::Opponent,
+                card_type: CardType::Land,
+            })
+        && item.v4.granted_by.is_none()
+        && item.v4.ability_source_contract.is_some_and(|source| {
             crate::card_def::CARD_DEFS
                 .get(usize::from(source.card_def))
-                .is_some_and(|d| d.is_executable() && d.name == "Consuming Aberration")
+                .is_some_and(|d| {
+                    d.is_executable() && crate::engine::consuming_aberration_cda_for_v1(d.name)
+                })
         })
 }
+fn aberration_continuation_v1(pending: &EffectContinuation) -> bool {
+    aberration_item_v1(&pending.resolving_item)
+}
+fn aberration_reveal_context_v1(state: &GameState, op: &EffectOp, ctx: &ExecCtx) -> bool {
+    matches!(
+        op,
+        EffectOp::RevealUntilCardTypeAndMill {
+            player: PlayerRef::Opponent,
+            card_type: CardType::Land
+        }
+    ) && (ctx.ability_source_contract.is_some_and(|source| {
+        crate::card_def::CARD_DEFS
+            .get(usize::from(source.card_def))
+            .is_some_and(|d| crate::engine::consuming_aberration_cda_for_v1(d.name))
+    }) || state.objects.try_get(ctx.source).is_some_and(|o| {
+        crate::engine::consuming_aberration_cda_for_v1(
+            crate::card_def::CARD_DEFS[usize::from(o.card_def)].name,
+        )
+    }))
+}
+
 fn validate_aberration_continuation_v1(
     state: &GameState,
     pending: &EffectContinuation,
@@ -18266,6 +18307,14 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if state.engine.halted.is_some() {
         return;
     }
+    if aberration_reveal_context_v1(state, op, ctx) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
+
     if crystal_prevention_v1::mixed_environment(state)
         && !crystal_prevention_v1::ordinary_nondamage(op)
     {
@@ -24826,7 +24875,8 @@ pub(crate) fn acquire_tutelage_resume_v1(
     if !matches!(
         pending.resolving_item.inline_effect,
         Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) {
+    ) && !aberration_item_v1(&pending.resolving_item)
+    {
         return Ok(None);
     }
     validate_pending_effect_choice(state)?;
@@ -24883,10 +24933,13 @@ pub(crate) fn acquire_tutelage_begin_v1(
     if !matches!(
         item.inline_effect,
         Some(EffectOp::SphinxsTutelageMillV1 { .. })
-    ) {
+    ) && !aberration_item_v1(item)
+    {
         return Ok(None);
     }
-    event::validate_published_tutelage_v1(state, item)?;
+    if !aberration_item_v1(item) {
+        event::validate_published_tutelage_v1(state, item)?;
+    }
     crate::engine::validated_stack_item_target_spec(item, state)?;
     if state.engine.pending_effect.is_some() || state.stack.last() != Some(item) {
         return Err("Tutelage begin lost its original public stack top".into());

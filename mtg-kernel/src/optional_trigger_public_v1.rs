@@ -273,18 +273,17 @@ fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String
             .get(usize::from(definition))
             .is_some_and(|d| d.name == "Consuming Aberration")
     };
-    if state
-        .objects
+    if state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && aberration(o.card_def)
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| aberration(s.card_def))
+    }) || held(state)
         .iter()
-        .any(|(_, o)| matches!(o.zone, Zone::Battlefield | Zone::Stack) && aberration(o.card_def))
-        || state.stack.iter().any(|row| {
-            row.v4
-                .ability_source_contract
-                .is_some_and(|s| aberration(s.card_def))
-        })
-        || held(state)
-            .iter()
-            .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
+        .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
         || state.engine.pending_effect.as_ref().is_some_and(|p| {
             p.ctx
                 .ability_source_contract
@@ -296,6 +295,7 @@ fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String
 
     if state.objects.iter().any(|(_, object)| {
         matches!(object.zone, Zone::Battlefield | Zone::Stack)
+            && object.v4.face_down_v1.is_none()
             && crate::event::is_sphinxs_tutelage_v1(object.card_def)
     }) || state.engine.event_history.iter().any(|event| {
         matches!(

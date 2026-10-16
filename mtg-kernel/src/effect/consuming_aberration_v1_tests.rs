@@ -613,3 +613,58 @@ fn paid_zero_graveyard_dies_and_paid_counter_keeps_costs_without_self_trigger_bo
         assert!(trigger_rows(&state).is_empty());
     }
 }
+
+#[test]
+fn genuine_paid_original_mill_public_api_and_erased_resume_refuse_readonly_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Think Twice", "Elvish Mystic", "Forest", "Swamp"]);
+        paid_aberration(&mut state, actor);
+        cast(&mut state, actor, "Think Twice", None, 2);
+        let item = trigger_rows(&state)[0].clone();
+        let ctx = crystal_prevention_v1::context(&item);
+        let root = item.inline_effect.clone().unwrap();
+        for op in [
+            root.clone(),
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+        ] {
+            let mut bad = restore(&state);
+            let original = bad.clone();
+            assert!(begin_resumable_resolution(&op, &ctx, item.clone(), &mut bad).is_err());
+            assert_eq!(bad, original);
+        }
+        to_order(&mut state);
+        for erase in [false, true] {
+            let mut bad = restore(&state);
+            if erase {
+                let p = bad.engine.pending_effect.as_mut().unwrap();
+                p.choice = None;
+                p.frames.clear();
+                p.answered_choice_guard = None;
+            }
+            let original = bad.clone();
+            assert!(resume_resumable_resolution(&mut bad).is_err());
+            assert_eq!(bad, original);
+        }
+        let mut bad = restore(&state);
+        let original = bad.clone();
+        execute(&root, &ctx, &mut bad);
+        assert_eq!(
+            bad.engine.halted,
+            Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source
+            ))
+        );
+        bad.engine.halted = None;
+        assert_eq!(bad, original);
+        // The genuine native engine, using its consumed private owner, still
+        // completes both the waiting and immediately answered restore paths.
+        let mut replay = restore(&state);
+        finish(&mut state, true);
+        finish(&mut replay, true);
+        assert_eq!(state, replay);
+    }
+}
