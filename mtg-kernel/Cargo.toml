@@ -177,3 +177,7 @@ required-features = ["standard-magezero-fixtures"]
 [[bin]]
 name = "kernel_limited_prepared_env_v5"
 path = "src/bin/kernel_limited_prepared_env_v5.rs"
+
+[[bin]]
+name = "kernel_limited_next_five_env_v6"
+path = "src/bin/kernel_limited_next_five_env_v6.rs"

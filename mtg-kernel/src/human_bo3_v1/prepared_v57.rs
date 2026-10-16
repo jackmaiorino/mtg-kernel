@@ -765,7 +765,7 @@ pub(super) fn activation_label(
     }).transpose()
 }
 pub(super) fn activation_label_next_five(
-    meanings: &[Option<observation::NextFiveActivationV59>],
+    meanings: &[Option<crate::next_five_observation_v59::NextFiveActivationV59>],
     index: usize,
     handles: &Handles,
 ) -> Result<Option<String>, Error> {
