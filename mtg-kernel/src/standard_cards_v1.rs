@@ -3891,6 +3891,19 @@ pub(crate) fn copied_departure_at(
         })
 }
 
+/// Include an effective definition hidden beneath a current Aegis copy when
+/// selecting a characteristic-only final-zone preflight. No hidden zones are read.
+pub(crate) fn has_battlefield_copy_origin_v1(state: &GameState, selected: fn(u16) -> bool) -> bool {
+    state.standard_v1.as_ref().is_some_and(|standard| {
+        standard.aegis_copies.iter().any(|copy| {
+            selected(copy.card_def)
+                && state.objects.try_get(copy.host.0).is_some_and(|live| {
+                    live.zone == Zone::Battlefield && live.zone_change_count == copy.host.1
+                })
+        })
+    })
+}
+
 /// End expired copy effects before state-based actions. Starting one is a
 /// separate mandatory attachment trigger, resolved by the controller.
 pub(crate) fn refresh_aegis_copies(state: &mut GameState) {

@@ -25,7 +25,8 @@ narrowing or saturation. Earlier layer7b base settings and face-down forms
 win, and existing additive layers follow. Checked P/T queries propagate overflow
 without changing the queried world;
 legacy optional base queries return no numeric value on that overflow.
-This does not establish atomicity of graveyard-changing native transitions.
+Native zone transitions now use the scoped final-scene check described below;
+source checks are not executed transition qualification.
 No CardDef field or serialized state/enum variant is added.
 
 The cast trigger uses the existing pre-SBA generic capture. finalize_cast
@@ -59,7 +60,7 @@ projection-only primitive verifies both hidden printings match the older neutral
 face-down row, without claiming a legal paid manifest/disguise route for them.
 No owning/model/Human/transport/Full/profile admission is added.
 
-Eight native source fixture groups cover both-seat real3UB payment, ordinary
+Fourteen native source fixture groups cover both-seat real3UB payment, ordinary
 publication and lack of self-trigger, paid Think Twice/permanent casts,
 first-land/empty/all-nonland libraries, original public prefix and hidden
 suffix, graveyard order, waiting/answered restore and readonly forgeries,
@@ -75,16 +76,56 @@ This is source-only implementation. All new Rust is uncompiled and unrun.
 Formatting, Python and static audits are not native qualification or evidence
 of complete consumer support.
 
-Known unresolved Partial boundary before any Full qualification: shared native
-zone-transition P/T atomicity. Concrete reproducer: genuinely pay3UB for an
-Aberration with one opponent graveyard card; use a labelled native numeric
-counter setup of i32::MAX-1 plus counters, then genuinely pay1U for Think Twice
-while the opponent's original top library card is Forest. The new cast trigger
-mills that Forest, raising the CDA base from1 to2 and overflowing final P/T.
-The shared zone-change batch currently writes the graveyard change before the
-next engine P/T guard halts. The checked-query fixture does not prove that this
-batch refuses before mutation. A correct shared fix must check the final genuine
-batch, including simultaneous departures/entries and entry owner/context, rather
-than reject valid intermediate count prefixes or approximate other layers.
-The next Full-work owner must implement and run that transition regression.
-This source remains uncompiled Partial with that boundary explicitly unresolved.
+Scoped final-zone P/T source repair: the shared event allocator/reset is now
+extracted from publication and reused to materialize the complete simultaneous
+scene before the checked full layer7 query. It uses the actual final replacement
+destinations, controller/owner rosters, incarnation resets, ending native copies,
+entry characteristics, frozen counter replacement inputs, Giada/Kinship counters,
+owned chosen-color/type entry constructors, and exact attachment incarnation.
+The scene is discarded; it does not execute a public step/resume, event observer,
+replacement pass, or linked return. Departing power/toughness are captured from
+the original prebatch scene and used by the existing LKI writers. This avoids
+querying a temporarily overflowing prefix when a suppressing Aura and Aberration
+leave simultaneously. Every batch member must materialize before final PT is
+checked; the check does not approximate a graveyard count or filter out a departing
+modifier from an otherwise intermediate scene.
+
+Public direct commit/propose, effect move batches, sacrifice groups, SBA groups,
+owned initialized permanent entries, copied/token entries and their explicit
+attachment rosters reach this check. Ordinary mixed replacement bookkeeping is
+staged before it, so a refused batch does not consume its prevention shield.
+The existing privately prepared Crystal/combat writers retain their original
+permits and replacement ownership. Deferred linked returns remain separate native
+entry batches after end_batch, each with its own real entry choices and check;
+no future return is guessed or folded into the original simultaneous scene.
+Actual-world selection includes suppressed/face-down/copy-hidden battlefield
+Aberrations and actual entering definitions. Catalog presence alone does not
+allocate a preview; source-absent/default catalogs retain the original path and
+serialized/hash field shapes.
+
+Native cast announcement and abort also use extracted original materializers.
+A graveyard cast checks its actual Stack placeholder/provenance/reset scene before
+installing it, including the negative-power underflow boundary. An unsuccessful
+Madness cast checks its exact abort destination/reset/permission scene before
+removing the placeholder or inserting the card into the graveyard. Stack remains
+an engine action and is not admitted as a generic zone-change effect destination.
+Child completion, trigger collection and priority reset run once, after the
+materialized transition has passed the check. No public permit, serialized proof,
+state cache or owner reconstruction is introduced.
+
+Six added source groups cover real paid Think Twice first-land overflow,
+waiting/answered ordering restores, two orders of native simultaneous departures
+over a genuinely paid Aberration and Witness Protection (original LKI retained),
+surviving-source exposure via direct/proposed/batch moves, a labelled mixed native
+prevention primitive that remains unconsumed, a genuine paid Faithless Looting
+Madness offer/target/abort with no remaining red source, and a legal public
+Flashback announcement at a labelled native negative-power boundary. Large counter,
+boost and mana-availability setups are explicit native boundary fixtures, not
+claims that those values were paid for by printed spells. All eight pre-existing
+source test bodies remain unchanged apart from formatting. This work does not
+qualify other non-zone P/T mutators or complete consumer support.
+
+All new Rust remains uncompiled and unrun. The source note describes implemented
+coverage, not observed native PASS or Full admission. Pinned formatting, source
+extraction audits,82 Python deck tests and6 frozen-pool tests do not replace the
+future genuine native transition/restore checks.

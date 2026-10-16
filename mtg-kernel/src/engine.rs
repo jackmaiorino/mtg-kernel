@@ -22318,6 +22318,30 @@ fn begin_cast_ex(
     spell_id: ObjectId,
     forced_cast_method: Option<CastMethodV4>,
 ) {
+    // Casting from a graveyard can also underflow a valid negative-power
+    // envelope. Use the exact native cast materializer, including its genuine
+    // placeholder and all definition-owned provenance, before installing it.
+    if state.objects.get(spell_id).zone == Zone::Graveyard
+        && crate::event::has_potential_aberration_battlefield_v1(state)
+    {
+        let mut scene = state.clone();
+        materialize_begin_cast_v1(&mut scene, player, spell_id, forced_cast_method);
+        if let Err(source) = validate_battlefield_pt(&scene) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return;
+        }
+        *state = scene;
+    } else {
+        materialize_begin_cast_v1(state, player, spell_id, forced_cast_method);
+    }
+}
+/// Observer-free native cast announcement. No generic effect may move to Stack.
+fn materialize_begin_cast_v1(
+    state: &mut GameState,
+    player: PlayerId,
+    spell_id: ObjectId,
+    forced_cast_method: Option<CastMethodV4>,
+) {
     let origin_zone = state.objects.get(spell_id).zone;
     let origin_zone_change_count = state.objects.get(spell_id).zone_change_count;
     let def = &card_def::CARD_DEFS[state.objects.get(spell_id).card_def as usize];
@@ -22910,6 +22934,65 @@ fn finalize_owned_cast(
 /// madness_cast`'s decline branch already has, rather than leaving
 /// `priority_passes` untouched.
 fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMethodV4) {
+    let to_zone = if cast_method == CastMethodV4::Madness {
+        Zone::Graveyard
+    } else {
+        pending.origin_zone
+    };
+    let materialized = if to_zone == Zone::Graveyard
+        && crate::event::has_potential_aberration_battlefield_v1(state)
+    {
+        let mut scene = state.clone();
+        let materialized = materialize_aborted_cast_v1(&mut scene, &pending, cast_method);
+        if let Err(source) = validate_battlefield_pt(&scene) {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return;
+        }
+        *state = scene;
+        materialized
+    } else {
+        materialize_aborted_cast_v1(state, &pending, cast_method)
+    };
+    let AbortedCastSceneV1 {
+        was_face_down,
+        owner,
+        to_zone,
+    } = materialized;
+    match resolution_cast_v1::finish_child(state) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.spell,
+            ));
+            return;
+        }
+    }
+    if to_zone == Zone::Hand && !was_face_down {
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            state
+                .reveal_hand_card(observer, owner, pending.spell)
+                .expect("an aborted public stack spell just returned to hand");
+        }
+    }
+    collect_and_queue_triggers(state);
+    reset_priority(state);
+}
+
+struct AbortedCastSceneV1 {
+    was_face_down: bool,
+    owner: PlayerId,
+    to_zone: Zone,
+}
+/// Exact abort roster/reset bookkeeping, shared by the native commit and its
+/// disposable final scene. The owning caller still performs child completion,
+/// trigger collection and the original priority reset exactly once afterwards.
+fn materialize_aborted_cast_v1(
+    state: &mut GameState,
+    pending: &PendingCast,
+    cast_method: CastMethodV4,
+) -> AbortedCastSceneV1 {
     let was_face_down = state.objects.get(pending.spell).v4.face_down_v1.is_some();
     let item = state.stack.pop();
     debug_assert!(
@@ -22967,26 +23050,11 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
             object.v4.on_adventure = true;
         }
     }
-    match resolution_cast_v1::finish_child(state) {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(_) => {
-            state.engine.halted = Some((
-                UnsupportedMechanic::InvalidEffectContinuation,
-                pending.spell,
-            ));
-            return;
-        }
+    AbortedCastSceneV1 {
+        was_face_down,
+        owner,
+        to_zone,
     }
-    if to_zone == Zone::Hand && !was_face_down {
-        for observer in [PlayerId::P0, PlayerId::P1] {
-            state
-                .reveal_hand_card(observer, owner, pending.spell)
-                .expect("an aborted public stack spell just returned to hand");
-        }
-    }
-    collect_and_queue_triggers(state);
-    reset_priority(state);
 }
 
 /// Pays and pushes an activated ability after every target and object-cost

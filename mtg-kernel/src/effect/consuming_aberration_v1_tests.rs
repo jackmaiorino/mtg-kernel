@@ -769,3 +769,400 @@ fn genuine_paid_original_mill_public_api_and_erased_resume_refuse_readonly_both_
         assert_eq!(state, replay);
     }
 }
+
+fn advance_to_expected_pt_refusal(state: &mut GameState, source: ObjectId, reverse: bool) {
+    for _ in 0..128 {
+        let decision = engine::advance_until_decision(state);
+        if state.engine.halted.is_some() {
+            break;
+        }
+        let action = match decision {
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::ChooseEffectTargets { legal_targets, .. } => Action::ChooseEffectTarget(
+                *if reverse {
+                    legal_targets.last()
+                } else {
+                    legal_targets.first()
+                }
+                .unwrap(),
+            ),
+            other => panic!("genuine overflow continuation changed decision: {other:?}"),
+        };
+        let result = engine::step(state, action);
+        if state.engine.halted.is_some() {
+            break;
+        }
+        result.unwrap();
+    }
+    assert_eq!(
+        state.engine.halted,
+        Some((
+            engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source
+        ))
+    );
+}
+fn assert_unmoved_revealed_batch(original: &GameState, refused: &GameState, prefix: &[ObjectId]) {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        assert_eq!(
+            refused.players[player.index()].library,
+            original.players[player.index()].library
+        );
+        assert_eq!(
+            refused.players[player.index()].graveyard,
+            original.players[player.index()].graveyard
+        );
+    }
+    for &object in prefix {
+        assert_eq!(refused.objects.get(object), original.objects.get(object));
+    }
+    assert!(!refused.engine.event_history[original.engine.event_history.len()..].iter().any(|event|
+        matches!(event, event::CommittedEvent::ZoneChange { object, .. } if prefix.contains(object))));
+    assert_eq!(
+        refused.engine.active_replacements,
+        original.engine.active_replacements
+    );
+}
+
+#[test]
+fn genuine_paid_think_twice_first_land_pt_overflow_refuses_before_zone_commit_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest", "Swamp"]);
+        let source = paid_aberration(&mut state, actor);
+        // A labelled numeric boundary, not a claim of paying for these counters.
+        state.objects.get_mut(source).counters.plus1_plus1 = i32::MAX - 1;
+        assert_eq!(
+            engine::checked_effective_pt(&state, source).unwrap(),
+            (i32::MAX, i32::MAX)
+        );
+        cast(&mut state, actor, "Think Twice", None, 2);
+        assert_eq!(trigger_rows(&state).len(), 1);
+        let prefix = vec![state.players[actor.opponent().index()].library[0]];
+        let original = state.clone();
+        let mut restored = restore(&state);
+        advance_to_expected_pt_refusal(&mut state, source, false);
+        advance_to_expected_pt_refusal(&mut restored, source, false);
+        assert_eq!(state, restored);
+        assert_unmoved_revealed_batch(&original, &state, &prefix);
+        assert_eq!(
+            engine::checked_effective_pt(&state, source).unwrap(),
+            (i32::MAX, i32::MAX)
+        );
+    }
+}
+
+#[test]
+fn genuine_paid_waiting_answered_mill_overflow_restore_keeps_original_zones_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for reverse in [false, true] {
+            let mut state = ready(actor, &["Think Twice", "Forest", "Swamp"]);
+            let source = paid_aberration(&mut state, actor);
+            state.objects.get_mut(source).counters.plus1_plus1 = i32::MAX - 1;
+            cast(&mut state, actor, "Think Twice", None, 2);
+            to_order(&mut state);
+            let prefix = state.players[actor.opponent().index()].library[..2].to_vec();
+            let waiting = restore(&state);
+            let decision = engine::advance_until_decision(&mut state);
+            let Decision::ChooseEffectTargets { legal_targets, .. } = decision else {
+                panic!("original revealed order missing");
+            };
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(
+                    *if reverse {
+                        legal_targets.last()
+                    } else {
+                        legal_targets.first()
+                    }
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+            assert!(state.engine.halted.is_none());
+            validate_pending_effect_choice(&state).unwrap();
+            let answered = restore(&state);
+            let mut from_waiting = waiting.clone();
+            let mut from_answered = answered.clone();
+            advance_to_expected_pt_refusal(&mut state, source, reverse);
+            advance_to_expected_pt_refusal(&mut from_waiting, source, reverse);
+            advance_to_expected_pt_refusal(&mut from_answered, source, reverse);
+            assert_eq!(state, from_waiting);
+            assert_eq!(state, from_answered);
+            assert_unmoved_revealed_batch(&waiting, &state, &prefix);
+        }
+    }
+}
+
+fn paid_suppressed_boundary(actor: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ready(actor, &["Forest"; 4]);
+    let source = paid_aberration(&mut state, actor);
+    engine::step(&mut state, Action::Pass).unwrap();
+    let aura = cast(
+        &mut state,
+        actor.opponent(),
+        "Witness Protection",
+        Some(Target::Object(source)),
+        1,
+    );
+    finish(&mut state, false);
+    assert_eq!(
+        state.objects.get(aura).v4.attached_to,
+        Some(crate::state::ObjectLinkV4 {
+            object: source,
+            zone_change_count: state.objects.get(source).zone_change_count,
+        })
+    );
+    assert!(!crate::continuous_characteristics_v1::printed_abilities_active(&state, source));
+    state.objects.get_mut(source).counters.plus1_plus1 = i32::MAX - 1;
+    assert_eq!(
+        engine::checked_effective_pt(&state, source).unwrap(),
+        (i32::MAX, i32::MAX)
+    );
+    (state, source, aura)
+}
+
+#[test]
+fn paid_suppressed_simultaneous_departures_keep_original_lki_in_both_orders_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for aura_first in [false, true] {
+            let (mut state, source, aura) = paid_suppressed_boundary(actor);
+            let generation = state.objects.get(source).zone_change_count;
+            // Native simultaneous-zone primitive over genuinely paid objects;
+            // this is not a claim of a printed two-permanent destruction spell.
+            let objects = if aura_first {
+                vec![aura, source]
+            } else {
+                vec![source, aura]
+            };
+            let events = objects
+                .iter()
+                .map(|id| ProposedEvent::zone_change(*id, Zone::Graveyard))
+                .collect::<Vec<_>>();
+            let mut restored = restore(&state);
+            event::propose_and_commit_batch(&mut state, events.clone());
+            event::propose_and_commit_batch(&mut restored, events);
+            assert_eq!(state, restored);
+            assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+            assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(aura).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(source).zone_change_count, generation + 1);
+            let lki = state
+                .creature_stats_lki_v1
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|entry| {
+                    entry.source.object == source && entry.source.zone_change_count == generation
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(lki.len(), 1);
+            assert_eq!((lki[0].power, lki[0].toughness), (i32::MAX, i32::MAX));
+            assert!(engine::validate_battlefield_pt(&state).is_ok());
+        }
+    }
+}
+
+#[test]
+fn paid_suppressed_survivor_exposure_and_mixed_prevention_refuse_before_mutation_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, source, aura) = paid_suppressed_boundary(actor);
+        for route in 0..4 {
+            let mut current = restore(&state);
+            if route == 3 {
+                // Native prevention primitive, separately labelled from payment.
+                // Its exact shield and history must not be consumed by the
+                // mixed batch whose other member has unrepresentable final PT.
+                current
+                    .engine
+                    .active_replacements
+                    .push(event::ActiveReplacement {
+                        id: 110_467,
+                        source: aura,
+                        kind: event::ReplacementEffectKind::PreventNextDamage {
+                            target: Target::Player(actor),
+                            remaining: 2,
+                        },
+                    });
+            }
+            let original = current.clone();
+            let zone = ProposedEvent::zone_change(aura, Zone::Graveyard);
+            match route {
+                0 => event::commit(&mut current, zone),
+                1 => event::propose_and_commit(&mut current, zone),
+                2 => event::propose_and_commit_batch(&mut current, vec![zone]),
+                3 => event::propose_and_commit_batch(
+                    &mut current,
+                    vec![
+                        ProposedEvent::Damage(event::DamageProposed {
+                            source: aura,
+                            target: Target::Player(actor),
+                            amount: 3,
+                            is_combat: false,
+                            touched_by: vec![],
+                            historical_source: None,
+                            niv_damage_origin_v1: None,
+                        }),
+                        zone,
+                    ],
+                ),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                current.engine.halted,
+                Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source
+                ))
+            );
+            current.engine.halted = None;
+            assert_eq!(current, original);
+        }
+    }
+}
+
+#[test]
+fn genuine_paid_looting_madness_abort_overflow_keeps_placeholder_and_graveyard_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 8]);
+        let source = paid_aberration(&mut state, actor);
+        let caster = actor.opponent();
+        let temper = put(&mut state, caster, "Fiery Temper", Zone::Hand);
+        let other_discard = put(&mut state, caster, "Island", Zone::Hand);
+        // Fixture mana availability: exactly one untapped red source. The
+        // genuine Looting payment spends it, leaving Madness {R} unavailable.
+        let mountains = state.players[caster.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&object| state.objects.get(object).card_def == id("Mountain"))
+            .collect::<Vec<_>>();
+        for &object in mountains.iter().skip(1) {
+            state.objects.get_mut(object).tapped = true;
+        }
+        engine::step(&mut state, Action::Pass).unwrap();
+        let looting = cast(&mut state, caster, "Faithless Looting", None, 1);
+        let mut reached_madness = false;
+        for _ in 0..128 {
+            let decision = engine::advance_until_decision(&mut state);
+            assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
+            let action = match decision {
+                Decision::ChooseMadnessCast { player, card } => {
+                    assert_eq!((player, card), (caster, temper));
+                    reached_madness = true;
+                    break;
+                }
+                Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } => {
+                    assert_eq!((player, count), (caster, 2));
+                    assert!(choices.contains(&temper) && choices.contains(&other_discard));
+                    Action::Discard(vec![temper, other_discard])
+                }
+                Decision::CastSpellOrPass { .. } => Action::Pass,
+                Decision::OrderTriggers { pending, .. } => {
+                    Action::OrderTriggers((0..pending.len()).collect())
+                }
+                other => panic!("genuine paid Looting/Madness stage: {other:?}"),
+            };
+            engine::step(&mut state, action).unwrap();
+        }
+        assert!(reached_madness);
+        assert_eq!(state.objects.get(looting).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(temper).zone, Zone::Exile);
+        assert!(mountains
+            .iter()
+            .all(|&object| state.objects.get(object).tapped));
+        let base = engine::effective_base_power(&state, source).unwrap();
+        state.objects.get_mut(source).counters.plus1_plus1 = i32::MAX - base;
+        assert_eq!(
+            engine::checked_effective_pt(&state, source).unwrap(),
+            (i32::MAX, i32::MAX)
+        );
+        engine::step(&mut state, Action::ChooseMadnessCast(true)).unwrap();
+        let Decision::ChooseTargets {
+            player,
+            spell,
+            legal_targets,
+            ..
+        } = engine::advance_until_decision(&mut state)
+        else {
+            panic!("actual Madness attempt must reach its real target choice");
+        };
+        assert_eq!((player, spell), (caster, temper));
+        assert!(legal_targets.contains(&Target::Player(actor)));
+        engine::step(&mut state, Action::ChooseTarget(Target::Player(actor))).unwrap();
+        let original = state.clone();
+        let mut restored = restore(&state);
+        engine::advance_until_decision(&mut state);
+        engine::advance_until_decision(&mut restored);
+        assert_eq!(state, restored);
+        assert_eq!(
+            state.engine.halted,
+            Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source
+            ))
+        );
+        assert_eq!(state.stack, original.stack);
+        assert_eq!(state.objects.get(temper), original.objects.get(temper));
+        assert_eq!(state.engine.event_history, original.engine.event_history);
+        for player in [actor, caster] {
+            assert_eq!(
+                state.players[player.index()].graveyard,
+                original.players[player.index()].graveyard
+            );
+            assert_eq!(
+                state.players[player.index()].mana_pool,
+                original.players[player.index()].mana_pool
+            );
+        }
+        assert_eq!(taps(&state, caster), taps(&original, caster));
+    }
+}
+
+#[test]
+fn native_checked_negative_power_flashback_announcement_refuses_before_stack_move_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Forest"; 4]);
+        let source = paid_aberration(&mut state, actor);
+        let flashback = put(&mut state, actor.opponent(), "Think Twice", Zone::Graveyard);
+        assert_eq!(engine::effective_base_power(&state, source), Some(2));
+        let binding = EffectObjectBinding {
+            object: source,
+            expected_zone: Zone::Battlefield,
+            expected_zone_change_count: state.objects.get(source).zone_change_count,
+        };
+        // Full-width native boost primitives, not printed spell/cost claims.
+        // Toughness remains positive, so the real cast menu exists at P=i32::MIN.
+        install_temporary_boost(&mut state, binding, i32::MIN, 0, card_def::Keywords::NONE);
+        install_temporary_boost(&mut state, binding, -2, 0, card_def::Keywords::NONE);
+        assert!(state.engine.halted.is_none());
+        assert_eq!(
+            engine::checked_effective_pt(&state, source).unwrap(),
+            (i32::MIN, 2)
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, ref castable_spells, .. }
+                if player == actor.opponent() && castable_spells.contains(&flashback)));
+        let original = state.clone();
+        let mut restored = restore(&state);
+        engine::step(&mut state, Action::CastSpell(flashback)).unwrap();
+        engine::step(&mut restored, Action::CastSpell(flashback)).unwrap();
+        assert_eq!(state, restored);
+        assert_eq!(
+            state.engine.halted,
+            Some((
+                engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source
+            ))
+        );
+        state.engine.halted = None;
+        assert_eq!(state, original);
+    }
+}
