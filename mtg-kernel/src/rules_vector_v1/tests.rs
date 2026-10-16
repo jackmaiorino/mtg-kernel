@@ -886,6 +886,10 @@ fn power_toughness_changes_keep_their_sign() {
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Drake Hatcher",
+    // Both native programs are walked through triggers_for. Their exact
+    // opponent-cast and ferocious predicates remain opaque in frozen v1.
+    "Painful Quandary",
+    "Flamewake Phoenix",
     "Fishing Pole",
     "Kellan, Planar Trailblazer",
     "Bloodthirsty Conqueror",
@@ -1125,6 +1129,11 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    (
+        "engine.rs",
+        "Treasure Token",
+        "resolution-time optional-payment source selection in effect_mana_plan; the printed tap-and-sacrifice cost and fixed-one mana output are read via sources::mana_ability_facts",
+    ),
     (
         "engine.rs",
         "Arahbo, the First Fang",
