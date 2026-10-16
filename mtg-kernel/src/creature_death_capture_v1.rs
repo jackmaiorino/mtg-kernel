@@ -392,16 +392,22 @@ fn departure_segment(
         else {
             return None;
         };
+        let current = state.objects.try_get(source.source)?;
         if at != departure.checked_add(1)?
             || usize::try_from(*departure_history_index).ok()? != departure
             || source.source != died.object
             || source.zone != Zone::Battlefield
             || source.zone_change_count != died.zone_change_count
             || source.controller != controller
-            || crate::engine::validate_historical_ability_source_contract(state, *source).is_err()
+            || source.owner != current.owner
+            || current.zone_change_count <= source.zone_change_count
+            || !crate::engine::source_card_def_matches(state, *source, current.card_def)
         {
             return None;
         }
+        // This is the deceased object, not an ability-source capability. A
+        // permanent spell copy can genuinely die as a token under Bloodwitch;
+        // its spell-copy origin does not invalidate the indexed departure.
         Some(*source)
     } else {
         None

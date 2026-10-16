@@ -2495,7 +2495,7 @@ fn validated_ability_source_contract(
 /// Aegis) changes a permanent's definition without a zone change, and an
 /// ability already on the stack keeps the one it was created with
 /// (113.7a).
-fn source_card_def_matches(
+pub(crate) fn source_card_def_matches(
     state: &GameState,
     contract: AbilitySourceContractV4,
     live_card_def: u16,
