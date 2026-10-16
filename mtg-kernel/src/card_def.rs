@@ -3271,7 +3271,13 @@ mod tests {
                 .filter(|(_, def)| def.capability != CardCapability::Full)
                 .map(|(id, def)| (id, def.name, def.capability))
                 .collect();
-            assert_eq!(non_full, expected_partial.iter().map(|(id, name)| (usize::from(*id), *name, CardCapability::Partial)).collect::<Vec<_>>());
+            assert_eq!(
+                non_full,
+                expected_partial
+                    .iter()
+                    .map(|(id, name)| (usize::from(*id), *name, CardCapability::Partial))
+                    .collect::<Vec<_>>()
+            );
             for id in [444, 445, 446, 447, 448, 450, 451] {
                 assert_eq!(CARD_DEFS[id as usize].capability, CardCapability::Full);
                 assert!(preflight_fully_supported_deck(&[id]).is_ok());

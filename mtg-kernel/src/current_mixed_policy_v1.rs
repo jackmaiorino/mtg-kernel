@@ -3,6 +3,8 @@
 mod elenda;
 mod kellan_public_operands;
 mod network;
+mod next_five;
+mod next_five_support;
 mod normalize;
 mod numeric;
 mod prepared;
@@ -12,6 +14,7 @@ use crate::rl_session::{
 };
 pub use elenda::{ElendaDecision, ElendaSession, ElendaSnapshot};
 pub use network::{ModelConfig, NativeModel};
+pub use next_five::{NextFiveDecision, NextFiveSession, NextFiveSnapshot};
 pub use numeric::NumericTree;
 pub use prepared::{PreparedDecision, PreparedSession, PreparedSnapshot};
 use sha2::{Digest, Sha256};
@@ -45,6 +48,7 @@ pub enum Source {
     RavenousV51,
     ElendaV52,
     PreparedV57,
+    NextFiveV59,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Packet {
@@ -92,6 +96,30 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/network.rs"),
             include_str!("current_mixed_policy_v1/elenda.rs"),
             include_str!("current_mixed_policy_v1/prepared.rs"),
+            include_str!("current_mixed_policy_v1/next_five.rs"),
+            include_str!("current_mixed_policy_v1/next_five_support.rs"),
+            include_str!("next_five_observation_v59.rs"),
+            include_str!("next_five_public_v59.rs"),
+            include_str!("rules_meaning_next_five_v59.rs"),
+            include_str!("rules_meaning_midnight_snack_v58.rs"),
+            include_str!("midnight_snack_public_v58.rs"),
+            include_str!("midnight_snack_v1.rs"),
+            include_str!("extravagant_replication_v1.rs"),
+            include_str!("infernal_vessel_v1.rs"),
+            include_str!("giada_v1.rs"),
+            include_str!("goblin_negotiation_v1.rs"),
+            include_str!("goblin_negotiation_v1/owned.rs"),
+            include_str!("effect/nonland_copy_v1.rs"),
+            include_str!("effect/crystal_prevention_v1.rs"),
+            include_str!("creature_death_capture_v1.rs"),
+            include_str!("rl_variable_cast_v1.rs"),
+            include_str!("rl_session/next_five_v59.rs"),
+            include_str!("controlled_creature_grants_v1.rs"),
+            include_str!("standard_statics_v1.rs"),
+            include_str!("standard_legends_v1.rs"),
+            include_str!("standard_cards_v1.rs"),
+            include_str!("life_loss_turn_v1.rs"),
+            include_str!("../build.rs"),
             include_str!("prepared_observation_v57.rs"),
             include_str!("rl_session/prepared_v57.rs"),
             include_str!("drake_public_v53.rs"),
