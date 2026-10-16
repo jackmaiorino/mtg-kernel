@@ -848,6 +848,15 @@ pub(super) fn project(
     human: PlayerSeatV1,
     prompt_seq: u64,
 ) -> Result<(HumanDecisionNextFiveV59, Vec<u32>), Error> {
+    let (visible, indexes, _) = project_with_handles(decision, human, prompt_seq)?;
+    Ok((visible, indexes))
+}
+
+pub(super) fn project_with_handles(
+    decision: &NextFiveDecisionV59,
+    human: PlayerSeatV1,
+    prompt_seq: u64,
+) -> Result<(HumanDecisionNextFiveV59, Vec<u32>, Handles), Error> {
     let observation = decision.observation();
     if observation.next_five.viewer != human || observation.common.common.acting_player != human {
         return Err(Error::NotHumanTurn);
@@ -904,6 +913,7 @@ pub(super) fn project(
             action_meanings,
         },
         indexes,
+        handles,
     ))
 }
 
