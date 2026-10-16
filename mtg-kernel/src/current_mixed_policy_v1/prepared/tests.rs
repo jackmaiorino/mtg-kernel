@@ -16,141 +16,126 @@ fn ready(actor: PlayerId) -> GameState {
     crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
     s
 }
-fn own(s: GameState) -> PreparedSession {
-    PreparedSession::from_session(FastActorSessionV1::from_prepared_v57_fixture_state(s)).unwrap()
+// Each stream starts from the same genuine pre-advance input. Reconstructing a
+// native session from an already-current world would execute another Advance
+// and append its own Drake receipt, even when the visible decision is unchanged.
+struct FixturePrepared {
+    model: PreparedSession,
+    native: FastActorSessionV1,
 }
-fn state(s: &PreparedSession) -> &GameState {
+struct FixtureSnapshot {
+    model: PreparedSnapshot,
+    native: crate::rl_session::FastActorSessionSnapshotV1,
+}
+impl std::ops::Deref for FixturePrepared {
+    type Target = PreparedSession;
+    fn deref(&self) -> &Self::Target {
+        &self.model
+    }
+}
+fn own(input: GameState) -> FixturePrepared {
+    let model = PreparedSession::from_session(FastActorSessionV1::from_prepared_v57_fixture_state(
+        input.clone(),
+    ))
+    .unwrap();
+    let native = FastActorSessionV1::from_prepared_v57_fixture_state(input);
+    let pair = FixturePrepared { model, native };
+    pair.assert_native_current();
+    pair
+}
+fn state(s: &FixturePrepared) -> &GameState {
     s.inner.fixture_state_v57()
 }
-fn expected(s: &PreparedSession) -> FastActorDecisionV1 {
+fn expected(s: &FixturePrepared) -> FastActorDecisionV1 {
     let FastActorResponseV1::Decision(e) = s.current_response() else {
         panic!("real model prompt absent")
     };
     e
 }
-fn gameplay(s: &PreparedSession) -> (Vec<u8>, (u64, u64)) {
+fn gameplay(s: &FixturePrepared) -> (Vec<u8>, (u64, u64)) {
     (
         serde_json::to_vec(state(s)).unwrap(),
         s.inner.fixture_counts_v57(),
     )
 }
-// A fresh native Prepared-mode stream owns its own issued menu. It never
-// clones or receives the model owner's sealed backend capability. Construction
-// from the complete fixture world must preserve that world and exact menu;
-// a surface-only prefix that cannot be reconstructed must fail these checks.
-struct NativeReference {
-    session: FastActorSessionV1,
-    current: FastActorDecisionV1,
-    original: FastActorDecisionV1,
-    actions: Vec<ActionSemanticV1>,
-    original_counts: (u64, u64),
-    native_counts: (u64, u64),
-}
-fn native_reference(s: &PreparedSession) -> NativeReference {
-    let session = FastActorSessionV1::from_prepared_v57_fixture_state(state(s).clone());
-    assert_eq!(state(s), session.prepared_fixture_state());
-    let FastActorResponseV1::Decision(current) = session.current_response() else {
-        panic!("independent native Prepared reference has no current decision")
-    };
-    let original = expected(s);
-    let (_, actions, _) = session
-        .prepared_current_decision_input_v57(current, current.acting_player)
-        .unwrap();
-    assert_eq!(
-        actions.as_slice(),
-        s.inner.decision_v57().unwrap().actions()
-    );
-    assert_eq!(
-        (
-            current.episode_id,
-            current.substep_index,
-            current.substep_count,
-            current.acting_player,
-            current.decision_kind,
-            current.legal_action_count
-        ),
-        (
-            original.episode_id,
-            original.substep_index,
-            original.substep_count,
-            original.acting_player,
-            original.decision_kind,
-            original.legal_action_count
-        )
-    );
-    let native_counts = (
-        session.policy_step_count(),
-        session.physical_decision_count(),
-    );
-    NativeReference {
-        session,
-        current,
-        original,
-        actions,
-        original_counts: s.inner.fixture_counts_v57(),
-        native_counts,
-    }
-}
-fn rebase_counter(value: u64, native_before: u64, original_before: u64) -> u64 {
-    original_before
-        .checked_add(value.checked_sub(native_before).unwrap())
-        .unwrap()
-}
-impl NativeReference {
-    fn assert_step(&mut self, s: &PreparedSession, actual: FastActorResponseV1, index: u32) {
-        let mut response = self
-            .session
-            .step(self.current.episode_id, self.current.step, index)
-            .unwrap();
-        // Only independent stream clock origins differ. Every actor/kind/menu,
-        // substep, outcome/reason/reward/deck field is still compared exactly.
-        match &mut response {
-            FastActorResponseV1::Decision(next) => {
-                next.step = rebase_counter(next.step, self.current.step, self.original.step);
-                next.environment_revision = rebase_counter(
-                    next.environment_revision,
-                    self.current.environment_revision,
-                    self.original.environment_revision,
-                );
-                next.physical_decision_id = rebase_counter(
-                    next.physical_decision_id,
-                    self.current.physical_decision_id,
-                    self.original.physical_decision_id,
-                );
-            }
-            FastActorResponseV1::Terminal(terminal) => {
-                terminal.policy_step_count = rebase_counter(
-                    terminal.policy_step_count,
-                    self.native_counts.0,
-                    self.original_counts.0,
-                );
-                terminal.physical_decision_count = rebase_counter(
-                    terminal.physical_decision_count,
-                    self.native_counts.1,
-                    self.original_counts.1,
-                );
-            }
-        }
-        assert_eq!(actual, response);
-        assert_eq!(state(s), self.session.prepared_fixture_state());
+impl FixturePrepared {
+    fn assert_native_current(&self) {
+        assert_eq!(state(self), self.native.prepared_fixture_state());
         assert_eq!(
-            s.inner.fixture_counts_v57(),
+            self.inner.fixture_counts_v57(),
             (
-                rebase_counter(
-                    self.session.policy_step_count(),
-                    self.native_counts.0,
-                    self.original_counts.0
-                ),
-                rebase_counter(
-                    self.session.physical_decision_count(),
-                    self.native_counts.1,
-                    self.original_counts.1
-                )
+                self.native.policy_step_count(),
+                self.native.physical_decision_count()
             )
         );
+        assert_eq!(self.current_response(), self.native.current_response());
+        let FastActorResponseV1::Decision(current) = self.native.current_response() else {
+            return;
+        };
+        let (_, actions, _) = self
+            .native
+            .prepared_current_decision_input_v57(current, current.acting_player)
+            .unwrap();
+        assert_eq!(
+            actions.as_slice(),
+            self.inner.decision_v57().unwrap().actions()
+        );
+    }
+    fn assert_native_step(&mut self, actual: &FastActorResponseV1, index: u32) {
+        let FastActorResponseV1::Decision(current) = self.native.current_response() else {
+            panic!("independent native Prepared reference has no current decision")
+        };
+        let response = self
+            .native
+            .step(current.episode_id, current.step, index)
+            .unwrap();
+        assert_eq!(actual, &response);
+        self.assert_native_current();
+    }
+    fn apply(&mut self, d: &PreparedDecision, index: u32) -> Result<FastActorResponseV1> {
+        self.assert_native_current();
+        let result = self.model.apply(d, index);
+        if let Ok(actual) = &result {
+            self.assert_native_step(actual, index);
+        } else {
+            // A rejected model decision must leave both complete streams equal.
+            self.assert_native_current();
+        }
+        result
+    }
+    fn score_and_apply(
+        &mut self,
+        decision: &PreparedDecision,
+        model: &NativeModel,
+    ) -> Result<(Vec<f32>, u32, FastActorResponseV1)> {
+        self.assert_native_current();
+        let result = self.model.score_and_apply(decision, model);
+        if let Ok((_, index, response)) = &result {
+            self.assert_native_step(response, *index);
+        } else {
+            self.assert_native_current();
+        }
+        result
+    }
+    fn snapshot(&self) -> FixtureSnapshot {
+        self.assert_native_current();
+        FixtureSnapshot {
+            model: self.model.snapshot(),
+            native: self.native.snapshot_v1(),
+        }
+    }
+    fn restore(&mut self, saved: &FixtureSnapshot) -> Result<()> {
+        // The real model owner first authenticates its own original snapshot.
+        // The independent native stream restores only its separately saved menu.
+        let result = self.model.restore(&saved.model);
+        if result.is_ok() {
+            self.native.prepared_restore_v57(&saved.native).unwrap();
+        }
+        self.assert_native_current();
+        result
     }
 }
-fn act(s: &mut PreparedSession, choose: impl Fn(&ActionSemanticV1) -> bool) {
+fn act(s: &mut FixturePrepared, choose: impl Fn(&ActionSemanticV1) -> bool) {
     let d = s.encode(expected(s)).unwrap();
     assert_eq!(d.packet.source(), Source::PreparedV57);
     let native = s.inner.decision_v57().unwrap();
@@ -166,14 +151,22 @@ fn act(s: &mut PreparedSession, choose: impl Fn(&ActionSemanticV1) -> bool) {
         .unwrap();
     assert_eq!(logits.len(), native.actions().len());
     assert!(logits.iter().all(|v| v.is_finite()));
-    let mut reference = native_reference(s);
-    let response = s.apply(&d, i as u32).unwrap();
-    reference.assert_step(s, response, i as u32);
+    s.apply(&d, i as u32).unwrap();
 }
-fn pass(s: &mut PreparedSession) {
-    act(s, |a| matches!(a, ActionSemanticV1::Pass { .. }));
+fn quiet_action(a: &ActionSemanticV1) -> bool {
+    match a {
+        ActionSemanticV1::Pass { .. }
+        | ActionSemanticV1::ChooseAttackerInclusion { include: false, .. }
+        | ActionSemanticV1::ChooseBlockerInclusion { include: false, .. } => true,
+        ActionSemanticV1::DeclareAttackers { attackers, .. } => attackers.is_empty(),
+        ActionSemanticV1::DeclareBlockersForAttacker { blockers, .. } => blockers.is_empty(),
+        _ => false,
+    }
 }
-fn priority(s: &mut PreparedSession, p: PlayerId) {
+fn pass(s: &mut FixturePrepared) {
+    act(s, quiet_action);
+}
+fn priority(s: &mut FixturePrepared, p: PlayerId) {
     for _ in 0..8 {
         if expected(s).acting_player == p.into() {
             return;
@@ -182,7 +175,7 @@ fn priority(s: &mut PreparedSession, p: PlayerId) {
     }
     panic!("real priority absent")
 }
-fn drain(s: &mut PreparedSession) {
+fn drain(s: &mut FixturePrepared) {
     for _ in 0..64 {
         let g = state(s);
         if g.stack.is_empty()
@@ -197,7 +190,7 @@ fn drain(s: &mut PreparedSession) {
     }
     panic!("real owned operation did not settle")
 }
-fn cast(s: &mut PreparedSession, p: PlayerId, id: ObjectId, target: Option<ObjectId>) {
+fn cast(s: &mut FixturePrepared, p: PlayerId, id: ObjectId, target: Option<ObjectId>) {
     priority(s, p);
     let before: u32 = state(s).players[p.index()]
         .mana_pool
@@ -223,7 +216,7 @@ fn cast(s: &mut PreparedSession, p: PlayerId, id: ObjectId, target: Option<Objec
         .sum();
     assert_eq!(before - after, u32::from(cost));
 }
-fn until(s: &mut PreparedSession, choose: impl Fn(&ActionSemanticV1) -> bool) {
+fn until(s: &mut FixturePrepared, choose: impl Fn(&ActionSemanticV1) -> bool) {
     for _ in 0..128 {
         if s.inner
             .decision_v57()
@@ -352,11 +345,17 @@ fn paid_prepared_casts_original_index_finite_logits_full_binding_and_restore_bot
             assert_ne!(packet, decision.packet);
             let input = s.encode(expected(&s)).unwrap();
             let model = NativeModel::deterministic_fixture().unwrap();
-            let mut reference = native_reference(&s);
-            let (logits, index, response) = s.score_and_apply(&input, &model).unwrap();
-            assert_eq!(logits.len(), reference.actions.len());
+            s.assert_native_current();
+            let FastActorResponseV1::Decision(native_current) = s.native.current_response() else {
+                panic!("independent native score input absent")
+            };
+            let (_, native_actions, _) = s
+                .native
+                .prepared_current_decision_input_v57(native_current, native_current.acting_player)
+                .unwrap();
+            let (logits, _, _) = s.score_and_apply(&input, &model).unwrap();
+            assert_eq!(logits.len(), native_actions.len());
             assert!(logits.iter().all(|logit| logit.is_finite()));
-            reference.assert_step(&s, response, index);
         }
     }
 }
@@ -504,8 +503,11 @@ fn paid_hatcher_real_combat_payment_history_and_exact_width_privacy_both_seats()
                 break;
             }
             let d = s.inner.decision_v57().unwrap();
-            let action=d.actions().iter().find(|a|matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.iter().any(|r|r.arena_id==h.0)))
-                .or_else(||d.actions().iter().find(|a|matches!(a,ActionSemanticV1::Pass{..})))
+            let action=d.actions().iter().find(|a| {
+                    matches!(a,ActionSemanticV1::ChooseAttackerInclusion{attacker,include:true,..}if attacker.arena_id==h.0)
+                        || matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.iter().any(|r|r.arena_id==h.0))
+                })
+                .or_else(||d.actions().iter().find(|a| quiet_action(a)))
                 .or_else(||(d.actions().len()==1).then(||&d.actions()[0]))
                 .expect("real combat choice absent").clone();
             act(&mut s, |candidate| candidate == &action);
@@ -633,11 +635,11 @@ fn typed_public_references_keep_identity_and_reuse_common_ranks_without_raw_stam
     );
 }
 
-impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for PreparedSession {
+impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for FixturePrepared {
     type Decision = PreparedDecision;
-    type Snapshot = PreparedSnapshot;
+    type Snapshot = FixtureSnapshot;
     fn own(s: GameState) -> Self {
-        Self::from_session(FastActorSessionV1::from_prepared_v57_fixture_state(s)).unwrap()
+        own(s)
     }
     fn world(&self) -> &GameState {
         self.inner.fixture_state_v57()
@@ -653,7 +655,7 @@ impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for Prepare
             FastActorResponseV1::Decision(e) => e,
             other => panic!("real decision absent:{other:?}"),
         };
-        PreparedSession::encode(self, e).unwrap()
+        self.model.encode(e).unwrap()
     }
     fn packet(d: &Self::Decision) -> &crate::current_mixed_policy_v1::Packet {
         d.packet()
@@ -663,90 +665,88 @@ impl crate::current_mixed_policy_v1::tests::ordinary_triggers::Owner for Prepare
             crate::current_mixed_policy_v1::NumericTree::encode(&serde_json::json!({})).unwrap();
     }
     fn apply(&mut self, d: &Self::Decision, index: u32) -> Result<()> {
-        let mut reference = native_reference(self);
-        let actual = PreparedSession::apply(self, d, index)?;
-        reference.assert_step(self, actual, index);
+        FixturePrepared::apply(self, d, index)?;
         Ok(())
     }
     fn snapshot(&self) -> Self::Snapshot {
-        PreparedSession::snapshot(self)
+        FixturePrepared::snapshot(self)
     }
     fn restore(&mut self, s: &Self::Snapshot) -> Result<()> {
-        PreparedSession::restore(self, s)
+        FixturePrepared::restore(self, s)
     }
 }
 #[test]
 fn ashroot_stromkirk_paid_cast_real_target_choice_and_restore_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid::<FixturePrepared>();
 }
 #[test]
 fn strongbox_gourmand_paid_cast_attack_resolution_and_restore_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_entry_attack::<PreparedSession>(
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_entry_attack::<FixturePrepared>(
     );
 }
 #[test]
 fn ashroot_stromkirk_private_opponent_printings_do_not_change_packet_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::privacy::<FixturePrepared>();
 }
 
 #[test]
 fn memorial_panda_paid_cast_grants_and_gain_death_input_restore_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_memorial_panda::<PreparedSession>(
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_memorial_panda::<FixturePrepared>(
     );
 }
 
 #[test]
 fn early_printings_paid_ordinary_activations_and_restore_prepared_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_early_activation::<
-        PreparedSession,
+        FixturePrepared,
     >();
 }
 
 #[test]
 fn crystal_paid_cast_hexproof_prevention_control_restore_privacy_preparedsession_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_crystal::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_crystal::<FixturePrepared>();
 }
 
 #[test]
 fn tyrant_herald_paid_cast_damage_flash_restore_privacy_preparedsession_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_tyrant_herald::<PreparedSession>(
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_tyrant_herald::<FixturePrepared>(
     );
 }
 
 #[test]
 fn rallier_bloom_paid_cast_private_pick_and_mana_restore_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<PreparedSession>(
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_rallier_bloom::<FixturePrepared>(
     );
 }
 
 #[test]
 fn enchantment_hunter_paid_cast_trigger_restore_privacy_preparedsession_both_seats() {
     crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_enchantment_hunter::<
-        PreparedSession,
+        FixturePrepared,
     >();
 }
 
 #[test]
 fn eaten_paid_additional_branches_exile_restore_privacy_preparedsession_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_eaten::<FixturePrepared>();
 }
 
 #[test]
 fn faebloom_paid_instant_reflexive_season_restore_privacy_preparedsession_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_faebloom::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_faebloom::<FixturePrepared>();
 }
 
 #[test]
 fn kellan_paid_upgrades_combat_impulse_restore_privacy_preparedsession_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_kellan::<FixturePrepared>();
 }
 
 #[test]
 fn fiery_paid_optional_equipment_death_replacement_restore_privacy_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_fiery::<FixturePrepared>();
 }
 
 #[test]
 fn divine_paid_ordinary_kicker_zero_multiple_restore_privacy_prepared_both_seats() {
-    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_divine::<PreparedSession>();
+    crate::current_mixed_policy_v1::tests::ordinary_triggers::paid_divine::<FixturePrepared>();
 }

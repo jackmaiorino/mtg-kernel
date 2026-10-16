@@ -23,10 +23,12 @@ fn printing<O: Owner>(s: &O) {
 }
 fn quiet<O: Owner>(s: &mut O) {
     let actions = s.actions();
-    let chosen=actions.iter().find(|a|matches!(a,ActionSemanticV1::Pass{..}))
-        .or_else(||actions.iter().find(|a|matches!(a,ActionSemanticV1::DeclareAttackers{attackers,..}if attackers.is_empty())))
-        .or_else(||actions.iter().find(|a|matches!(a,ActionSemanticV1::DeclareBlockersForAttacker{blockers,..}if blockers.is_empty())))
-        .or_else(||(actions.len()==1).then(||&actions[0])).unwrap_or_else(||panic!("unexpected real choice:{actions:?}")).clone();
+    let chosen = actions
+        .iter()
+        .find(|a| quiet_action(a))
+        .or_else(|| (actions.len() == 1).then(|| &actions[0]))
+        .unwrap_or_else(|| panic!("unexpected real choice:{actions:?}"))
+        .clone();
     step(s, |a| a == &chosen);
 }
 fn faeries<O: Owner>(s: &O, actor: PlayerId) -> Vec<ObjectId> {
