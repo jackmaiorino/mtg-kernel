@@ -279,10 +279,94 @@ record!(HumanNextFiveGoblinOptionV59 {
     source: HumanCardRefV1,
     shield_remaining: Option<i32>
 });
+record!(HumanWideConquerorV59 {
+    occurrence: usize,
+    loss_operations: Vec<usize>,
+    original_source: HumanCardRefV1,
+    current_original_source: Option<HumanCardRefV1>,
+    original_controller: PlayerSeatV1,
+    losing_opponent: PlayerSeatV1,
+    saved_actual_amount: u32,
+    phase: crate::snack_wide_public_v59::PhaseV59,
+    actual_gain: Option<u32>
+});
+record!(HumanWidePandaV59 {
+    occurrence: usize,
+    gain_operation: usize,
+    original_source: HumanCardRefV1,
+    current_original_source: Option<HumanCardRefV1>,
+    original_controller: PlayerSeatV1,
+    life_gained: u32,
+    phase: crate::snack_wide_public_v59::PhaseV59,
+    operation_attempted: bool,
+    actual_counters_added: i32
+});
+record!(HumanWideLifeV59 {
+    ordered_rules: Vec<crate::snack_wide_public_v59::RuleV59>,
+    life: Vec<crate::snack_wide_public_v59::LifeV59>,
+    conqueror: Vec<HumanWideConquerorV59>,
+    panda: Vec<HumanWidePandaV59>,
+    trigger_order: Vec<crate::snack_wide_public_v59::TriggerOrderV59>
+});
+fn wide_facts(
+    value: &crate::snack_wide_public_v59::FactsV59,
+    handles: &mut Handles,
+) -> Result<HumanWideLifeV59, Error> {
+    let conqueror = value
+        .conqueror
+        .iter()
+        .map(|row| {
+            Ok(HumanWideConquerorV59 {
+                occurrence: row.occurrence,
+                loss_operations: row.loss_operations.clone(),
+                original_source: stable_href(&row.source, handles)?,
+                current_original_source: row
+                    .current_original_source
+                    .as_ref()
+                    .map(|r| stable_href(r, handles))
+                    .transpose()?,
+                original_controller: row.original_controller,
+                losing_opponent: row.losing_opponent,
+                saved_actual_amount: row.saved_actual_amount,
+                phase: row.phase,
+                actual_gain: row.actual_gain,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    let panda = value
+        .panda
+        .iter()
+        .map(|row| {
+            Ok(HumanWidePandaV59 {
+                occurrence: row.occurrence,
+                gain_operation: row.gain_operation,
+                original_source: stable_href(&row.source, handles)?,
+                current_original_source: row
+                    .current_original_source
+                    .as_ref()
+                    .map(|r| stable_href(r, handles))
+                    .transpose()?,
+                original_controller: row.original_controller,
+                life_gained: row.life_gained,
+                phase: row.phase,
+                operation_attempted: row.operation_attempted,
+                actual_counters_added: row.actual_counters_added,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(HumanWideLifeV59 {
+        ordered_rules: value.ordered_rules.clone(),
+        life: value.life.clone(),
+        conqueror,
+        panda,
+        trigger_order: value.trigger_order.clone(),
+    })
+}
 record!(HumanNextFiveFactsV59 {
     viewer: PlayerSeatV1,
     meanings: Vec<HumanNextFiveMeaningV59>,
     snack: HumanNextFiveSnackFactsV59,
+    wide_life: HumanWideLifeV59,
     authorized: Vec<(crate::rules_meaning_next_five_v59::FamilyV59, HumanCardRefV1)>,
     current: Vec<HumanNextFiveCurrentV59>,
     casts: Vec<HumanNextFiveCastV59>,
@@ -830,7 +914,9 @@ fn project_facts(
             })
         })
         .collect::<Result<_, Error>>()?;
+    let wide_life = wide_facts(&value.wide_life, handles)?;
     Ok(HumanNextFiveFactsV59 {
+        wide_life,
         viewer: value.viewer,
         meanings,
         snack,
@@ -1176,5 +1262,159 @@ impl HumanNextFiveProjectorV59 {
         };
         self.accepted = Some((receipt.clone(), session.authority.clone()));
         Ok(receipt)
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod wide_tests {
+    use super::*;
+    use crate::{ids::PlayerId, state::Zone};
+    #[test]
+    fn paid_wide_human_and_opponent_original_indices_native_parity_and_stale_restore_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            for human in [actor, actor.opponent()] {
+                let (mut raw, snack, _) = crate::snack_wide_life_v59::tests::scene(actor, true);
+                crate::snack_wide_life_v59::tests::gain_input(&mut raw, actor);
+                for player in [actor, actor.opponent()] {
+                    crate::policy_observation_v6::tests::put(
+                        &mut raw,
+                        player,
+                        "Forest",
+                        Zone::Hand,
+                    );
+                }
+                let mut reference =
+                    FastActorSessionV1::from_next_five_v59_fixture_state(raw.clone());
+                let mut session = HumanNextFiveSessionV59::from_session(
+                    FastActorSessionV1::from_next_five_v59_fixture_state(raw),
+                    human.into(),
+                )
+                .unwrap();
+                let saved = session.snapshot_v59();
+                let native_saved = reference.snapshot_v1();
+                let mut projector = HumanNextFiveProjectorV59::new(human.into());
+                let mut stale = None;
+                let mut first_result = None;
+                for pass in 0..2 {
+                    if pass == 1 {
+                        session.restore_v59(&saved).unwrap();
+                        reference.restore_v1(&native_saved);
+                        let before = serde_json::to_vec(session.inner.fixture_state_v59()).unwrap();
+                        assert!(projector
+                            .submit(&mut session, stale.clone().unwrap())
+                            .is_err());
+                        assert_eq!(
+                            serde_json::to_vec(session.inner.fixture_state_v59()).unwrap(),
+                            before
+                        );
+                        projector = HumanNextFiveProjectorV59::new(human.into());
+                    }
+                    let mut completed = false;
+                    for _ in 0..64 {
+                        assert_eq!(session.current_response(), reference.current_response());
+                        let state = session.inner.fixture_state_v59();
+                        if state.objects.get(snack).zone == Zone::Graveyard
+                            && state.stack.is_empty()
+                            && state.engine.pending_activation.is_none()
+                            && state.engine.pending_triggers.is_empty()
+                        {
+                            completed = true;
+                            break;
+                        }
+                        let decision = session.inner.decision_v59().unwrap();
+                        let expected = decision.expected();
+                        let index=decision.actions().iter().position(|a|matches!(a,
+                        ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==snack.0))
+                        .or_else(||decision.actions().iter().position(|a|matches!(a,
+                            ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Player{player},..}if *player==actor.opponent().into())))
+                        .or_else(||decision.actions().iter().position(|a|matches!(a,ActionSemanticV1::Pass{..}))).unwrap();
+                        if expected.acting_player == human.into() {
+                            let visible = projector.project_current(&session, expected).unwrap();
+                            let original = projector.pending.as_ref().unwrap();
+                            let visible_index = original
+                                .indexes
+                                .iter()
+                                .position(|i| usize::try_from(*i) == Ok(index))
+                                .unwrap();
+                            let request = HumanActionRequestV1 {
+                                prompt_seq: visible.prompt_seq,
+                                action_index: u32::try_from(visible_index).unwrap(),
+                            };
+                            if stale.is_none() {
+                                stale = Some(request.clone());
+                            }
+                            let receipt = projector.submit(&mut session, request.clone()).unwrap();
+                            let after =
+                                serde_json::to_vec(session.inner.fixture_state_v59()).unwrap();
+                            assert_eq!(projector.submit(&mut session, request).unwrap(), receipt);
+                            assert_eq!(
+                                serde_json::to_vec(session.inner.fixture_state_v59()).unwrap(),
+                                after
+                            );
+                        } else {
+                            session
+                                .step_opponent_with(expected, |observation, actions| {
+                                    assert_eq!(observation, decision.observation());
+                                    assert_eq!(actions, decision.actions());
+                                    Ok(u32::try_from(index).unwrap())
+                                })
+                                .unwrap();
+                        }
+                        reference
+                            .step(
+                                expected.episode_id,
+                                expected.step,
+                                u32::try_from(index).unwrap(),
+                            )
+                            .unwrap();
+                        assert_eq!(
+                            session.inner.fixture_state_v59(),
+                            reference.next_five_fixture_state()
+                        );
+                        assert_eq!(
+                            session.inner.fixture_counts_v59(),
+                            (
+                                reference.policy_step_count(),
+                                reference.physical_decision_count()
+                            )
+                        );
+                    }
+                    assert!(completed);
+                    let state = session.inner.fixture_state_v59();
+                    assert_eq!(state.players[actor.index()].life, 2_100_000_020);
+                    let bytes = serde_json::to_vec(state).unwrap();
+                    if let Some(first) = &first_result {
+                        assert_eq!(&bytes, first)
+                    } else {
+                        first_result = Some(bytes)
+                    }
+                    let expected = match session.current_response() {
+                        FastActorResponseV1::Decision(d) => d,
+                        _ => panic!("wide Human priority absent"),
+                    };
+                    if expected.acting_player == human.into() {
+                        let visible = projector.project_current(&session, expected).unwrap();
+                        assert_eq!(
+                            visible.state.next_five.wide_life.conqueror[0].actual_gain,
+                            Some(2_200_000_000)
+                        );
+                        let json =
+                            serde_json::to_string(&visible.state.next_five.wide_life).unwrap();
+                        for key in [
+                            "arena_id",
+                            "history_index",
+                            "original_world",
+                            "inline_effect",
+                        ] {
+                            assert!(!json.contains(key));
+                        }
+                    }
+                }
+            }
+        }
     }
 }

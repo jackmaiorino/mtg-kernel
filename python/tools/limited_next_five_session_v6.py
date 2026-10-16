@@ -204,16 +204,78 @@ SNACK_ACTIVATION = {"source":ROOT,"stage":("enum",("ChoosingOpponentBeforeCosts"
     "target":("optional",SEAT),"target_legal_now":("optional",bool),"original_controller_gained_this_turn_now":GAIN_TOTAL}
 
 
+WIDE_RULES = ("OnePositiveOccurrenceWithExactU32Amount", "FinalNativeLifeCheckedI32BeforeResolutionRemoval",
+    "ActualPostLossConquerorObserverAndCapturedController", "MandatoryTargetlessSavedAmountGain",
+    "CounterDoesNotEvaluateOrCommitFutureGain", "OnePandaCounterInstructionForOneActualGain",
+    "NativeCounterReplacementsStillApply", "FirstGainCountsOccurrenceNotAmount",
+    "WideLossSetsActualLossTurnFlag", "CompleteNativeInputRowRemovalAndOutputValidation")
+WIDE_PHASE = ("enum", ("Fresh", "Held", "Published", "Resolved", "Countered"))
+WIDE_LIFE = {"operation":U64,"kind":("enum",("Loss","Gain")),"player":SEAT,"amount":U32}
+WIDE_CONQUEROR = {"occurrence":U64,"loss_operations":("list",U64),"original_source":REF,
+    "current_original_source":("optional",REF),"original_controller":SEAT,"losing_opponent":SEAT,
+    "saved_actual_amount":U32,"phase":WIDE_PHASE,"actual_gain":("optional",U32)}
+WIDE_PANDA = {"occurrence":U64,"gain_operation":U64,"original_source":REF,
+    "current_original_source":("optional",REF),"original_controller":SEAT,"life_gained":U32,
+    "phase":WIDE_PHASE,"operation_attempted":bool,"actual_counters_added":I32}
+WIDE_ORDER = {"controller":SEAT,"group_position":U64,"observer":("enum",("Conqueror","Panda")),"occurrence":U64}
+WIDE_FACTS = {"ordered_rules":("list",("enum",WIDE_RULES)),"life":("list",WIDE_LIFE),
+    "conqueror":("list",WIDE_CONQUEROR),"panda":("list",WIDE_PANDA),"trigger_order":("list",WIDE_ORDER)}
+
+def _validate_wide_life(value: Any) -> None:
+    _shape(value,WIDE_FACTS,"wide_life")
+    if value["ordered_rules"] != list(WIDE_RULES):
+        raise LimitedSessionError("wide life ordered rules changed")
+    for index,row in enumerate(value["life"]):
+        if row["operation"] != index or row["amount"] <= (1<<31)-1:
+            raise LimitedSessionError("wide life operation or amount changed")
+    for index,row in enumerate(value["conqueror"]):
+        if (row["occurrence"] != index or not row["loss_operations"]
+                or len(set(row["loss_operations"])) != len(row["loss_operations"])
+                or row["original_controller"] == row["losing_opponent"]
+                or row["original_source"]["controller"] != row["original_controller"]
+                or row["original_source"]["zone"] != "Battlefield"
+                or any(at >= len(value["life"]) for at in row["loss_operations"])):
+            raise LimitedSessionError("wide Conqueror occurrence changed")
+        losses=[value["life"][at] for at in row["loss_operations"]]
+        if (any(e["kind"] != "Loss" or e["player"] != row["losing_opponent"] for e in losses)
+                or sum(e["amount"] for e in losses) != row["saved_actual_amount"]
+                or row["actual_gain"] != (row["saved_actual_amount"] if row["phase"] == "Resolved" else None)):
+            raise LimitedSessionError("wide Conqueror saved amount or completion changed")
+    for index,row in enumerate(value["panda"]):
+        at=row["gain_operation"]
+        if row["occurrence"] != index or at >= len(value["life"]):
+            raise LimitedSessionError("wide Panda occurrence changed")
+        gain=value["life"][at]
+        if (gain["kind"] != "Gain" or gain["player"] != row["original_controller"]
+                or gain["amount"] != row["life_gained"] or row["actual_counters_added"] < 0
+                or row["original_source"]["controller"] != row["original_controller"]
+                or row["original_source"]["zone"] != "Battlefield"
+                or row["operation_attempted"] != (row["phase"] == "Resolved")
+                or (not row["operation_attempted"] and row["actual_counters_added"] != 0)):
+            raise LimitedSessionError("wide Panda gain or counter output changed")
+    seen=set()
+    for row in value["trigger_order"]:
+        key=(row["controller"],row["group_position"])
+        rows=value["conqueror"] if row["observer"] == "Conqueror" else value["panda"]
+        if key in seen or row["occurrence"] >= len(rows):
+            raise LimitedSessionError("wide trigger order position changed")
+        seen.add(key)
+        occurrence=rows[row["occurrence"]]
+        if occurrence["phase"] != "Held" or occurrence["original_controller"] != row["controller"]:
+            raise LimitedSessionError("wide trigger order owner changed")
+
+
 def _validate_next_five_visible(visible: Any, actor: str, annotations: Any, actions: Any) -> None:
     if type(visible) is not dict or set(visible) != {"common","prepared","next_five"}:
         raise LimitedSessionError("missing complete next-five visible state")
     # This validates an inherited field layout only, not an artifact or its tags.
     _validate_prepared_visible({key:visible[key] for key in ("common","prepared")},actor,annotations,actions)
     facts=visible["next_five"]
-    fields={"viewer","meanings","snack","authorized","current","casts","triggers","aura_copy","infernal_deaths",
+    fields={"viewer","meanings","snack","wide_life","authorized","current","casts","triggers","aura_copy","infernal_deaths",
             "angel_replacements","angel_mana","goblin_quotes","goblin_ordering","goblin_ordering_options","goblin_completed"}
     if type(facts) is not dict or set(facts) != fields or facts["viewer"] != actor:
         raise LimitedSessionError("invalid next-five actor or complete fields")
+    _validate_wide_life(facts["wide_life"])
     expected=_expected_next_five_meanings()
     if not _same_json_value(facts["meanings"],expected):
         raise LimitedSessionError("ordered next-five printed meaning changed")

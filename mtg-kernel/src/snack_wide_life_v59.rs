@@ -539,7 +539,7 @@ pub(crate) fn require_legacy(state: &GameState) -> Result<(), String> {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::next_five_public_v59::tests as native;
     use crate::{
@@ -547,7 +547,7 @@ mod tests {
         policy_observation_v6::tests::put,
         state::Zone,
     };
-    fn scene(
+    pub(crate) fn scene(
         actor: PlayerId,
         conq: bool,
     ) -> (
@@ -579,7 +579,7 @@ mod tests {
         };
         (state, snack, panda)
     }
-    fn gain_input(state: &mut GameState, actor: PlayerId) {
+    pub(crate) fn gain_input(state: &mut GameState, actor: PlayerId) {
         for _ in 0..2 {
             event::propose_and_commit(state, ProposedEvent::life_gain(actor, 1_100_000_000));
             event::propose_and_commit(state, ProposedEvent::life_loss(actor, 1_100_000_000));

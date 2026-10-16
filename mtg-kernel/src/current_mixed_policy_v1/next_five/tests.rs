@@ -949,3 +949,62 @@ fn genuine_next_five_score_and_apply_uses_original_index_and_refuses_legacy_owne
         }
     }
 }
+
+#[test]
+fn paid_exact_wide_snack_conqueror_panda_numeric_full_native_pair_and_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut raw, snack, panda) = crate::snack_wide_life_v59::tests::scene(actor, true);
+        crate::snack_wide_life_v59::tests::gain_input(&mut raw, actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut raw, player, "Forest", Zone::Hand);
+        }
+        let mut foreign = own(raw.clone());
+        let mut owner = own(raw);
+        let original = owner.decision_v59().unwrap();
+        let untouched = gameplay(&foreign);
+        assert!(foreign.apply(&original, 0).is_err());
+        assert_eq!(gameplay(&foreign), untouched);
+        act(
+            &mut owner,
+            |a| matches!(a,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==snack.0),
+        );
+        act(
+            &mut owner,
+            |a| matches!(a,ActionSemanticV1::ChooseTarget{target:TargetRefV1::Player{player},..}if *player==actor.opponent().into()),
+        );
+        assert_eq!(state(&owner).objects.get(snack).zone, Zone::Graveyard);
+        let saved = owner.snapshot_v59();
+        let stale = owner.decision_v59().unwrap();
+        drain(&mut owner);
+        let result = gameplay(&owner);
+        let current = owner.decision_v59().unwrap();
+        let wide = &current.observation().next_five.wide_life;
+        assert_eq!(wide.conqueror[0].saved_actual_amount, 2_200_000_000);
+        assert_eq!(wide.conqueror[0].actual_gain, Some(2_200_000_000));
+        assert_eq!(wide.panda[0].life_gained, 2_200_000_000);
+        assert_eq!(
+            state(&owner)
+                .objects
+                .get(panda.unwrap())
+                .counters
+                .plus1_plus1,
+            3
+        );
+        assert_eq!(state(&owner).players[actor.index()].life, 2_100_000_020);
+        assert_eq!(
+            current.observation().next_five.snack.gained_this_turn[actor.index()].value(),
+            4_400_000_000
+        );
+        let scores = NativeModel::deterministic_fixture()
+            .unwrap()
+            .forward(current.packet())
+            .unwrap();
+        assert!(scores.iter().all(|x| x.is_finite()));
+        owner.restore_v59(&saved).unwrap();
+        let before = gameplay(&owner);
+        assert!(owner.apply(&stale, 0).is_err());
+        assert_eq!(gameplay(&owner), before);
+        drain(&mut owner);
+        assert_eq!(gameplay(&owner), result);
+    }
+}

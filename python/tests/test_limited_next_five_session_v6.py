@@ -10,7 +10,7 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python/tools"))
 from limited_next_five_session_v6 import (
-    LimitedNextFiveClientV6, _validate_next_five_visible, _expected_next_five_meanings, _validate_play_context,
+    LimitedNextFiveClientV6, WIDE_RULES, _validate_wide_life, _validate_next_five_visible, _expected_next_five_meanings, _validate_play_context,
 )
 from limited_prepared_session_v5 import _expected_prepared_meanings, COUNTERS
 from limited_decks_v1 import parse_dck
@@ -24,6 +24,7 @@ def mock_facts(actor="p0"):
         "viewer":actor,"meaning":deepcopy(meaning[0]["ordered_rules"][0]["Snack"]["meaning"]),
         "attacked_this_turn":[False,False],"gained_this_turn":[{"limbs":[0,0,0,0]},{"limbs":[0,0,0,0]}],"authorized_printings":[],
         "current":[],"current_food":[],"casts":[],"held_raid":[],"published_raid":[],"activations":[]},
+        "wide_life":{"ordered_rules":list(WIDE_RULES),"life":[],"conqueror":[],"panda":[],"trigger_order":[]},
         "authorized":[],"current":[],"casts":[],"triggers":[],"aura_copy":None,"infernal_deaths":[],
         "angel_replacements":[],"angel_mana":[[],[]],"goblin_quotes":[],"goblin_ordering":None,
         "goblin_ordering_options":[],"goblin_completed":[]}
@@ -368,6 +369,30 @@ class LimitedNextFiveClientV6Test(unittest.TestCase):
         changed=deepcopy(decision);changed["foundations_combat"]["assignments"][0]["recipient"]["object"]["arena_id"]=9
         with self.assertRaises(LimitedSessionError): _validate_play_context(changed)
 
+
+class WideLifeGrammarTest(unittest.TestCase):
+    def test_exact_wide_occurrence_amount_and_counter_outcome_are_closed(self):
+        # Explicit protocol representation primitive, never native gameplay evidence.
+        facts=mock_facts()["wide_life"]
+        facts["life"]=[dict(operation=0,kind="Loss",player="p1",amount=2_200_000_000),
+                       dict(operation=1,kind="Gain",player="p0",amount=2_200_000_000)]
+        facts["conqueror"]=[dict(occurrence=0,loss_operations=[0],original_source=ref("wide-conq"),
+            current_original_source=None,original_controller="p0",losing_opponent="p1",
+            saved_actual_amount=2_200_000_000,phase="Resolved",actual_gain=2_200_000_000)]
+        facts["panda"]=[dict(occurrence=0,gain_operation=1,original_source=ref("wide-panda"),
+            current_original_source=None,original_controller="p0",life_gained=2_200_000_000,
+            phase="Resolved",operation_attempted=True,actual_counters_added=2)]
+        _validate_wide_life(facts)
+        for case in range(7):
+            changed=deepcopy(facts)
+            if case==0: changed["life"][0]["amount"]=1<<32
+            elif case==1: changed["conqueror"][0]["actual_gain"]-=1
+            elif case==2: changed["panda"][0]["gain_operation"]=0
+            elif case==3: changed["panda"][0]["actual_counters_added"]=-1
+            elif case==4: changed["ordered_rules"].reverse()
+            elif case==5: changed["life"][0]["history_index"]=0
+            else: changed["conqueror"][0]["loss_operations"]=[0,0]
+            with self.assertRaises(LimitedSessionError): _validate_wide_life(changed)
 
 if __name__ == "__main__":
     unittest.main()

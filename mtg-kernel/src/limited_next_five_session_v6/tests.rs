@@ -1175,3 +1175,47 @@ fn v6_paid_spinner_eight_identical_staged_occurrences_bind_real_prefix_and_resto
         assert_eq!(wire.menu()["state"], public);
     }
 }
+
+#[test]
+fn v6_paid_exact_wide_snack_gain_and_panda_public_outcome_restore_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, snack, _) = crate::snack_wide_life_v59::tests::scene(actor, true);
+        crate::snack_wide_life_v59::tests::gain_input(&mut state, actor);
+        for player in [actor, actor.opponent()] {
+            put(&mut state, player, "Forest", Zone::Hand);
+        }
+        let mut wire = Wire::fixture(state);
+        wire.native_step(|a|matches!(a,ActionSemanticV1::ActivateAbility{source,ability_index:0,..}if source.arena_id==snack.0));
+        wire.native_step(|a|matches!(a,ActionSemanticV1::ChooseTarget{target:crate::rl::TargetRefV1::Player{player},..}if *player==actor.opponent().into()));
+        let saved = wire.snapshot();
+        let stale = wire.request(|label| label == "Pass priority");
+        wire.drain();
+        let after = wire.bytes();
+        let wide = &wire.menu()["state"]["next_five"]["wide_life"];
+        assert_eq!(
+            wide["conqueror"][0]["saved_actual_amount"],
+            2_200_000_000u32
+        );
+        assert_eq!(wide["conqueror"][0]["actual_gain"], 2_200_000_000u32);
+        assert_eq!(wide["panda"][0]["life_gained"], 2_200_000_000u32);
+        assert_eq!(wide["panda"][0]["actual_counters_added"], 1);
+        let text = serde_json::to_string(wide).unwrap();
+        for forbidden in [
+            "arena_id",
+            "history_index",
+            "private_world",
+            "linked_borrow",
+            "inline_effect",
+        ] {
+            assert!(!text.contains(forbidden));
+        }
+        wire.restore(saved);
+        let before = wire.bytes();
+        let rejected = wire.send(stale);
+        assert_eq!(rejected["response_type"], "error");
+        assert_eq!(wire.bytes(), before);
+        wire.send(json!({"request_type":"current"}));
+        wire.drain();
+        assert_eq!(wire.bytes(), after);
+    }
+}

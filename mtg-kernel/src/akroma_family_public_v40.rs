@@ -971,6 +971,11 @@ fn build_for_scope_with_assembly(
     ) -> Result<Vec<FamilyProjectionV40>, RlContractError>,
 ) -> Result<Vec<FamilyProjectionV40>, RlContractError> {
     let (scope, state) = request;
+    if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+        crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    } else {
+        crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    }
     if matches!(
         scope,
         crate::rl::CommonProjectionScopeV42::ConquerorV49

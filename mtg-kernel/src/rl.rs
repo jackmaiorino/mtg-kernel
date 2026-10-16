@@ -2207,6 +2207,9 @@ fn build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50(
     accept_fake: bool,
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<ObservationV2> {
+    if !matches!(text_mode, ObservationTextModeV2::NextFiveV59Artifact) {
+        crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    }
     if let Some(proof) = conqueror_proof {
         proof.require_state(state)?;
     }
@@ -3833,6 +3836,9 @@ fn common_family_observation_storage_with_proof(
     conqueror_proof: Option<&crate::conqueror_public_v49::ValidatedStateV49<'_>>,
 ) -> Result<PolicyObservationStorageV6> {
     let (scope, state) = request;
+    if scope != CommonProjectionScopeV42::NextFiveV59 {
+        crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    }
     if let Some(proof) = conqueror_proof {
         if scope != CommonProjectionScopeV42::ConquerorV49 {
             return Err(RlContractError(
@@ -10785,13 +10791,23 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     if let Some(proof) = conqueror_proof {
                         proof.pending_source_reference(state, p)?
                     } else {
-                        crate::conqueror_public_v49::pending_source_reference(state, p)?
+                        if prepared_scope == Some(CommonProjectionScopeV42::NextFiveV59) {
+                            crate::conqueror_public_v49::pending_source_reference_for_next_five(
+                                state, p,
+                            )?
+                        } else {
+                            crate::conqueror_public_v49::pending_source_reference(state, p)?
+                        }
                     }
                 } else {
                     None
                 };
                 let panda_source = if accept_panda {
-                    crate::panda_public_v47::pending_source_reference(state, p)?
+                    if prepared_scope == Some(CommonProjectionScopeV42::NextFiveV59) {
+                        crate::panda_public_v47::pending_source_reference_for_next_five(state, p)?
+                    } else {
+                        crate::panda_public_v47::pending_source_reference(state, p)?
+                    }
                 } else {
                     None
                 };
@@ -11748,7 +11764,11 @@ fn stack_item_public_conqueror_v49_fake_v50(
         ));
     }
     let panda_target = if accepted_sources.3 {
-        crate::panda_public_v47::original_target_reference(state, item)?
+        if prepared_scope == Some(CommonProjectionScopeV42::NextFiveV59) {
+            crate::panda_public_v47::original_target_reference_for_next_five(state, item)?
+        } else {
+            crate::panda_public_v47::original_target_reference(state, item)?
+        }
     } else {
         None
     };
@@ -12133,7 +12153,11 @@ fn stack_source_ref_conqueror_v49_fake_v50(
         let source = if let Some(proof) = conqueror_proof {
             proof.stack_source_reference(state, item)?
         } else {
-            crate::conqueror_public_v49::stack_source_reference(state, item)?
+            if prepared_scope == Some(CommonProjectionScopeV42::NextFiveV59) {
+                crate::conqueror_public_v49::stack_source_reference_for_next_five(state, item)?
+            } else {
+                crate::conqueror_public_v49::stack_source_reference(state, item)?
+            }
         };
         if let Some(source) = source {
             return Ok(source);
@@ -12141,7 +12165,11 @@ fn stack_source_ref_conqueror_v49_fake_v50(
     }
     let (accept_akroma, accept_faebloom, accept_hunter, accept_panda) = accepted_sources;
     if accept_panda {
-        if let Some(source) = crate::panda_public_v47::stack_source_reference(state, item)? {
+        if let Some(source) = if prepared_scope == Some(CommonProjectionScopeV42::NextFiveV59) {
+            crate::panda_public_v47::stack_source_reference_for_next_five(state, item)?
+        } else {
+            crate::panda_public_v47::stack_source_reference(state, item)?
+        } {
             return Ok(source);
         }
     }

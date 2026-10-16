@@ -226,6 +226,22 @@ fn pending_source_reference_validated(
             .0,
     )))
 }
+pub(crate) fn pending_source_reference_for_next_five(
+    state: &GameState,
+    pending: &PendingTrigger,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    conqueror::validate(state).map_err(RlContractError)?;
+    pending_source_reference_validated(state, pending)
+}
+pub(crate) fn stack_source_reference_for_next_five(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<CardStableRefV1>, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    conqueror::validate(state).map_err(RlContractError)?;
+    stack_source_reference_validated(state, item)
+}
 fn entry(state: &GameState, at: u64) -> Result<&CommittedEvent, RlContractError> {
     state
         .engine
@@ -264,6 +280,16 @@ pub fn meanings() -> Result<Vec<meaning::MeaningV49>, RlContractError> {
 }
 pub fn capture(state: &GameState) -> Result<FactsV49, RlContractError> {
     crate::snack_wide_life_v59::require_legacy(state).map_err(RlContractError)?;
+    capture_ordinary(state)
+}
+/// Ordinary subfacts only. The V59 envelope also requires all wide successor facts.
+pub(crate) fn capture_ordinary_for_next_five(
+    state: &GameState,
+) -> Result<FactsV49, RlContractError> {
+    crate::snack_wide_life_v59::validate(state).map_err(RlContractError)?;
+    capture_ordinary(state)
+}
+fn capture_ordinary(state: &GameState) -> Result<FactsV49, RlContractError> {
     conqueror::validate(state).map_err(RlContractError)?;
     let meanings = meanings()?;
     let batches = state

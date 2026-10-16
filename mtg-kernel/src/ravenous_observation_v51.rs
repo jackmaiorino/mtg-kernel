@@ -212,6 +212,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 }
 pub(crate) fn validate_state_complete_prepared_v57(state: &GameState) -> Result<(), String> {
     crate::snack_wide_life_v59::require_legacy(state)?;
+    validate_state_complete_inherited(state)
+}
+pub(crate) fn validate_state_complete_next_five_v59(state: &GameState) -> Result<(), String> {
+    crate::snack_wide_life_v59::validate(state)?;
+    validate_state_complete_inherited(state)
+}
+fn validate_state_complete_inherited(state: &GameState) -> Result<(), String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
@@ -650,12 +657,20 @@ fn observe_parts_complete_current_scope_using_family_builder(
             .map_err(|error| diagnose_observation_error("inherited.hunter", error))?,
         eaten: crate::eaten_public_v46::capture(state, actor)
             .map_err(|error| diagnose_observation_error("inherited.eaten", error))?,
-        panda: crate::panda_public_v47::capture(state)
-            .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
+        panda: (if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+            crate::panda_public_v47::capture_ordinary_for_next_five(state)
+        } else {
+            crate::panda_public_v47::capture(state)
+        })
+        .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
         season: crate::doubling_season_public_v48::capture(state)
             .map_err(|error| diagnose_observation_error("inherited.season", error))?,
-        conqueror: crate::conqueror_public_v49::capture(state)
-            .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
+        conqueror: (if scope == crate::rl::CommonProjectionScopeV42::NextFiveV59 {
+            crate::conqueror_public_v49::capture_ordinary_for_next_five(state)
+        } else {
+            crate::conqueror_public_v49::capture(state)
+        })
+        .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
         fake: crate::fake_your_own_death_v50::public_v50::capture(state)
             .map_err(|error| diagnose_observation_error("inherited.fake", error))?,
         battlefield: ravenous.cards,
