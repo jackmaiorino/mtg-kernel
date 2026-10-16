@@ -589,10 +589,50 @@ def _merge_iteration(part, validated_files, timing, exposure_inputs):
     return entry
 
 
-def projected_seconds(report, config, kind):
-    units = len(config["iterations"]) if kind == "training" else len(config["episodes"])
-    measured = report["completed_updates"] if kind == "training" else report["completed_games"]
-    return positive(report["seconds"], "completed-work seconds") * units / measured
+def native_update_seconds(report, resolve=checked):
+    """A training qualification's one update, as its native child timed it
+    (`scheduler_timing.iteration_wall_seconds` in its pinned stdout, which
+    excludes the child's initialization), or None for a report that predates
+    the pinned stdout."""
+    if "native_stdout" not in report:
+        return None
+    lines = [json.loads(line) for line in
+             resolve(report["native_stdout"]).read_text(encoding="utf-8").splitlines() if line.strip()]
+    timings = [line.get("scheduler_timing") for line in lines if "completed_iteration" in line]
+    require(len(timings) == 1 and type(timings[0]) is dict
+            and timings[0].get("schema") == "phase1-scheduler-wall/v1",
+            "qualification stdout must time exactly one update")
+    return positive(timings[0]["iteration_wall_seconds"], "native update seconds")
+
+
+def projection_basis(report, kind):
+    """How a qualification projects: an evaluation scales its games to the
+    whole sample; a training trial runs one update, projected per update when
+    its stdout is pinned and, in reports from before that, as the whole trial
+    per update."""
+    if kind != "training":
+        return "evaluation"
+    return "per-update" if "native_stdout" in report else "whole-trial"
+
+
+def projected_seconds(report, config, kind, resolve=checked):
+    """The whole workload's seconds from one qualification. A training trial
+    pays its start-up (the launcher's setup and the native child's
+    initialization, up to the child's first update) once; the rest of the
+    trial (the update, then the launcher's fingerprint and archive of its
+    outputs) recurs for every update."""
+    seconds = positive(report["seconds"], "completed-work seconds")
+    if kind != "training":
+        return seconds * len(config["episodes"]) / report["completed_games"]
+    updates = len(config["iterations"])
+    require(report["completed_updates"] == 1, "a training qualification runs one update")
+    update = native_update_seconds(report, resolve)
+    if update is None:
+        return seconds * updates
+    execution = read(resolve(report["execution"]))
+    start_up = positive(execution["seconds"], "native wall seconds") - update
+    require(0 <= start_up < seconds, "qualification update outlasts its trial")
+    return seconds + (updates - 1) * (seconds - start_up)
 
 
 def qualification_evidence(report, request, config, runtime, family, resolve, verify_outputs):
@@ -743,8 +783,8 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     qualification, which must still be this host's when the pack is on this
     host. Returns the slowest packed slot's projected seconds, the host's
     overheads, the pin, the slots, each slot's packed projected seconds, the
-    slowdown of each kind (mean packed over solo projected seconds) and the
-    number of background claims it recorded."""
+    slowdown of each kind (mean packed over solo projected seconds), the
+    number of background claims it recorded and its trials' projection bases."""
     ref = entry.get("report", entry)
     resolve = artifact_reader(entry.get("path_mappings", []))
     pack = read(checked(ref))
@@ -774,7 +814,7 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     require(all(type(member["slot"]) is int and 0 <= member["slot"] < len(slots) for member in solo)
             and sorted(kinds[member["slot"]] for member in solo) == sorted(set(kinds)),
             "a pack needs one solo trial per slot kind")
-    intervals, seconds = [], []
+    intervals, seconds, bases = [], [], set()
     for member in solo + packed:
         report = read(resolve(member["report"]))
         require(report["workload"] == family, "pack trial workload differs")
@@ -790,7 +830,8 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
         start = started["started_unix"]
         require(execution.get("started_unix") == start, "pack trial start time differs from its receipt")
         intervals.append((start, start + positive(execution["child_seconds"], "native child seconds")))
-        seconds.append(projected_seconds(report, config, request["kind"]))
+        seconds.append(projected_seconds(report, config, request["kind"], resolve))
+        bases.add(projection_basis(report, request["kind"]))
     alone, together = intervals[:len(solo)], intervals[len(solo):]
     starts = [start for start, _ in together]
     require(max(starts) - min(starts) <= 0.1 * min(end - start for start, end in together),
@@ -804,7 +845,7 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     slowdown = {kind: sum(value for value, other in zip(packed_seconds, kinds) if other == kind)
                 / kinds.count(kind) / baseline[kind] for kind in sorted(set(kinds))}
     transport, queue = placement_overheads(choice, host)
-    return max(packed_seconds), transport, queue, ref, slots, packed_seconds, slowdown, background
+    return max(packed_seconds), transport, queue, ref, slots, packed_seconds, slowdown, background, bases
 
 
 def selected_slots(ref):
@@ -829,7 +870,7 @@ def require_choice(path, request, verify_outputs=False):
         if status["eligible"]:
             require(host in PLACEMENTS and status["cpu_affinity"], "paid/unknown or empty eligible placement")
             eligible.add(host)
-    candidates, worker_counts, fingerprints = [], {}, {}
+    candidates, worker_counts, fingerprints, bases = [], {}, {}, set()
     for entry in choice["qualifications"]:
         ref = entry.get("report", entry)
         resolve = artifact_reader(entry.get("path_mappings", []))
@@ -854,14 +895,17 @@ def require_choice(path, request, verify_outputs=False):
         fingerprints[ref["sha256"]] = (sample, actual)
         worker_counts.setdefault(placement["host"], []).append(placement["workers"])
         qualification_work(report, request, actual_config, resolve, verify_outputs)
-        seconds = projected_seconds(report, config, request["kind"])
+        seconds = projected_seconds(report, config, request["kind"], resolve)
+        bases.add(projection_basis(report, request["kind"]))
         transport, queue = placement_overheads(choice, placement["host"])
         candidates.append((seconds, transport, queue, ref, placement))
     require(set(worker_counts) == eligible, "eligible host lacks measured allocation")
     require(all(counts[0] == 1 and counts == sorted(set(counts)) and any(w > 1 for w in counts)
                 for counts in worker_counts.values()), "each host needs serial then increasing workers")
     require(candidates, "missing compatible completed-work throughput evidence")
+    # Projections compare only on one basis (projection_basis).
     if "packs" not in choice:
+        require(len(bases) == 1, "a choice's qualifications must share one projection basis")
         best = min(((seconds + transport + queue, ref, placement)
                     for seconds, transport, queue, ref, placement in candidates), key=lambda item: item[0])
         require(choice["selected"][family] == best[1] and request["placement"] == best[2],
@@ -879,10 +923,12 @@ def require_choice(path, request, verify_outputs=False):
             pack = pack_candidate(entry, request, config, runtime, family, choice, eligible, verify_outputs,
                                   reference)
             if pack is not None:
-                wave, transport, queue, ref, slots, slot_seconds, slowdown, background = pack
+                wave, transport, queue, ref, slots, slot_seconds, slowdown, background, pack_bases = pack
+                bases |= pack_bases
                 options.append((math.ceil(runs / len(slots)) * (wave + transport) + queue, ref, slots,
                                 "pack", {"slots": len(slots), "slot_seconds": slot_seconds, "slowdown": slowdown,
                                          "background_claims": background}))
+        require(len(bases) == 1, "a choice's qualifications must share one projection basis")
         best = min(options, key=lambda item: item[0])
         require(choice["selected"][family] == best[1] and request["placement"] in best[2],
                 "production does not use fastest qualified eligible allocation")
@@ -1080,7 +1126,8 @@ def execute(request_path, qualification):
     report = {"schema": SCHEMA, "qualification": qualification, "complete": True,
               "request": pin(request_path), "executed_config": pin(root/"config.json"),
               "execution": pin(root/"execution.json"),
-              "native_result": pin(root/"native-result.json"), "runtime": runtime,
+              "native_result": pin(root/"native-result.json"), "native_stdout": pin(root/"stdout.jsonl"),
+              "runtime": runtime,
               "launcher_sha256": pin(__file__)["sha256"], "workload": workload(config, request["kind"], family=request.get("schedule_family")),
               "placement": request["placement"], "fingerprint": fingerprint,
               "completed_games": games, "completed_updates": (1 if qualification else len(config["iterations"]))

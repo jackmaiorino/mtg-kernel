@@ -102,7 +102,14 @@ Build a choice JSON:
 Get each key with `workload(config, kind)`. Training replicas differ only in
 IDs/seeds; decks, seat order, opponents, complete schedule shape, initial state,
 loss and optimizer must match. The fastest eligible candidate minimizes complete
-projected work plus transport and any measured remaining host queue. Optional
+projected work plus transport and any measured remaining host queue. A training
+qualification runs the first update, so its projection pays the trial's
+start-up once (the launcher's setup and the native child's initialization up to
+its first update, which the child times itself in the report's pinned
+`native_stdout`) and the rest of the trial (the update, its fingerprint and its
+archive) once per update. Reports from before `native_stdout` project the whole
+trial once per update, so they count the start-up once per update; the
+qualifications of one choice must share one projection basis. Optional
 `queue_seconds` requires a `queue_evidence` pin; this allows an otherwise slower
 free PC to finish an independent job sooner while the faster PC is occupied.
 The research lead owns the total campaign queue and shared storage accounting.
