@@ -401,7 +401,7 @@ pub(crate) mod perforating_artist_v1 {
             )
     }
 
-    fn validate_origin(state: &GameState, item: &StackItem) -> Result<(), String> {
+    pub(crate) fn validate_origin(state: &GameState, item: &StackItem) -> Result<(), String> {
         let source = item
             .v4
             .ability_source_contract

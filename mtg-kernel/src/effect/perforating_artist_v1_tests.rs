@@ -8,6 +8,272 @@ use crate::{
     state::Step,
 };
 
+#[test]
+fn genuine_v64_paid_cast_meaning_and_full_public_form_restore_both_seats() {
+    use crate::{artist_public_v64 as public, rules_meaning_artist_v64 as meaning};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = crate::extra_turn_v1::tests::ready(actor);
+        let artist = put(&mut state, actor, "Perforating Artist", Zone::Hand);
+        let hidden = public::capture(&state, actor.opponent()).unwrap();
+        assert!(!hidden
+            .authorized_printings
+            .iter()
+            .any(|r| r.object == artist.0));
+        assert!(public::capture(&state, actor)
+            .unwrap()
+            .authorized_printings
+            .iter()
+            .any(|r| r.object == artist.0));
+        mana(&mut state, actor, "Swamp", 1);
+        mana(&mut state, actor, "Mountain", 2);
+        engine::step(&mut state, Action::CastSpell(artist)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let copy = restored(&state);
+        for viewer in [actor, actor.opponent()] {
+            let facts = public::capture(&state, viewer).unwrap();
+            assert_eq!(public::capture(&copy, viewer).unwrap(), facts);
+            public::validate(&state, viewer, &facts).unwrap();
+            assert_eq!(facts.casts.len(), 1);
+            assert!(facts.casts[0].genuine_cast_finalized);
+            assert!(!facts.casts[0].is_uncast_copy);
+            assert!(!facts.casts[0].payment_pending);
+            assert_eq!(facts.casts[0].original_controller, actor.into());
+            assert_eq!(facts.casts[0].current_form.power, Some(3));
+            assert_eq!(facts.casts[0].current_form.toughness, Some(2));
+            assert!(!facts.complete_ordinary_observation);
+            assert!(!facts.owning_consumer_admitted);
+            let mut changed = facts.meaning.clone();
+            changed.ordered_rules.reverse();
+            assert!(meaning::validate(&changed).is_err());
+            let mut changed = facts.clone();
+            changed.casts[0].original_controller = actor.opponent().into();
+            let before = serde_json::to_vec(&state).unwrap();
+            assert!(public::validate(&state, viewer, &changed).is_err());
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+        drain(&mut state);
+        let facts = public::capture(&state, actor).unwrap();
+        let permanent = facts.battlefield[actor.index()]
+            .iter()
+            .find(|r| r.card.object == artist.0)
+            .unwrap();
+        assert_eq!(
+            permanent.form.keyword_bits & Keywords::DEATHTOUCH.0,
+            Keywords::DEATHTOUCH.0
+        );
+        assert_eq!(permanent.form.power, Some(3));
+        assert_eq!(permanent.counters.fellowship, 0);
+        assert_eq!(CARD_DEFS[460].capability, CardCapability::Partial);
+        assert!(card_def::preflight_fully_supported_deck(&[460]).is_err());
+    }
+}
+
+#[test]
+fn genuine_v64_raid_sacrifice_discard_privacy_and_answered_restore_both_seats() {
+    use crate::artist_public_v64::{self as public, PaymentKindV64, PaymentStatusV64, StageV64};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        for mode in 0..3 {
+            let payer = actor.opponent();
+            let (mut state, artist) = paid(actor);
+            let permanent = put(&mut state, payer, "Fishing Pole", Zone::Battlefield);
+            let card = put(&mut state, payer, "Forest", Zone::Hand);
+            raid(&mut state, actor, artist, true);
+            let published = public::capture(&state, actor).unwrap();
+            let row = published
+                .triggers
+                .iter()
+                .find(|r| r.stage == StageV64::Published)
+                .unwrap();
+            assert_eq!(row.source.captured_controller, actor.into());
+            assert_eq!(row.affected_opponent, payer.into());
+            assert!(row.payment.is_none());
+            assert_eq!(payment(&mut state, payer), vec![Target::Object(permanent)]);
+            for viewer in [actor, payer] {
+                let facts = public::capture(&state, viewer).unwrap();
+                let row = facts
+                    .triggers
+                    .iter()
+                    .find(|r| r.stage == StageV64::Resolving)
+                    .unwrap();
+                let choice = row.payment.as_ref().unwrap();
+                assert_eq!(
+                    choice.kind,
+                    PaymentKindV64::SacrificeControlledNonlandPermanent
+                );
+                assert_eq!(choice.status, PaymentStatusV64::Waiting);
+                assert_eq!(choice.candidates.as_ref().unwrap()[0].object, permanent.0);
+                assert!(!choice.is_target);
+                assert!(choice.may_decline);
+            }
+            if mode == 0 {
+                engine::step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(permanent)),
+                )
+                .unwrap();
+            } else {
+                engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+                assert_eq!(payment(&mut state, payer), vec![Target::Object(card)]);
+                let hidden = public::capture(&state, actor).unwrap();
+                let shown = public::capture(&state, payer).unwrap();
+                let choice = hidden.triggers[0].payment.as_ref().unwrap();
+                assert_eq!(choice.kind, PaymentKindV64::DiscardCard);
+                assert!(choice.candidates.is_none());
+                assert!(choice.selected.is_none());
+                assert_eq!(
+                    shown.triggers[0]
+                        .payment
+                        .as_ref()
+                        .unwrap()
+                        .candidates
+                        .as_ref()
+                        .unwrap()[0]
+                        .object,
+                    card.0
+                );
+                // An otherwise identical hidden-world fixture changes only the
+                // unexposed hand printing; it is not another gameplay cast.
+                let mut hidden_world = state.clone();
+                hidden_world.objects.get_mut(card).card_def =
+                    card_def::card_id_by_name("Island").unwrap();
+                assert_eq!(public::capture(&hidden_world, actor).unwrap(), hidden);
+                assert_ne!(public::capture(&hidden_world, payer).unwrap(), shown);
+                if mode == 1 {
+                    engine::step(&mut state, Action::ChooseEffectTarget(Target::Object(card)))
+                        .unwrap();
+                } else {
+                    engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+                }
+            }
+            let mut copy = restored(&state);
+            for viewer in [actor, payer] {
+                let facts = public::capture(&state, viewer).unwrap();
+                assert_eq!(public::capture(&copy, viewer).unwrap(), facts);
+                assert_eq!(
+                    facts.triggers[0].payment.as_ref().unwrap().status,
+                    PaymentStatusV64::Answered
+                );
+                public::validate(&state, viewer, &facts).unwrap();
+            }
+            let life = state.players[payer.index()].life;
+            for game in [&mut state, &mut copy] {
+                drain(game);
+                assert_eq!(
+                    game.players[payer.index()].life,
+                    life - if mode == 2 { 3 } else { 0 }
+                );
+                assert!(public::capture(game, actor).unwrap().triggers.is_empty());
+                assert!(game.engine.halted.is_none());
+            }
+            assert_same(&state, &copy);
+        }
+    }
+}
+
+#[test]
+fn genuine_v64_native_raid_root_and_payment_forgery_refuse_readonly_both_seats() {
+    use crate::artist_public_v64 as public;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let payer = actor.opponent();
+        let (mut state, artist) = paid(actor);
+        put(&mut state, payer, "Fishing Pole", Zone::Battlefield);
+        raid(&mut state, actor, artist, true);
+        payment(&mut state, payer);
+        for mode in 0..4 {
+            let mut changed = state.clone();
+            let pending = changed.engine.pending_effect.as_mut().unwrap();
+            match mode {
+                0 => pending.ctx.controller = payer,
+                1 => pending.resolving_item.inline_effect = Some(EffectOp::Sequence(vec![])),
+                2 => {
+                    pending
+                        .resolving_item
+                        .v4
+                        .ability_source_contract
+                        .as_mut()
+                        .unwrap()
+                        .zone_change_count += 1
+                }
+                3 => {
+                    let PendingEffectChoice::SelectTargets { legal, .. } =
+                        pending.choice.as_mut().unwrap()
+                    else {
+                        panic!()
+                    };
+                    legal.clear();
+                }
+                _ => unreachable!(),
+            }
+            let before = serde_json::to_vec(&changed).unwrap();
+            assert!(public::capture(&changed, actor).is_err());
+            assert_eq!(serde_json::to_vec(&changed).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn genuine_v64_paid_control_response_keeps_original_raid_controller_and_public_roster_both_seats() {
+    use crate::artist_public_v64::{self as public, StageV64};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let payer = actor.opponent();
+        let (mut state, artist) = paid(actor);
+        put(&mut state, payer, "High Fae Trickster", Zone::Battlefield);
+        raid(&mut state, actor, artist, true);
+        let employment = put(&mut state, payer, "Involuntary Employment", Zone::Hand);
+        mana(&mut state, payer, "Mountain", 4);
+        priority(&mut state, payer);
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, castable_spells, .. }
+            if player == payer && castable_spells.contains(&employment))
+        );
+        engine::step(&mut state, Action::CastSpell(employment)).unwrap();
+        assert!(
+            matches!(next(&mut state), Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(artist)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(artist))).unwrap();
+        let mut copy = restored(&state);
+        for game in [&mut state, &mut copy] {
+            resolve_response(game, employment);
+            let facts = public::capture(game, actor).unwrap();
+            let raid = facts
+                .triggers
+                .iter()
+                .find(|r| r.stage == StageV64::Published)
+                .unwrap();
+            assert_eq!(raid.source.captured_controller, actor.into());
+            assert_eq!(raid.affected_opponent, payer.into());
+            assert_eq!(
+                raid.source
+                    .current_original_source
+                    .as_ref()
+                    .unwrap()
+                    .controller,
+                payer.into()
+            );
+            assert!(payment(game, payer).contains(&Target::Object(artist)));
+            let facts = public::capture(game, actor).unwrap();
+            assert!(facts.triggers[0]
+                .payment
+                .as_ref()
+                .unwrap()
+                .candidates
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|r| r.object == artist.0 && r.controller == payer.into()));
+            engine::step(game, Action::ChooseEffectTarget(Target::Object(artist))).unwrap();
+            drain(game);
+            assert_eq!(game.objects.get(artist).zone, Zone::Graveyard);
+            assert!(game.players[actor.index()].graveyard.contains(&artist));
+            assert!(public::capture(game, actor).unwrap().triggers.is_empty());
+        }
+        assert_same(&state, &copy);
+    }
+}
+
 fn next(state: &mut GameState) -> Decision {
     let decision = engine::advance_until_decision(state);
     assert!(!matches!(decision, Decision::Halted { .. }), "{decision:?}");
