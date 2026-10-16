@@ -617,10 +617,11 @@ def projection_basis(report, kind):
 
 def projected_seconds(report, config, kind, resolve=checked):
     """The whole workload's seconds from one qualification. A training trial
-    pays its start-up (the launcher's setup and the native child's
-    initialization, up to the child's first update) once; the rest of the
-    trial (the update, then the launcher's fingerprint and archive of its
-    outputs) recurs for every update."""
+    pays once what a run pays once (the launcher's setup, the native child's
+    initialization and exit, the storage checks and the report). Each update
+    repeats the native update and its archive. The trial fingerprinted its one
+    update in one process; a run fingerprints every update over the
+    fingerprint_workers of its placement."""
     seconds = positive(report["seconds"], "completed-work seconds")
     if kind != "training":
         return seconds * len(config["episodes"]) / report["completed_games"]
@@ -630,9 +631,15 @@ def projected_seconds(report, config, kind, resolve=checked):
     if update is None:
         return seconds * updates
     execution = read(resolve(report["execution"]))
-    start_up = positive(execution["seconds"], "native wall seconds") - update
-    require(0 <= start_up < seconds, "qualification update outlasts its trial")
-    return seconds + (updates - 1) * (seconds - start_up)
+    require(update < positive(execution["seconds"], "native wall seconds"),
+            "qualification update outlasts its native execution")
+    timing = report.get("artifact_timing")
+    require(type(timing) is dict, "qualification lacks its artifact timing")
+    fingerprint = positive(timing.get("fingerprint_seconds"), "fingerprint seconds")
+    archive = positive(timing.get("archive_seconds"), "archive seconds")
+    once = seconds - update - fingerprint - archive
+    require(once >= 0, "qualification update, fingerprint and archive outlast its trial")
+    return once + updates * (update + archive + fingerprint / fingerprint_workers(report["placement"]))
 
 
 def qualification_evidence(report, request, config, runtime, family, resolve, verify_outputs):
