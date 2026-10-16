@@ -463,6 +463,34 @@ fn batch_qualifies(state: &GameState, id: ObjectId, predicate: ExileCastPredicat
             }
         }
 }
+fn top_batch_definition(id: u16) -> bool {
+    id == 481
+        && card_def::CARD_DEFS
+            .get(usize::from(id))
+            .is_some_and(|d| d.name == "Etali, Primal Storm")
+}
+
+pub(super) fn refuse_top_batch_legacy(state: &GameState) -> Result<(), String> {
+    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, top_batch_definition)
+        || state.objects.iter().any(|(_, o)| {
+            matches!(
+                o.zone,
+                Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile
+            ) && o.v4.face_down_v1.is_none()
+                && top_batch_definition(o.card_def)
+        })
+        || state.stack.iter().any(top_batch_item)
+        || state
+            .engine
+            .pending_effect
+            .as_ref()
+            .is_some_and(top_batch_pending)
+    {
+        return Err("Etali top-card free casting requires a complete successor".into());
+    }
+    Ok(())
+}
+
 pub(super) fn top_batch_item(item: &StackItem) -> bool {
     item.inline_effect == Some(EffectOp::ExileTopEachPlayerThenCastV1)
 }
@@ -825,3 +853,11 @@ fn finish_batch(state: &mut GameState, choice: &ExileBatchChoice) -> Result<(), 
     *state = staged;
     Ok(())
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "etali_primal_storm_v1_tests.rs"]
+mod etali_primal_storm_tests;

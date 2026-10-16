@@ -1,6 +1,5 @@
-//! Prepared genuine native FDN194 fixtures. This file is deliberately not a
-//! module yet: enable its entrypoints only with the actual contiguous registry
-//! append, after Progenitus480. No absent-printing early-success branch exists.
+//! Genuine native FDN194 Partial481 fixtures. Initial lands/libraries/Hand cards
+//! are labelled support operands; payment, turns, attack and casting are native.
 use super::*;
 use crate::{
     engine::{self, Action, Decision},
@@ -152,6 +151,7 @@ fn batch(s: &mut GameState, p: PlayerId) -> ExileBatchChoice {
 fn paid_six_mana_printing_attack_sickness_and_old_consumer_refusal_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let (s, source) = paid(p, &["Forest"; 40], &["Forest"; 40]);
+        assert_eq!(id(NAME), 481);
         let d = &card_def::CARD_DEFS[id(NAME) as usize];
         assert_eq!(d.capability, card_def::CardCapability::Partial);
         assert_eq!(
@@ -162,6 +162,7 @@ fn paid_six_mana_printing_attack_sickness_and_old_consumer_refusal_both_seats() 
         assert_eq!(s.objects.get(source).owner, p);
         assert!(card_def::preflight_fully_supported_deck(&[id(NAME)]).is_err());
         assert!(crate::rl::observe_v1(&s, p, 0).is_err());
+        assert!(crate::drake_public_v53::capture(&s).is_err());
     }
 }
 #[test]

@@ -1165,6 +1165,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("effect/standard_exile.rs", "Etali, Primal Storm", "exact native top-only free-cast family; new root remains Opaque and old consumers refuse"),
     ("progenitus_v1.rs", "Progenitus", "native all-source protection and mandatory original-zone reveal/shuffle remain Opaque"),
     ("effect/harvester_v1.rs", "Abyssal Harvester", "native tap activation with exact turn/incarnation target, copiable Nightmare and token-only cleanup remains Opaque"),
     ("effect/source_token_copy_v1.rs", "Homunculus Horde", "native current or last-known copiable source, not a fixed token"),
@@ -1499,6 +1500,10 @@ const RULES_MODULES: &[(&str, &str)] = &[
     ),
     ("engine.rs", include_str!("../engine.rs")),
     ("effect.rs", include_str!("../effect.rs")),
+    (
+        "effect/standard_exile.rs",
+        include_str!("../effect/standard_exile.rs"),
+    ),
     (
         "effect/library_choice_search_v2.rs",
         include_str!("../effect/library_choice_search_v2.rs"),

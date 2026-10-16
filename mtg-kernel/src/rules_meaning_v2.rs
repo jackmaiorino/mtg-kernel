@@ -160,6 +160,10 @@ pub fn producer_sha256_v2() -> String {
             "effect/inspiration_resolution_v1.rs",
             include_str!("effect/inspiration_resolution_v1.rs"),
         ),
+        (
+            "effect/standard_exile.rs",
+            include_str!("effect/standard_exile.rs"),
+        ),
     ];
     let mut hash = Sha256::new();
     hash.update(RULES_MEANING_SCHEMA_V2.as_bytes());

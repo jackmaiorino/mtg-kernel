@@ -2213,7 +2213,7 @@ pub fn drakuseth_attack_v1() -> EffectOp {
 fn etali_primal_storm_attack_v1() -> EffectOp {
     EffectOp::ExileTopEachPlayerThenCastV1
 }
-// This remains unregistered until the actual preceding printing is composed.
+// FDN194 follows the actual contiguous Progenitus480 prerequisite.
 static ETALI_PRIMAL_STORM_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     home_zone: Zone::Battlefield,
