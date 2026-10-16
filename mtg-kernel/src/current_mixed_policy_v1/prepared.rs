@@ -39,6 +39,20 @@ impl PreparedDecision {
         &mut self.packet
     }
 }
+// Pure normalization of the exact freshly validated backend input. This
+// function cannot capture another decision or acquire executable authority.
+fn packet_from_current(
+    observation: &crate::prepared_observation_v57::PreparedObservationV57,
+    actions: &[crate::rl::ActionSemanticV1],
+) -> Result<Packet> {
+    let state = serde_json::to_value(observation).map_err(|e| Error::Projection(e.to_string()))?;
+    let actions = actions
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Projection(e.to_string()))?;
+    normalize::encode(Source::PreparedV57, state, actions)
+}
 impl PreparedSession {
     pub fn from_session(session: FastActorSessionV1) -> Result<Self> {
         Ok(Self::from_prepared(
@@ -96,15 +110,7 @@ impl PreparedSession {
         if backend.expected() != expected {
             return Err(Error::StaleBinding);
         }
-        let state = serde_json::to_value(backend.observation())
-            .map_err(|e| Error::Projection(e.to_string()))?;
-        let actions = backend
-            .actions()
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Projection(e.to_string()))?;
-        let packet = normalize::encode(Source::PreparedV57, state, actions)?;
+        let packet = packet_from_current(backend.observation(), backend.actions())?;
         Ok(PreparedDecision {
             backend,
             packet,
@@ -126,17 +132,18 @@ impl PreparedSession {
         {
             return Err(Error::ActionRange);
         }
-        self.inner
-            .validate_decision_v57(&decision.backend)
-            .map_err(|_| Error::StaleBinding)?;
-        if self.encode(decision.backend.expected())?.packet != decision.packet {
-            return Err(Error::StaleBinding);
-        }
-        // The real owning step repeats complete current private validation
-        // immediately before applying the original native ordered index.
-        self.inner
-            .step_v57(&decision.backend, selected_index)
-            .map_err(|e| Error::Projection(e.to_string()))
+        self.inner.step_with_current_check(
+            &decision.backend,
+            selected_index,
+            |observation, actions| {
+                if packet_from_current(observation, actions)? != decision.packet {
+                    return Err(Error::StaleBinding);
+                }
+                Ok(())
+            },
+            |_| Error::StaleBinding,
+            |error| Error::Projection(error.to_string()),
+        )
     }
     pub fn score_and_apply(
         &mut self,

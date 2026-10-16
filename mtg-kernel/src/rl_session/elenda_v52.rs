@@ -711,8 +711,12 @@ impl FastActorSessionV1 {
         Ok((observation, actions, binding))
     }
 
-    /// Revalidation is read-only. The projector calls this immediately
-    /// before applying its privately mapped index through session.step.
+    /// Independent read-only revalidation for Limited predecessor fixtures.
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
     pub(crate) fn elenda_validate_bound_decision_v52(
         &self,
         expected: FastActorDecisionV1,
@@ -858,10 +862,10 @@ impl ElendaSessionV52 {
             generation: self.generation,
         })
     }
-    pub fn validate_decision_v52(
+    fn validated_current_input(
         &self,
         decision: &ElendaDecisionV52,
-    ) -> Result<(), RlContractError> {
+    ) -> Result<(ElendaObservationV52, Vec<ActionSemanticV1>), RlContractError> {
         if !std::sync::Arc::ptr_eq(&self.owner, &decision.owner)
             || decision.generation != self.generation
         {
@@ -869,35 +873,63 @@ impl ElendaSessionV52 {
                 "foreign or stale Elenda V52 decision".into(),
             ));
         }
-        self.inner
-            .elenda_validate_bound_decision_v52(
-                decision.expected,
-                decision.expected.acting_player,
-                &decision.binding,
-            )
-            .map_err(|error| RlContractError(format!("Elenda V52 binding:{error:?}")))?;
-        let (observation, actions, _) = self
+        let (observation, actions, binding) = self
             .inner
             .elenda_current_decision_input_v52(decision.expected, decision.expected.acting_player)
-            .map_err(|error| RlContractError(format!("Elenda V52 current:{error:?}")))?;
+            .map_err(|error| RlContractError(format!("Elenda V52 binding:{error:?}")))?;
+        if binding != decision.binding {
+            return Err(RlContractError(format!(
+                "Elenda V52 binding:{:?}",
+                FlatActionDecisionSliceErrorV1::CorruptCurrentBinding
+            )));
+        }
         if observation != decision.observation || actions != decision.actions {
             return Err(RlContractError("Elenda V52 public menu changed".into()));
         }
-        Ok(())
+        Ok((observation, actions))
+    }
+    pub fn validate_decision_v52(
+        &self,
+        decision: &ElendaDecisionV52,
+    ) -> Result<(), RlContractError> {
+        self.validated_current_input(decision).map(|_| ())
     }
     pub fn step_v52(
         &mut self,
         decision: &ElendaDecisionV52,
         selected_index: u32,
     ) -> Result<FastActorResponseV1, RlContractError> {
-        self.validate_decision_v52(decision)?;
+        self.step_with_current_check(
+            decision,
+            selected_index,
+            |_, _| Ok(()),
+            |error| error,
+            |error| error,
+        )
+    }
+
+    /// A fresh complete input is confined to this exclusive mutable call.
+    /// The callback sees only its public values and cannot retain step authority
+    /// or mutate this session. The core session step still runs all its guards.
+    pub(crate) fn step_with_current_check<E>(
+        &mut self,
+        decision: &ElendaDecisionV52,
+        selected_index: u32,
+        check: impl FnOnce(&ElendaObservationV52, &[ActionSemanticV1]) -> Result<(), E>,
+        binding_error: impl FnOnce(RlContractError) -> E,
+        native_error: impl FnOnce(RlContractError) -> E,
+    ) -> Result<FastActorResponseV1, E> {
+        let (observation, actions) = self
+            .validated_current_input(decision)
+            .map_err(binding_error)?;
+        check(&observation, &actions)?;
         if usize::try_from(selected_index)
             .ok()
             .is_none_or(|index| index >= decision.actions.len())
         {
-            return Err(RlContractError(
+            return Err(native_error(RlContractError(
                 "Elenda V52 action index out of range".into(),
-            ));
+            )));
         }
         self.inner
             .step(
@@ -905,6 +937,8 @@ impl ElendaSessionV52 {
                 decision.expected.step,
                 selected_index,
             )
-            .map_err(|error| RlContractError(format!("Elenda V52 native step:{error:?}")))
+            .map_err(|error| {
+                native_error(RlContractError(format!("Elenda V52 native step:{error:?}")))
+            })
     }
 }

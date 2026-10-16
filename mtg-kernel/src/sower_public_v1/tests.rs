@@ -525,6 +525,19 @@ fn genuine_paid_sower_and_frenzied_restrictions_partition_restore_and_refuse_for
             Decision::ChooseTargets { .. }
         ));
         engine::step(&mut state, Action::ChooseTarget(Target::Object(recipient))).unwrap();
+        // Target selection precedes native activation finalization and payment.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        assert!(state.engine.pending_activation.is_none());
+        let [paid] = state.stack.as_slice() else {
+            panic!("one genuinely paid Sower activation must be on the stack")
+        };
+        assert_eq!(paid.source, sower);
+        assert_eq!(paid.controller, actor);
+        assert_eq!(paid.kind, crate::state::StackItemKind::ActivatedAbility);
+        assert_eq!(paid.targets.as_slice(), &[Target::Object(recipient)]);
         assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
         for _ in 0..16 {
             let decision = engine::advance_until_decision(&mut state);
