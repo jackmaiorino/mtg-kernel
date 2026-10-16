@@ -4,10 +4,10 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 `8a43c201cf18b9aaa310294a42642dee276313bb`, composed by normal merge with
 `41aea9c56747df05377d42810f93833cdd8d3f93` at `891af8e91`.
 Seven earlier Full registrations remain Full. The five appendices retain Partial
-IDs 452-456. Native Alesha, Nine-Lives Familiar and Valkyrie's Call appendices
-retain Partial IDs 457-459. Source inventory is 460 definitions and 268 FDN rows;
+IDs 452-456. Native Alesha, Nine-Lives Familiar, Valkyrie's Call and Perforating
+Artist appendices retain Partial IDs 457-460. Source inventory is 461 definitions and 269 FDN rows;
 frozen booster membership remains 286 names and 24 token dependencies (245 Full,
-8 Partial, 33 Missing). Full-only production deck reset still refuses each appendix.
+9 Partial, 32 Missing). Full-only production deck reset still refuses each appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -165,7 +165,23 @@ All 174 affected Python cases across the same nine modules passed at exact
 Call printing/deck/Full-only-refusal case. This integration passed pinned
 1.94.1 formatting, diff checks, and lightweight static checks of source-case
 preservation and feature identity coverage.
-All 151 Rust source cases at this composed head, binary and checker remain
+
+Reviewed Perforating Artist source `496b5f8b16ea8f7f5a72442b0f280af55394dda4`
+is normally composed at `1a099ef8f615e412e83b592ff100061b42edd069` after the actual
+Call prerequisite. The exact 72-field printing gates the captured-controller
+Raid trigger and closed sacrifice, discard and life-loss stages. Non-target
+payment binds the complete affected player's nonland roster and exact departure
+incarnations. A consumed native owner lends the authentic removed stack row to
+the unchanged public validator and restores the entire remaining stack on success
+or error. Six paid both-seat Rust fixture groups cover control responses,
+bounce/recast, sacrifice replacement, Madness, restore and malformed stages.
+All existing model and owning source stays unchanged; Artist adds no consumer
+permission. Root and scoped source reviews found no unresolved defect in scope.
+These Rust cases remain uncompiled and unexecuted.
+
+All 175 affected Python cases passed at exact composed `1a099ef8f615e412e83b592ff100061b42edd069`
+in 21.018 seconds. Pinned 1.94.1 formatting and diff checks also passed.
+The current 151 model Rust source cases, binary and checker remain
 uncompiled/unrun; source counts are not runtime passes. Actual
 export/catalog/profile and runtime qualification remain root-owned. Active
 Native177 qualifies the separate seven-printing source at
