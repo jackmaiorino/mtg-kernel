@@ -4338,7 +4338,6 @@ fn keywords_for(card: &CardJson) -> String {
         | "Elenda, Saint of Dusk" => keywords.push("Keywords::LIFELINK"),
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
-        "Progenitus" => keywords.push("Keywords::PROTECTION_FROM_EVERYTHING"),
         "Brazen Scourge" | "Fanatical Firebrand" | "Ruby, Daring Tracker" => {
             keywords.push("Keywords::HASTE")
         }
