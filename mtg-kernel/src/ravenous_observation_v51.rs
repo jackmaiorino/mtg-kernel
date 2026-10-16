@@ -132,6 +132,7 @@ pub fn producer_sha256() -> String {
             include_str!("banner_observation_v1.rs"),
             include_str!("inspiration_observation_v1.rs"),
             include_str!("fishing_pole_observation_v39.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
             include_str!("effect/harvester_v1.rs"),

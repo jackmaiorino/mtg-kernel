@@ -1753,6 +1753,12 @@ pub enum CommittedEvent {
     DrakeHistoryRefV1 {
         index: u64,
     },
+    /// Conditional history-only replay context for the original V49 gain.
+    /// Frozen V49/Panda journal and world payloads are unchanged.
+    ConquerorGainReplayBorrowV49 {
+        input_history_index: u64,
+        borrow: crate::linked_aura_operation_v1::PandaReplayBorrowV1,
+    },
     /// Engine-produced pre-departure power for one exact Alesha battlefield
     /// incarnation. Structural validation binds this receipt to the matching
     /// immediately preceding ZoneChange and effect payload. Because native
@@ -2013,8 +2019,7 @@ pub enum CommittedEvent {
         source: crate::state::AbilitySourceContractV4,
         gain_history_index: u64,
         amount: u32,
-    },
-}
+    },}
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
 

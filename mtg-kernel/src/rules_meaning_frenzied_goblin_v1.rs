@@ -85,86 +85,18 @@ pub fn producer_sha256() -> String {
             ("card_def", include_str!("card_def.rs")),
             ("build", include_str!("../build.rs")),
             (
-                "counter_target_effects_v1.rs",
-                include_str!("counter_target_effects_v1.rs"),
-            ),
-            (
-                "zimone_paradox_sculptor_v1.rs",
-                include_str!("zimone_paradox_sculptor_v1.rs"),
-            ),
-            (
-                "standard_creatures_v1.rs",
-                include_str!("standard_creatures_v1.rs"),
-            ),
-            ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
-            (
-                "engine/omniscience_cast_v1.rs",
-                include_str!("engine/omniscience_cast_v1.rs"),
-            ),
-            (
-                "resolution_cast_v1.rs",
-                include_str!("resolution_cast_v1.rs"),
-            ),
-            (
-                "effect/harvester_v1.rs",
-                include_str!("effect/harvester_v1.rs"),
-            ),
-            ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
-            (
-                "london_mulligan_v1.rs",
-                include_str!("london_mulligan_v1.rs"),
-            ),
-            ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
-            (
-                "soul_shackled_zombie_v1.rs",
-                include_str!("soul_shackled_zombie_v1.rs"),
-            ),
-            ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
-            (
-                "controlled_creature_grants_v1.rs",
-                include_str!("controlled_creature_grants_v1.rs"),
-            ),
-            (
-                "source_power_activation_v1.rs",
-                include_str!("source_power_activation_v1.rs"),
-            ),
-            (
-                "effect/nonland_copy_v1.rs",
-                include_str!("effect/nonland_copy_v1.rs"),
-            ),
-            (
-                "rl_session/flat_action_v4/search_state/effect_refs.rs",
-                include_str!("rl_session/flat_action_v4/search_state/effect_refs.rs"),
-            ),
-            (
-                "effect/inspiration_resolution_v1.rs",
-                include_str!("effect/inspiration_resolution_v1.rs"),
-            ),
-            (
-                "effect/standard_exile.rs",
-                include_str!("effect/standard_exile.rs"),
-            ),
-            (
-                "snack_wide_life_v59.rs",
-                include_str!("snack_wide_life_v59.rs"),
-            ),
-            (
-                "snack_wide_life_v59/custody.rs",
-                include_str!("snack_wide_life_v59/custody.rs"),
+                "bloodthirsty_conqueror_v49/custody.rs",
+                include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             ),
             (
                 "linked_aura_operation_v1.rs",
                 include_str!("linked_aura_operation_v1.rs"),
             ),
-            (
-                "bloodthirsty_conqueror_v49.rs",
-                include_str!("bloodthirsty_conqueror_v49.rs"),
-            ),
+            ("planeswalker_v1.rs", include_str!("planeswalker_v1.rs")),
+            ("leyline_axe_v1.rs", include_str!("leyline_axe_v1.rs")),
+            ("life_loss_turn_v1.rs", include_str!("life_loss_turn_v1.rs")),
+            ("progenitus_v1.rs", include_str!("progenitus_v1.rs")),
             ("fiendish_panda_v1.rs", include_str!("fiendish_panda_v1.rs")),
-            (
-                "fiendish_panda_v1/custody.rs",
-                include_str!("fiendish_panda_v1/custody.rs"),
-            ),
             ("life_gain_turn_v1.rs", include_str!("life_gain_turn_v1.rs")),
             ("midnight_snack_v1.rs", include_str!("midnight_snack_v1.rs")),
         ] {

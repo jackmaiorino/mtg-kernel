@@ -99,6 +99,7 @@ pub fn producer_sha256() -> String {
             include_str!("planeswalker_v1.rs"),
             include_str!("rules_meaning_doubling_season_v48.rs"),
             include_str!("card_def.rs"),
+            include_str!("bloodthirsty_conqueror_v49/custody.rs"),
             include_str!("counter_target_effects_v1.rs"),
             include_str!("zimone_paradox_sculptor_v1.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),

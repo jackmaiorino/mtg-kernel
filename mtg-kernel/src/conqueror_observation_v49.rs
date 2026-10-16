@@ -86,6 +86,7 @@ pub fn producer_sha256() -> String {
         include_str!("rl_variable_cast_v1.rs"),
         include_str!("policy_observation_variable_cast_v1.rs"),
         include_str!("faebloom_observation_v43.rs"),
+        include_str!("bloodthirsty_conqueror_v49/custody.rs"),
         include_str!("engine/omniscience_cast_v1.rs"),
         include_str!("resolution_cast_v1.rs"),
         include_str!("effect/harvester_v1.rs"),
