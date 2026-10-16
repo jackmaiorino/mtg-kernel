@@ -1,6 +1,7 @@
 //! Ordinary selected permission ownership. Legacy permissions emit no records.
 use super::*;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PermissionInstallationV1 {
     pub index: u32,
@@ -13,6 +14,7 @@ fn installations(state: &GameState) -> Vec<&PermissionInstallationV1> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StrongboxPermissionGrantedV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::StrongboxPermissionGrantedV1 { installation } => {
@@ -26,6 +28,7 @@ fn starts(state: &GameState, index: u32) -> Vec<(usize, u32, PlayerId)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StrongboxPermissionTurnStartedV1])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| match event {
@@ -42,6 +45,7 @@ fn expires(state: &GameState, index: u32) -> Vec<(usize, u32)> {
     state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StrongboxPermissionExpiredV1])
         .iter()
         .enumerate()
         .filter_map(|(at, event)| match event {
@@ -53,13 +57,25 @@ fn expires(state: &GameState, index: u32) -> Vec<(usize, u32)> {
         })
         .collect()
 }
-pub(super) fn validate(state: &GameState) -> Result<(), String> {
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::StrongboxPermissionCleanupV1,
+            EventKindV1::StrongboxPermissionExpiredV1,
+            EventKindV1::StrongboxPermissionGrantedV1,
+            EventKindV1::StrongboxPermissionTurnStartedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::StrongboxPermissionGrantedV1 { installation: g } => {
                 let bindings = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::ExilePlaySelectionCapturedV1])
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::ExilePlaySelectionCapturedV1 {

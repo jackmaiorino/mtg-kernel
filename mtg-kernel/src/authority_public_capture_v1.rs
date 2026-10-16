@@ -1,6 +1,7 @@
 //! Private event-time visibility, linked to the independent entry journal.
 //! No current hidden card definition is used to reconstruct historical facts.
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::rl::CardStableRefV1;
 use crate::state::{GameObject, GameState, Zone};
 use serde::{Deserialize, Serialize};
@@ -79,7 +80,7 @@ pub(crate) fn facts_at(
     else {
         return Err("public entrant snapshot missing".into());
     };
-    if capture.observer_authority_index != observer_index || state.engine.event_history.iter().filter(|event| {
+    if capture.observer_authority_index != observer_index || state.engine.event_history.scan_for_v1(&[EventKindV1::AuthorityEntryPublicFactsV1]).iter().filter(|event| {
         matches!(event, CommittedEvent::AuthorityEntryPublicFactsV1 { capture } if capture.observer_authority_index == observer_index)
     }).count() != 1 { return Err("public entrant snapshot repeated or redirected".into()) }
     let snapshot: GameObject = serde_json::from_str(&capture.entrant_snapshot)
@@ -127,7 +128,16 @@ pub(crate) fn facts_at(
 }
 
 pub(crate) fn validate_facts(state: &GameState) -> Result<(), String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::AuthorityEntryObserversV1,
+            EventKindV1::AuthorityEntryPublicFactsV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::AuthorityEntryObserversV1 { .. } => {
                 facts_at(state, index as u64)?;
@@ -155,18 +165,32 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if !cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
-    )) && state.engine.event_history.iter().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::AuthorityEntryObserversV1 { .. }
-                | CommittedEvent::AuthorityEntryCaptureV1 { .. }
-                | CommittedEvent::AuthorityEntryCollectedV1 { .. }
-                | CommittedEvent::AuthorityEntryPublishedV1 { .. }
-                | CommittedEvent::AuthorityEntryOperationV1 { .. }
-                | CommittedEvent::AuthorityEntryCompletedV1 { .. }
-                | CommittedEvent::AuthorityEntryPublicFactsV1 { .. }
-        )
-    }) {
+    )) && state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::AuthorityEntryCaptureV1,
+            EventKindV1::AuthorityEntryCollectedV1,
+            EventKindV1::AuthorityEntryCompletedV1,
+            EventKindV1::AuthorityEntryObserversV1,
+            EventKindV1::AuthorityEntryOperationV1,
+            EventKindV1::AuthorityEntryPublicFactsV1,
+            EventKindV1::AuthorityEntryPublishedV1,
+        ])
+        .iter()
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::AuthorityEntryObserversV1 { .. }
+                    | CommittedEvent::AuthorityEntryCaptureV1 { .. }
+                    | CommittedEvent::AuthorityEntryCollectedV1 { .. }
+                    | CommittedEvent::AuthorityEntryPublishedV1 { .. }
+                    | CommittedEvent::AuthorityEntryOperationV1 { .. }
+                    | CommittedEvent::AuthorityEntryCompletedV1 { .. }
+                    | CommittedEvent::AuthorityEntryPublicFactsV1 { .. }
+            )
+        })
+    {
         return Err("Authority journal requires its selected Limited catalog".into());
     }
     crate::authority_of_the_consuls_v1::validate_state(state)?;

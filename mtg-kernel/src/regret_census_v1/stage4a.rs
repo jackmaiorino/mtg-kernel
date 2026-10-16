@@ -1598,4 +1598,6 @@ pub(super) fn run(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<(
 }
 
 #[cfg(test)]
+mod history_guard_tests;
+#[cfg(test)]
 mod tests;

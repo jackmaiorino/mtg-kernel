@@ -2,6 +2,7 @@
 use crate::card_def::{CostComponent, DynamicValueDef, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectObjectBinding, EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::StackItemId;
 use crate::state::{GameState, StackItem, StackItemKind, Zone};
 use serde::{Deserialize, Serialize};
@@ -165,6 +166,7 @@ fn paid(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::KrenkoPaidV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::KrenkoPaidV1 { paid } if paid.item.v4.stack_item_id == id => {
@@ -179,6 +181,7 @@ fn paid(state: &GameState, id: StackItemId) -> Result<&PaidV1, String> {
     let inputs = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::KrenkoPaymentInputV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::KrenkoPaymentInputV1 { input } if input.stack_item_id == id => {
@@ -272,15 +275,20 @@ pub(crate) fn record_paid(
 pub(crate) fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item)
         || item.inline_effect == Some(program())
-        || state.engine.event_history.iter().any(|e| match e {
-            CommittedEvent::KrenkoPaidV1 { paid } => {
-                paid.item.v4.stack_item_id == item.v4.stack_item_id
-            }
-            CommittedEvent::KrenkoPaymentInputV1 { input } => {
-                input.stack_item_id == item.v4.stack_item_id
-            }
-            _ => false,
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::KrenkoPaidV1, EventKindV1::KrenkoPaymentInputV1])
+            .iter()
+            .any(|e| match e {
+                CommittedEvent::KrenkoPaidV1 { paid } => {
+                    paid.item.v4.stack_item_id == item.v4.stack_item_id
+                }
+                CommittedEvent::KrenkoPaymentInputV1 { input } => {
+                    input.stack_item_id == item.v4.stack_item_id
+                }
+                _ => false,
+            })
 }
 pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), String> {
     if !tracked(state, item) {
@@ -291,6 +299,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         || state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::KrenkoRemovedV1])
             .iter()
             .any(|e| matches!(e,CommittedEvent::KrenkoRemovedV1 {removed} if removed.paid==p.index))
     {
@@ -355,6 +364,7 @@ fn original_input<'a>(
     let inputs = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::KrenkoRemovalInputV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::KrenkoRemovalInputV1 { input } if input.paid == owner.paid => {
@@ -522,7 +532,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         validate_item(state, item)?;
     }
-    for (at, e) in state.engine.event_history.iter().enumerate() {
+    for (at, e) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::KrenkoPaidV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::KrenkoPaidV1 { paid: p } = e else {
             continue;
         };
@@ -532,6 +548,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let removals = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::KrenkoRemovedV1])
             .iter()
             .filter_map(|e| match e {
                 CommittedEvent::KrenkoRemovedV1 { removed: r } if r.paid == p.index => {
@@ -543,6 +560,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let inputs = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::KrenkoRemovalInputV1])
             .iter()
             .filter_map(|e| match e {
                 CommittedEvent::KrenkoRemovalInputV1 { input } if input.paid == p.index => {
@@ -582,6 +600,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let finishes = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::KrenkoCompletedV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::KrenkoCompletedV1 { completed: c }
@@ -603,6 +622,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let samples = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::KrenkoSampleV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::KrenkoSampleV1 { sample: s } if s.removed == r.index => {
@@ -675,7 +695,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             _ => return Err("Krenko mandatory paid owner erased or replayed".into()),
         }
     }
-    for e in &state.engine.event_history {
+    for e in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::KrenkoCompletedV1,
+        EventKindV1::KrenkoPaymentInputV1,
+        EventKindV1::KrenkoRemovalInputV1,
+        EventKindV1::KrenkoRemovedV1,
+        EventKindV1::KrenkoSampleV1,
+    ]) {
         match e {
             CommittedEvent::KrenkoPaymentInputV1 { input } => {
                 paid(state, input.stack_item_id)?;
@@ -719,17 +745,29 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             && selected_definition(object.card_def)
             && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
     }) || state.stack.iter().any(|i| tracked(state, i))
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                CommittedEvent::KrenkoPaidV1 { .. }
-                    | CommittedEvent::KrenkoRemovedV1 { .. }
-                    | CommittedEvent::KrenkoSampleV1 { .. }
-                    | CommittedEvent::KrenkoCompletedV1 { .. }
-                    | CommittedEvent::KrenkoRemovalInputV1 { .. }
-                    | CommittedEvent::KrenkoPaymentInputV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[
+                EventKindV1::KrenkoCompletedV1,
+                EventKindV1::KrenkoPaidV1,
+                EventKindV1::KrenkoPaymentInputV1,
+                EventKindV1::KrenkoRemovalInputV1,
+                EventKindV1::KrenkoRemovedV1,
+                EventKindV1::KrenkoSampleV1,
+            ])
+            .iter()
+            .any(|e| {
+                matches!(
+                    e,
+                    CommittedEvent::KrenkoPaidV1 { .. }
+                        | CommittedEvent::KrenkoRemovedV1 { .. }
+                        | CommittedEvent::KrenkoSampleV1 { .. }
+                        | CommittedEvent::KrenkoCompletedV1 { .. }
+                        | CommittedEvent::KrenkoRemovalInputV1 { .. }
+                        | CommittedEvent::KrenkoPaymentInputV1 { .. }
+                )
+            })
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{self, CommittedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{
     AbilitySourceContractV4, GameState, StackItem, StackItemKind, StackTargetContractV4, Zone,
@@ -180,6 +181,7 @@ fn published(state: &GameState, id: StackItemId) -> Result<(usize, &StackItem), 
     let mut found = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::WildwoodTriggerPublishedV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {
@@ -238,10 +240,10 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx, op: &EffectOp) -> Re
         ctx.controller,
         ctx.ability_source_contract,
     )?;
-    let starts = state.engine.event_history.iter().enumerate().filter(|(_, event)| matches!(event, CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id } if *stack_item_id == id)).collect::<Vec<_>>();
+    let starts = state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerResolvingV1]).iter().enumerate().filter(|(_, event)| matches!(event, CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id } if *stack_item_id == id)).collect::<Vec<_>>();
     if !matches!(starts.as_slice(), [(index, _)] if *index > publication_index)
         || state.stack.iter().any(|live| live.v4.stack_item_id == id)
-        || state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::WildwoodTriggerOperationV1 { stack_item_id, .. } | CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. } if *stack_item_id == id))
+        || state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerClosedV1, EventKindV1::WildwoodTriggerOperationV1]).iter().any(|event| matches!(event, CommittedEvent::WildwoodTriggerOperationV1 { stack_item_id, .. } | CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. } if *stack_item_id == id))
     { return Err("Wildwood operation restarted outside owned resolution".into()); }
     let source = ctx
         .ability_source_contract
@@ -510,7 +512,12 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             _ => return Err("Wildwood resolution owner erased or reintroduced".into()),
         }
     }
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::WildwoodTriggerClosedV1,
+        EventKindV1::WildwoodTriggerCounteredV1,
+        EventKindV1::WildwoodTriggerOperationV1,
+        EventKindV1::WildwoodTriggerResolvingV1,
+    ]) {
         if let CommittedEvent::WildwoodTriggerCounteredV1 { item } = event {
             if !publications.contains(&item.v4.stack_item_id) {
                 return Err("Wildwood orphan counter operation".into());
@@ -533,12 +540,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 pub(crate) fn active(state: &GameState) -> Result<Vec<(usize, usize, &CaptureV1)>, String> {
     validate_state(state)?;
     let mut result = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::WildwoodCounterCaptureV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else {
             continue;
         };
         for observer in 0..capture.observers.len() {
-            let closed = state.engine.event_history.iter().any(|event| {
+            let closed = state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerPublishedV1]).iter().any(|event| {
                 let CommittedEvent::WildwoodTriggerPublishedV1 { item } = event else { return false; };
                 item_key(item) == Some((index, observer)) && state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. } if *stack_item_id == item.v4.stack_item_id))
             });

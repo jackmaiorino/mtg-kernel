@@ -2,6 +2,7 @@
 use crate::card_def::{CardType, TargetSpec};
 use crate::effect::ExecCtx;
 use crate::event::{self, CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{AbilitySourceContractV4, GameState, StackTargetContractV4, Target, Zone};
 
@@ -110,6 +111,7 @@ pub(crate) fn validate_source(
     let entries = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::SingleGraveyardEntryV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {

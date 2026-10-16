@@ -3,6 +3,7 @@
 use super::*;
 use crate::card_def::CARD_DEFS;
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, InspirationStartedV1};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -540,7 +541,13 @@ fn tracked(state: &GameState) -> Result<bool, String> {
 
 fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, String> {
     let mut receipts: Vec<&InspirationResolutionReceiptV1> = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::InspirationResolutionBoundaryV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::InspirationResolutionBoundaryV1 { receipt } = event else {
             continue;
         };
@@ -652,10 +659,20 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::InspirationEngineDepartureV1,
+            EventKindV1::InspirationResolutionInputV1,
+            EventKindV1::InspirationResolutionOperationV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             CommittedEvent::InspirationResolutionInputV1 { input } => {
-                let uses = state.engine.event_history.iter().filter(|e| matches!(e,
+                let uses = state.engine.event_history.scan_for_v1(&[EventKindV1::InspirationResolutionOperationV1]).iter().filter(|e| matches!(e,
                     CommittedEvent::InspirationResolutionOperationV1 { operation } if operation.input == input.index)).count();
                 if input.index as usize != at || uses != 1 {
                     return Err("Inspiration actual input erased, duplicated or orphaned".into());
@@ -744,6 +761,7 @@ fn validate_departure(
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::InspirationEngineDepartureV1])
         .iter()
         .enumerate()
         .filter_map(|(at, e)| match e {

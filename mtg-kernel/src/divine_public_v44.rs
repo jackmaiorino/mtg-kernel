@@ -1,4 +1,5 @@
 //! Scoped Divine cast facts. All original contracts and payment plans stay private.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_variable_cast_v1::{variable_cast_context, VariableCastContextV1};
 use crate::policy_surface_v5::PolicyDecisionV5;
@@ -64,17 +65,24 @@ pub(crate) fn target_ref_v44(
         // recipient. Use only an authenticated original battlefield departure.
         crate::controlled_creature_grants_v1::validate_color_history(state)
             .map_err(RlContractError)?;
-        let mut snapshots = state.engine.event_history.iter().filter_map(|e| {
-            let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
-            else {
-                return None;
-            };
-            (snapshot.source.source == id
-                && snapshot.source.zone_change_count == reference.zone_change_count
-                && snapshot.source.card_def == reference.card_db_id
-                && PlayerSeatV1::from(snapshot.source.owner) == reference.owner)
-                .then_some(snapshot)
-        });
+        let mut snapshots = state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::ProtectionSourceColorDepartureV1])
+            .iter()
+            .filter_map(|e| {
+                let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 {
+                    snapshot, ..
+                } = e
+                else {
+                    return None;
+                };
+                (snapshot.source.source == id
+                    && snapshot.source.zone_change_count == reference.zone_change_count
+                    && snapshot.source.card_def == reference.card_db_id
+                    && PlayerSeatV1::from(snapshot.source.owner) == reference.owner)
+                    .then_some(snapshot)
+            });
         let snapshot = snapshots.next().ok_or_else(|| {
             RlContractError("Divine departed target has no original visibility occurrence".into())
         })?;

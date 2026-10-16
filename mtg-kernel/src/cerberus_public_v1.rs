@@ -1,4 +1,5 @@
 //! Separate event-time Cerberus transport. This is not V8/V9 or model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -189,7 +190,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 fn trigger_rows(state: &GameState) -> Result<Vec<TriggerV1>, RlContractError> {
     use crate::event::CommittedEvent;
     let mut rows = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
+    {
         let CommittedEvent::CerberusCaptureV1 { capture } = event else {
             continue;
         };
@@ -221,6 +226,7 @@ fn trigger_rows(state: &GameState) -> Result<Vec<TriggerV1>, RlContractError> {
         let outcome = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::CerberusOperationV1])
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::CerberusOperationV1 {
@@ -234,11 +240,17 @@ fn trigger_rows(state: &GameState) -> Result<Vec<TriggerV1>, RlContractError> {
             "completed"
         } else if stack_ordinal.is_some() {
             "published"
-        } else if state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        } else if state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::CerberusCollectedV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::CerberusCollectedV1 { capture_history_index }
                 if *capture_history_index == capture.history_index)
-        }) {
+            })
+        {
             "waiting"
         } else {
             "captured"

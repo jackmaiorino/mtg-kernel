@@ -2,6 +2,7 @@
 use crate::card_def::CARD_DEFS;
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, HistoricalDamageSourceV1};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::state::{
     AbilitySourceContractV4, AttackDeclarationTurnV1, GameObject, GameState, StackItem,
@@ -95,6 +96,7 @@ pub(crate) fn public_sources(state: &GameState) -> Result<Vec<GorehornSourceV1>,
                 state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::GorehornDepartureV1])
                     .iter()
                     .find_map(|event| match event {
                         CommittedEvent::GorehornDepartureV1 { departure: d }
@@ -171,10 +173,15 @@ pub(crate) fn owns_context(state: &GameState, ctx: &ExecCtx) -> bool {
 fn tracked(state: &GameState, item: &StackItem) -> bool {
     selected(item)
         || item.v4.gorehorn_published_v1.0.is_some()
-        || state.engine.event_history.iter().any(|e| {
-            matches!(e,CommittedEvent::GorehornPublishedV1{publication:p}
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::GorehornPublishedV1])
+            .iter()
+            .any(|e| {
+                matches!(e,CommittedEvent::GorehornPublishedV1{publication:p}
   if p.item.v4.stack_item_id==item.v4.stack_item_id)
-        })
+            })
 }
 fn is_record(e: &CommittedEvent) -> bool {
     matches!(
@@ -254,6 +261,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
     if state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornDepartureV1])
         .iter()
         .enumerate()
         .any(|(index, event)| {
@@ -302,7 +310,7 @@ pub(crate) fn publish(state: &mut GameState, id: StackItemId) -> Result<(), Stri
     if row.inline_effect.as_ref()!=Some(&crate::trigger::gorehorn_raider_effect())
   || row.controller!=source.controller || row.targets.len()!=1 || row.v4.target_contracts.len()!=1
   || row.v4.granted_by.is_some() || !row.v4.gorehorn_published_v1.is_empty()
-  || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::GorehornPublishedV1{publication:p} if p.item.v4.stack_item_id==id)) {
+  || state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornPublishedV1]).iter().any(|e|matches!(e,CommittedEvent::GorehornPublishedV1{publication:p} if p.item.v4.stack_item_id==id)) {
   return Err("Gorehorn publication changed printed root, target or original controller".into());
  }
     let index = u32::try_from(state.engine.event_history.len())
@@ -326,6 +334,7 @@ fn publication(state: &GameState, id: StackItemId) -> Result<&PublicationV1, Str
     let mut rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornPublishedV1])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
@@ -370,7 +379,7 @@ fn publication(state: &GameState, id: StackItemId) -> Result<&PublicationV1, Str
 #[path = "gorehorn_crystal_v1.rs"]
 pub(crate) mod crystal;
 pub(crate) fn publication_matches(state: &GameState, item: &StackItem, saved: &StackItem) -> bool {
-    if state.engine.event_history.iter().any(|e| matches!(e,
+    if state.engine.event_history.scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1]).iter().any(|e| matches!(e,
         CommittedEvent::CrystalPreventionBoundaryV1 { boundary } if boundary.item.v4.stack_item_id == item.v4.stack_item_id))
         && item.v4.crystal_prevention_started_v1.is_empty() {
         return false;
@@ -388,7 +397,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
         return Err("Gorehorn marked Crystal owner lost actual begin".into());
     }
     if !publication_matches(state,item,&p.item) || state.stack.iter().filter(|i|i.v4.stack_item_id==item.v4.stack_item_id).count()!=1
-  || state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::GorehornOperationV1{operation:o} if o.publication==p.index)) || crystal::completed_count(state,item.v4.stack_item_id)!=0 {
+  || state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornOperationV1]).iter().any(|e|matches!(e,CommittedEvent::GorehornOperationV1{operation:o} if o.publication==p.index)) || crystal::completed_count(state,item.v4.stack_item_id)!=0 {
   return Err("Gorehorn lacks exact unclosed published owner".into());
  }
     Ok(())
@@ -468,6 +477,7 @@ pub(crate) fn source_facts(
     let rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornDepartureV1])
         .iter()
         .filter_map(|e| match e {
             CommittedEvent::GorehornDepartureV1 { departure: d }
@@ -537,6 +547,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparedV1, String> {
     let mut rows = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornPreparedV1])
         .iter()
         .enumerate()
         .filter_map(|(i, e)| match e {
@@ -588,7 +599,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparedV1, String> {
     Ok(r)
 }
 pub(crate) fn has_publication(state: &GameState, id: StackItemId) -> bool {
-    state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::GorehornPublishedV1{publication:p} if p.item.v4.stack_item_id==id))
+    state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornPublishedV1]).iter().any(|e|matches!(e,CommittedEvent::GorehornPublishedV1{publication:p} if p.item.v4.stack_item_id==id))
 }
 pub(crate) fn damage_source(
     state: &GameState,
@@ -682,6 +693,7 @@ fn record_preparation(
             state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::GorehornDepartureV1])
                 .iter()
                 .find_map(|e| match e {
                     CommittedEvent::GorehornDepartureV1 { departure: d }
@@ -719,7 +731,7 @@ fn record_operation(
     raid: Option<(u32, PlayerId, Option<AttackDeclarationTurnV1>, bool)>,
     damage_operation: Option<u32>,
 ) -> Result<(), String> {
-    if state.stack.iter().any(|i|i.v4.stack_item_id==owner.item.v4.stack_item_id) || state.engine.event_history.iter().any(|e|
+    if state.stack.iter().any(|i|i.v4.stack_item_id==owner.item.v4.stack_item_id) || state.engine.event_history.scan_for_v1(&[EventKindV1::GorehornOperationV1]).iter().any(|e|
   matches!(e,CommittedEvent::GorehornOperationV1{operation:o} if o.publication==owner.publication)) {
   return Err("Gorehorn removal ownership changed or replayed".into());
  }
@@ -767,7 +779,19 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         validate_item(state, item)?;
     }
-    for (index, e) in state.engine.event_history.iter().enumerate() {
+    for (index, e) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::GorehornDamageOperationV1,
+            EventKindV1::GorehornDepartureV1,
+            EventKindV1::GorehornOperationV1,
+            EventKindV1::GorehornPreparedV1,
+            EventKindV1::GorehornPublishedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match e {
             CommittedEvent::GorehornDepartureV1 { departure: d } => {
                 if d.index as usize != index {
@@ -785,6 +809,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let closed = state
                     .engine
                     .event_history
+                    .scan_for_v1(&[EventKindV1::GorehornOperationV1])
                     .iter()
                     .filter_map(|e| match e {
                         CommittedEvent::GorehornOperationV1 { operation: o }
@@ -816,6 +841,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     || state
                         .engine
                         .event_history
+                        .scan_for_v1(&[EventKindV1::GorehornDamageOperationV1])
                         .iter()
                         .filter(|e| {
                             matches!(e,
@@ -865,10 +891,15 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     }
                 } else if o.raid_result.is_some()
                     || o.damage_operation.is_some()
-                    || state.engine.event_history.iter().any(|e| {
-                        matches!(e,
+                    || state
+                        .engine
+                        .event_history
+                        .scan_for_v1(&[EventKindV1::GorehornPreparedV1])
+                        .iter()
+                        .any(|e| {
+                            matches!(e,
      CommittedEvent::GorehornPreparedV1{prepared:r} if r.publication==p.index)
-                    })
+                        })
                 {
                     return Err("Gorehorn counter/fizzle closure hides execution".into());
                 }
@@ -880,6 +911,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornCrystalBeginV1])
         .iter()
         .any(|e| matches!(e, CommittedEvent::GorehornCrystalBeginV1 { .. }))
     {
@@ -977,6 +1009,7 @@ fn validate_damage_operation(
     if state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::GorehornOperationV1])
         .iter()
         .filter(|e| {
             matches!(e,CommittedEvent::GorehornOperationV1{operation:c}

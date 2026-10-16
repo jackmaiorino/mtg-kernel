@@ -1,6 +1,7 @@
 //! Paid once-only activation authority for the selected printed Librarian root.
 use crate::card_def::{TargetSpec, CARD_DEFS};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::StackItemId;
 use crate::state::{GameState, StackItem, StackItemKind, Zone};
 use serde::{Deserialize, Serialize};
@@ -206,6 +207,7 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
     let operations: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::LibrarianActivationOperationV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| {
@@ -234,6 +236,7 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     let rows: Vec<_> = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::LibrarianActivationCommittedV1])
         .iter()
         .filter_map(|event| match event {
             CommittedEvent::LibrarianActivationCommittedV1 { item: saved }
@@ -252,11 +255,16 @@ pub(crate) fn validate_item(state: &GameState, item: &StackItem) -> Result<(), S
     }
     shape(item)?;
     if rows.as_slice() != [item]
-        || state.engine.event_history.iter().any(|event| {
-            matches!(event,
+        || state
+            .engine
+            .event_history
+            .scan_for_v1(&[EventKindV1::LibrarianActivationFinishedV1])
+            .iter()
+            .any(|event| {
+                matches!(event,
             CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. }
                 if *stack_item_id == item.v4.stack_item_id)
-        })
+            })
     {
         return Err("Librarian activation lost payment or replayed completion".into());
     }
@@ -293,7 +301,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     }
     let mut ids = Vec::new();
     let mut sources = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::LibrarianActivationCommittedV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::LibrarianActivationCommittedV1 { item } = event else {
             continue;
         };
@@ -308,6 +322,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let finishes: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::LibrarianActivationFinishedV1])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| {
@@ -324,6 +339,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let operations: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::LibrarianActivationOperationV1])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {
@@ -339,6 +355,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let removals: Vec<_> = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::LibrarianActivationCounterRemovalV1])
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {
@@ -439,16 +456,26 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    if state.engine.event_history.iter().any(|event| match event {
-        CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. } => {
-            !ids.contains(stack_item_id)
-        }
-        CommittedEvent::LibrarianActivationOperationV1 { item, .. }
-        | CommittedEvent::LibrarianActivationCounterRemovalV1 { item } => {
-            !ids.contains(&item.v4.stack_item_id)
-        }
-        _ => false,
-    }) {
+    if state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::LibrarianActivationCounterRemovalV1,
+            EventKindV1::LibrarianActivationFinishedV1,
+            EventKindV1::LibrarianActivationOperationV1,
+        ])
+        .iter()
+        .any(|event| match event {
+            CommittedEvent::LibrarianActivationFinishedV1 { stack_item_id, .. } => {
+                !ids.contains(stack_item_id)
+            }
+            CommittedEvent::LibrarianActivationOperationV1 { item, .. }
+            | CommittedEvent::LibrarianActivationCounterRemovalV1 { item } => {
+                !ids.contains(&item.v4.stack_item_id)
+            }
+            _ => false,
+        })
+    {
         return Err("Librarian completion has no genuine payment".into());
     }
     for (id, object) in state.objects.iter() {

@@ -1,6 +1,7 @@
 //! Exact public selection from a newly exiled library batch.
 pub use super::strongbox_permission_v1::PermissionInstallationV1;
 use super::*;
+use crate::event_history_v1::EventKindV1;
 use sha2::{Digest, Sha256};
 
 fn digest(binding: &ExileTopChoiceBindingV1) -> Result<[u8; 32], String> {
@@ -59,7 +60,7 @@ pub(crate) fn capture_exiled_top(
         return Err("exile-play capture supports exactly two requested cards".into());
     }
     if let Some(stack_item) = ctx.stack_item_id {
-        if state.engine.event_history.iter().any(|event| {
+        if state.engine.event_history.scan_for_v1(&[EventKindV1::ExilePlaySelectionCapturedV1, EventKindV1::ExilePlaySelectionConsumedV1]).iter().any(|event| {
             matches!(
                 event,
                 event::CommittedEvent::ExilePlaySelectionCapturedV1 { resolving_stack_item, .. }
@@ -160,7 +161,10 @@ fn validate_capture_record(
         return Ok(()); // physical primitive, never a production continuation
     };
     let mut captured = None;
-    for event in &state.engine.event_history {
+    for event in state.engine.event_history.scan_for_v1(&[
+        EventKindV1::ExilePlaySelectionCapturedV1,
+        EventKindV1::ExilePlaySelectionConsumedV1,
+    ]) {
         match event {
             event::CommittedEvent::ExilePlaySelectionCapturedV1 {
                 resolving_stack_item,
@@ -236,7 +240,7 @@ pub(super) fn validate_required_stage(
         .ctx
         .stack_item_id
         .ok_or("Strongbox lacks genuine stack identity")?;
-    let has_capture = state.engine.event_history.iter().any(|event| matches!(event,
+    let has_capture = state.engine.event_history.scan_for_v1(&[EventKindV1::ExilePlaySelectionCapturedV1]).iter().any(|event| matches!(event,
         event::CommittedEvent::ExilePlaySelectionCapturedV1 { resolving_stack_item, .. } if *resolving_stack_item == stack));
     if !has_capture
         && pending.choice.is_none()
@@ -612,7 +616,7 @@ fn contains(op: &EffectOp) -> bool {
 /// semantics merely by relabeling it as their generic CardSelection purpose.
 pub(crate) fn require_legacy_consumer_supported(state: &GameState) -> Result<(), String> {
     let pending = state.engine.pending_effect.as_ref();
-    let public_capture=state.engine.event_history.iter().any(|event|matches!(event,
+    let public_capture=state.engine.event_history.scan_for_v1(&[EventKindV1::RaidEntryCaptureV1]).iter().any(|event|matches!(event,
         event::CommittedEvent::RaidEntryCaptureV1 {capture} if capture.pending.is_some() && crate::card_def::CARD_DEFS[usize::from(capture.source.card_def)].name=="Strongbox Raider"));
     let unsupported = public_capture
         || state
@@ -652,7 +656,17 @@ pub(crate) fn validate_closed(
     let mut captures = Vec::new();
     let mut consumed = Vec::new();
     let mut skipped = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[
+            EventKindV1::ExilePlaySelectionCapturedV1,
+            EventKindV1::ExilePlaySelectionConsumedV1,
+            EventKindV1::StrongboxRaidSkippedV1,
+        ])
+        .iter()
+        .enumerate()
+    {
         match event {
             event::CommittedEvent::ExilePlaySelectionCapturedV1 {
                 resolving_stack_item,
@@ -742,6 +756,7 @@ pub(crate) fn validate_closed(
     let grants = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StrongboxPermissionGrantedV1])
         .iter()
         .enumerate()
         .filter_map(|(index, event)| match event {

@@ -2,6 +2,7 @@
 use crate::card_def::{Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectCond, EffectOp};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 
 pub(crate) fn root() -> EffectOp {
@@ -97,6 +98,7 @@ pub(crate) fn validate_source(
     let original = state
         .engine
         .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkEndStepObserversV1])
         .iter()
         .rev()
         .find_map(|event| match event {
@@ -124,7 +126,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     {
         return Err("private Stromkirk observer journal entered the trigger log".into());
     }
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::StromkirkEndStepObserversV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::StromkirkEndStepObserversV1 {
             beginning_index,
             turn,

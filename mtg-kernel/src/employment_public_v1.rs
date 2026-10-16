@@ -1,6 +1,7 @@
 //! Explicit temporary-control transport. Frozen V8/V9 remain refused.
 use crate::effect::temporary_control_v1::authority::{self, InstallationOriginV1};
 use crate::event::CommittedEvent;
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -158,7 +159,13 @@ pub(crate) fn installations(
 ) -> Result<Vec<InstallationV1>, RlContractError> {
     authority::validate(state).map_err(RlContractError)?;
     let mut rows = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::TemporaryControlInstalledV1])
+        .iter()
+        .enumerate()
+    {
         let CommittedEvent::TemporaryControlInstalledV1 {
             installation: capture,
         } = event
@@ -184,6 +191,7 @@ pub(crate) fn installations(
         let expiry = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::TemporaryControlExpiredV1])
             .iter()
             .find_map(|event| match event {
                 CommittedEvent::TemporaryControlExpiredV1 {

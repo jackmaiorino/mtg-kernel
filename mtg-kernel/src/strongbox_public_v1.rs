@@ -1,4 +1,5 @@
 //! Separate public Strongbox transport. This is not V8/V9 or tensor/model admission.
+use crate::event_history_v1::EventKindV1;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -364,7 +365,11 @@ fn selected_capture(c: &crate::raid_entry_custody_v1::CaptureV1) -> bool {
 fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
     use crate::event::CommittedEvent as E;
     let mut rows = Vec::new();
-    for event in &state.engine.event_history {
+    for event in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::RaidEntryCaptureV1])
+    {
         let E::RaidEntryCaptureV1 { capture } = event else {
             continue;
         };
@@ -377,6 +382,7 @@ fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
         let publication = state
             .engine
             .event_history
+            .scan_for_v1(&[EventKindV1::RaidEntryPublishedV1])
             .iter()
             .find_map(|event| match event {
                 E::RaidEntryPublishedV1 { publication } if publication.capture == capture.index => {
@@ -403,6 +409,7 @@ fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
             state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::ExilePlaySelectionCapturedV1])
                 .iter()
                 .find_map(|event| match event {
                     E::ExilePlaySelectionCapturedV1 {
@@ -416,6 +423,7 @@ fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
             state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::ExilePlaySelectionConsumedV1])
                 .iter()
                 .find_map(|event| match event {
                     E::ExilePlaySelectionConsumedV1 {
@@ -429,6 +437,7 @@ fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
             state
                 .engine
                 .event_history
+                .scan_for_v1(&[EventKindV1::StrongboxPermissionGrantedV1])
                 .iter()
                 .find_map(|event| match event {
                     E::StrongboxPermissionGrantedV1 { installation }
@@ -451,8 +460,8 @@ fn entries(state: &GameState) -> Result<Vec<EntryV1>, RlContractError> {
         });
         let permission=installation.map(|g| {
             let card=selected.clone().ok_or_else(||RlContractError("Strongbox selected public card missing".into()))?;
-            let started=state.engine.event_history.iter().any(|event|matches!(event,E::StrongboxPermissionTurnStartedV1 {installation,..} if *installation==g.index));
-            let expired=state.engine.event_history.iter().any(|event|matches!(event,E::StrongboxPermissionExpiredV1 {installation,..} if *installation==g.index));
+            let started=state.engine.event_history.scan_for_v1(&[EventKindV1::StrongboxPermissionTurnStartedV1]).iter().any(|event|matches!(event,E::StrongboxPermissionTurnStartedV1 {installation,..} if *installation==g.index));
+            let expired=state.engine.event_history.scan_for_v1(&[EventKindV1::StrongboxPermissionExpiredV1]).iter().any(|event|matches!(event,E::StrongboxPermissionExpiredV1 {installation,..} if *installation==g.index));
             let current=state.objects.try_get(g.chosen.object).is_some_and(|object|object.zone==Zone::Exile && object.zone_change_count==g.chosen.expected_zone_change_count && object.owner==capture.source.controller);
             Ok::<_,RlContractError>(PermissionV1 {card,holder:g.permission.holder.into(),play_land:g.permission.play_or_cast==crate::engine::PlayOrCast::Play,cast_spell:g.permission.play_or_cast==crate::engine::PlayOrCast::Cast,next_holder_turn_started:started,expired,exact_current_exile:current})
         }).transpose()?;
