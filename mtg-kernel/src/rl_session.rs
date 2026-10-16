@@ -10539,7 +10539,7 @@ mod tests {
     use super::*;
     use crate::card_def::card_id_by_name;
     use crate::effect::EffectOp;
-    use crate::engine::{PendingOptionalCost, PendingOptionalCostSacrifice};
+    use crate::engine::PendingOptionalCost;
     use crate::policy_surface_v5::{
         reset_test_exact_surface_hash_calls, test_exact_surface_hash_calls,
     };
@@ -13244,14 +13244,19 @@ mod tests {
 
     #[test]
     fn flat_action_slice_encodes_and_consumes_detached_highway_robbery_cost_target() {
-        let mut state = GameState::new_from_libraries(&[], &[], card_name, 82_120);
+        use crate::engine::{self, Action};
+
+        let forest = card_id_by_name("Forest").unwrap();
+        let mut state =
+            GameState::new_from_libraries(&[forest; 4], &[forest; 4], card_name, 82_120);
+        state.step = Step::Main1;
         let source_card = card_id_by_name("Highway Robbery").unwrap();
         let source = state.objects.push(GameObject {
             card_def: source_card,
             name: "Highway Robbery".to_string(),
             owner: PlayerId::P0,
             controller: PlayerId::P0,
-            zone: Zone::Stack,
+            zone: Zone::Hand,
             tapped: false,
             summoning_sick: false,
             damage: 0,
@@ -13260,19 +13265,92 @@ mod tests {
             v4: ObjectStateV4::from_card_def(source_card),
             spell_copy_origin: None,
             plotted_turn: None,
-            zone_change_count: 2,
+            zone_change_count: 0,
         });
+        state.players[0].hand.push(source);
         let first_land = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
         let second_land = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
-        state.engine.pending_optional_cost_sacrifice = Some(PendingOptionalCostSacrifice {
-            player: PlayerId::P0,
-            source,
-            remaining: 1,
-            chosen: Vec::new(),
-            then: EffectOp::Sequence(Vec::new()),
-            spell_resume: Some((source, Zone::Graveyard)),
-        });
+        // Pay and resolve the actual registered {1}{R} spell through its
+        // printed optional-cost program. Do not invent a stack origin, empty
+        // consequence or selected spell form for the detached-source fixture.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass {
+                player: PlayerId::P0,
+                ..
+            }
+        ));
+        for land in [first_land, second_land] {
+            engine::step(&mut state, Action::ActivateManaAbility(land)).unwrap();
+        }
+        engine::step(&mut state, Action::CastSpell(source)).unwrap();
+        let mut offered = false;
+        for _ in 0..16 {
+            match engine::advance_until_decision(&mut state) {
+                Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+                Decision::ChooseOptionalCost {
+                    player: PlayerId::P0,
+                    sacrifice_payable: true,
+                    ..
+                } => {
+                    offered = true;
+                    break;
+                }
+                other => panic!("expected genuine Highway Robbery payment, got {other:?}"),
+            }
+        }
+        assert!(offered);
+        assert_eq!(state.players[0].mana_pool, [0; 6]);
+        assert!(state.objects.get(first_land).tapped && state.objects.get(second_land).tapped);
+        assert!(state.engine.event_history.iter().any(|event| matches!(event,
+            crate::event::CommittedEvent::SpellCast { spell, controller: PlayerId::P0 } if *spell == source)));
+        engine::step(
+            &mut state,
+            Action::ChooseOptionalCost(OptionalCostChoice::SacrificeLand),
+        )
+        .unwrap();
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseCostTargets { source: actual, remaining: 1, candidates, .. }
+            if actual == source && candidates == vec![first_land, second_land]));
+        let payment = state
+            .engine
+            .pending_optional_cost_sacrifice
+            .as_ref()
+            .unwrap();
+        assert_eq!(payment.spell_resume, Some((source, Zone::Graveyard)));
+        assert_eq!(
+            payment.then,
+            EffectOp::DrawCards {
+                player: crate::effect::PlayerRef::Controller,
+                count: 2
+            }
+        );
+        let selected_types = crate::source_type_hexproof_v1::current_types(&state, source).unwrap();
+        assert_eq!(
+            selected_types.card_types(),
+            vec![crate::card_def::CardType::Sorcery]
+        );
+        // Explicit legacy-layout support primitive: detach only the genuine
+        // resolving row. Its paid finalized origin and native continuation
+        // remain unchanged, so departure still has selected-form authority.
+        let detached = state.stack.pop().expect("actual resolving spell row");
+        assert_eq!(detached.source, source);
+        assert!(detached.v4.source_contract.is_some());
         assert!(state.stack.is_empty());
+        assert_eq!(
+            crate::source_type_hexproof_v1::current_types(&state, source).unwrap(),
+            selected_types
+        );
+        let mut missing_form = state.clone();
+        missing_form
+            .objects
+            .get_mut(source)
+            .v4
+            .spell_cast_origin
+            .as_mut()
+            .unwrap()
+            .finalized_method = None;
+        assert!(crate::source_type_hexproof_v1::current_types(&missing_form, source).is_err());
 
         let mut session = FastActorSessionV1::reset_with_limits(82_120, 41_120, 256, 32_768);
         session.state = state;
@@ -13364,6 +13442,11 @@ mod tests {
         session
             .consume_current_flat_action_slice_v1(encoded.binding, 0)
             .unwrap();
+        assert_eq!(
+            session.state.players[0].hand.len(),
+            2,
+            "the actual paid consequence draws two"
+        );
         assert_eq!(session.state.objects.get(source).zone, Zone::Graveyard);
         assert!(session.state.players[0].graveyard.contains(&source));
         assert!(
