@@ -184,7 +184,30 @@ in 21.018 seconds. Pinned 1.94.1 formatting and diff checks also passed.
 The current 151 model Rust source cases, binary and checker remain
 uncompiled/unrun; source counts are not runtime passes. Actual
 export/catalog/profile and runtime qualification remain root-owned. Active
-Native177 qualifies the separate seven-printing source at
+Native177 is checking the separate seven-printing source at
 `de373adff4e7d87835b5a7e428eb9da9c47b93f3`, excluding these Partial appendices.
+Its running lib process has already reported model failures, so it cannot
+qualify that source. Terminal diagnostics and output custody remain pending.
 No hash guess, profile waiver, Full promotion, trained
 policy or strength claim is made here.
+
+Reviewed unregistered Embercleave primitives `f0d138ad66659a29921d184c0f9e5f9e82f818c5`
+are composed at `e62819d5cf3b6e6e1ba54de897f0129005a51189`. A distinct native
+count uses current attacking creatures, retaining both red mana requirements.
+The dormant recipe reuses native Flash, Equipment grants, Equip and exact-source
+ETB attachment. One current-attacker source case is selected. Two future paid
+fixture functions require genuine registration and are deliberately not tests
+before that prerequisite. No printing identity, registration or admission is added.
+
+Reviewed complete Graveyard Return V61 observation source through
+`c6ff90a88fca0a51ac43997bd1670fc0febde7b3` is composed at
+`ff9d5dfeb24986028a3ed5c8fee214b107e9a11c`. Its distinct ordinary envelope
+retains all sixteen native counters and the Alesha/Familiar public facts.
+Authorized visible and retained Call/Artist or later identities refuse; opposing
+concealed identities do not select refusal. Historical casts exclude the native
+Disguise route. Five paid both-seat source groups cover counters, death and
+return, source/target binding, hidden worlds, native Raid publication and restore.
+Candidate annotations and owning, model, Human and transport extensions remain
+separate work. Both source additions preserve the existing 151 model cases,
+NextFive owner, Human and transport files and all Python files. Pinned formatting
+and diff checks pass; no Rust compilation or execution is claimed.
