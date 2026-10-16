@@ -220,7 +220,12 @@ fn until(s: &mut FixturePrepared, choose: impl Fn(&ActionSemanticV1) -> bool) {
     for _ in 0..128 {
         if s.inner
             .decision_v57()
-            .unwrap()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "genuine V57 family choice lost its decision: {error:?}; response:{:?}",
+                    s.current_response()
+                )
+            })
             .actions()
             .iter()
             .any(&choose)
