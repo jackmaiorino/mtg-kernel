@@ -4,9 +4,10 @@ Source-only bounded issue #110 implementation. Base is exact PR282 head
 `8a43c201cf18b9aaa310294a42642dee276313bb`, composed by normal merge with
 `41aea9c56747df05377d42810f93833cdd8d3f93` at `891af8e91`.
 Seven earlier Full registrations remain Full. The five appendices retain Partial
-IDs 452-456. Source inventory is 457 definitions and 265 FDN rows; frozen booster
-membership remains 286 names and 24 token dependencies (245 Full, 5 Partial,
-36 Missing). Full-only production deck reset still refuses each new appendix.
+IDs 452-456. A separate native Alesha appendix now retains Partial ID 457.
+Source inventory is 458 definitions and 266 FDN rows; frozen booster
+membership remains 286 names and 24 token dependencies (245 Full, 6 Partial,
+35 Missing). Full-only production deck reset still refuses each new appendix.
 
 `current_mixed_policy_v1::NextFiveSession` consumes the authentic sealed
 `NextFiveSessionV59`, preserves the actual observation and original native legal
@@ -92,8 +93,14 @@ Courtyard/Banner registration or current consumer permission.
 
 Compatible evidence includes 165 affected Python cases at preceding source
 `4fcc8bc1d0fececccb20306e4c43ed32a79de80b`, including 17 V6 mock protocol
-cases. Later changes do not alter Python or deck inputs; this is not reported
-as an exact-head Python rerun. This integration passed pinned
+cases. After composing reviewed native Alesha source `c6957a253f00fc622c3b2d15ed31e491077b6974`,
+all 172 affected Python cases across the nine Limited/deck/pool modules passed
+at `79eed12c1402bf06042bffea0e6214c0c6e844d1` in 27.063 seconds. This includes
+the new exact-printing, frozen-prefix, 40-card and Full-only refusal check.
+Alesha's genuine native paid fixtures and departed-incarnation power receipt
+remain Rust source only. The existing native mutable-world LKI contract does
+not authenticate coordinated raw GameState edits; no V59 owner or model
+permission for Alesha is introduced. This integration passed pinned
 1.94.1 formatting, diff checks, and lightweight static checks of source-case
 preservation, complete unique identity inputs, and unchanged catalog sources.
 All 151 Rust source cases at this composed head, binary and checker remain
