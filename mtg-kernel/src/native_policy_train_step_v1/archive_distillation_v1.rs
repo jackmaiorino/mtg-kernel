@@ -118,7 +118,12 @@ pub(super) fn external_auxiliary_terms_v1(
     let mut divergences = Vec::with_capacity(input.rows.len());
     let mut loss = 0.0_f64;
     for row in &input.rows {
-        let tape = forward_with_tape(parameters, config, row.encoded)?;
+        let tape = forward_with_tape(
+            parameters,
+            config,
+            row.encoded,
+            TrainingMathV1::PlatformLibm,
+        )?;
         let logits: Vec<f64> = tape
             .logits_v1()
             .iter()
@@ -184,6 +189,7 @@ impl NativePolicyValueTrainStateV1 {
         (Vec<LineBAuxiliaryResultV1>, NativeScorerBiasGaugeRecordV1),
         NativePolicyTrainErrorV1,
     > {
+        self.require_platform_math_v1("archive distillation")?;
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidLearningRate);
         }
@@ -250,6 +256,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             next_step,
             learning_rate,
+            self.training_math,
         )?;
         // Adam is elementwise and has no global gradient clipping. Restore
         // frozen tensors before validation/publication; gradients alone would

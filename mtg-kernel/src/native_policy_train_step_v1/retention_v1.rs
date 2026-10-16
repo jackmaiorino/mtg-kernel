@@ -55,7 +55,13 @@ fn retention_backward(
     for group in groups {
         let mut rows = Vec::new();
         for row in group.rows {
-            let tape = forward_with_tape(&parameters, config, row.encoded).map_err(failure)?;
+            let tape = forward_with_tape(
+                &parameters,
+                config,
+                row.encoded,
+                TrainingMathV1::PlatformLibm,
+            )
+            .map_err(failure)?;
             if tape.logits_v1().len() != row.expected_current_logits.len()
                 || !tape
                     .logits_v1()
@@ -196,6 +202,8 @@ impl NativePolicyValueTrainStateV1 {
         learning_rate: f32,
         workers: usize,
     ) -> Result<RetainedImitationResultV1, String> {
+        self.require_platform_math_v1("retained imitation")
+            .map_err(failure)?;
         if !beta.is_finite() || beta < 0.0 {
             return Err("retention beta must be finite and nonnegative".into());
         }
@@ -247,6 +255,7 @@ impl NativePolicyValueTrainStateV1 {
             &self.second_moments,
             next_step,
             learning_rate,
+            self.training_math,
         )
         .map_err(failure)?;
         next[SCORER_SECOND_BIAS].values[0] = f32::from_bits(self.scorer_bias_anchor_bits);

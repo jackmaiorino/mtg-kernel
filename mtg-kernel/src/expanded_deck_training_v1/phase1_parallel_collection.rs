@@ -157,6 +157,7 @@ pub(super) fn collect_parallel_v1(
     workers: usize,
     max_non_natural_episode_fraction: f32,
     collection_sampler: CollectionSamplerV1,
+    training_math: TrainingMathV1,
     output_directory: PathBuf,
 ) -> Result<Value, String> {
     let started = Instant::now();
@@ -176,7 +177,14 @@ pub(super) fn collect_parallel_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
-    let (mut policy, state, transfer) = initialize_with_transfer_context(&source)?;
+    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    bind_training_math_v1(
+        &source,
+        transfer.as_ref(),
+        training_math,
+        &mut policy,
+        &mut state,
+    )?;
     collection_sampler.apply_to_learner_v1(&mut policy);
     if let Some(context) = &transfer {
         context.validate_batch(&episodes)?;
@@ -193,7 +201,8 @@ pub(super) fn collect_parallel_v1(
         .map(|_| {
             Ok(CollectorV1 {
                 policy: policy.fork_for_collection_v3()?,
-                opponent_cache: OpponentCacheV1::for_collection(verified_sources.clone()),
+                opponent_cache: OpponentCacheV1::for_collection(verified_sources.clone())
+                    .with_training_math_v1(training_math),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -317,6 +326,7 @@ pub(super) fn collect_parallel_v1(
         "collection_worker_timings":worker_timings,
     });
     collection_sampler.record_v1(&mut result);
+    training_math.record_v1(&mut result);
     if let Some(pin) = non_natural_ledger_pin {
         result["non_natural_ledger"] = json!(pin);
     }
@@ -509,6 +519,7 @@ mod tests {
             workers: 2,
             max_non_natural_episode_fraction: 0.0,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect"),
         })
         .unwrap();
@@ -662,6 +673,7 @@ mod tests {
             workers: 2,
             max_non_natural_episode_fraction: 0.5,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect-admitted"),
         });
         clear_force_non_natural_seeds_for_test_v1([episodes[1].seed]);
@@ -690,6 +702,7 @@ mod tests {
             workers: 2,
             max_non_natural_episode_fraction: 0.1,
             collection_sampler: CollectionSamplerV1::Legacy,
+            training_math: TrainingMathV1::PlatformLibm,
             output_directory: root.join("collect-fraction-capped"),
         })
         .unwrap_err();
@@ -856,6 +869,7 @@ mod tests {
                     episodes: episodes.clone(),
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: sampler,
+                    training_math: TrainingMathV1::PlatformLibm,
                     output_directory,
                 }
             } else {
@@ -865,6 +879,7 @@ mod tests {
                     workers,
                     max_non_natural_episode_fraction: 0.0,
                     collection_sampler: sampler,
+                    training_math: TrainingMathV1::PlatformLibm,
                     output_directory,
                 }
             };

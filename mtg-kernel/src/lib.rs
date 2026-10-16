@@ -252,6 +252,9 @@ pub(crate) mod native_flat_cpu_reference_v1;
 // `docs/audits/model_guided_forward_determinism_audit_v1.md` for the
 // determinism hole it closes.
 pub(crate) mod deterministic_math_v1;
+// The run-wide choice between the platform libm and portable, bit-defined
+// tanh/exp/ln for training (collection forwards, replay checks, learner).
+pub(crate) mod training_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
 #[cfg(feature = "gameplay-checkpoint-reconstruction-v1")]
