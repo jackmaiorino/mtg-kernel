@@ -268,6 +268,32 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
     validate_state_with_pt(state, true)
 }
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    let aberration = |definition: u16| {
+        crate::card_def::CARD_DEFS
+            .get(usize::from(definition))
+            .is_some_and(|d| d.name == "Consuming Aberration")
+    };
+    if state
+        .objects
+        .iter()
+        .any(|(_, o)| matches!(o.zone, Zone::Battlefield | Zone::Stack) && aberration(o.card_def))
+        || state.stack.iter().any(|row| {
+            row.v4
+                .ability_source_contract
+                .is_some_and(|s| aberration(s.card_def))
+        })
+        || held(state)
+            .iter()
+            .any(|row| row.source_contract.is_some_and(|s| aberration(s.card_def)))
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            p.ctx
+                .ability_source_contract
+                .is_some_and(|s| aberration(s.card_def))
+        })
+    {
+        return Err("Aberration CDA and mill require a distinct complete consumer".into());
+    }
+
     if state.objects.iter().any(|(_, object)| {
         matches!(object.zone, Zone::Battlefield | Zone::Stack)
             && crate::event::is_sphinxs_tutelage_v1(object.card_def)

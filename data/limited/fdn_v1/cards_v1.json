@@ -8194,6 +8194,38 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/s/SphinxsTutelage.java",
       "is_token": false
+    },
+    {
+      "name": "Consuming Aberration",
+      "engine_capability": "partial",
+      "mana_cost": "{3}{U}{B}",
+      "mana_value": 5,
+      "colors": [
+        "U",
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 0,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_consuming_aberration_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "characteristic_defining_power_toughness_all_opponents_graveyard_cards_all_zones",
+        "controller_cast_spell_each_opponent_reveal_through_first_land_then_graveyard"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/c/ConsumingAberration.java",
+      "is_token": false
     }
   ]
 }

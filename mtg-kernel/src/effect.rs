@@ -5799,15 +5799,20 @@ fn complete_resumable_target_selection(
             player,
             original_prefix,
         } => {
-            continuation
-                .frames
-                .push(EffectFrame::RevealedLibraryToGraveyardBatch {
-                    player,
-                    original_prefix,
-                    objects,
-                    order_resolved: true,
-                    path,
-                });
+            let frame = EffectFrame::RevealedLibraryToGraveyardBatch {
+                player,
+                original_prefix,
+                objects,
+                order_resolved: true,
+                path,
+            };
+            if aberration_continuation_v1(continuation) {
+                continuation.answered_choice_guard =
+                    Some(EffectAnsweredChoiceGuard::StandardSelection {
+                        frame: Box::new(frame.clone()),
+                    });
+            }
+            continuation.frames.push(frame);
         }
         EffectTargetSelectionPurpose::OrderLookedLibraryTop {
             player,
@@ -8812,7 +8817,14 @@ fn validate_answered_choice_guard(
                             ordered: Some(_),
                             ..
                         }
-                )
+                ) && !(aberration_continuation_v1(pending)
+                    && matches!(
+                        **frame,
+                        EffectFrame::RevealedLibraryToGraveyardBatch {
+                            order_resolved: true,
+                            ..
+                        }
+                    ))
             {
                 return Err("Standard selection lost its authenticated answer frame".into());
             }
@@ -9504,6 +9516,83 @@ pub(crate) fn validate_vampire_gourmand_state(state: &GameState) -> Result<(), S
     vampire_gourmand_resolution_v1::validate(state)
 }
 
+fn aberration_continuation_v1(pending: &EffectContinuation) -> bool {
+    pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility
+        && pending.resolving_item.v4.granted_by.is_none()
+        && pending.ctx.ability_source_contract.is_some_and(|source| {
+            crate::card_def::CARD_DEFS
+                .get(usize::from(source.card_def))
+                .is_some_and(|d| d.is_executable() && d.name == "Consuming Aberration")
+        })
+}
+fn validate_aberration_continuation_v1(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if !aberration_continuation_v1(pending) {
+        return Ok(());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    if *root
+        != (EffectOp::RevealUntilCardTypeAndMill {
+            player: PlayerRef::Opponent,
+            card_type: CardType::Land,
+        })
+    {
+        return Err("Aberration lost its untargeted opponent reveal root".into());
+    }
+    let opponent = pending.ctx.controller.opponent();
+    let expected = bind_library_through_first_type(state, opponent, CardType::Land);
+    match (
+        &pending.choice,
+        pending.frames.as_slice(),
+        &pending.answered_choice_guard,
+    ) {
+        (
+            Some(PendingEffectChoice::SelectTargets {
+                player,
+                path,
+                purpose:
+                    EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                        player: owner,
+                        original_prefix,
+                    },
+                ..
+            }),
+            [],
+            None,
+        ) if *player == opponent
+            && *owner == opponent
+            && path.is_empty()
+            && *original_prefix == expected =>
+        {
+            Ok(())
+        }
+        (
+            None,
+            [frame @ EffectFrame::RevealedLibraryToGraveyardBatch {
+                player,
+                original_prefix,
+                objects,
+                order_resolved: true,
+                path,
+            }],
+            Some(EffectAnsweredChoiceGuard::StandardSelection { frame: saved }),
+        ) if *player == opponent
+            && path.is_empty()
+            && *original_prefix == expected
+            && **saved == *frame =>
+        {
+            validate_exact_binding_permutation(
+                original_prefix,
+                objects,
+                "Aberration graveyard answer",
+            )
+        }
+        _ => Err("Aberration lost its required original mill ordering stage".into()),
+    }
+}
+
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
@@ -9606,6 +9695,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     validate_exact_spell_search_continuation(state, pending)?;
     crate::spinner_of_souls_v1::validate_continuation(state, pending)?;
     validate_tutelage_continuation_v1(state, pending)?;
+    validate_aberration_continuation_v1(state, pending)?;
     perforating_artist_v1::validate_continuation(state, pending)?;
     alesha_optional_v1::validate_continuation(state, pending)?;
     crate::frenzied_goblin_v1::validate_continuation(state, pending)?;
@@ -11716,12 +11806,22 @@ fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, Str
                     ordered: Some(_),
                     ..
                 }
-        ) && continuation.answered_choice_guard.take()
-            != Some(EffectAnsweredChoiceGuard::StandardSelection {
-                frame: Box::new(frame.clone()),
-            })
+        ) || (aberration_continuation_v1(&continuation)
+            && matches!(
+                frame,
+                EffectFrame::RevealedLibraryToGraveyardBatch {
+                    order_resolved: true,
+                    ..
+                }
+            ))
         {
-            return Err("Standard selection answer changed before execution".into());
+            if continuation.answered_choice_guard.take()
+                != Some(EffectAnsweredChoiceGuard::StandardSelection {
+                    frame: Box::new(frame.clone()),
+                })
+            {
+                return Err("Standard selection answer changed before execution".into());
+            }
         }
         let EffectFrame::Program { op, path } = frame else {
             match frame {
@@ -24854,3 +24954,11 @@ pub(crate) fn begin_owned_tutelage_v1(
 ))]
 #[path = "effect/sphinxs_tutelage_v1_tests.rs"]
 mod sphinxs_tutelage_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/consuming_aberration_v1_tests.rs"]
+mod consuming_aberration_v1_tests;

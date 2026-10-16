@@ -1885,6 +1885,17 @@ fn gatecreeper_vine_effect() -> EffectOp {
     }
 }
 
+fn consuming_aberration_mill_v1() -> EffectOp {
+    EffectOp::RevealUntilCardTypeAndMill {
+        player: PlayerRef::Opponent,
+        card_type: CardType::Land,
+    }
+}
+const CONSUMING_ABERRATION_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSpell,
+    ..etb_trigger(consuming_aberration_mill_v1)
+}];
+
 fn balustrade_spy_effect() -> EffectOp {
     EffectOp::RevealUntilCardTypeAndMill {
         player: PlayerRef::Target(0),
@@ -3602,6 +3613,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     };
     if !card.is_executable() {
         return &[];
+    }
+    if card.name == "Consuming Aberration" {
+        return &CONSUMING_ABERRATION_TRIGGERS_V1;
     }
     if card.name == "Sphinx's Tutelage" {
         return &SPHINXS_TUTELAGE_TRIGGERS_V1;

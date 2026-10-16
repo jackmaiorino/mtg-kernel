@@ -8835,6 +8835,16 @@ fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> 
     if state
         .objects
         .try_get(object)
+        .is_some_and(|o| CARD_DEFS[usize::from(o.card_def)].name == "Consuming Aberration")
+    {
+        return Err(RlContractError(
+            "Aberration requires its distinct complete consumer".into(),
+        ));
+    }
+
+    if state
+        .objects
+        .try_get(object)
         .is_some_and(|live| crate::event::is_sphinxs_tutelage_v1(live.card_def))
     {
         return Err(RlContractError(

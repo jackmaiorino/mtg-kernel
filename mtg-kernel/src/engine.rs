@@ -18017,7 +18017,56 @@ pub fn effective_name(state: &GameState, id: ObjectId) -> &str {
     state.objects.get(id).name.as_str()
 }
 
+/// Exact definition-owned CDA selector, shared by native rules and extraction.
+pub(crate) fn consuming_aberration_cda_for_v1(name: &str) -> bool {
+    name == "Consuming Aberration"
+}
+
+/// Native CDA cardinality is never narrowed to a printed i16 or saturated.
+pub(crate) fn consuming_aberration_card_count_v1(count: usize) -> Result<i32, String> {
+    i32::try_from(count)
+        .map_err(|_| "Consuming Aberration graveyard count exceeds native i32".into())
+}
+
+/// Layer 7a, including cards outside the battlefield. Copy effects install the
+/// effective CardDef; in zones without a controller, "you" denotes the owner.
+fn consuming_aberration_base_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>, String> {
+    let object = state.objects.get(id);
+    let definition = &card_def::CARD_DEFS[usize::from(object.card_def)];
+    if !definition.is_executable()
+        || !consuming_aberration_cda_for_v1(definition.name)
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    {
+        return Ok(None);
+    }
+    let player = if matches!(object.zone, Zone::Battlefield | Zone::Stack) {
+        object.controller
+    } else {
+        object.owner
+    };
+    let count = state.players[player.opponent().index()]
+        .graveyard
+        .iter()
+        .filter(|&&id| {
+            let card = state.objects.get(id);
+            !card.v4.is_token
+                && !card_def::CARD_DEFS[usize::from(card.card_def)].is_token
+                && card.spell_copy_origin.is_none()
+        })
+        .count();
+    consuming_aberration_card_count_v1(count).map(Some)
+}
+
+/// Optional public base queries expose no numeric value on native overflow.
+/// Mutation and complete projection paths use the checked layer-7 query below.
 pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    checked_base_power_v1(state, id).ok().flatten()
+}
+pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+    checked_base_toughness_v1(state, id).ok().flatten()
+}
+
+fn checked_base_power_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>, String> {
     if state
         .objects
         .get(id)
@@ -18025,7 +18074,7 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
         .face_down_v1
         .is_some_and(|face| !face.disguised)
     {
-        return None;
+        return Ok(None);
     }
     let obj = state.objects.get(id);
     let characteristic_power = || -> Option<i32> {
@@ -18038,21 +18087,25 @@ pub fn effective_base_power(state: &GameState, id: ObjectId) -> Option<i32> {
             None
         }
     };
-    crate::continuous_characteristics_v1::base_power_toughness(state, id)
+    let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
         .map(|(power, _)| i32::from(power))
         .or_else(|| obj.v4.face_down_v1.map(|_| 2))
         .or_else(|| crate::standard_cards_v1::gnome_base_stats(state, id).map(|stats| stats.0))
-        .or_else(characteristic_power)
-        .or_else(|| {
-            card_def::CARD_DEFS[obj.card_def as usize]
-                .power_for_face(obj.v4.face_index)
-                .map(i32::from)
-        })
+        .or_else(characteristic_power);
+    let base = match base {
+        Some(value) => Some(value),
+        None => consuming_aberration_base_v1(state, id)?,
+    };
+    Ok(base.or_else(|| {
+        card_def::CARD_DEFS[obj.card_def as usize]
+            .power_for_face(obj.v4.face_index)
+            .map(i32::from)
+    }))
 }
 
 // The Standard query must remain lazy behind earlier layer results.
 #[allow(clippy::unnecessary_lazy_evaluations)]
-pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> {
+fn checked_base_toughness_v1(state: &GameState, id: ObjectId) -> Result<Option<i32>, String> {
     if state
         .objects
         .get(id)
@@ -18060,7 +18113,7 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
         .face_down_v1
         .is_some_and(|face| !face.disguised)
     {
-        return None;
+        return Ok(None);
     }
     let obj = state.objects.get(id);
     let base = crate::continuous_characteristics_v1::base_power_toughness(state, id)
@@ -18069,11 +18122,16 @@ pub fn effective_base_toughness(state: &GameState, id: ObjectId) -> Option<i32> 
     #[cfg(feature = "standard-magezero-fixtures")]
     let base =
         base.or_else(|| crate::standard_statics_v1::characteristic_defining_toughness(state, id));
-    base.or_else(|| obj.v4.face_down_v1.map(|_| 2)).or_else(|| {
+    let base = base.or_else(|| obj.v4.face_down_v1.map(|_| 2));
+    let base = match base {
+        Some(value) => Some(value),
+        None => consuming_aberration_base_v1(state, id)?,
+    };
+    Ok(base.or_else(|| {
         card_def::CARD_DEFS[obj.card_def as usize]
             .toughness_for_face(obj.v4.face_index)
             .map(i32::from)
-    })
+    }))
 }
 
 /// The single layer-7 query used by native rules and current projections.
@@ -18109,9 +18167,9 @@ fn checked_effective_stat(
     let overflow = || format!("effective PT exceeds native i32 range for {id:?}");
     let select = |pair: (i128, i128)| if toughness { pair.1 } else { pair.0 };
     let base = if toughness {
-        effective_base_toughness(state, id)
+        checked_base_toughness_v1(state, id)?
     } else {
-        effective_base_power(state, id)
+        checked_base_power_v1(state, id)?
     };
     let mut value = i128::from(base.unwrap_or(0)) + i128::from(obj.counters.plus1_plus1)
         - i128::from(obj.counters.minus1_minus1)
