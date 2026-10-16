@@ -319,10 +319,9 @@ fn death_bindings(state: &GameState, nine: u16) -> Result<Vec<DeathBinding>, Str
             return Err("V61 changed or duplicate Nine-Lives departure capture".into());
         }
         crate::engine::validate_historical_ability_source_contract(state, *source)?;
-        let prior = state.engine.event_history[..index]
-            .iter()
-            .rev()
-            .find(|row| !matches!(row, E::ControlledCreatureDeathCaptureV1 { .. }));
+        let prior = Some(crate::creature_death_capture_v1::validated_capture_death(
+            state, index,
+        )?);
         if !matches!(prior,Some(E::ZoneChange {object,from:Zone::Battlefield,to:Zone::Graveyard,controller_before:actual})if *object==source.source && actual==controller_before)
         {
             return Err("V61 capture lost its adjacent actual death".into());

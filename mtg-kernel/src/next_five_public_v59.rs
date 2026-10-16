@@ -332,10 +332,9 @@ fn deaths(state: &GameState, viewer: PlayerId, id: u16) -> Result<Vec<DeathV59>,
         {
             return Err("V59 Infernal original death capture changed or duplicated".into());
         }
-        let prior = state.engine.event_history[..index]
-            .iter()
-            .rev()
-            .find(|e| !matches!(e, E::ControlledCreatureDeathCaptureV1 { .. }));
+        let prior = Some(crate::creature_death_capture_v1::validated_capture_death(
+            state, index,
+        )?);
         if !matches!(prior,Some(E::ZoneChange{object,from:Zone::Battlefield,to:Zone::Graveyard,controller_before:actual})if *object==died.object&&actual==controller_before)
         {
             return Err("V59 Infernal capture lost its actual adjacent death".into());

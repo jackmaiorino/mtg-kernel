@@ -2495,7 +2495,7 @@ fn validated_ability_source_contract(
 /// Aegis) changes a permanent's definition without a zone change, and an
 /// ability already on the stack keeps the one it was created with
 /// (113.7a).
-fn source_card_def_matches(
+pub(crate) fn source_card_def_matches(
     state: &GameState,
     contract: AbilitySourceContractV4,
     live_card_def: u16,
@@ -14336,15 +14336,10 @@ fn validate_bound_trigger_source_objects(
             else {
                 return Err("Valkyrie's Call return lost its exact death capture".into());
             };
-            let history_death = state.engine.event_history[..capture_index]
-                .iter()
-                .rev()
-                .find(|event| {
-                    !matches!(
-                        event,
-                        crate::event::CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
-                    )
-                });
+            let history_death = Some(crate::creature_death_capture_v1::validated_capture_death(
+                state,
+                capture_index,
+            )?);
             let expected_capture = crate::trigger::triggers_for(contract.card_def)
                 .get(usize::from(*ability_index))
                 .is_some_and(|ability| {
