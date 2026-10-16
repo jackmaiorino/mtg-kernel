@@ -25657,13 +25657,14 @@ fn tutelage_remaining_v1(
             || *start_history_index != start
             || *previous_batch != linked
             || usize::try_from(*move_start).ok() != Some(cursor)
-            || batch_index != cursor + pair.len()
         {
             return Err("Tutelage batch chain, move range or progress changed".into());
         }
         validate_exact_binding_permutation(pair, ordered, "Tutelage original pair order")?;
-        for (index, binding) in ordered.iter().enumerate() {
-            if !matches!(state.engine.event_history.get(cursor + index),
+        let mut member_cursor = cursor;
+        for binding in ordered {
+            let movement = member_cursor;
+            if !matches!(state.engine.event_history.get(movement),
                 Some(event::CommittedEvent::ZoneChange { object, from: Zone::Library, to: Zone::Graveyard, controller_before })
                 if *object == binding.object && *controller_before == player)
                 || state.objects.get(binding.object).zone != Zone::Graveyard
@@ -25672,6 +25673,36 @@ fn tutelage_remaining_v1(
             {
                 return Err("Tutelage completed native mill/incarnation changed".into());
             }
+            member_cursor += 1;
+            let live = state.objects.get(binding.object);
+            if harvester_v1::catalog_enabled()
+                && !live.v4.is_token
+                && live.spell_copy_origin.is_none()
+                && crate::card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+            {
+                // Harvester emits one native occurrence immediately after this
+                // exact printed creature-card move. Validate its original turn,
+                // physical owner, card definition and full generation through
+                // the same readonly native occurrence validator, then bind the
+                // supplementary receipt to this particular pair member.
+                let entry = harvester_v1::graveyard_entry(state, member_cursor)?;
+                if entry.card.object != binding.object
+                    || entry.card.expected_zone_change_count != live.zone_change_count
+                    || entry.owner != player
+                    || entry.origin
+                        != (harvester_v1::GraveyardOriginV1::ZoneChange {
+                            history_index: movement as u64,
+                        })
+                {
+                    return Err(
+                        "Tutelage Harvester receipt redirected its actual mill member".into(),
+                    );
+                }
+                member_cursor += 1;
+            }
+        }
+        if member_cursor != batch_index {
+            return Err("Tutelage completed pair contains an unowned supplemental event".into());
         }
         // Only a genuine two-card, nonland, color-sharing pair can reach
         // another suspended iteration. A one-card final mill always stops.
