@@ -137,12 +137,6 @@ pub(crate) fn pending(
     let ability = crate::trigger::triggers_for(source.card_def)
         .get(usize::from(*ability_index))
         .ok_or_else(invalid)?;
-    let death = events[..index].iter().rev().find(|event| {
-        !matches!(
-            event,
-            CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
-        )
-    });
     // A coherent mutable-log forgery cannot invent a precommit observer.
     // Match the full frozen source/controller/deceased/ability tuple against
     // committed authority and its exact death occurrence before using it.
@@ -153,17 +147,7 @@ pub(crate) fn pending(
         .enumerate()
         .filter(|(_, event)| *event == &events[index]);
     let (history_index, _) = authorities.next().ok_or_else(invalid)?;
-    let history_death = state.engine.event_history[..history_index]
-        .iter()
-        .rev()
-        .find(|event| {
-            !matches!(
-                event,
-                CommittedEvent::ControlledCreatureDeathCaptureV1 { .. }
-            )
-        });
     if authorities.next().is_some()
-        || history_death != death
         || state.engine.event_history.iter().any(|event| {
             matches!(event, CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index }
                 if u64::try_from(history_index).ok() == Some(*capture_history_index))
@@ -171,6 +155,15 @@ pub(crate) fn pending(
     {
         return Err(invalid());
     }
+    let death = preceding_death(
+        state,
+        events,
+        index,
+        history_index,
+        *died,
+        *controller_before,
+    )
+    .ok_or_else(invalid)?;
     if !definition.is_executable()
         || !matches!(
             ability.condition,
@@ -216,9 +209,9 @@ pub(crate) fn pending(
             || state.objects.try_get(died.object).is_none_or(|object| {
                 object.v4.is_token || CARD_DEFS[usize::from(object.card_def)].is_token
             })))
-        || !matches!(death, Some(CommittedEvent::ZoneChange {
+        || !matches!(death, CommittedEvent::ZoneChange {
             object, from: Zone::Battlefield, to: Zone::Graveyard, controller_before: actual,
-        }) if *object == died.object && actual == controller_before)
+        } if *object == died.object && actual == controller_before)
         || state.objects.try_get(died.object).is_none_or(|object| {
             let later_moves = events[index + 1..].iter().filter(|event| {
                 matches!(event, CommittedEvent::ZoneChange { object, .. } if *object == died.object)
@@ -303,6 +296,147 @@ pub(crate) fn pending(
     )))
 }
 
+/// A native departure may append its exact LKI receipts before death observers.
+/// Niv's receipt is history-only; Alesha's is in both streams. Reconstruct only
+/// this closed segment, retaining the original death and complete capture order.
+/// Unrelated events, missing receipts, and altered receipt indices are refused.
+fn preceding_death<'a>(
+    state: &'a GameState,
+    events: &[CommittedEvent],
+    index: usize,
+    history_index: usize,
+    died: ObjectLinkV4,
+    controller: crate::ids::PlayerId,
+) -> Option<&'a CommittedEvent> {
+    let (departure, niv) = departure_segment(state, history_index, died, controller)?;
+    let history = &state.engine.event_history;
+    // Match the exact native collection-log suffix against committed history.
+    // Only the authenticated Niv receipt above is absent from that public log.
+    let expected = history.get(departure..=history_index)?;
+    let log_len = expected.len().checked_sub(usize::from(niv.is_some()))?;
+    let actual = events.get(index.checked_add(1)?.checked_sub(log_len)?..=index)?;
+    if !actual.iter().eq(expected
+        .iter()
+        .enumerate()
+        .filter(|(offset, _)| Some(departure + offset) != niv)
+        .map(|(_, event)| event))
+    {
+        return None;
+    }
+    history.get(departure)
+}
+
+/// Shared native/public history guard. This validates only the exact departure
+/// segment, without collecting a capture or changing any consumer admission.
+pub(crate) fn validated_capture_death(
+    state: &GameState,
+    history_index: usize,
+) -> Result<&CommittedEvent, String> {
+    let Some(CommittedEvent::ControlledCreatureDeathCaptureV1 {
+        died,
+        controller_before,
+        ..
+    }) = state.engine.event_history.get(history_index)
+    else {
+        return Err("controlled death capture is absent".into());
+    };
+    let (departure, _) = departure_segment(state, history_index, *died, *controller_before)
+        .ok_or("controlled death lost its exact native departure/receipt segment")?;
+    Ok(&state.engine.event_history[departure])
+}
+
+fn departure_segment(
+    state: &GameState,
+    history_index: usize,
+    died: ObjectLinkV4,
+    controller: crate::ids::PlayerId,
+) -> Option<(usize, Option<usize>)> {
+    let history = &state.engine.event_history;
+    let mut cursor = history_index;
+    while cursor > 0
+        && matches!(
+            history.get(cursor - 1),
+            Some(CommittedEvent::ControlledCreatureDeathCaptureV1 { .. })
+        )
+    {
+        cursor -= 1;
+    }
+    let alesha = match history.get(cursor.checked_sub(1)?)? {
+        CommittedEvent::AleshaPowerLkiV1 { .. } => {
+            cursor -= 1;
+            Some(cursor)
+        }
+        _ => None,
+    };
+    let niv = match history.get(cursor.checked_sub(1)?)? {
+        CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 { .. } => {
+            cursor -= 1;
+            Some(cursor)
+        }
+        _ => None,
+    };
+    let departure = cursor.checked_sub(1)?;
+    let death = history.get(departure)?;
+    if !matches!(death, CommittedEvent::ZoneChange {
+        object, from: Zone::Battlefield, to: Zone::Graveyard, controller_before,
+    } if *object == died.object && *controller_before == controller)
+        || niv.is_some() != crate::event::niv_mizzet_catalog_enabled_v1()
+    {
+        return None;
+    }
+    let departed_source = if let Some(at) = niv {
+        let CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = history.get(at)?
+        else {
+            return None;
+        };
+        if at != departure.checked_add(1)?
+            || usize::try_from(*departure_history_index).ok()? != departure
+            || source.source != died.object
+            || source.zone != Zone::Battlefield
+            || source.zone_change_count != died.zone_change_count
+            || source.controller != controller
+            || crate::engine::validate_historical_ability_source_contract(state, *source).is_err()
+        {
+            return None;
+        }
+        Some(*source)
+    } else {
+        None
+    };
+    if let Some(source) = departed_source {
+        let is_alesha =
+            CARD_DEFS.get(usize::from(source.card_def))?.name == "Alesha, Who Laughs at Fate";
+        if alesha.is_some() != is_alesha {
+            return None;
+        }
+    }
+    if let Some(at) = alesha {
+        let CommittedEvent::AleshaPowerLkiV1 {
+            source,
+            card_def,
+            zone_change_count,
+            departure_history_index,
+            ..
+        } = history.get(at)?
+        else {
+            return None;
+        };
+        if at != departure.checked_add(1 + usize::from(niv.is_some()))?
+            || usize::try_from(*departure_history_index).ok()? != departure
+            || *source != died.object
+            || *zone_change_count != died.zone_change_count
+            || CARD_DEFS.get(usize::from(*card_def))?.name != "Alesha, Who Laughs at Fate"
+            || departed_source.is_some_and(|departed| departed.card_def != *card_def)
+        {
+            return None;
+        }
+    }
+    Some((departure, niv))
+}
+
 /// A definition-owned new death program, not a predecessor or an arbitrary
 /// historical source contract. Used only to retain its physical source during
 /// hidden-state sampling after the event marker has been collected.
@@ -338,3 +472,10 @@ pub(crate) fn owns_program(
                     }
             })
 }
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;

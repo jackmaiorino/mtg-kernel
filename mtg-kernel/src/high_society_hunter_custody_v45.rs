@@ -100,7 +100,7 @@ pub(crate) fn source_at(
                     .objects
                     .try_get(died.object)
                     .is_none_or(|o| o.v4.is_token)
-                || !matches!(state.engine.event_history[..at].iter().rev().find(|e|!matches!(e,CommittedEvent::ControlledCreatureDeathCaptureV1{..})),
+                || !matches!(Some(crate::creature_death_capture_v1::validated_capture_death(state, at)?),
                     Some(CommittedEvent::ZoneChange{object,from:Zone::Battlefield,to:Zone::Graveyard,controller_before:actual})
                     if *object==died.object && actual==controller_before)
             {
