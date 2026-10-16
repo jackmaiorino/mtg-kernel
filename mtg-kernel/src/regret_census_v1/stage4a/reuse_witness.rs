@@ -95,10 +95,10 @@ impl Recording {
                 .iter()
                 .all(|key| decision[key].as_str().is_some_and(|x| hex(x, 64)))
             || !decision["state_hash"].as_str().is_some_and(|x| hex(x, 16))
-            || !search_record["step"]
+            || search_record["step"]
                 .as_u64()
                 .zip(decision["step"].as_u64())
-                .is_some_and(|(root, live)| root <= live)
+                .is_none_or(|(root, live)| root > live)
         {
             return Err(bad());
         }
