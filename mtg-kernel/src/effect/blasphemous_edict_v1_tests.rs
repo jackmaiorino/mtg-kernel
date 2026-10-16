@@ -133,6 +133,34 @@ fn finish(s: &mut GameState) {
             Decision::OrderTriggers { pending, .. } => {
                 Action::OrderTriggers((0..pending.len()).collect())
             }
+            Decision::ChooseTargets {
+                player,
+                spell,
+                remaining: 1,
+                legal_targets,
+                can_finish: false,
+            } => {
+                // The dying paid Bloodwitch still announces each original
+                // captured trigger and its mandatory opponent target.
+                let pending = s.engine.pending_triggers.first().unwrap();
+                assert_eq!((pending.source, pending.controller), (spell, player));
+                assert_eq!(pending.target_spec, TargetSpec::TargetOpponent);
+                assert!(pending.targets.is_empty());
+                let source = pending.source_contract.unwrap();
+                assert_eq!((source.source, source.controller), (spell, player));
+                assert_eq!(source.card_def, id("Vengeful Bloodwitch"));
+                assert_eq!(source.zone, Zone::Battlefield);
+                let departed = s.objects.get(spell);
+                assert_eq!((source.owner, departed.owner), (player, player));
+                assert_eq!(departed.zone, Zone::Graveyard);
+                assert_eq!(
+                    source.zone_change_count.checked_add(1),
+                    Some(departed.zone_change_count)
+                );
+                let target = Target::Player(player.opponent());
+                assert_eq!(legal_targets, vec![target]);
+                Action::ChooseTarget(target)
+            }
             Decision::ChooseEffectTargets {
                 legal_targets,
                 can_finish: false,
