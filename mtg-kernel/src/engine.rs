@@ -1029,6 +1029,9 @@ pub struct PendingActivation {
     pub crew_finished: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loyalty_x: Option<u8>,
+    /// Distinct declared mana X; absent for every predecessor activation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mana_x_v1: Option<u8>,
     #[serde(
         default,
         skip_serializing_if = "crate::cauldron_grants_v1::CauldronGrantRecordV1::is_empty"
@@ -1054,6 +1057,10 @@ impl std::hash::Hash for PendingActivation {
         }
         if let Some(x) = self.loyalty_x {
             b"loyalty_x_v1".hash(hash);
+            x.hash(hash);
+        }
+        if let Some(x) = self.mana_x_v1 {
+            b"activation_mana_x_v1".hash(hash);
             x.hash(hash);
         }
     }
@@ -4811,6 +4818,22 @@ fn payable_activation_legal_targets_for(
             can_pay_activation_components_with_x(ability.cost, controller, source, state, x_value)
         })
         .collect()
+}
+
+fn maximum_activation_mana_x_v1(
+    state: &GameState,
+    pending: &PendingActivation,
+    ability: &ActivatedAbilityDef,
+) -> Option<u8> {
+    (0..=u8::MAX).rev().find(|&x| {
+        can_pay_activation_components_with_x(
+            ability.cost,
+            pending.controller,
+            pending.source,
+            state,
+            x,
+        )
+    })
 }
 
 fn activation_x_value(
@@ -11349,6 +11372,14 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
     } else {
         None
     };
+    let fiend_owner = match effect::fiend_artisan_v1::acquire_resume(state, &item) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return None;
+        }
+    };
     let index = resolution_cast_v1::resolving_index(state, item.v4.stack_item_id);
     match index
         .filter(|&i| i < state.stack.len())
@@ -11392,6 +11423,8 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         effect::resume_owned_frenzied_goblin_resolution(state, owner)
     } else if let Some(owner) = gourmand_owner.as_ref() {
         effect::resume_owned_vampire_gourmand_resolution(state, owner)
+    } else if let Some(owner) = fiend_owner {
+        effect::fiend_artisan_v1::resume(state, owner)
     } else if let Some(owner) = printed_optional_owner {
         effect::resume_owned_printed_optional(state, owner)
     } else {
@@ -13046,6 +13079,15 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     )
     .expect("validate_pending_activation already confirmed this ability index resolves");
     let ability = &ability;
+    if effect::fiend_artisan_v1::ability(ability) && pending.mana_x_v1.is_none() {
+        let maximum = maximum_activation_mana_x_v1(state, &pending, ability)
+            .expect("validated mana-X activation has a payable zero");
+        return Some(Decision::ChooseEffectOption {
+            player: pending.controller,
+            source: pending.source,
+            option_count: u16::from(maximum) + 1,
+        });
+    }
     if ability.cost.contains(&CostComponent::LoyaltyX) && pending.loyalty_x.is_none() {
         let maximum = crate::planeswalker_v1::loyalty(state, pending.source)
             .unwrap_or(0)
@@ -13499,6 +13541,26 @@ pub(crate) fn validate_pending_activation(
         {
             return Err("invalid variable loyalty cost".into());
         }
+    }
+    if effect::fiend_artisan_v1::ability(ability) {
+        if !effect::fiend_artisan_v1::definition(object.card_def)
+            || !sorcery_speed_timing_ok(pending.controller, state)
+            || state.priority_player != pending.controller
+            || pending.cauldron_grant.0.is_some()
+            || pending.ability_index != 0
+            || (pending.mana_x_v1.is_none() && !pending.object_cost_chosen.is_empty())
+            || !can_pay_activation_components_with_x(
+                ability.cost,
+                pending.controller,
+                pending.source,
+                state,
+                pending.mana_x_v1.unwrap_or(0),
+            )
+        {
+            return Err("mana-X activation source, stage or affordability changed".into());
+        }
+    } else if pending.mana_x_v1.is_some() {
+        return Err("activation carries an unrelated mana X".into());
     }
     if interactive_families > 1 {
         return Err("activation has multiple interactive object-cost families".to_string());
@@ -15391,7 +15453,9 @@ fn validated_stack_item_target_metadata(
             } else if item.v4.hidden_ability_source.is_some() {
                 return Err("non-ninjutsu activation carries hidden source provenance".to_string());
             }
-            let expected_x = if ability.cost.contains(&CostComponent::LoyaltyX) {
+            let expected_x = if effect::fiend_artisan_v1::ability(ability) {
+                effect::fiend_artisan_v1::paid_x(state, item)?
+            } else if ability.cost.contains(&CostComponent::LoyaltyX) {
                 crate::standard_cards_v1::paid_loyalty_x(state, item.v4.stack_item_id)
                     .ok_or("variable loyalty payment lost its paid X")?
             } else {
@@ -18766,6 +18830,7 @@ fn checked_effective_stat(
         value = value.checked_add(delta).ok_or_else(overflow)?;
         Ok(())
     };
+    add(effect::fiend_artisan_v1::bonus(state, id)?)?;
     add(bestow_host_counter_bonus(state, id))?;
     add(select(controlled_subtype_boost(state, id)))?;
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -20051,6 +20116,7 @@ enum PendingActivationActionStage {
     ChooseCostTarget,
     Crew,
     ChooseLoyaltyX,
+    ChooseManaX,
 }
 
 /// Purely derives the one action family, if any, exposed by a staged cast.
@@ -20224,6 +20290,9 @@ fn pending_activation_action_stage(
         pending.source,
     )
     .ok_or("missing activation")?;
+    if effect::fiend_artisan_v1::ability(&staged_ability) && pending.mana_x_v1.is_none() {
+        return Ok(PendingActivationActionStage::ChooseManaX);
+    }
     if staged_ability.cost.contains(&CostComponent::LoyaltyX) && pending.loyalty_x.is_none() {
         return Ok(PendingActivationActionStage::ChooseLoyaltyX);
     }
@@ -20283,7 +20352,8 @@ fn action_matches_pending_activation_stage(
             PendingActivationActionStage::Crew,
             Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
         ) | (
-            PendingActivationActionStage::ChooseLoyaltyX,
+            PendingActivationActionStage::ChooseLoyaltyX
+                | PendingActivationActionStage::ChooseManaX,
             Action::ChooseEffectOption(_)
         ) | (PendingActivationActionStage::Discard, Action::Discard(_))
             | (
@@ -20653,6 +20723,16 @@ pub(crate) fn step_without_linked_aura_v1(
             } else if state.engine.pending_cast.is_some() {
                 apply_pending_cast_effect_option(state, option_index)
             } else if let Some(pending) = state.engine.pending_activation.as_ref() {
+                if pending_activation_action_stage(state,pending)? == PendingActivationActionStage::ChooseManaX {
+                    let ability = resolved_activated_ability(state.objects.get(pending.source).card_def,
+                        pending.ability_index, state, pending.source).ok_or("mana-X ability absent")?;
+                    let maximum = maximum_activation_mana_x_v1(state, pending, &ability)
+                        .ok_or("mana-X cost is no longer payable")?;
+                    let x = u8::try_from(option_index).map_err(|_|"mana X exceeds native payment range")?;
+                    if x > maximum { return Err("mana X is outside the payable range".into()); }
+                    state.engine.pending_activation.as_mut().ok_or("activation disappeared")?.mana_x_v1=Some(x);
+                    return Ok(());
+                }
                 if pending_activation_action_stage(state,pending)? != PendingActivationActionStage::ChooseLoyaltyX {
                     return Err("activation is not choosing X".into());
                 }
@@ -23322,6 +23402,7 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
         object_cost_chosen: vec![],
         crew_finished: false,
         loyalty_x: None,
+        mana_x_v1: None,
         cauldron_grant: crate::standard_cards_v1::capture_cauldron_grant(
             state,
             source,
@@ -23786,6 +23867,7 @@ fn finalize_activation(state: &mut GameState) {
         )
         .is_none_or(|ability| {
             ability.cost.contains(&CostComponent::LoyaltyX) && staged.loyalty_x.is_none()
+                || effect::fiend_artisan_v1::ability(&ability) && staged.mana_x_v1.is_none()
                 || crew_requirement(ability.cost).is_some() && !staged.crew_finished
         })
     {
@@ -23867,7 +23949,8 @@ fn finalize_activation(state: &mut GameState) {
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
     let x_value = match pending
-        .loyalty_x
+        .mana_x_v1
+        .or(pending.loyalty_x)
         .map(Ok)
         .unwrap_or_else(|| activation_x_value(ability, &pending.targets_chosen, state))
     {
@@ -23887,7 +23970,31 @@ fn finalize_activation(state: &mut GameState) {
                 .and_then(|id| crate::attack_target_v1::attacked_planeswalker(state, *id))
         })
         .flatten();
-    let paid = if let Some(owner) = fixed_payment_owner.as_ref() {
+    let paid = if effect::fiend_artisan_v1::ability(ability) {
+        // The new graveyard-count dependency can reject a final sacrifice
+        // scene. Stage this one complete native payment, including real mana
+        // abilities, before committing any mana, tap or sacrifice to the world.
+        let mut transaction = state.clone();
+        let input =
+            effect::fiend_artisan_v1::record_input(&mut transaction, &pending, frozen.source);
+        match input {
+            Ok(index)
+                if pay_cost_components_with_x(
+                    &mut transaction,
+                    pending.controller,
+                    pending.source,
+                    ability.cost,
+                    &object_cost_ids,
+                    x_value,
+                ) && transaction.engine.halted.is_none() =>
+            {
+                frozen.fiend_input = index;
+                *state = transaction;
+                true
+            }
+            _ => false,
+        }
+    } else if let Some(owner) = fixed_payment_owner.as_ref() {
         if !pay_cost_components_with_x(
             state,
             pending.controller,
@@ -23924,6 +24031,9 @@ fn finalize_activation(state: &mut GameState) {
         )
     };
     if !paid {
+        if effect::fiend_artisan_v1::ability(ability) {
+            state.engine.pending_activation = Some(pending.clone());
+        }
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
         state.engine.halted = Some((
@@ -23959,6 +24069,7 @@ struct FrozenActivationSource {
     source: AbilitySourceContractV4,
     granted_by: Option<AbilitySourceContractV4>,
     fixed_departure: Option<u32>,
+    fiend_input: Option<u32>,
     payment_history_start: usize,
     fishing_ability_index: u8,
     ajani_payment_owner: Option<crate::ajani_full_v42::lifecycle::PaymentOwner>,
@@ -23998,6 +24109,7 @@ fn freeze_activation_source(
         source,
         granted_by,
         fixed_departure: None,
+        fiend_input: None,
         payment_history_start: state.engine.event_history.len(),
         fishing_ability_index: pending.ability_index,
         ajani_payment_owner: None,
@@ -24075,7 +24187,7 @@ fn push_paid_activation(
             }
         }
     }
-    let x_value = pending.loyalty_x.unwrap_or_else(|| {
+    let x_value = pending.mana_x_v1.or(pending.loyalty_x).unwrap_or_else(|| {
         activation_x_value(ability, &pending.targets_chosen, state)
             .expect("validated paid activation retains its target-bound X value")
     });
@@ -24114,6 +24226,13 @@ fn push_paid_activation(
             ..StackStateV4::default()
         },
     });
+    if effect::fiend_artisan_v1::record_paid(state, stack_item_id, frozen.fiend_input).is_err() {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.source,
+        ));
+        return;
+    }
     crate::source_power_activation_v1::record_paid(state, stack_item_id);
     crate::librarian_activation_v1::record_paid(state, stack_item_id);
     if crate::krenko_v1::record_paid(
@@ -31279,3 +31398,11 @@ mod checked_pt_tests;
 ))]
 #[path = "engine/progenitus_v1_tests.rs"]
 mod progenitus_v1_tests;
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "engine/fiend_artisan_v1_tests.rs"]
+mod fiend_artisan_v1_tests;

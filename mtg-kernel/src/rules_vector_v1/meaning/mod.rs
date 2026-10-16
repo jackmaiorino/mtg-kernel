@@ -95,7 +95,8 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         {
             out.atoms.push(Atom::Opaque)
         }
-        EffectOp::BindSphinxLoreV1
+        EffectOp::FiendArtisanSearchV1
+        | EffectOp::BindSphinxLoreV1
         | EffectOp::SphinxLoreV1 { .. }
         | EffectOp::BindGreatwurmCountersV1
         | EffectOp::GreatwurmCountersV1 { .. }

@@ -8762,6 +8762,38 @@
       "sideboard_only": false,
       "complexity": "complex",
       "is_token": false
+    },
+    {
+      "name": "Fiend Artisan",
+      "mana_cost": "{B/G}{B/G}",
+      "mana_value": 2,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Nightmare"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "mechanics": [
+        "battlefield_plus_one_plus_one_per_controller_graveyard_creature_card",
+        "sorcery_tap_sacrifice_another_creature_choose_mana_x_search_creature_mana_value_at_most_x"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FiendArtisan.java",
+      "engine_capability": "partial",
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_fiend_artisan_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "is_token": false
     }
   ]
 }

@@ -589,6 +589,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Artifact)
         }
+        LibraryCardFilter::CreatureManaValueAtMost(_) => {
+            // The frozen vocabulary cannot express this mana-value ceiling.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             let _ = value;
             // The vocabulary lacks a disjunction of types and exact mana value.

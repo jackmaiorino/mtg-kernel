@@ -1107,6 +1107,10 @@ pub enum LibraryCardFilter {
     ArtifactWithManaValue(u16),
     LandWithBasicLandType,
     ArtifactCreatureOrEnchantmentManaValueAtMost(u16),
+    /// A creature card whose printed mana value does not exceed the bound.
+    /// The caller supplies its already chosen X; this filter does not choose
+    /// or pay X and grants no permission to activate an ability.
+    CreatureManaValueAtMost(u16),
 }
 
 impl LibraryCardFilter {
@@ -2742,6 +2746,8 @@ pub enum EffectOp {
     /// Simultaneously exile each player's top card, then optionally cast the
     /// nonlands in any order during this resolution.
     ExileTopEachPlayerThenCastV1,
+    /// Definition-owned Fiend Artisan search using its genuinely paid X.
+    FiendArtisanSearchV1,
     /// Exact wide-life successor. Frozen V49 capture amounts stay unchanged.
     ConquerorGainFromWideCaptureV59 {
         capture_history_index: u64,
@@ -4200,7 +4206,10 @@ pub(crate) fn contains_nonland_sacrifice_payment_v1(op: &EffectOp) -> bool {
 /// private library/hand ordering, and multi-card mill ordering enter the v4
 /// interpreter.
 pub fn contains_player_choice(op: &EffectOp) -> bool {
-    if matches!(op, EffectOp::AleshaRaidReturn { .. }) {
+    if matches!(
+        op,
+        EffectOp::AleshaRaidReturn { .. } | EffectOp::FiendArtisanSearchV1
+    ) {
         return true;
     }
     if crate::high_society_hunter_custody_v45::binding(op).is_some() {
@@ -4317,6 +4326,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if fiend_artisan_v1::selected(state, &resolving_item)
+        || fiend_artisan_v1::waiting(state, ctx)
+        || *op == EffectOp::FiendArtisanSearchV1
+    {
+        return Err("Fiend Artisan requires its genuine native row".into());
+    }
     if harvester_v1::recipe(op)
         || harvester_v1::selected(state, &resolving_item)
         || harvester_v1::waiting(state, ctx)
@@ -4583,6 +4598,12 @@ fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
         .is_some_and(standard_exile::top_batch_pending)
     {
         return Err("top-card free casting has no public resume authority".into());
+    }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        fiend_artisan_v1::selected(state, &p.resolving_item)
+            || fiend_artisan_v1::waiting(state, &p.ctx)
+    }) {
+        return Err("Fiend Artisan has no public continuation".into());
     }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         harvester_v1::selected(state, &p.resolving_item) || harvester_v1::waiting(state, &p.ctx)
@@ -6551,6 +6572,12 @@ fn complete_resumable_target_selection(
                     path: canonical_path.clone(),
                     canonical_path,
                 });
+            if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
+                continuation.answered_choice_guard =
+                    Some(EffectAnsweredChoiceGuard::StandardSelection {
+                        frame: Box::new(continuation.frames.last().unwrap().clone()),
+                    });
+            }
         }
         EffectTargetSelectionPurpose::SearchLibraryToHandMany {
             player,
@@ -10113,6 +10140,7 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    fiend_artisan_v1::validate_pending(state)?;
     if state
         .engine
         .pending_effect
@@ -13693,6 +13721,9 @@ fn drive_resumable_inner_with_native_row_v1(
                     path,
                     canonical_path,
                 } => {
+                    if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
+                        continuation.answered_choice_guard = None;
+                    }
                     if path != canonical_path || max_targets == 0 {
                         return Err(
                             "multi-card library-search coordinator metadata changed".to_string()
@@ -13791,6 +13822,9 @@ fn drive_resumable_inner_with_native_row_v1(
                                 }
                             }
                         }
+                    }
+                    if fiend_artisan_v1::selected(state, &continuation.resolving_item) {
+                        fiend_artisan_v1::finish(state, &continuation.resolving_item);
                     }
                 }
                 EffectFrame::SearchLibraryToHandMany {
@@ -14519,6 +14553,11 @@ fn drive_resumable_inner_with_native_row_v1(
                 crate::standard_cards_v1::apply_chosen_permanent(state, chosen, action);
             }
             EffectOp::CreateAnotherControlledNonlandTargetCopyV1 => {
+                if spirit_copy_item_v1(state,&continuation.resolving_item) {
+                    let owner=native_row.ok_or("Replication closed copy lost native owner")?;
+                    execute_spirit_copy_v1(state,&NativeExecutionProofV1{owner,ctx:&continuation.ctx})?;
+                    continue;
+                }
                 if nonland_copy_v1::stage(state,&mut continuation,path)? {
                     state.engine.pending_effect=Some(continuation);
                     return Ok(ResumableProgress::Suspended);
@@ -15369,6 +15408,24 @@ fn drive_resumable_inner_with_native_row_v1(
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
+            }
+            EffectOp::FiendArtisanSearchV1 => {
+                let owner=native_row.ok_or("Fiend Artisan lost private native row")?;
+                if owner.item != continuation.resolving_item || owner.ctx != continuation.ctx
+                    || *owner.root != EffectOp::FiendArtisanSearchV1 || !path.is_empty()
+                    || !continuation.frames.is_empty() {
+                    return Err("Fiend Artisan changed its exact native root/context/path".into());
+                }
+                fiend_artisan_v1::paid_x(state,&continuation.resolving_item)?;
+                fiend_artisan_v1::start(state,&continuation)?;
+                let player=continuation.ctx.controller;
+                let filter=LibraryCardFilter::CreatureManaValueAtMost(continuation.ctx.x_value);
+                let original_library=bind_library_exact(state,player);
+                let candidates=library_search_candidates(state,player,filter,&original_library)?;
+                stage_library_search_to_destination_choice(&mut continuation,player,filter,
+                    original_library,candidates,1,LibrarySearchDestinationV1::Battlefield{tapped:false},path);
+                state.engine.pending_effect=Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             EffectOp::SearchLibraryCardsToDestination {
                 player,
@@ -17999,6 +18056,9 @@ fn library_filter_matches(
         LibraryCardFilter::ArtifactWithManaValue(mana_value) => {
             def.has_type(CardType::Artifact) && def.mana_value == mana_value
         }
+        LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
+            def.has_type(CardType::Creature) && def.mana_value <= maximum
+        }
         LibraryCardFilter::ArtifactCreatureOrEnchantmentManaValueAtMost(maximum) => {
             def.mana_value <= maximum
                 && [
@@ -18047,6 +18107,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         }
         LibraryCardFilter::InstantOrSorceryManaValue(value) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 7), u64::from(value))
+        }
+        LibraryCardFilter::CreatureManaValueAtMost(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 11), u64::from(maximum))
         }
     }
 }
@@ -19198,6 +19261,15 @@ fn execute_with_native_row_v1(
         ));
         return;
     }
+    if (*op == EffectOp::FiendArtisanSearchV1 || fiend_artisan_v1::waiting(state, ctx))
+        && native_proof.is_none_or(|p| p.ctx != ctx)
+    {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if (harvester_v1::recipe(op) || harvester_v1::waiting(state, ctx))
         && native_proof.is_none_or(|p| p.ctx != ctx)
     {
@@ -19313,6 +19385,12 @@ fn execute_with_native_row_v1(
             }
         }
         EffectOp::BindCuratorDestiniesV1 | EffectOp::CuratorDestiniesV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::FiendArtisanSearchV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
@@ -25180,6 +25258,96 @@ mod tests {
 mod filtered_library_search_tests {
     use super::*;
 
+    /// Native filter primitive only. No Fiend Artisan definition, activation,
+    /// payment, or printed-program authority is constructed by this fixture.
+    #[test]
+    #[cfg(feature = "limited-fdn-fixtures")]
+    fn creature_mana_ceiling_native_primitive_exact_library_restore_and_stale_refusal_both_seats() {
+        let names = [
+            "Llanowar Elves",
+            "Axgard Cavalry",
+            "Lightning Bolt",
+            "Forest",
+        ];
+        let cards = names.map(|name| crate::card_def::card_id_by_name(name).unwrap());
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let state = GameState::new_from_libraries(
+                &cards,
+                &cards,
+                |id| crate::card_def::CARD_DEFS[id as usize].name.into(),
+                1126,
+            );
+            let original = bind_library_exact(&state, player);
+            let restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for maximum in [0, 1, 2, u16::MAX] {
+                let filter = LibraryCardFilter::CreatureManaValueAtMost(maximum);
+                let mut expected: Vec<_> = original
+                    .iter()
+                    .copied()
+                    .filter(|binding| {
+                        let card = state.objects.get(binding.object).card_def;
+                        card == cards[0] && maximum >= 1 || card == cards[1] && maximum >= 2
+                    })
+                    .collect();
+                expected.sort_by_key(|binding| {
+                    crate::card_def::CARD_DEFS[state.objects.get(binding.object).card_def as usize]
+                        .name
+                });
+                let before = serde_json::to_vec(&state).unwrap();
+                let found = library_search_candidates(&state, player, filter, &original).unwrap();
+                assert_eq!(found, expected);
+                assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+                assert_eq!(
+                    library_search_candidates(&restored, player, filter, &original).unwrap(),
+                    found
+                );
+                assert_eq!(
+                    serde_json::from_slice::<LibraryCardFilter>(
+                        &serde_json::to_vec(&filter).unwrap()
+                    )
+                    .unwrap(),
+                    filter
+                );
+            }
+            // A stale incarnation cannot become an eligible card just because
+            // the same physical object is later returned to the library.
+            let chosen = original
+                .iter()
+                .find(|binding| state.objects.get(binding.object).card_def == cards[0])
+                .unwrap();
+            let mut stale = state.clone();
+            event::propose_and_commit(
+                &mut stale,
+                event::ProposedEvent::zone_change(chosen.object, Zone::Hand),
+            );
+            event::propose_and_commit(
+                &mut stale,
+                event::ProposedEvent::zone_change(chosen.object, Zone::Library),
+            );
+            let before = serde_json::to_vec(&stale).unwrap();
+            assert!(library_search_candidates(
+                &stale,
+                player,
+                LibraryCardFilter::CreatureManaValueAtMost(u16::MAX),
+                &original,
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&stale).unwrap(), before);
+            let mut forged = state.clone();
+            forged.objects.get_mut(chosen.object).v4.face_index = 1;
+            let before = serde_json::to_vec(&forged).unwrap();
+            assert!(library_search_candidates(
+                &forged,
+                player,
+                LibraryCardFilter::CreatureManaValueAtMost(u16::MAX),
+                &original,
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&forged).unwrap(), before);
+        }
+    }
+
     #[test]
     fn library_filter_fingerprints_separate_all_variants_and_preserve_merged_tags() {
         use LibraryCardFilter::*;
@@ -26175,6 +26343,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if fiend_artisan_v1::waiting(state, ctx) {
+        return true;
+    }
     if harvester_v1::waiting(state, ctx) {
         return true;
     }
@@ -27478,7 +27649,8 @@ pub(crate) fn needs_electroduplicate_entry_owner_v1(state: &GameState) -> bool {
 mod electroduplicate_v1_tests;
 
 // This copy permit never confers Kykar's separate printed token-creation mode.
-// Its original removed cast or native spell-copy row is borrowed for one batch.
+// Its original removed cast, native spell copy, or Replication row is borrowed for one batch.
+// Fiend Artisan is the other exact closed blueprint; generic raw creation stays refused.
 pub(crate) struct SpiritCopyPermitV1<'a, 'b> {
     proof: &'a NativeExecutionProofV1<'b>,
     proposal: event::ProposedEvent,
@@ -27503,17 +27675,33 @@ impl SpiritCopyPermitV1<'_, '_> {
             && events == self.events()
     }
 }
+fn closed_copy_definition_v1(id: u16) -> bool {
+    kykar_v1::token_definition(id) || fiend_artisan_v1::definition(id)
+}
 fn spirit_copy_target_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     ctx.target_contracts.iter().any(|c| {
         matches!(c,
-        StackTargetContractV4::Object { card_def, .. } if kykar_v1::token_definition(*card_def))
+        StackTargetContractV4::Object { card_def, .. } if closed_copy_definition_v1(*card_def))
     }) || ctx.targets.iter().any(|t| {
         matches!(t, Target::Object(id)
             if state.objects.try_get(*id).is_some_and(|o|
-                o.v4.face_down_v1.is_none() && kykar_v1::token_definition(o.card_def)))
+                o.v4.face_down_v1.is_none() && closed_copy_definition_v1(o.card_def)))
     })
 }
 fn spirit_copy_item_v1(state: &GameState, item: &StackItem) -> bool {
+    if item.inline_effect == Some(EffectOp::CreateAnotherControlledNonlandTargetCopyV1)
+        && item.v4.ability_source_contract.is_some_and(|c| {
+            card_def::CARD_DEFS
+                .get(usize::from(c.card_def))
+                .is_some_and(|d| d.name == "Extravagant Replication")
+        })
+        && item.v4.target_contracts.iter().any(|c| {
+            matches!(c,StackTargetContractV4::Object{card_def,..}
+            if fiend_artisan_v1::definition(*card_def))
+        })
+    {
+        return true;
+    }
     item.v4.source_contract.is_some_and(|source| {
         card_def::CARD_DEFS
             .get(usize::from(source.card_def))
@@ -27529,11 +27717,13 @@ fn spirit_copy_proposal_v1(
 ) -> Result<Option<event::ProposedEvent>, String> {
     let owner = proof.owner;
     let ctx = proof.ctx;
-    let source = owner
+    let source_definition = owner
         .item
         .v4
         .source_contract
-        .ok_or("copy spell source absent")?;
+        .map(|c| c.card_def)
+        .or(owner.item.v4.ability_source_contract.map(|c| c.card_def))
+        .ok_or("copy spell or ability source absent")?;
     owner.validate_entry(state, &owner.item, ctx, &owner.root)?;
     // The native driver has already removed this exact row. Lend only its
     // authenticated original to an immutable validation copy; the public
@@ -27541,20 +27731,28 @@ fn spirit_copy_proposal_v1(
     // checks native virtual-copy ancestry as well as physical cast provenance.
     let mut loan = state.clone();
     loan.stack.push(owner.item.clone());
-    crate::engine::validated_stack_item_target_spec(&owner.item, &loan)?;
+    let target_spec = crate::engine::validated_stack_item_target_spec(&owner.item, &loan)?
+        .ok_or("native copy has no target specification")?;
     if owner.ctx != *ctx
-        || owner.item.kind != StackItemKind::Spell
+        || (owner.item.kind != StackItemKind::Spell
+            && owner.item.kind != StackItemKind::TriggeredAbility)
         || owner.item.source != ctx.source
         || owner.item.controller != ctx.controller
-        || owner.item.inline_effect.is_some()
+        || (owner.item.inline_effect.is_some()
+            && *owner.root != EffectOp::CreateAnotherControlledNonlandTargetCopyV1)
         || owner.item.targets != ctx.targets
         || owner.item.v4.target_contracts != ctx.target_contracts
     {
         return Err("Spirit copy lost its original native spell/context".into());
     }
     let extra = match owner.root.as_ref() {
-        EffectOp::ElectroduplicateCopyV1 if electroduplicate_definition_v1(source.card_def) => 1,
+        EffectOp::ElectroduplicateCopyV1 if electroduplicate_definition_v1(source_definition) => 1,
         EffectOp::CreateControlledCreatureTargetCopyV1
+            if spirit_copy_item_v1(state, &owner.item) =>
+        {
+            0
+        }
+        EffectOp::CreateAnotherControlledNonlandTargetCopyV1
             if spirit_copy_item_v1(state, &owner.item) =>
         {
             0
@@ -27567,23 +27765,38 @@ fn spirit_copy_proposal_v1(
         return Err("Spirit copy lost its single original target".into());
     };
     if !crate::self_reflection_v1::target_matches_live(state, *target, *contract)
-        || !crate::engine::effect_target_is_legal(
-            state,
-            ctx.source,
-            ctx.controller,
-            card_def::TargetSpec::ControlledCreature,
-            &ctx.targets,
-            0,
-        )
+        || !(if owner.item.kind == StackItemKind::TriggeredAbility {
+            crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                owner
+                    .item
+                    .v4
+                    .ability_source_contract
+                    .ok_or("copy original ability source absent")?,
+                ctx.controller,
+                target_spec,
+                &ctx.targets,
+                0,
+            )
+        } else {
+            crate::engine::effect_target_is_legal(
+                state,
+                ctx.source,
+                ctx.controller,
+                target_spec,
+                &ctx.targets,
+                0,
+            )
+        })
     {
         return Ok(None);
     }
     let live = state.objects.get(*object);
-    if !live.v4.is_token
+    if (kykar_v1::token_definition(live.card_def) && !live.v4.is_token)
         || live.zone != Zone::Battlefield
         || live.v4.face_down_v1.is_some()
         || live.v4.face_index != 0
-        || !kykar_v1::token_definition(live.card_def)
+        || !closed_copy_definition_v1(live.card_def)
     {
         return Err("Spirit copy requires the exact visible white flying blueprint".into());
     }
@@ -27613,7 +27826,7 @@ fn execute_spirit_copy_v1(
     // path supplies no permission to materialize the Partial Spirit blueprint.
     if proof.ctx.targets.first().is_some_and(|target| {
         matches!(target, Target::Object(id) if state.objects.try_get(*id).is_some_and(|live|
-            live.v4.face_down_v1.is_some() || !kykar_v1::token_definition(live.card_def)))
+            live.v4.face_down_v1.is_some() || !closed_copy_definition_v1(live.card_def)))
     }) {
         match proof.owner.root.as_ref() {
             EffectOp::CreateControlledCreatureTargetCopyV1 => {
@@ -27624,6 +27837,9 @@ fn execute_spirit_copy_v1(
                     event::propose_and_commit_batch(state, vec![proposal]);
                 }
             }
+            EffectOp::CreateAnotherControlledNonlandTargetCopyV1 => {
+                return Err("Replication target changed its closed copy blueprint".into());
+            }
             _ => return Err("Spirit copy lost its original printed root".into()),
         }
         return Ok(());
@@ -27632,4 +27848,580 @@ fn execute_spirit_copy_v1(
         event::commit_spirit_copy_owned_v1(state, SpiritCopyPermitV1 { proof, proposal })?;
     }
     Ok(())
+}
+// Inline so every existing semantic producer that binds effect.rs includes
+// the whole native cost, stat and continuation implementation.
+pub(crate) mod fiend_artisan_v1 {
+    use super::*;
+    use crate::card_def::{ActivatedAbilityDef, ActivationTargetFilter, CostComponent};
+    use crate::mana::{Cost, ManaColor, Pip};
+    pub(crate) fn definition(id: u16) -> bool {
+        cfg!(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        )) && id == 483
+            && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+                let card_def::CardDef {
+                    name: _,
+                    capability: _,
+                    cost: _,
+                    generic_cost_reduction: _,
+                    ward_cost: _,
+                    spell_cannot_be_countered: _,
+                    records_mana_spent: _,
+                    equipment: _,
+                    types: _,
+                    subtypes: _,
+                    supertypes: _,
+                    power: _,
+                    toughness: _,
+                    starting_loyalty: _,
+                    enters_with_plus_one_counters: _,
+                    controlled_counter_keyword: _,
+                    game_outcome_protection_v1: _,
+                    controlled_creature_grant: _,
+                    is_land: _,
+                    produces_mana: _,
+                    colors: _,
+                    target_spec: _,
+                    keywords: _,
+                    spell_effect: _,
+                    mana_ability: _,
+                    alt_cost: _,
+                    kicker_cost: _,
+                    additional_cost: _,
+                    flashback: _,
+                    activated_abilities: _,
+                    plot_cost: _,
+                    madness_cost: _,
+                    mode2: _,
+                    mode3: _,
+                    additional_modes: _,
+                    kicked_target_spec: _,
+                    is_token: _,
+                    escape: _,
+                    mana_ability_choices: _,
+                    enters_battlefield_tapped: _,
+                    mana_ability_def: _,
+                    minimum_blockers: _,
+                    omen: _,
+                    mana_value: _,
+                    mana_ability_includes_chosen_color: _,
+                    as_enters_choose_color_other_than: _,
+                    additional_mana_abilities: _,
+                    object_name: _,
+                    enters_battlefield_tapped_unless: _,
+                    attachment: _,
+                    transform_face: _,
+                    saga: _,
+                    optional_additional_cost: _,
+                    changeling: _,
+                    bestow: _,
+                    delve: _,
+                    adventure: _,
+                    cant_be_blocked_by_monarchs_creatures: _,
+                    conditional_tap_yield: _,
+                    enters_tapped_unless_controller: _,
+                    additional_mana_ability_conditions: _,
+                    restricted_mana_abilities: _,
+                    animation: _,
+                    activated_ability_generic_reductions: _,
+                    combat_static_rules: _,
+                    as_enters_color_choice_v1: _,
+                    chosen_color_creature_boost_v1: _,
+                    damage_replacement_v1: _,
+                    token_counter_replacement_v48: _,
+                    starting_life_self_bonuses_v1: _,
+                    source_type_hexproof_v1: _,
+                    other_controlled_nontoken_death_v1: _,
+                    creature_type_entry_v1: _,
+                } = d;
+                d.name == "Fiend Artisan"
+                    && d.capability == card_def::CardCapability::Partial
+                    && d.cost
+                        == crate::mana::Cost {
+                            pips: &[
+                                crate::mana::Pip::Hybrid(
+                                    crate::mana::ManaColor::B,
+                                    crate::mana::ManaColor::G,
+                                ),
+                                crate::mana::Pip::Hybrid(
+                                    crate::mana::ManaColor::B,
+                                    crate::mana::ManaColor::G,
+                                ),
+                            ],
+                            generic: 0,
+                            x_count: 0,
+                        }
+                    && d.generic_cost_reduction.is_none()
+                    && d.ward_cost.is_none()
+                    && !d.spell_cannot_be_countered
+                    && !d.records_mana_spent
+                    && d.equipment.is_none()
+                    && d.types == [CardType::Creature]
+                    && d.subtypes == [card_def::Subtype::Nightmare]
+                    && d.supertypes.is_empty()
+                    && d.power == Some(1)
+                    && d.toughness == Some(1)
+                    && d.starting_loyalty.is_none()
+                    && d.enters_with_plus_one_counters.is_none()
+                    && d.controlled_counter_keyword.is_none()
+                    && d.game_outcome_protection_v1.is_none()
+                    && d.controlled_creature_grant.is_none()
+                    && !d.is_land
+                    && d.produces_mana.is_empty()
+                    && d.colors == [crate::mana::ManaColor::B, crate::mana::ManaColor::G]
+                    && d.target_spec == card_def::TargetSpec::None
+                    && d.keywords == Keywords::NONE
+                    && (d.spell_effect)()
+                        == Some(EffectOp::MoveObject {
+                            object: ObjectRef::ThisSource,
+                            to_zone: Zone::Battlefield,
+                        })
+                    && (d.mana_ability)().is_none()
+                    && d.alt_cost.is_none()
+                    && d.kicker_cost.is_none()
+                    && d.additional_cost.is_none()
+                    && d.flashback.is_none()
+                    && d.activated_abilities.len() == 1
+                    && ability(&d.activated_abilities[0])
+                    && d.plot_cost.is_none()
+                    && d.madness_cost.is_none()
+                    && d.mode2.is_none()
+                    && d.mode3.is_none()
+                    && d.additional_modes.is_empty()
+                    && d.kicked_target_spec.is_none()
+                    && !d.is_token
+                    && d.escape.is_none()
+                    && d.mana_ability_choices.is_empty()
+                    && !d.enters_battlefield_tapped
+                    && d.mana_ability_def.is_none()
+                    && d.minimum_blockers == 1
+                    && d.omen.is_none()
+                    && d.mana_value == 2
+                    && !d.mana_ability_includes_chosen_color
+                    && d.as_enters_choose_color_other_than.is_none()
+                    && d.additional_mana_abilities.is_empty()
+                    && d.object_name == d.name
+                    && d.enters_battlefield_tapped_unless.is_none()
+                    && d.attachment.is_none()
+                    && d.transform_face.is_none()
+                    && d.saga.is_none()
+                    && d.optional_additional_cost.is_none()
+                    && !d.changeling
+                    && d.bestow.is_none()
+                    && !d.delve
+                    && d.adventure.is_none()
+                    && !d.cant_be_blocked_by_monarchs_creatures
+                    && d.conditional_tap_yield.is_none()
+                    && d.enters_tapped_unless_controller.is_none()
+                    && d.additional_mana_ability_conditions.is_empty()
+                    && d.restricted_mana_abilities.is_empty()
+                    && d.animation.is_none()
+                    && d.activated_ability_generic_reductions.is_empty()
+                    && d.combat_static_rules == card_def::CombatStaticRulesDef::NONE
+                    && d.as_enters_color_choice_v1.is_none()
+                    && d.chosen_color_creature_boost_v1.is_none()
+                    && d.damage_replacement_v1.is_none()
+                    && d.token_counter_replacement_v48.is_none()
+                    && d.starting_life_self_bonuses_v1.is_empty()
+                    && d.source_type_hexproof_v1.is_none()
+                    && d.other_controlled_nontoken_death_v1.is_none()
+                    && d.creature_type_entry_v1.is_none()
+            })
+    }
+
+    pub(crate) const COST: &[CostComponent] = &[
+        // Mana abilities run before paying the sacrifice. A selected Elf may
+        // contribute mana and then be sacrificed; only the source's T is reserved.
+        CostComponent::Mana(Cost {
+            pips: &[Pip::Hybrid(ManaColor::B, ManaColor::G)],
+            generic: 0,
+            x_count: 1,
+        }),
+        CostComponent::Tap,
+        CostComponent::SacrificeOtherControlledCreatures(1),
+    ];
+    pub(crate) fn program() -> EffectOp {
+        EffectOp::FiendArtisanSearchV1
+    }
+    pub(crate) fn ability(a: &ActivatedAbilityDef) -> bool {
+        a.cost == COST
+            && a.target_spec == card_def::TargetSpec::None
+            && (a.effect)() == program()
+            && a.activation_zone == Zone::Battlefield
+            && a.sorcery_speed_only
+            && a.activation_target_filter == ActivationTargetFilter::TargetSpecOnly
+            && a.max_activations_per_turn.is_none()
+            && a.face.is_none()
+    }
+    /// Layer7c, only on the battlefield while the printed static ability exists.
+    /// This is deliberately separate from the all-zone Aberration CDA.
+    pub(crate) fn bonus(state: &GameState, id: ObjectId) -> Result<i128, String> {
+        let o = state
+            .objects
+            .try_get(id)
+            .ok_or("Fiend stat object missing")?;
+        if o.zone != Zone::Battlefield
+            || !definition(o.card_def)
+            || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
+            return Ok(0);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut count = 0i128;
+        for &card in &state.players[o.controller.index()].graveyard {
+            let c = state
+                .objects
+                .try_get(card)
+                .ok_or("Fiend graveyard card missing")?;
+            if c.zone != Zone::Graveyard || c.owner != o.controller || !seen.insert(card) {
+                return Err("Fiend graveyard membership changed".into());
+            }
+            let d = card_def::CARD_DEFS
+                .get(usize::from(c.card_def))
+                .ok_or("Fiend graveyard definition missing")?;
+            if !c.v4.is_token
+                && !d.is_token
+                && c.spell_copy_origin.is_none()
+                && d.has_type(CardType::Creature)
+            {
+                count = count
+                    .checked_add(1)
+                    .ok_or("Fiend graveyard count overflow")?;
+            }
+        }
+        Ok(count)
+    }
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct InputV1 {
+        pub source: crate::state::AbilitySourceContractV4,
+        pub pending: crate::engine::PendingActivation,
+    }
+    pub(crate) fn record_input(
+        state: &mut GameState,
+        p: &crate::engine::PendingActivation,
+        source: crate::state::AbilitySourceContractV4,
+    ) -> Result<Option<u32>, String> {
+        if p.mana_x_v1.is_none() {
+            return Ok(None);
+        }
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Fiend history exceeds native index width")?;
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::FiendArtisanInputV1 {
+                input: Box::new(InputV1 {
+                    source,
+                    pending: p.clone(),
+                }),
+            });
+        Ok(Some(at))
+    }
+    pub(crate) fn record_paid(
+        state: &mut GameState,
+        id: StackItemId,
+        input: Option<u32>,
+    ) -> Result<(), String> {
+        let Some(input_index) = input else {
+            return Ok(());
+        };
+        let item = state
+            .stack
+            .iter()
+            .find(|r| r.v4.stack_item_id == id)
+            .ok_or("Fiend publication absent")?
+            .clone();
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::FiendArtisanPaidV1 {
+                input_index,
+                item: Box::new(item.clone()),
+            });
+        paid_x(state, &item).map(|_| ())
+    }
+    pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
+        item.inline_effect == Some(program())
+            || state.engine.event_history.iter().any(|e| {
+                matches!(e,event::CommittedEvent::FiendArtisanPaidV1{item: original,..}
+                if original.v4.stack_item_id==item.v4.stack_item_id)
+            })
+    }
+    pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
+        state.stack.iter().any(|r| {
+            selected(state, r)
+                && (r.source == ctx.source || ctx.stack_item_id == Some(r.v4.stack_item_id))
+        }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            selected(state, &p.resolving_item)
+                && (p.resolving_item.source == ctx.source
+                    || p.ctx.stack_item_id == ctx.stack_item_id)
+        })
+    }
+    pub(crate) fn paid_x(state: &GameState, item: &StackItem) -> Result<u8, String> {
+        let mut paid =
+            state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter_map(|(at, e)| match e {
+                    event::CommittedEvent::FiendArtisanPaidV1 {
+                        input_index,
+                        item: original,
+                    } if original.v4.stack_item_id == item.v4.stack_item_id => {
+                        Some((at, *input_index, original.as_ref()))
+                    }
+                    _ => None,
+                });
+        let (at, input_index, original) = paid.next().ok_or("Fiend paid X absent")?;
+        if paid.next().is_some()
+            || original != item
+            || item.kind != StackItemKind::ActivatedAbility
+            || item.inline_effect != Some(program())
+            || !item.targets.is_empty()
+            || !item.v4.target_contracts.is_empty()
+            || item.v4.activated_ability_index != Some(0)
+            || item.is_copy
+            || item.v4.granted_by.is_some()
+            || item.v4.cauldron_grant.0.is_some()
+        {
+            return Err("Fiend paid row changed or duplicated".into());
+        }
+        let Some(event::CommittedEvent::FiendArtisanInputV1 { input }) =
+            state.engine.event_history.get(input_index as usize)
+        else {
+            return Err("Fiend selected input absent".into());
+        };
+        let p = &input.pending;
+        let x = p.mana_x_v1.ok_or("Fiend selected X absent")?;
+        if input_index as usize >= at
+            || !definition(input.source.card_def)
+            || input.source.source != item.source
+            || input.source.controller != item.controller
+            || input.source.zone != Zone::Battlefield
+            || item.v4.ability_source_contract != Some(input.source)
+            || p.source != item.source
+            || p.controller != item.controller
+            || p.ability_index != 0
+            || p.source_zone_change_count != input.source.zone_change_count
+            || p.target_spec != card_def::TargetSpec::None
+            || !p.targets_chosen.is_empty()
+            || !p.target_contracts.is_empty()
+            || p.loyalty_x.is_some()
+            || p.crew_finished
+            || p.cauldron_grant.0.is_some()
+            || p.cost_discard_paid.as_deref() != Some(&[])
+            || item.v4.x_value != u16::from(x)
+            || p.object_cost_chosen.len() != 1
+        {
+            return Err("Fiend original selected activation changed".into());
+        }
+        let sacrificed = p.object_cost_chosen[0];
+        let segment = &state.engine.event_history[input_index as usize + 1..at];
+        if sacrificed.object == item.source
+            || sacrificed.expected_zone != Zone::Battlefield
+            || !segment
+                .iter()
+                .any(|e| matches!(e,event::CommittedEvent::Tap{object} if *object==item.source))
+            || segment
+                .iter()
+                .filter(|e| {
+                    matches!(e,event::CommittedEvent::Sacrificed{object,controller_before,..}
+                if *object==sacrificed.object && *controller_before==item.controller)
+                })
+                .count()
+                != 1
+            || !segment.iter().any(|e| {
+                matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Battlefield,..}
+                if *object==sacrificed.object)
+            })
+            || !item.v4.paid_cost_refs.iter().any(|r| {
+                r.object == sacrificed.object
+                    && sacrificed.expected_zone_change_count.checked_add(1)
+                        == Some(r.zone_change_count)
+            })
+        {
+            return Err("Fiend original tap/sacrifice payment absent".into());
+        }
+        if state.engine.event_history.iter().any(|e|matches!(e,
+            event::CommittedEvent::FiendArtisanSearchFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id)) {
+            return Err("Fiend original activation was already finished".into());
+        }
+        Ok(x)
+    }
+    fn original_library<'a>(
+        state: &'a GameState,
+        item: &StackItem,
+    ) -> Result<&'a [EffectObjectBinding], String> {
+        let mut found = state.engine.event_history.iter().filter_map(|e| match e {
+            event::CommittedEvent::FiendArtisanSearchStartedV1 {
+                stack_item_id,
+                library,
+            } if *stack_item_id == item.v4.stack_item_id => Some(library.as_slice()),
+            _ => None,
+        });
+        let library = found.next().ok_or("Fiend search occurrence absent")?;
+        if found.next().is_some() {
+            return Err("Fiend search occurrence duplicated".into());
+        }
+        Ok(library)
+    }
+    pub(super) fn start(state: &mut GameState, p: &EffectContinuation) -> Result<(), String> {
+        paid_x(state, &p.resolving_item)?;
+        if state.engine.event_history.iter().any(|e| {
+            matches!(e,
+            event::CommittedEvent::FiendArtisanSearchStartedV1{stack_item_id,..}
+                if *stack_item_id==p.resolving_item.v4.stack_item_id)
+        }) {
+            return Err("Fiend search cannot restart its original occurrence".into());
+        }
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::FiendArtisanSearchStartedV1 {
+                stack_item_id: p.resolving_item.v4.stack_item_id,
+                library: bind_library_exact(state, p.ctx.controller),
+            });
+        Ok(())
+    }
+    pub(super) fn finish(state: &mut GameState, item: &StackItem) {
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::FiendArtisanSearchFinishedV1 {
+                stack_item_id: item.v4.stack_item_id,
+            });
+    }
+    pub(super) fn validate_pending(state: &GameState) -> Result<(), String> {
+        let Some(p) = &state.engine.pending_effect else {
+            return Ok(());
+        };
+        if !selected(state, &p.resolving_item) {
+            return Ok(());
+        }
+        crate::engine::validated_stack_item_target_spec(&p.resolving_item, state)?;
+        paid_x(state, &p.resolving_item)?;
+        if state.stack.last() != Some(&p.resolving_item) {
+            return Err("Fiend resolving search is not its actual native stack top".into());
+        }
+        if p.ctx != crystal_prevention_v1::context(&p.resolving_item) {
+            return Err("Fiend full original context changed".into());
+        }
+        let original = original_library(state, &p.resolving_item)?;
+        let filter = LibraryCardFilter::CreatureManaValueAtMost(p.ctx.x_value);
+        match (&p.choice, p.frames.as_slice(), &p.answered_choice_guard) {
+            (
+                Some(PendingEffectChoice::SelectTargets {
+                    player,
+                    path,
+                    purpose:
+                        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                            player: holder,
+                            filter: f,
+                            original_library,
+                            max_targets: 1,
+                            destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+                            canonical_path,
+                            ..
+                        },
+                    ..
+                }),
+                [],
+                None,
+            ) if *player == p.ctx.controller
+                && holder == player
+                && path.is_empty()
+                && canonical_path.is_empty()
+                && *f == filter
+                && original_library == original =>
+            {
+                Ok(())
+            }
+            (
+                None,
+                [frame @ EffectFrame::SearchLibraryCardsToDestination {
+                    player,
+                    filter: f,
+                    original_library,
+                    max_targets: 1,
+                    destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+                    path,
+                    canonical_path,
+                    ..
+                }],
+                Some(EffectAnsweredChoiceGuard::StandardSelection { frame: guard }),
+            ) if *player == p.ctx.controller
+                && path.is_empty()
+                && canonical_path.is_empty()
+                && *f == filter
+                && original_library == original
+                && guard.as_ref() == frame =>
+            {
+                Ok(())
+            }
+            _ => Err("Fiend mandatory original search stage changed".into()),
+        }
+    }
+    pub(crate) struct ResumeOwnerV1 {
+        owner: NativeExecutionOwnerV1,
+        pending: EffectContinuation,
+    }
+    pub(crate) fn acquire_resume(
+        state: &GameState,
+        item: &StackItem,
+    ) -> Result<Option<ResumeOwnerV1>, String> {
+        if !selected(state, item) {
+            return Ok(None);
+        }
+        validate_pending_effect_choice(state)?;
+        let p = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .ok_or("Fiend pending absent")?;
+        if p.resolving_item != *item || p.choice.is_some() {
+            return Err("Fiend ready native row changed".into());
+        }
+        let mut owner = NativeExecutionOwnerV1::from_validated_pending(state)?;
+        let at = state
+            .stack
+            .iter()
+            .position(|r| r == item)
+            .ok_or("Fiend original public row absent")?;
+        if state
+            .stack
+            .iter()
+            .filter(|r| r.v4.stack_item_id == item.v4.stack_item_id)
+            .count()
+            != 1
+        {
+            return Err("Fiend original public row duplicated".into());
+        }
+        owner.remaining_stack.remove(at);
+        owner.saved_pending = Some(Box::new(p.clone()));
+        Ok(Some(ResumeOwnerV1 {
+            owner,
+            pending: p.clone(),
+        }))
+    }
+    pub(crate) fn resume(
+        state: &mut GameState,
+        owner: ResumeOwnerV1,
+    ) -> Result<ResumableProgress, String> {
+        if state.engine.pending_effect.as_ref() != Some(&owner.pending)
+            || state.stack != owner.owner.remaining_stack
+        {
+            return Err("Fiend exact pre-pop continuation changed".into());
+        }
+        let mut transaction = state.clone();
+        let result = drive_with_native_row_v1(&mut transaction, &owner.owner)?;
+        if transaction.engine.halted.is_some() {
+            return Err("Fiend final native search scene halted".into());
+        }
+        *state = transaction;
+        Ok(result)
+    }
 }

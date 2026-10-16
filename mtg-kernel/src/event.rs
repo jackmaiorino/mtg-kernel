@@ -1969,6 +1969,22 @@ pub enum CommittedEvent {
     LeylineOpeningV1 {
         record: crate::leyline_axe_v1::RecordV1,
     },
+    /// Native selected activation, captured before any payment mutation.
+    FiendArtisanInputV1 {
+        input: Box<crate::effect::fiend_artisan_v1::InputV1>,
+    },
+    /// Exact paid publication; independent of the editable public row X.
+    FiendArtisanPaidV1 {
+        input_index: u32,
+        item: Box<crate::state::StackItem>,
+    },
+    FiendArtisanSearchStartedV1 {
+        stack_item_id: StackItemId,
+        library: Vec<crate::effect::EffectObjectBinding>,
+    },
+    FiendArtisanSearchFinishedV1 {
+        stack_item_id: StackItemId,
+    },
     LifeLossWideV59 {
         player: PlayerId,
         amount: u32,
@@ -4712,7 +4728,9 @@ fn aberration_definition_v1(id: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(id))
         .is_some_and(|d| {
-            d.is_executable() && crate::engine::consuming_aberration_cda_for_v1(d.name)
+            d.is_executable()
+                && (crate::engine::consuming_aberration_cda_for_v1(d.name)
+                    || crate::effect::fiend_artisan_v1::definition(id))
         })
 }
 /// Select only actual battlefield characteristics, including suppressed forms
