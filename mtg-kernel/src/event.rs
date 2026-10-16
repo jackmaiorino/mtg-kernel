@@ -1788,6 +1788,31 @@ pub enum CommittedEvent {
         ordered: Vec<crate::effect::EffectObjectBinding>,
         move_start: u64,
     },
+    /// Only actual positive final combat damage to a player creates this receipt.
+    LathrilCombatDamageV1 {
+        damage_history_index: u64,
+        source: crate::state::AbilitySourceContractV4,
+        player: PlayerId,
+        amount: i32,
+    },
+    LathrilCombatCollectedV1 {
+        capture_history_index: u64,
+    },
+    LathrilCombatPublishedV1 {
+        capture_history_index: u64,
+        item: Box<crate::state::StackItem>,
+    },
+    LathrilCombatResolvedV1 {
+        capture_history_index: u64,
+    },
+    LathrilCombatCounteredV1 {
+        capture_history_index: u64,
+    },
+    /// Bound only by the genuine private combat-finish callback, in packet order.
+    LathrilCombatObservedV1 {
+        capture_history_index: u64,
+        marker_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -3823,6 +3848,32 @@ fn commit_with_entry_batch_and_source_color(
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
+    let lathril_source = match &event {
+        ProposedEvent::Damage(d)
+            if d.is_combat && d.amount > 0 && matches!(d.target, Target::Player(_)) =>
+        {
+            state
+                .objects
+                .try_get(d.source)
+                .filter(|o| {
+                    o.zone == Zone::Battlefield
+                        && o.v4.face_index == 0
+                        && o.v4.face_down_v1.is_none()
+                        && is_lathril_v1(o.card_def)
+                        && crate::continuous_characteristics_v1::printed_abilities_active(
+                            state, d.source,
+                        )
+                })
+                .map(|_| {
+                    (
+                        crate::state::AbilitySourceContractV4::capture(state, d.source),
+                        d.target,
+                        d.amount,
+                    )
+                })
+        }
+        _ => None,
+    };
     let committed = match event {
         ProposedEvent::Damage(d) => {
             let source_has_deathtouch = d.amount > 0
@@ -4483,6 +4534,16 @@ fn commit_with_entry_batch_and_source_color(
             state.engine.event_log.push(receipt.clone());
             state.engine.event_history.push(receipt);
         }
+    }
+    if let Some((source, Target::Player(player), amount)) = lathril_source {
+        let receipt = CommittedEvent::LathrilCombatDamageV1 {
+            damage_history_index: entry_history_index as u64,
+            source,
+            player,
+            amount,
+        };
+        state.engine.event_log.push(receipt.clone());
+        state.engine.event_history.push(receipt);
     }
     if let Some((source, card_def, zone_change_count, power)) = alesha_power_departure {
         if zone_change_count
@@ -8199,6 +8260,356 @@ pub(crate) fn validate_published_tutelage_v1(
         .collect::<Vec<_>>();
     if publications.as_slice() != [(capture, item)] {
         return Err("Tutelage publication/targets changed".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn is_lathril_v1(card_def: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.is_executable() && card.name == "Lathril, Blade of the Elves")
+}
+
+// Structural native restore validation. This is not a signature over a caller's
+// coordinated edits to an entire raw world/history.
+pub(crate) fn lathril_damage_v1(
+    state: &GameState,
+    capture_history_index: u64,
+) -> Result<(crate::state::AbilitySourceContractV4, u32), String> {
+    let index =
+        usize::try_from(capture_history_index).map_err(|_| "Lathril capture index overflow")?;
+    let Some(CommittedEvent::LathrilCombatDamageV1 {
+        damage_history_index,
+        source,
+        player,
+        amount: captured_amount,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Lathril capture missing".into());
+    };
+    let damage_index =
+        usize::try_from(*damage_history_index).map_err(|_| "Lathril damage index overflow")?;
+    let Some(CommittedEvent::Damage {
+        source: actual,
+        target: Target::Player(recipient),
+        amount,
+    }) = state.engine.event_history.get(damage_index)
+    else {
+        return Err("Lathril original damage changed".into());
+    };
+    // Only Niv's event-time observers can occur between this Damage and this
+    // capture. No unrelated event, second damage or substituted source is lent.
+    if damage_index >= index
+        || *actual != source.source
+        || *amount <= 0
+        || amount != captured_amount
+        || recipient != player
+        || !state.engine.event_history[damage_index + 1..index]
+            .iter()
+            .all(|entry| {
+                matches!(entry,
+            CommittedEvent::NivMizzetVisionaryDamageV1 { damage_history_index: other, .. }
+            if other == damage_history_index)
+            })
+        || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+            CommittedEvent::LathrilCombatDamageV1 { damage_history_index: other, .. }
+            if other == damage_history_index)
+            })
+            .count()
+            != 1
+        || source.zone != Zone::Battlefield
+        || !is_lathril_v1(source.card_def)
+        || state.objects.try_get(source.source).is_none_or(|object| {
+            object.owner != source.owner
+                || !crate::engine::source_card_def_matches(state, *source, object.card_def)
+                || object.zone_change_count < source.zone_change_count
+                || (object.zone_change_count == source.zone_change_count
+                    && object.zone != source.zone)
+        })
+    {
+        return Err("Lathril original combat/source capture changed".into());
+    }
+    let markers = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::LathrilCombatObservedV1 {
+                capture_history_index: capture,
+                marker_history_index,
+            } if *capture == capture_history_index => Some(*marker_history_index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [marker] = markers.as_slice() else {
+        return Err("Lathril combat handoff missing or duplicated".into());
+    };
+    let marker_index =
+        usize::try_from(*marker).map_err(|_| "Lathril combat marker index overflow")?;
+    if marker_index <= index
+        || state.engine.event_history.get(marker_index) != Some(&CommittedEvent::CombatDamageToPlayer {
+            source: source.source, source_zone_change_count: source.zone_change_count,
+            player: *player, amount: *amount,
+        })
+        || state.engine.event_history.iter().filter(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatObservedV1 { marker_history_index, .. } if marker_history_index == marker)).count() != 1 {
+        return Err("Lathril exact native combat marker changed".into());
+    }
+    Ok((
+        *source,
+        u32::try_from(*amount).map_err(|_| "Lathril damage width overflow")?,
+    ))
+}
+
+pub(crate) fn collect_lathril_v1(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<crate::trigger::PendingTrigger>, String> {
+    let mut captures = Vec::new();
+    let mut result = Vec::new();
+    for event in events {
+        if !matches!(event, CommittedEvent::LathrilCombatDamageV1 { .. }) {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(index, actual)| (actual == event).then_some(index as u64))
+            .collect::<Vec<_>>();
+        let [index] = positions.as_slice() else {
+            return Err("Lathril capture erased or duplicated".into());
+        };
+        if captures.contains(index) || state.engine.event_history.iter().any(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatCollectedV1 { capture_history_index } if capture_history_index == index))
+        { return Err("Lathril capture recollected".into()); }
+        let (source, _) = lathril_damage_v1(state, *index)?;
+        result.push(crate::trigger::PendingTrigger {
+            controller: source.controller,
+            source: source.source,
+            effect: crate::effect::EffectOp::LathrilCombatTokensV1 {
+                capture_history_index: *index,
+            },
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+        captures.push(*index);
+    }
+    for capture_history_index in captures {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::LathrilCombatCollectedV1 {
+                capture_history_index,
+            });
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_lathril_trigger_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<u64, String> {
+    let Some(crate::effect::EffectOp::LathrilCombatTokensV1 {
+        capture_history_index,
+    }) = item.inline_effect.as_ref()
+    else {
+        return Err("Lathril captured program changed".into());
+    };
+    let (source, _) = lathril_damage_v1(state, *capture_history_index)?;
+    if item.kind != crate::state::StackItemKind::TriggeredAbility
+        || item.source != source.source
+        || item.controller != source.controller
+        || item.v4.ability_source_contract != Some(source)
+        || item.is_copy
+        || item.is_flashback
+        || item.kicked
+        || item.madness_offer
+        || item.mode_chosen != 0
+        || item.v4.x_value != 0
+        || item.v4.activated_ability_index.is_some()
+        || item.v4.granted_by.is_some()
+        || item.v4.cauldron_grant.0.is_some()
+        || item.v4.hidden_ability_source.is_some()
+        || item.v4.source_contract.is_some()
+        || item.v4.madness_source_contract.is_some()
+        || item.v4.target_spec.is_some()
+        || !item.targets.is_empty()
+        || !item.v4.target_contracts.is_empty()
+        || !item.discarded.is_empty()
+        || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
+        || state
+            .engine
+            .event_history
+            .iter()
+            .filter(|entry| {
+                matches!(entry,
+            CommittedEvent::LathrilCombatCollectedV1 { capture_history_index: other }
+            if other == capture_history_index)
+            })
+            .count()
+            != 1
+        || state.engine.event_history.iter().any(|entry| {
+            matches!(entry,
+            CommittedEvent::LathrilCombatResolvedV1 { capture_history_index: other }
+                | CommittedEvent::LathrilCombatCounteredV1 { capture_history_index: other }
+            if other == capture_history_index)
+        })
+    {
+        return Err("Lathril trigger source/controller/recipe changed or consumed".into());
+    }
+    Ok(*capture_history_index)
+}
+
+pub(crate) fn publish_lathril_v1(
+    state: &mut GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    if !matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
+    ) {
+        return Ok(());
+    }
+    let capture_history_index = validate_lathril_trigger_v1(state, item)?;
+    if state.engine.event_history.iter().any(|entry| matches!(entry,
+        CommittedEvent::LathrilCombatPublishedV1 { capture_history_index: other, .. } if *other == capture_history_index))
+    { return Err("Lathril damage trigger already published".into()); }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::LathrilCombatPublishedV1 {
+            capture_history_index,
+            item: Box::new(item.clone()),
+        });
+    Ok(())
+}
+
+pub(crate) fn validate_published_lathril_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<(), String> {
+    let capture = validate_lathril_trigger_v1(state, item)?;
+    let publications = state
+        .engine
+        .event_history
+        .iter()
+        .filter_map(|entry| match entry {
+            CommittedEvent::LathrilCombatPublishedV1 {
+                capture_history_index,
+                item: row,
+            } if *capture_history_index == capture
+                || row.v4.stack_item_id == item.v4.stack_item_id =>
+            {
+                Some((*capture_history_index, row.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if publications.as_slice() != [(capture, item)] {
+        return Err("Lathril original publication changed".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn lathril_counter_capture_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Result<Option<u64>, String> {
+    if !lathril_item_selected_v1(state, item) {
+        return Ok(None);
+    }
+    validate_published_lathril_v1(state, item)?;
+    validate_lathril_trigger_v1(state, item).map(Some)
+}
+
+pub(crate) fn lathril_item_selected_v1(state: &GameState, item: &crate::state::StackItem) -> bool {
+    matches!(
+        item.inline_effect,
+        Some(crate::effect::EffectOp::LathrilCombatTokensV1 { .. })
+    ) || state.engine.event_history.iter().any(|entry| {
+        matches!(entry,
+            CommittedEvent::LathrilCombatPublishedV1 { item: original, .. }
+            if original.v4.stack_item_id == item.v4.stack_item_id)
+    })
+}
+
+/// Only the engine's already-committed combat batch calls this handoff. Equal
+/// packets consume matching event-time captures in their original native order.
+pub(crate) fn bind_lathril_combat_marker_v1(
+    state: &mut GameState,
+    captures: &[CommittedEvent],
+    marker_history_index: u64,
+) -> Result<(), String> {
+    let index =
+        usize::try_from(marker_history_index).map_err(|_| "Lathril marker index overflow")?;
+    let Some(CommittedEvent::CombatDamageToPlayer {
+        source,
+        source_zone_change_count,
+        player,
+        amount,
+    }) = state.engine.event_history.get(index)
+    else {
+        return Err("Lathril native combat marker missing".into());
+    };
+    let mut selected = None;
+    for capture in captures {
+        let CommittedEvent::LathrilCombatDamageV1 {
+            source: observer,
+            player: recipient,
+            amount: actual,
+            ..
+        } = capture
+        else {
+            return Err("Lathril handoff contains a foreign event".into());
+        };
+        if observer.source != *source
+            || observer.zone_change_count != *source_zone_change_count
+            || recipient != player
+            || actual != amount
+        {
+            continue;
+        }
+        let positions = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| (entry == capture).then_some(i as u64))
+            .collect::<Vec<_>>();
+        let [position] = positions.as_slice() else {
+            return Err("Lathril handoff capture erased or duplicated".into());
+        };
+        if !state.engine.event_history.iter().any(|entry| matches!(entry,
+            CommittedEvent::LathrilCombatObservedV1 { capture_history_index, .. } if capture_history_index == position)) {
+            selected = Some(*position);
+            break;
+        }
+    }
+    if let Some(capture_history_index) = selected {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::LathrilCombatObservedV1 {
+                capture_history_index,
+                marker_history_index,
+            });
+        lathril_damage_v1(state, capture_history_index)?;
     }
     Ok(())
 }

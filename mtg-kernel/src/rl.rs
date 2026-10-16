@@ -8832,6 +8832,16 @@ fn effect_target_ref_visible(
 /// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|o| o.v4.face_down_v1.is_none() && crate::event::is_lathril_v1(o.card_def))
+    {
+        return Err(RlContractError(
+            "Lathril requires its distinct complete consumer".into(),
+        ));
+    }
+
     if state.objects.try_get(object).is_some_and(|o| {
         o.v4.face_down_v1.is_none()
             && CARD_DEFS[usize::from(o.card_def)].name == "Consuming Aberration"

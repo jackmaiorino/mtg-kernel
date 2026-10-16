@@ -8226,6 +8226,42 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/c/ConsumingAberration.java",
       "is_token": false
+    },
+    {
+      "name": "Lathril, Blade of the Elves",
+      "engine_capability": "partial",
+      "mana_cost": "{2}{B}{G}",
+      "mana_value": 4,
+      "colors": [
+        "B",
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Noble"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_lathril_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "menace",
+        "final_positive_combat_damage_to_player_creates_that_many_elf_warriors",
+        "tap_source_and_ten_other_untapped_controlled_elves_drain_ten"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LathrilBladeOfTheElves.java",
+      "is_token": false
     }
   ]
 }

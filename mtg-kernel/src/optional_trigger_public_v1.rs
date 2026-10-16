@@ -268,6 +268,32 @@ pub(crate) fn validate_state_checked(state: &GameState) -> Result<(), String> {
     validate_state_with_pt(state, true)
 }
 fn validate_state_with_pt(state: &GameState, checked: bool) -> Result<(), String> {
+    if state.objects.iter().any(|(_, o)| {
+        matches!(o.zone, Zone::Battlefield | Zone::Stack)
+            && o.v4.face_down_v1.is_none()
+            && crate::event::is_lathril_v1(o.card_def)
+    }) || state.engine.event_history.iter().any(|entry| {
+        matches!(
+            entry,
+            crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+        )
+    }) || state.stack.iter().any(|row| {
+        row.v4
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || held(state).iter().any(|row| {
+        row.source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) || state.engine.pending_effect.as_ref().is_some_and(|p| {
+        p.ctx
+            .ability_source_contract
+            .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
+    }) {
+        return Err(
+            "Lathril native combat/cost history requires a distinct complete consumer".into(),
+        );
+    }
+
     let aberration = |definition: u16| {
         crate::card_def::CARD_DEFS
             .get(usize::from(definition))

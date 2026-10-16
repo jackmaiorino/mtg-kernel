@@ -1012,6 +1012,14 @@ const SKYKNIGHT_SQUIRE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     condition: TriggerCondition::OtherControlledCreatureEnters { subtype: None },
     ..etb_trigger(writhing_chrysalis_counter_marker_effect)
 }];
+fn lathril_template_v1() -> EffectOp {
+    EffectOp::BindLathrilCombatTokensV1
+}
+static LATHRIL_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    ..etb_trigger(lathril_template_v1)
+}];
+
 fn sphinxs_tutelage_template_v1() -> EffectOp {
     EffectOp::BindSphinxsTutelageMillV1
 }
@@ -3614,6 +3622,9 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.name == "Lathril, Blade of the Elves" {
+        return &LATHRIL_TRIGGERS_V1;
+    }
     if card.name == "Consuming Aberration" {
         return &CONSUMING_ABERRATION_TRIGGERS_V1;
     }
@@ -4103,6 +4114,7 @@ pub(crate) fn source_bound_trigger_program_matches(template: &EffectOp, effect: 
         return true;
     }
     match (template, effect) {
+        (EffectOp::BindLathrilCombatTokensV1, EffectOp::LathrilCombatTokensV1 { .. }) => true,
         // The actual row validator authenticates this capture's complete
         // enclosing combat operation and original source incarnation.
         (
@@ -4227,6 +4239,14 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     {
         return true;
     }
+    if card.name == "Lathril, Blade of the Elves"
+        && matches!(
+            effect,
+            EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
+        )
+    {
+        return true;
+    }
     if card.name == "Sphinx's Tutelage"
         && matches!(
             effect,
@@ -4341,6 +4361,13 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    if crate::event::is_lathril_v1(card_def) {
+        return matches!(
+            effect,
+            EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
+        )
+        .then_some(TargetSpec::None);
+    }
     if crate::event::is_sphinxs_tutelage_v1(card_def) {
         return matches!(
             effect,
@@ -5110,6 +5137,16 @@ fn triggers_from_events(
                 })
     });
     let mut new_triggers = state.legend_pending_v1.take().unwrap_or_default();
+    match crate::event::collect_lathril_v1(state, events) {
+        Ok(pending) => new_triggers.extend(pending),
+        Err(_) => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ObjectId(0),
+            ));
+            return Vec::new();
+        }
+    }
     match crate::event::collect_tutelage_v1(state, events) {
         Ok(pending) => new_triggers.extend(pending),
         Err(_) => {
@@ -5547,7 +5584,9 @@ fn triggers_from_events(
                     continue;
                 }
                 // Tutelage observes each successful draw at event commit, not this later scene.
-                if crate::event::is_sphinxs_tutelage_v1(definition) {
+                if crate::event::is_sphinxs_tutelage_v1(definition)
+                    || crate::event::is_lathril_v1(definition)
+                {
                     continue;
                 }
                 // These abilities were captured at the actual life-gain commit,

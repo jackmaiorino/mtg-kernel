@@ -5851,12 +5851,15 @@ fn can_pay_components(
             CostComponent::SacrificeControlled { count, filter } => {
                 sacrificeable_controlled_permanents(player, *filter, state, &[])
                     .into_iter()
-                    .filter(|&id| *filter != PermanentFilter::AnotherArtifact || id != source)
+                    .filter(|&id| !permanent_filter_excludes_source(*filter) || id != source)
                     .count()
                     >= usize::from(*count)
             }
             CostComponent::TapControlled { count, filter } => {
-                tappable_controlled_permanents(player, *filter, state, &[]).len()
+                tappable_controlled_permanents(player, *filter, state, &[])
+                    .into_iter()
+                    .filter(|&id| !permanent_filter_excludes_source(*filter) || id != source)
+                    .count()
                     >= usize::from(*count)
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
@@ -6128,7 +6131,10 @@ fn validate_cost_component_choices_v1(
             .iter()
             .enumerate()
             .any(|(index, id)| object_cost_chosen[..index].contains(id));
-        let tappable = tappable_controlled_permanents(player, filter, state, &[]);
+        let tappable = tappable_controlled_permanents(player, filter, state, &[])
+            .into_iter()
+            .filter(|&id| !permanent_filter_excludes_source(filter) || id != source)
+            .collect::<Vec<_>>();
         if object_cost_chosen.len() != needed
             || duplicate
             || object_cost_chosen.iter().any(|id| !tappable.contains(id))
@@ -6156,7 +6162,7 @@ fn validate_cost_component_choices_v1(
                 })
         });
         let aliases_source_departure = object_cost_chosen.contains(&source)
-            && (filter == PermanentFilter::AnotherArtifact
+            && (permanent_filter_excludes_source(filter)
                 || components.iter().any(|component| {
                     matches!(
                         component,
@@ -6905,9 +6911,16 @@ fn sacrificeable_lands(
         .collect()
 }
 
-/// `pub(crate)` so `effect::execute` (`EffectOp::PumpAllUntilEndOfTurn`) can
-/// reuse the identical type-matching predicate a `SacrificeControlled` cost
-/// uses to find candidates, rather than duplicating it.
+// Contextual source exclusions are shared by feasibility, choice and payment.
+fn permanent_filter_excludes_source(filter: PermanentFilter) -> bool {
+    matches!(
+        filter,
+        PermanentFilter::AnotherArtifact | PermanentFilter::AnotherWithSubtype(_)
+    )
+}
+
+/// Shared effective type/subtype predicate; contextual source exclusion belongs
+/// to the cost's complete candidate/payment paths.
 pub(crate) fn permanent_matches_filter(
     state: &GameState,
     id: ObjectId,
@@ -6925,6 +6938,7 @@ pub(crate) fn permanent_matches_filter(
             card_def::CARD_DEFS[state.objects.get(id).card_def as usize].is_land
         }
         PermanentFilter::AnotherArtifact => object_has_type(state, id, CardType::Artifact),
+        PermanentFilter::AnotherWithSubtype(subtype) => has_effective_subtype(state, id, subtype),
     }
 }
 
@@ -7009,7 +7023,7 @@ fn activation_controlled_cost_candidates(
     };
     candidates
         .into_iter()
-        .filter(|&object| filter != PermanentFilter::AnotherArtifact || object != source)
+        .filter(|&object| !permanent_filter_excludes_source(filter) || object != source)
         .map(|object| {
             let live = state.objects.get(object);
             EffectObjectBinding {
@@ -7134,7 +7148,8 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         }
         PermanentFilter::ArtifactOrCreature
         | PermanentFilter::Token
-        | PermanentFilter::Creature => CostKind::SacrificePermanents,
+        | PermanentFilter::Creature
+        | PermanentFilter::AnotherWithSubtype(_) => CostKind::SacrificePermanents,
         PermanentFilter::Land => CostKind::SacrificeLands,
     }
 }
@@ -12423,9 +12438,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
                         CostKind::SacrificeArtifacts
                     }
-                    PermanentFilter::ArtifactOrCreature | PermanentFilter::Token => {
-                        CostKind::SacrificePermanents
-                    }
+                    PermanentFilter::ArtifactOrCreature
+                    | PermanentFilter::Token
+                    | PermanentFilter::AnotherWithSubtype(_) => CostKind::SacrificePermanents,
                     PermanentFilter::Land => CostKind::SacrificeLands,
                 },
                 remaining,
@@ -13302,7 +13317,7 @@ pub(crate) fn validate_pending_activation(
                         || !permanent_matches_filter(state, binding.object, filter)
                         || (tap && live.tapped)
                 })
-                || (filter == PermanentFilter::AnotherArtifact && binding.object == pending.source)
+                || (permanent_filter_excludes_source(filter) && binding.object == pending.source)
         }) {
             return Err("pending activation carries an illegal object-cost selection".to_string());
         }
@@ -14090,6 +14105,19 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             .clone();
         crate::event::publish_tutelage_v1(state, &tutelage_item)?;
     }
+    if state.stack.last().is_some_and(|item| {
+        matches!(
+            item.inline_effect,
+            Some(EffectOp::LathrilCombatTokensV1 { .. })
+        )
+    }) {
+        let lathril_item = state
+            .stack
+            .last()
+            .expect("just published Lathril trigger")
+            .clone();
+        crate::event::publish_lathril_v1(state, &lathril_item)?;
+    }
     crate::gorehorn_damage_v1::publish(state, stack_item_id)?;
     crate::equipment_damage_source_v4::publish(state, stack_item_id)?;
     crate::raid_entry_custody_v1::publish(state, stack_item_id)?;
@@ -14469,6 +14497,20 @@ fn triggered_stack_item_expected_target_spec(
                 )
             }
         };
+    if crate::event::is_lathril_v1(source_card_def)
+        && item.v4.granted_by.is_none()
+        && !matches!(inline_effect, EffectOp::CounterUnlessPaysGeneric { .. })
+    {
+        crate::event::validate_lathril_trigger_v1(state, item)?;
+        if state
+            .stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+        {
+            crate::event::validate_published_lathril_v1(state, item)?;
+        }
+        return Ok(None);
+    }
     if crate::event::is_sphinxs_tutelage_v1(source_card_def) {
         crate::event::validate_tutelage_trigger_v1(state, item)?;
         // Private placement probes have no row yet. Every actual published
@@ -14861,6 +14903,9 @@ pub(crate) fn validated_stack_item_target_spec(
     state: &GameState,
 ) -> Result<Option<TargetSpec>, String> {
     validate_spell_stack_source(state, item)?;
+    if crate::event::lathril_item_selected_v1(state, item) {
+        crate::event::validate_published_lathril_v1(state, item)?;
+    }
     crate::source_power_activation_v1::validate_item(state, item)?;
     crate::librarian_activation_v1::validate_item(state, item)?;
     crate::drake_hatcher_v1::custody::validate_item(state, item)?;
@@ -15524,6 +15569,7 @@ pub(crate) fn counter_stack_item_by_id(
     let fake_death_counter_owner =
         crate::fake_your_own_death_v50::death_custody::acquire_counter(state, &item)?;
     let temporal_owner = crate::extra_turn_v1::acquire_counter(state, &item)?;
+    let lathril_counter_capture = crate::event::lathril_counter_capture_v1(state, &item)?;
     let fake_death_counter = crate::fake_your_own_death_v50::death_custody::begin_counter(
         state,
         fake_death_counter_owner,
@@ -15534,6 +15580,14 @@ pub(crate) fn counter_stack_item_by_id(
         }
     } else {
         state.stack.remove(position);
+    }
+    if let Some(capture_history_index) = lathril_counter_capture {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::LathrilCombatCounteredV1 {
+                capture_history_index,
+            });
     }
     crate::fake_your_own_death_v50::death_custody::finish_counter(state, fake_death_counter)?;
     crate::ajani_full_v42::lifecycle::record_removed(state, ajani_counter_owner.as_ref(), true)?;
@@ -16318,6 +16372,16 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
     };
+    let lathril_owner = match effect::acquire_lathril_begin_v1(state, &current) {
+        Ok(owner) => owner,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                current.source,
+            ));
+            return ResolutionProgress::Suspended;
+        }
+    };
     let item = state
         .stack
         .pop()
@@ -16395,6 +16459,15 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         x_value: item.v4.x_value,
     };
 
+    if let Some(owner) = lathril_owner {
+        if effect::begin_owned_lathril_v1(state, owner, &ctx).is_err() {
+            state.stack.push(item.clone());
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+        return ResolutionProgress::Complete;
+    }
     if let Some(owner) = tutelage_owner {
         return match effect::begin_owned_tutelage_v1(state, owner, &ctx) {
             Ok(effect::ResumableProgress::Complete(completed)) if *completed == item => {
@@ -19141,6 +19214,11 @@ pub(crate) fn commit_combat_damage_events_inner(
     false
 }
 pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start: usize) {
+    let lathril_captures = state.engine.event_log[event_start..]
+        .iter()
+        .filter(|event| matches!(event, CommittedEvent::LathrilCombatDamageV1 { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
     let combat_player_damage = state.engine.event_log[event_start..]
         .iter()
         .filter_map(|event| match *event {
@@ -19159,7 +19237,15 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         })
         .collect::<Vec<_>>();
     for (source, source_zone_change_count, player, amount) in combat_player_damage {
+        let marker_history_index = state.engine.event_history.len() as u64;
         event::log_combat_damage_to_player(state, source, source_zone_change_count, player, amount);
+        if !lathril_captures.is_empty()
+            && event::bind_lathril_combat_marker_v1(state, &lathril_captures, marker_history_index)
+                .is_err()
+        {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+            return;
+        }
         // 702.164c: combat damage a creature with toxic N deals to a player
         // also gives that player N poison counters.
         #[cfg(feature = "standard-magezero-fixtures")]

@@ -2693,6 +2693,11 @@ pub enum EffectOp {
     SphinxsTutelageMillV1 {
         capture_history_index: u64,
     },
+    /// Printed template and captured native root. Direct interpreters refuse both.
+    BindLathrilCombatTokensV1,
+    LathrilCombatTokensV1 {
+        capture_history_index: u64,
+    },
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4234,6 +4239,18 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if lathril_context_v1(state, ctx.stack_item_id)
+        || matches!(
+            op,
+            EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. }
+        )
+        || matches!(
+            resolving_item.inline_effect,
+            Some(EffectOp::LathrilCombatTokensV1 { .. })
+        )
+    {
+        return Err("Lathril requires its genuine native pre-removal owner".into());
+    }
     if matches!(
         op,
         EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. }
@@ -4350,6 +4367,16 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        lathril_context_v1(state, p.ctx.stack_item_id)
+            || matches!(
+                p.resolving_item.inline_effect,
+                Some(EffectOp::LathrilCombatTokensV1 { .. })
+            )
+    }) {
+        return Err("Lathril has no public resumable continuation".into());
+    }
+
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         aberration_continuation_v1(p)
             || p.resolving_item
@@ -9635,6 +9662,16 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        lathril_context_v1(state, p.ctx.stack_item_id)
+            || matches!(
+                p.resolving_item.inline_effect,
+                Some(EffectOp::LathrilCombatTokensV1 { .. })
+            )
+    }) {
+        return Err("Lathril has no public resumable continuation".into());
+    }
+
     if crate::linked_aura_operation_v1::has_pending(state) {
         return crate::linked_aura_operation_v1::validate(state);
     }
@@ -18307,6 +18344,13 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     if state.engine.halted.is_some() {
         return;
     }
+    if lathril_context_v1(state, ctx.stack_item_id) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            ctx.source,
+        ));
+        return;
+    }
     if aberration_reveal_context_v1(state, op, ctx) {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -18773,6 +18817,12 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             for _ in 0..count.max(0) {
                 event::propose_and_commit(state, event::ProposedEvent::draw(player));
             }
+        }
+        EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::BindSphinxsTutelageMillV1 | EffectOp::SphinxsTutelageMillV1 { .. } => {
             state.engine.halted = Some((
@@ -25015,3 +25065,130 @@ mod sphinxs_tutelage_v1_tests;
 ))]
 #[path = "effect/consuming_aberration_v1_tests.rs"]
 mod consuming_aberration_v1_tests;
+
+// Published occurrence, not a caller-editable root/kind, selects this family.
+fn lathril_context_v1(state: &GameState, stack_id: Option<crate::ids::StackItemId>) -> bool {
+    stack_id.is_some_and(|id| {
+        state.engine.event_history.iter().any(|entry| {
+            matches!(entry,
+        event::CommittedEvent::LathrilCombatPublishedV1 { item, .. } if item.v4.stack_item_id == id)
+        })
+    })
+}
+
+pub(crate) struct LathrilBeginOwnerV1 {
+    item: StackItem,
+    remaining_stack: Vec<StackItem>,
+    capture: u64,
+}
+
+pub(crate) fn acquire_lathril_begin_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<LathrilBeginOwnerV1>, String> {
+    if !lathril_context_v1(state, Some(item.v4.stack_item_id))
+        && !matches!(
+            item.inline_effect,
+            Some(EffectOp::LathrilCombatTokensV1 { .. })
+        )
+    {
+        return Ok(None);
+    }
+    event::validate_published_lathril_v1(state, item)?;
+    crate::engine::validated_stack_item_target_spec(item, state)?;
+    if state.engine.pending_effect.is_some()
+        || state.stack.last() != Some(item)
+        || state
+            .stack
+            .iter()
+            .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+            .count()
+            != 1
+    {
+        return Err("Lathril lost its exact public stack top".into());
+    }
+    let capture = event::validate_lathril_trigger_v1(state, item)?;
+    let mut remaining_stack = state.stack.clone();
+    remaining_stack.pop();
+    Ok(Some(LathrilBeginOwnerV1 {
+        item: item.clone(),
+        remaining_stack,
+        capture,
+    }))
+}
+
+pub(crate) fn begin_owned_lathril_v1(
+    state: &mut GameState,
+    owner: LathrilBeginOwnerV1,
+    ctx: &ExecCtx,
+) -> Result<(), String> {
+    if state.stack != owner.remaining_stack || state.engine.pending_effect.is_some() {
+        return Err("Lathril removed-row owner changed".into());
+    }
+    let mut expected = crystal_prevention_v1::context(&owner.item);
+    expected.niv_damage_origin_v1 = event::niv_damage_origin_for_saved_item_v1(state, &owner.item);
+    if *ctx != expected {
+        return Err("Lathril original native context changed".into());
+    }
+    event::validate_published_lathril_v1(state, &owner.item)?;
+    let (source, amount) = event::lathril_damage_v1(state, owner.capture)?;
+    let token_def =
+        crate::card_def::card_id_by_name("Elf Warrior Token").ok_or("Lathril Elf token missing")?;
+    let token = &crate::card_def::CARD_DEFS[usize::from(token_def)];
+    if !token.is_token || !token.is_executable() || !token.has_full_support() {
+        return Err("Lathril Elf token is not executable Full".into());
+    }
+    let original = usize::try_from(amount).map_err(|_| "Lathril token count overflow")?;
+    let replacement =
+        crate::doubling_season_v48::ReplacementInputV48::capture(state, source.controller);
+    let expanded = replacement.replaced_token_count(original)?;
+    let final_objects = state
+        .objects
+        .len()
+        .checked_add(expanded)
+        .ok_or("Lathril token arena overflow")?;
+    if u64::try_from(final_objects).map_err(|_| "Lathril token arena overflow")?
+        > u64::from(u32::MAX) + 1
+        || expanded
+            .checked_mul(std::mem::size_of::<event::ProposedEvent>())
+            .is_none_or(|bytes| bytes > isize::MAX as usize)
+    {
+        return Err("Lathril token roster capacity overflow".into());
+    }
+    let template = [event::ProposedEvent::create_token(
+        token_def,
+        source.controller,
+    )];
+    crate::doubling_season_v48::preflight_entry_roster(state, &template)?;
+    crate::doubling_season_v48::preflight_token_initialization(state, &template)?;
+    let mut events = Vec::new();
+    events
+        .try_reserve_exact(original)
+        .map_err(|_| "Lathril original token roster allocation failed")?;
+    events.extend(
+        (0..original).map(|_| event::ProposedEvent::create_token(token_def, source.controller)),
+    );
+    // One complete original simultaneous entry batch. Commit only a successful
+    // staged world, preserving the public row on any checked replacement error.
+    let mut staged = state.clone();
+    event::propose_and_commit_batch(&mut staged, events);
+    if staged.engine.halted.is_some() || staged.engine.pending_effect.is_some() {
+        return Err("Lathril token batch did not complete".into());
+    }
+    staged
+        .engine
+        .event_history
+        .push(event::CommittedEvent::LathrilCombatResolvedV1 {
+            capture_history_index: owner.capture,
+        });
+    *state = staged;
+    Ok(())
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "effect/lathril_v1_tests.rs"]
+mod lathril_v1_tests;
