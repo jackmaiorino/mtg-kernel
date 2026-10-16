@@ -108,7 +108,7 @@ fn run<O: Owner>(actor: PlayerId, optional: bool, survives: bool) {
     assert!(!s
         .actions()
         .iter()
-        .any(|a| matches!(a, ActionSemanticV1::FinishEffectSelection { .. })));
+        .any(|a| matches!(a, ActionSemanticV1::FinishTargetSelection { .. })));
     assert!(s.actions().iter().any(|a| target(a, other)));
     assert!(!s.actions().iter().any(|a| target(a, pole)));
     printing(&s); // Pending mandatory selection still has a real source contract.
@@ -117,7 +117,7 @@ fn run<O: Owner>(actor: PlayerId, optional: bool, survives: bool) {
     assert!(options.iter().any(|a| target(a, pole)));
     assert!(options
         .iter()
-        .any(|a| matches!(a, ActionSemanticV1::FinishEffectSelection { .. })));
+        .any(|a| matches!(a, ActionSemanticV1::FinishTargetSelection { source: host, selected_count: 1, .. } if host.arena_id == source.0)));
     assert!(!options.iter().any(|a| target(a, other)));
     let pending = s.snapshot();
     let pending_world_and_counts = gameplay(&s);
@@ -143,7 +143,7 @@ fn run<O: Owner>(actor: PlayerId, optional: bool, survives: bool) {
             if optional {
                 target(a, pole)
             } else {
-                matches!(a, ActionSemanticV1::FinishEffectSelection { .. })
+                matches!(a, ActionSemanticV1::FinishTargetSelection { source: host, selected_count: 1, .. } if host.arena_id == source.0)
             }
         });
         assert_eq!(s.world().players[actor.index()].mana_pool, [0; 6]);

@@ -1,4 +1,5 @@
 //! Distinct Ravenous V51 mixed-family observation. Executable session admission is separate.
+use crate::akroma_family_public_v40::diagnose_observation_error;
 use crate::ids::PlayerId;
 use crate::policy_observation_v8::PolicyObservationExtensionsV8;
 use crate::policy_surface_v5::PolicySurfaceV5;
@@ -9,6 +10,7 @@ use crate::state::GameState;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub const SCHEMA: &str = "mtg-kernel/ravenous-observation/v51";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RavenousObservationV51 {
@@ -239,11 +241,15 @@ pub(crate) fn observe_parts_complete_base_v52(
     let (actor, origin) = actor_and_origin;
     surface
         .validate_observation_origin_substeps_v45(state, actor, origin, substep)
+        .map_err(|error| diagnose_observation_error("inherited.origin_substeps", error))
         .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
-    let ravenous = crate::ravenous_public_v51::battlefield(state)?;
-    let roots = crate::akroma_public_v1::roots()?;
-    let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
+    let ravenous = crate::ravenous_public_v51::battlefield(state)
+        .map_err(|error| diagnose_observation_error("inherited.ravenous_battlefield", error))?;
+    let roots = crate::akroma_public_v1::roots()
+        .map_err(|error| diagnose_observation_error("inherited.akroma_roots", error))?;
+    let (grants, color_departures) = crate::akroma_public_v1::facts(state)
+        .map_err(|error| diagnose_observation_error("inherited.akroma_facts", error))?;
     let base = crate::rl::common_family_observation_storage_scoped(
         (crate::rl::CommonProjectionScopeV42::RavenousV51, state),
         surface,
@@ -251,8 +257,10 @@ pub(crate) fn observe_parts_complete_base_v52(
         step,
         physical,
         (substep_index, substep_count),
-    )?;
-    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    )
+    .map_err(|error| diagnose_observation_error("inherited.common_storage", error))?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)
+        .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
     let mut parts = crate::akroma_family_public_v40::build_for_scope(
         state,
@@ -262,8 +270,11 @@ pub(crate) fn observe_parts_complete_base_v52(
         physical,
         substep,
         crate::rl::CommonProjectionScopeV42::RavenousV51,
-    )?;
-    base.projection = crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)?;
+    )
+    .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
+    base.projection =
+        crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)
+            .map_err(|error| diagnose_observation_error("inherited.family_merge", error))?;
     let mut observation = RavenousObservationV51 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
@@ -291,24 +302,38 @@ pub(crate) fn observe_parts_complete_base_v52(
         color_departures,
         roots,
         projection_sha256: String::new(),
-        ajani: crate::ajani_public_v42::facts(state)?,
-        faebloom: crate::faebloom_public_v43::capture(state)?,
-        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
-        divine: crate::divine_public_v44::facts(state, origin, actor)?,
-        hunter: crate::high_society_hunter_public_v45::capture(state)?,
-        eaten: crate::eaten_public_v46::capture(state, actor)?,
-        panda: crate::panda_public_v47::capture(state)?,
-        season: crate::doubling_season_public_v48::capture(state)?,
-        conqueror: crate::conqueror_public_v49::capture(state)?,
-        fake: crate::fake_your_own_death_v50::public_v50::capture(state)?,
+        ajani: crate::ajani_public_v42::facts(state)
+            .map_err(|error| diagnose_observation_error("inherited.ajani", error))?,
+        faebloom: crate::faebloom_public_v43::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.faebloom", error))?,
+        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)
+            .map_err(|error| diagnose_observation_error("inherited.target_traits", error))?,
+        divine: crate::divine_public_v44::facts(state, origin, actor)
+            .map_err(|error| diagnose_observation_error("inherited.divine", error))?,
+        hunter: crate::high_society_hunter_public_v45::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.hunter", error))?,
+        eaten: crate::eaten_public_v46::capture(state, actor)
+            .map_err(|error| diagnose_observation_error("inherited.eaten", error))?,
+        panda: crate::panda_public_v47::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
+        season: crate::doubling_season_public_v48::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.season", error))?,
+        conqueror: crate::conqueror_public_v49::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
+        fake: crate::fake_your_own_death_v50::public_v50::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.fake", error))?,
         battlefield: ravenous.cards,
         ravenous: ravenous.facts,
         trigger_order: surface
             .hunter_order_context_v45(state)
+            .map_err(|error| diagnose_observation_error("inherited.trigger_order", error))
             .map_err(RlContractError)?,
     };
-    observation.validate_battlefield_artifact()?;
-    observation.projection_sha256 = commitment(&observation)?;
+    observation
+        .validate_battlefield_artifact()
+        .map_err(|error| diagnose_observation_error("inherited.battlefield_artifact", error))?;
+    observation.projection_sha256 = commitment(&observation)
+        .map_err(|error| diagnose_observation_error("inherited.commitment", error))?;
     for part in &mut parts {
         part.set_projection(&observation.projection);
     }
@@ -396,11 +421,15 @@ fn observe_parts_complete_current_scope(
     let (actor, origin) = actor_and_origin;
     surface
         .validate_observation_origin_substeps_v45(state, actor, origin, substep)
+        .map_err(|error| diagnose_observation_error("inherited.origin_substeps", error))
         .map_err(RlContractError)?;
     let (substep_index, substep_count) = substep;
-    let ravenous = crate::ravenous_public_v51::battlefield_complete_scope(state, scope)?;
-    let roots = crate::akroma_public_v1::roots()?;
-    let (grants, color_departures) = crate::akroma_public_v1::facts(state)?;
+    let ravenous = crate::ravenous_public_v51::battlefield_complete_scope(state, scope)
+        .map_err(|error| diagnose_observation_error("inherited.prepared_battlefield", error))?;
+    let roots = crate::akroma_public_v1::roots()
+        .map_err(|error| diagnose_observation_error("inherited.akroma_roots", error))?;
+    let (grants, color_departures) = crate::akroma_public_v1::facts(state)
+        .map_err(|error| diagnose_observation_error("inherited.akroma_facts", error))?;
     let base = crate::rl::common_family_observation_storage_scoped(
         (scope, state),
         surface,
@@ -408,13 +437,24 @@ fn observe_parts_complete_current_scope(
         step,
         physical,
         (substep_index, substep_count),
-    )?;
-    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)?;
+    )
+    .map_err(|error| diagnose_observation_error("inherited.common_storage", error))?;
+    let storage = crate::policy_observation_v8::observation_storage_v8(state, actor, base)
+        .map_err(|error| diagnose_observation_error("inherited.extensions", error))?;
     let mut base = storage.base;
     let mut parts = crate::akroma_family_public_v40::build_for_scope(
-        state, surface, actor, step, physical, substep, scope,
-    )?;
-    base.projection = crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)?;
+        state,
+        surface,
+        actor,
+        step,
+        physical,
+        substep,
+        scope,
+    )
+    .map_err(|error| diagnose_observation_error("inherited.family_parts", error))?;
+    base.projection =
+        crate::akroma_family_public_v40::merge_projection(&base.projection, &parts)
+            .map_err(|error| diagnose_observation_error("inherited.family_merge", error))?;
     let mut observation = RavenousObservationV51 {
         schema: schema.into(),
         producer_sha256: producer,
@@ -442,23 +482,35 @@ fn observe_parts_complete_current_scope(
         color_departures,
         roots,
         projection_sha256: String::new(),
-        ajani: crate::ajani_public_v42::facts(state)?,
-        faebloom: crate::faebloom_public_v43::capture(state)?,
-        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)?,
-        divine: crate::divine_public_v44::facts(state, origin, actor)?,
-        hunter: crate::high_society_hunter_public_v45::capture(state)?,
-        eaten: crate::eaten_public_v46::capture(state, actor)?,
-        panda: crate::panda_public_v47::capture(state)?,
-        season: crate::doubling_season_public_v48::capture(state)?,
-        conqueror: crate::conqueror_public_v49::capture(state)?,
-        fake: crate::fake_your_own_death_v50::public_v50::capture(state)?,
+        ajani: crate::ajani_public_v42::facts(state)
+            .map_err(|error| diagnose_observation_error("inherited.ajani", error))?,
+        faebloom: crate::faebloom_public_v43::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.faebloom", error))?,
+        creature_target_traits: crate::faebloom_observation_v43::target_traits(state)
+            .map_err(|error| diagnose_observation_error("inherited.target_traits", error))?,
+        divine: crate::divine_public_v44::facts(state, origin, actor)
+            .map_err(|error| diagnose_observation_error("inherited.divine", error))?,
+        hunter: crate::high_society_hunter_public_v45::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.hunter", error))?,
+        eaten: crate::eaten_public_v46::capture(state, actor)
+            .map_err(|error| diagnose_observation_error("inherited.eaten", error))?,
+        panda: crate::panda_public_v47::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.panda", error))?,
+        season: crate::doubling_season_public_v48::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.season", error))?,
+        conqueror: crate::conqueror_public_v49::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.conqueror", error))?,
+        fake: crate::fake_your_own_death_v50::public_v50::capture(state)
+            .map_err(|error| diagnose_observation_error("inherited.fake", error))?,
         battlefield: ravenous.cards,
         ravenous: ravenous.facts,
         trigger_order: surface
             .hunter_order_context_v45(state)
+            .map_err(|error| diagnose_observation_error("inherited.trigger_order", error))
             .map_err(RlContractError)?,
     };
-    observation.projection_sha256 = commitment(&observation)?;
+    observation.projection_sha256 = commitment(&observation)
+        .map_err(|error| diagnose_observation_error("inherited.commitment", error))?;
     for part in &mut parts {
         part.set_projection(&observation.projection);
     }
@@ -473,8 +525,9 @@ impl RavenousObservationV51 {
         for (seat, cards) in self.battlefield.iter().enumerate() {
             let common = &self.projection.surface.battlefield[seat];
             if common.len() != cards.len() {
-                return Err(RlContractError(
-                    "Ravenous V51 battlefield roster differs".into(),
+                return Err(diagnose_observation_error(
+                    "ravenous_artifact.ravenous_v51_battlefield_roster_differs",
+                    RlContractError("Ravenous V51 battlefield roster differs".into()),
                 ));
             }
             for (exact, base) in cards.iter().zip(common) {
@@ -493,8 +546,9 @@ impl RavenousObservationV51 {
                     || exact.card.counters.plus1_plus1
                         != i16::try_from(exact.plus_one_counters).unwrap_or(0)
                 {
-                    return Err(RlContractError(
-                        "Ravenous V51 exact battlefield card differs".into(),
+                    return Err(diagnose_observation_error(
+                        "ravenous_artifact.ravenous_v51_exact_battlefield_card_differs",
+                        RlContractError("Ravenous V51 exact battlefield card differs".into()),
                     ));
                 }
                 if exact.soul != 0 {
@@ -510,8 +564,9 @@ impl RavenousObservationV51 {
         }
         soul_counts.sort_by_key(|entry| (entry.permanent.object, entry.permanent.generation));
         if soul_counts != self.ravenous.soul_counts {
-            return Err(RlContractError(
-                "Ravenous V51 soul facts/roster disagree".into(),
+            return Err(diagnose_observation_error(
+                "ravenous_artifact.ravenous_v51_soul_facts_roster_disagree",
+                RlContractError("Ravenous V51 soul facts/roster disagree".into()),
             ));
         }
         Ok(())
@@ -551,8 +606,9 @@ impl RavenousObservationV51 {
             || self.ravenous.producer_sha256 != crate::ravenous_public_v51::producer_sha256()
             || self.ravenous.card_db_hash != self.card_db_hash
         {
-            return Err(RlContractError(
-                "Ravenous V51 public identity mismatch".into(),
+            return Err(diagnose_observation_error(
+                "ravenous_artifact.ravenous_v51_public_identity_mismatch",
+                RlContractError("Ravenous V51 public identity mismatch".into()),
             ));
         }
         let id = crate::card_def::card_id_by_name("Ravenous Amulet")
@@ -563,8 +619,9 @@ impl RavenousObservationV51 {
             .map(|root| printed_meaning(id, root).map_err(RlContractError))
             .collect::<Result<Vec<_>, _>>()?;
         if self.ravenous.meanings != meanings {
-            return Err(RlContractError(
-                "Ravenous V51 ordered meanings differ".into(),
+            return Err(diagnose_observation_error(
+                "ravenous_artifact.ravenous_v51_ordered_meanings_differ",
+                RlContractError("Ravenous V51 ordered meanings differ".into()),
             ));
         }
         if self.fake.schema != crate::fake_your_own_death_v50::public_v50::SCHEMA
@@ -605,8 +662,9 @@ impl RavenousObservationV51 {
             || self.card_db_hash != crate::card_def::KERNEL_CARDDB_HASH
             || self.projection_sha256 != commitment(self)?
         {
-            return Err(RlContractError(
-                "Ravenous V51 observation identity mismatch".into(),
+            return Err(diagnose_observation_error(
+                "ravenous_artifact.ravenous_v51_observation_identity_mismatch",
+                RlContractError("Ravenous V51 observation identity mismatch".into()),
             ));
         }
         for root in &self.fake.meanings {

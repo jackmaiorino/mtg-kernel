@@ -224,7 +224,7 @@ pub(crate) mod tests {
     fn genuine_absent_relation_commit_emits_no_new_private_state() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
-            let equipment = put(&mut state, actor, "Longbow", Zone::Battlefield);
+            let equipment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
             let creature = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
             state
                 .attach_object_exact(equipment, 0, creature, 0)
@@ -255,12 +255,12 @@ pub(crate) mod tests {
             &mut state,
             ProposedEvent::zone_change(season, Zone::Battlefield),
         );
-        let equipment = put(&mut state, actor, "Longbow", Zone::Battlefield);
+        let equipment = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
         let mut ctx = crate::effect::ExecCtx::no_targets(equipment, actor);
         ctx.ability_source_contract = Some(AbilitySourceContractV4::capture(&state, equipment));
         let token = crate::card_def::card_id_by_name("Goblin Token").unwrap();
         // Existing token-plus-attachment primitive on genuine physical objects.
-        // This deliberately does not assign Longbow a fictional printed trigger.
+        // This deliberately does not assign Viridian Longbow a fictional printed trigger.
         crate::effect::execute(
             &crate::effect::EffectOp::CreateTokenAndAttachSource { token_def: token },
             &ctx,

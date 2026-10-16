@@ -92,8 +92,8 @@ fn memorial<O: Owner>(actor: PlayerId) {
             !s.world().objects.get(elf).tapped,
             "actual vigilance declaration does not tap"
         );
-        assert!(s.world().engine.event_history.iter().any(|event| matches!(event,
-            CommittedEvent::DeclaredAttacker { source, controller, .. } if *source == elf && *controller == actor)));
+        assert!(s.world().engine.combat.attackers_declared);
+        assert_eq!(s.world().engine.combat.attackers.as_slice(), &[elf]);
         let declared = (gameplay(&s), O::packet(&s.encode()).clone());
         s.restore(&prompt).unwrap();
         step(&mut s, |a| a == &attack);

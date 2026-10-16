@@ -1,5 +1,6 @@
 //! One current prepared-family envelope. Compatibility layouts have distinct
 //! schemas and never authorize frozen V51/V52 artifacts or executable actions.
+use crate::akroma_family_public_v40::diagnose_observation_error as diagnostic;
 use crate::{
     ids::PlayerId,
     policy_surface_v5::{PolicyDecisionV5, PolicySurfaceV5},
@@ -311,7 +312,9 @@ pub(crate) fn observe_parts_v57(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<PreparedPublicPartsV57, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
+    validate_state(state)
+        .map_err(|error| diagnostic("prepared.state", error))
+        .map_err(RlContractError)?;
     let (inherited, families) =
         crate::ravenous_observation_v51::observe_parts_complete_prepared_v57(
             state,
@@ -320,35 +323,47 @@ pub(crate) fn observe_parts_v57(
             step,
             physical,
             substep,
-        )?;
+        )
+        .map_err(|error| diagnostic("prepared.inherited", error))?;
     let mut common = crate::elenda_observation_v52::ElendaObservationV52 {
         schema: ELENDA_COMPAT_SCHEMA.into(),
         producer_sha256: producer_sha256(),
         common: inherited,
-        elenda: crate::elenda_public_v52::capture(state)?,
+        elenda: crate::elenda_public_v52::capture(state)
+            .map_err(|error| diagnostic("prepared.elenda", error))?,
         projection_sha256: String::new(),
     };
-    common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
-    let candidates =
-        crate::rl_session::prepared_candidates_v57(actor_and_origin.1, state, surface)?;
+    common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)
+        .map_err(|error| diagnostic("prepared.elenda_commitment", error))?;
+    let candidates = crate::rl_session::prepared_candidates_v57(actor_and_origin.1, state, surface)
+        .map_err(|error| diagnostic("prepared.candidates", error))?;
     let action_meanings = candidates
         .iter()
-        .map(|candidate| annotation(state, &candidate.semantic))
+        .map(|candidate| {
+            annotation(state, &candidate.semantic)
+                .map_err(|error| diagnostic("prepared.annotation", error))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let mut value = PreparedObservationV57 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
         common,
-        drake: crate::drake_public_v53::capture(state)?,
-        spinner: crate::spinner_public_v54::capture(state).map_err(RlContractError)?,
-        quandary: crate::quandary_public_v55::capture(state, actor_and_origin.0)
+        drake: crate::drake_public_v53::capture(state)
+            .map_err(|error| diagnostic("prepared.drake", error))?,
+        spinner: crate::spinner_public_v54::capture(state)
+            .map_err(|error| diagnostic("prepared.spinner", error))
             .map_err(RlContractError)?,
-        phoenix: crate::phoenix_public_v56::capture(state)?,
+        quandary: crate::quandary_public_v55::capture(state, actor_and_origin.0)
+            .map_err(|error| diagnostic("prepared.quandary", error))
+            .map_err(RlContractError)?,
+        phoenix: crate::phoenix_public_v56::capture(state)
+            .map_err(|error| diagnostic("prepared.phoenix", error))?,
         action_meanings,
         projection_sha256: String::new(),
     };
-    value.projection_sha256 = commitment(&value)?;
-    validate_artifact(&value)?;
+    value.projection_sha256 =
+        commitment(&value).map_err(|error| diagnostic("prepared.commitment", error))?;
+    validate_artifact(&value).map_err(|error| diagnostic("prepared.artifact", error))?;
     Ok((value, families))
 }
 /// Closed value checks are supplemental. Only validate_current plus the sealed
@@ -391,8 +406,9 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
         || value.phoenix.producer_sha256 != crate::phoenix_public_v56::producer_sha256()
         || value.phoenix.card_db_hash != inherited.card_db_hash
     {
-        return Err(RlContractError(
-            "prepared family artifact identity/root order changed".into(),
+        return Err(diagnostic(
+            "prepared_artifact.prepared_family_artifact_identity_root_order_changed",
+            RlContractError("prepared family artifact identity/root order changed".into()),
         ));
     }
     if value.schema != SCHEMA
@@ -409,7 +425,10 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
         || inherited.substep_count == 0
         || inherited.substep_index >= inherited.substep_count
     {
-        return Err(RlContractError("prepared artifact identity changed".into()));
+        return Err(diagnostic(
+            "prepared_artifact.prepared_artifact_identity_changed",
+            RlContractError("prepared artifact identity changed".into()),
+        ));
     }
     let mut seen = std::collections::BTreeSet::new();
     for seat in 0..2 {
@@ -417,8 +436,9 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
         let narrow = &inherited.battlefield[seat];
         let base = &inherited.projection.surface.battlefield[seat];
         if exact.len() != narrow.len() || exact.len() != base.len() {
-            return Err(RlContractError(
-                "prepared complete battlefield roster changed".into(),
+            return Err(diagnostic(
+                "prepared_artifact.prepared_complete_battlefield_roster_changed",
+                RlContractError("prepared complete battlefield roster changed".into()),
             ));
         }
         for ((card, compat), base) in exact.iter().zip(narrow).zip(base) {
@@ -442,7 +462,10 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
             .iter()
             .any(|n| *n < 0)
             {
-                return Err(RlContractError("prepared public counter underflow".into()));
+                return Err(diagnostic(
+                    "prepared_artifact.prepared_public_counter_underflow",
+                    RlContractError("prepared public counter underflow".into()),
+                ));
             }
             if !seen.insert(source.incarnation.object)
                 || source.incarnation.object != reference.arena_id
@@ -465,8 +488,9 @@ pub fn validate_artifact(value: &PreparedObservationV57) -> Result<(), RlContrac
                 || card.counters.soul < 0
                 || card.counters.incubation < 0
             {
-                return Err(RlContractError(
-                    "prepared exact card roster/value mismatch".into(),
+                return Err(diagnostic(
+                    "prepared_artifact.prepared_exact_card_roster_value_mismatch",
+                    RlContractError("prepared exact card roster/value mismatch".into()),
                 ));
             }
         }

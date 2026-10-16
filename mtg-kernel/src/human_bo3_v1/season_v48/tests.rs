@@ -248,10 +248,9 @@ fn genuine_created_token_attachment_human_exact_choice_private_binding_and_resto
         let menu = projector.project_current(&session, first).unwrap();
         assert_eq!(menu.schema, "mtg-kernel-human-season-decision/v48");
         assert_eq!(menu.actions.len(), 2);
-        assert!(menu
-            .actions
-            .iter()
-            .all(|action| action.label.starts_with("Attach Longbow")));
+        assert!(menu.actions.iter().all(|action| action
+            .label
+            .starts_with("Attach Viridian Longbow to newly created ")));
         let snapshot = session.snapshot_v48();
         for _ in 0..3 {
             session.restore_v48(&snapshot).unwrap();
