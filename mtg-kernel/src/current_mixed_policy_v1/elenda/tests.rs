@@ -1,4 +1,5 @@
 use super::*;
+use crate::rl_session::test_timing_v1::{span, FixturePhase};
 use crate::{
     ids::{ObjectId, PlayerId},
     policy_observation_v6::tests::put,
@@ -49,6 +50,7 @@ fn own(input: GameState) -> FixtureElenda {
 }
 impl FixtureElenda {
     fn assert_native_current(&self) {
+        let _timing = span(FixturePhase::ReferenceParityInclusive);
         assert_eq!(
             self.inner.fixture_state_v52(),
             self.native.elenda_fixture_state()
@@ -74,6 +76,7 @@ impl FixtureElenda {
         );
     }
     fn assert_native_step(&mut self, actual: &FastActorResponseV1, index: u32) {
+        let _timing = span(FixturePhase::ReferenceStepInclusive);
         let FastActorResponseV1::Decision(current) = self.native.current_response() else {
             panic!("independent native Elenda reference has no current decision")
         };
@@ -86,7 +89,9 @@ impl FixtureElenda {
     }
     fn apply(&mut self, d: &ElendaDecision, index: u32) -> Result<FastActorResponseV1> {
         self.assert_native_current();
+        let timing = span(FixturePhase::ModelApplyInclusive);
         let result = self.model.apply(d, index);
+        drop(timing);
         if let Ok(actual) = &result {
             self.assert_native_step(actual, index);
         } else {
@@ -96,6 +101,7 @@ impl FixtureElenda {
         result
     }
     fn snapshot(&self) -> FixtureElendaSnapshot {
+        let _timing = span(FixturePhase::SnapshotInclusive);
         self.assert_native_current();
         FixtureElendaSnapshot {
             model: self.model.snapshot(),
@@ -103,6 +109,7 @@ impl FixtureElenda {
         }
     }
     fn restore(&mut self, saved: &FixtureElendaSnapshot) -> Result<()> {
+        let _timing = span(FixturePhase::RestoreInclusive);
         // The real model owner first authenticates its own original snapshot.
         // The independent native stream restores only its separately saved menu.
         let result = self.model.restore(&saved.model);

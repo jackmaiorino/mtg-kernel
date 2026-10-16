@@ -36,6 +36,103 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+/// Optional test diagnostics. No world, decision, or operand enters this utility.
+/// Inclusive fixture/reference spans overlap their child spans and must not be
+/// summed. The policy span includes construction of its deterministic fixture.
+#[cfg(test)]
+pub(crate) mod test_timing_v1 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    pub(crate) enum Phase {
+        NativeSurfaceApply,
+        NativeSurfaceAdvance,
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        Fixture(FixturePhase),
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) enum FixturePhase {
+        ActionsInclusive,
+        EncodeInclusive,
+        PolicyForward,
+        ApplyInclusive,
+        ReferenceParityInclusive,
+        ReferenceStepInclusive,
+        SnapshotInclusive,
+        RestoreInclusive,
+        ModelApplyInclusive,
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    impl From<FixturePhase> for Phase {
+        fn from(phase: FixturePhase) -> Self {
+            Self::Fixture(phase)
+        }
+    }
+
+    impl Phase {
+        fn label(&self) -> &'static str {
+            match self {
+                Self::NativeSurfaceApply => "native.surface_apply",
+                Self::NativeSurfaceAdvance => "native.surface_advance",
+                #[cfg(all(
+                    feature = "limited-fdn-fixtures",
+                    not(feature = "standard-magezero-fixtures")
+                ))]
+                Self::Fixture(phase) => match phase {
+                    FixturePhase::ActionsInclusive => "fixture.actions_inclusive",
+                    FixturePhase::EncodeInclusive => "fixture.encode_inclusive",
+                    FixturePhase::PolicyForward => "fixture.policy_forward",
+                    FixturePhase::ApplyInclusive => "fixture.apply_inclusive",
+                    FixturePhase::ReferenceParityInclusive => "reference.parity_inclusive",
+                    FixturePhase::ReferenceStepInclusive => "reference.step_inclusive",
+                    FixturePhase::SnapshotInclusive => "fixture.snapshot_inclusive",
+                    FixturePhase::RestoreInclusive => "fixture.restore_inclusive",
+                    FixturePhase::ModelApplyInclusive => "model.apply_inclusive",
+                },
+            }
+        }
+    }
+
+    pub(crate) struct Span {
+        phase: Phase,
+        started: Instant,
+    }
+
+    pub(crate) fn span(phase: impl Into<Phase>) -> Option<Span> {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        if !*ENABLED.get_or_init(|| {
+            std::env::var_os("MTG_FDN_TEST_TIMING_V1").is_some_and(|value| value == "1")
+        }) {
+            return None;
+        }
+        Some(Span {
+            phase: phase.into(),
+            started: Instant::now(),
+        })
+    }
+
+    impl Drop for Span {
+        fn drop(&mut self) {
+            eprintln!(
+                "fdn_test_timing_v1 phase={} count=1 elapsed_ns={}",
+                self.phase.label(),
+                self.started.elapsed().as_nanos()
+            );
+        }
+    }
+}
+
 pub(crate) mod ajani_v42;
 pub(crate) mod akroma_v40;
 pub(crate) mod arahbo_v31;
@@ -7725,8 +7822,12 @@ impl FastActorSessionV1 {
                     next_environment_revision,
                 )
                 .expect("selected candidate was checked above");
-                self.surface
-                    .apply_fast_actor_current_candidate_in_place(&mut self.state, proof)
+                {
+                    #[cfg(test)]
+                    let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceApply);
+                    self.surface
+                        .apply_fast_actor_current_candidate_in_place(&mut self.state, proof)
+                }
             }
             #[cfg(test)]
             FastActorApplyPathV1::CloneReference => self
@@ -8297,10 +8398,12 @@ impl FastActorSessionV1 {
             ));
             return;
         }
-        let surfaced = match self
-            .surface
-            .next_decision_owned(&mut self.state, self.environment_revision)
-        {
+        let surfaced = match {
+            #[cfg(test)]
+            let _timing = test_timing_v1::span(test_timing_v1::Phase::NativeSurfaceAdvance);
+            self.surface
+                .next_decision_owned(&mut self.state, self.environment_revision)
+        } {
             Ok(decision) => decision,
             Err(_) => {
                 self.terminal = Some(halted_terminal(

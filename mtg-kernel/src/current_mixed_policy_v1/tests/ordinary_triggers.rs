@@ -1,5 +1,6 @@
 //! Shared genuine native paths. Adapters live beside each sealed owner.
 use super::super::*;
+use crate::rl_session::test_timing_v1::{span, FixturePhase};
 use crate::{
     ids::{ObjectId, PlayerId},
     policy_observation_v6::tests::put,
@@ -76,19 +77,26 @@ fn gameplay<O: Owner>(s: &O) -> (Vec<u8>, (u64, u64)) {
     (serde_json::to_vec(s.world()).unwrap(), s.counts())
 }
 fn step<O: Owner>(s: &mut O, choose: impl Fn(&ActionSemanticV1) -> bool) {
+    let timing = span(FixturePhase::ActionsInclusive);
     let actions = s.actions();
+    drop(timing);
     let i = actions
         .iter()
         .position(choose)
         .unwrap_or_else(|| panic!("genuine native action absent:{actions:?}"));
+    let timing = span(FixturePhase::EncodeInclusive);
     let d = s.encode();
+    drop(timing);
     assert_eq!(O::packet(&d).actions().len(), actions.len());
+    let timing = span(FixturePhase::PolicyForward);
     let logits = NativeModel::deterministic_fixture()
         .unwrap()
         .forward(O::packet(&d))
         .unwrap();
+    drop(timing);
     assert_eq!(logits.len(), actions.len());
     assert!(logits.iter().all(|v| v.is_finite()));
+    let _timing = span(FixturePhase::ApplyInclusive);
     s.apply(&d, i as u32).unwrap();
 }
 // V5 decomposes nonempty combat menus into original inclusion choices.
