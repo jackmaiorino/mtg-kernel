@@ -77,6 +77,9 @@ fn paid(p: PlayerId, own: &[&str], other: &[&str]) -> (GameState, ObjectId) {
     let lands = (0..6)
         .map(|_| put(&mut s, p, "Mountain", Zone::Battlefield))
         .collect::<Vec<_>>();
+    for _ in 0..4 {
+        put(&mut s, p.opponent(), "Swamp", Zone::Battlefield);
+    }
     assert!(
         matches!(next(&mut s), Decision::CastSpellOrPass {player,ref castable_spells,..}
         if player == p && castable_spells.contains(&source))
@@ -308,5 +311,215 @@ fn paid_attack_changed_top_player_root_history_and_incarnation_refuse_readonly_b
             assert!(validate_batch(&bad, &pending, &forged).is_err());
             assert_eq!(bad, before);
         }
+    }
+}
+
+#[test]
+fn paid_attack_public_begin_unknown_context_and_direct_resume_refuse_native_row_theft_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, source) = paid(
+            p,
+            &["Forest", "Llanowar Elves", "Forest"],
+            &["Forest", "Juggernaut", "Forest"],
+        );
+        attack(&mut s, p, source);
+        for _ in 0..32 {
+            let d = next(&mut s);
+            if s.stack.last().is_some_and(top_batch_item) {
+                break;
+            }
+            quiet(&mut s, d);
+        }
+        let row = s.stack.last().unwrap().clone();
+        assert!(top_batch_item(&row));
+        let ctx = crystal_prevention_v1::context(&row);
+        let mut bad = restored(&s);
+        let before = bad.clone();
+        assert!(begin_resumable_resolution(
+            &EffectOp::ExileTopEachPlayerThenCastV1,
+            &ctx,
+            row.clone(),
+            &mut bad
+        )
+        .is_err());
+        assert_eq!(bad, before);
+        let mut forged = ctx.clone();
+        forged.stack_item_id = Some(crate::ids::StackItemId(u64::MAX));
+        let draw = EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        };
+        let mut bad = restored(&s);
+        let mut expected = bad.clone();
+        execute_without_linked_aura_v1(&draw, &forged, &mut bad);
+        expected.engine.halted = Some((
+            engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        assert_eq!(bad, expected);
+        batch(&mut s, p);
+        let mut bad = restored(&s);
+        let before = bad.clone();
+        assert!(resume_resumable_resolution(&mut bad).is_err());
+        assert_eq!(bad, before);
+        answer(&mut s, Action::FinishEffectSelection);
+        settle(&mut s);
+    }
+}
+
+#[test]
+fn paid_attack_real_murder_response_preserves_original_controller_and_departed_source_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, source) = paid(
+            p,
+            &["Forest", "Llanowar Elves", "Forest"],
+            &["Forest", "Juggernaut", "Forest"],
+        );
+        attack(&mut s, p, source);
+        let original = s
+            .stack
+            .iter()
+            .find(|row| top_batch_item(row))
+            .unwrap()
+            .clone();
+        let captured = original.v4.ability_source_contract.unwrap();
+        for _ in 0..16 {
+            let d = next(&mut s);
+            if matches!(d,Decision::CastSpellOrPass{player,..}if player==p.opponent()) {
+                break;
+            }
+            quiet(&mut s, d);
+        }
+        let murder = put(&mut s, p.opponent(), "Murder", Zone::Hand);
+        assert!(
+            matches!(next(&mut s),Decision::CastSpellOrPass{ref castable_spells,..}if castable_spells.contains(&murder))
+        );
+        answer(&mut s, Action::CastSpell(murder));
+        assert!(
+            matches!(next(&mut s),Decision::ChooseTargets{ref legal_targets,..}if legal_targets.contains(&Target::Object(source)))
+        );
+        answer(&mut s, Action::ChooseTarget(Target::Object(source)));
+        let row = s.stack.last().unwrap();
+        assert_eq!(row.source, murder);
+        assert_eq!(s.players[p.opponent().index()].mana_pool, [0; 6]);
+        for _ in 0..32 {
+            let d = next(&mut s);
+            if s.objects.get(source).zone == Zone::Graveyard {
+                break;
+            }
+            quiet(&mut s, d);
+        }
+        assert_eq!(s.objects.get(source).zone, Zone::Graveyard);
+        assert!(s.objects.get(source).zone_change_count > captured.zone_change_count);
+        let choice = batch(&mut s, p);
+        let pending = s.engine.pending_effect.as_ref().unwrap();
+        assert_eq!(pending.ctx.controller, p);
+        assert_eq!(pending.ctx.ability_source_contract, Some(captured));
+        assert_eq!(choice.scans.iter().filter_map(|scan| scan.hit).count(), 2);
+        answer(&mut s, Action::FinishEffectSelection);
+        settle(&mut s);
+    }
+}
+#[test]
+fn paid_attack_free_x_is_zero_and_real_additional_discard_is_still_paid_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut own = vec!["Forest"; 40];
+        own[1] = "Wildwood Scourge";
+        let (mut s, source) = paid(p, &own, &["Forest"; 40]);
+        attack(&mut s, p, source);
+        let choice = batch(&mut s, p);
+        let card = choice.scans[0].hit.unwrap().object;
+        answer(&mut s, Action::ChooseEffectTarget(Target::Object(card)));
+        let row = s.stack.iter().find(|row| row.source == card).unwrap();
+        assert_eq!(row.kind, crate::state::StackItemKind::Spell);
+        assert_eq!(row.v4.x_value, 0);
+        assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
+        settle(&mut s);
+        assert_eq!(s.objects.get(card).zone, Zone::Graveyard);
+        let mut own = vec!["Forest"; 40];
+        own[1] = "Thrill of Possibility";
+        let (mut s, source) = paid(p, &own, &["Forest"; 40]);
+        attack(&mut s, p, source);
+        let choice = batch(&mut s, p);
+        let card = choice.scans[0].hit.unwrap().object;
+        let discard = s.players[p.index()].hand[0];
+        assert_eq!(s.objects.get(discard).card_def, id("Forest"));
+        answer(&mut s, Action::ChooseEffectTarget(Target::Object(card)));
+        assert!(matches!(next(&mut s),Decision::Discard{player,count:1,..}if player==p));
+        answer(&mut s, Action::Discard(vec![discard]));
+        let row = s.stack.iter().find(|row| row.source == card).unwrap();
+        assert!(row.discarded.contains(&discard));
+        assert_eq!(s.objects.get(discard).zone, Zone::Graveyard);
+        assert_eq!(s.players[p.index()].mana_pool, [0; 6]);
+        settle(&mut s);
+    }
+}
+#[test]
+fn independent_prepaid_hidden_libraries_do_not_change_actual_public_free_cast_menu_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let own = ["Forest", "Llanowar Elves", "Forest", "Forest"];
+        let (mut a, source) = paid(p, &own, &["Forest", "Juggernaut", "Forest", "Forest"]);
+        let (mut b, other) = paid(p, &own, &["Forest", "Juggernaut", "Swamp", "Island"]);
+        assert_eq!(source, other);
+        assert_ne!(a, b);
+        attack(&mut a, p, source);
+        attack(&mut b, p, other);
+        let ca = batch(&mut a, p);
+        let cb = batch(&mut b, p);
+        assert_eq!(next(&mut a), next(&mut b));
+        assert_eq!(
+            ca.scans
+                .iter()
+                .filter_map(|scan| scan.hit)
+                .collect::<Vec<_>>(),
+            cb.scans
+                .iter()
+                .filter_map(|scan| scan.hit)
+                .collect::<Vec<_>>()
+        );
+        answer(&mut a, Action::FinishEffectSelection);
+        answer(&mut b, Action::FinishEffectSelection);
+        settle(&mut a);
+        settle(&mut b);
+        assert_eq!(next(&mut a), next(&mut b));
+    }
+}
+
+#[test]
+fn paid_ready_resume_owner_binds_entire_pending_and_remaining_stack_without_public_loan_both_seats()
+{
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let (mut s, source) = paid(
+            p,
+            &["Forest", "Llanowar Elves", "Forest"],
+            &["Forest", "Juggernaut", "Forest"],
+        );
+        attack(&mut s, p, source);
+        batch(&mut s, p);
+        engine::step(&mut s, Action::FinishEffectSelection).unwrap();
+        let row = s
+            .engine
+            .pending_effect
+            .as_ref()
+            .unwrap()
+            .resolving_item
+            .clone();
+        assert!(acquire_top_batch_resume_v1(&s, &row).unwrap().is_some());
+        for mode in 0..3 {
+            let mut bad = restored(&s);
+            let owner = acquire_top_batch_resume_v1(&bad, &row).unwrap().unwrap();
+            let position =
+                engine::resolution_cast_v1::resolving_index(&bad, row.v4.stack_item_id).unwrap();
+            assert_eq!(bad.stack.remove(position), row);
+            match mode {
+                0 => bad.engine.pending_effect.as_mut().unwrap().ctx.controller = p.opponent(),
+                1 => bad.engine.pending_effect.as_mut().unwrap().frames.clear(),
+                _ => bad.stack.push(row.clone()),
+            }
+            let before = bad.clone();
+            assert!(resume_owned_top_batch_v1(&mut bad, owner).is_err());
+            assert_eq!(bad, before);
+        }
+        settle(&mut s);
     }
 }

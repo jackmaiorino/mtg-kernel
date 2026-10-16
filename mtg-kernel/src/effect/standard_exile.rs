@@ -463,6 +463,24 @@ fn batch_qualifies(state: &GameState, id: ObjectId, predicate: ExileCastPredicat
             }
         }
 }
+pub(super) fn top_batch_item(item: &StackItem) -> bool {
+    item.inline_effect == Some(EffectOp::ExileTopEachPlayerThenCastV1)
+}
+
+pub(super) fn top_batch_pending(pending: &EffectContinuation) -> bool {
+    top_batch_item(&pending.resolving_item)
+}
+
+pub(super) fn top_batch_waiting(state: &GameState, ctx: &ExecCtx) -> bool {
+    state
+        .stack
+        .iter()
+        .any(|item| top_batch_item(item) && item.source == ctx.source)
+        || state.engine.pending_effect.as_ref().is_some_and(|pending| {
+            top_batch_pending(pending) && pending.resolving_item.source == ctx.source
+        })
+}
+
 // The continuation's serialized shape is unchanged. Its exact definition-owned
 // root distinguishes the original until-hit scan from the new top-only batch.
 fn batch_top_only(

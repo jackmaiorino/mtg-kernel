@@ -24,7 +24,12 @@ nonland incarnation, ordered casts and remaining continuation are validated.
 Native resolution casting retains original physical owner, captured trigger
 controller, normal targets and additional/optional costs, free X=0, arbitrary
 cast order and optional decline. This grants no later permission to cast cards
-left in exile. Existing public direct-interpreter rejection, Crystal closed
+left in exile. The new root requires the existing lexical NativeExecutionOwner at begin and
+a distinct consumed ready-row owner at resume. The latter binds the full saved
+pending input and remaining stack before removal; unlike a stack loan, it allows
+the existing resolution-cast machinery to add the genuinely authorized child. Public begin/direct resume
+refuse it; genuine granted/other rows remain authenticated by their own exact
+row/context rather than an operation flag. Existing direct-interpreter rejection, Crystal closed
 eligibility and old complete consumer refusal are preserved. Frozen v1 meaning
 of the new leaf is Opaque, not an invented complete predecessor meaning.
 
@@ -32,13 +37,15 @@ of the new leaf is Opaque, not an invented complete predecessor meaning.
 producer closure that already binds the Omniscience/native engine changes;
 original input order, repetitions and flat/path-source framing are retained.
 
-Five future genuine paid both-seat fixture functions are prepared in
+Ten future genuine paid both-seat fixture functions are prepared in
 `mtg-kernel/src/effect/etali_primal_storm_v1_tests.rs`. The file is deliberately
 not declared as a module until genuine registration. It has no absent-printing
 success fallback. It covers real land-funded cast, sickness and next-turn real
 attack, zero/land tops, optional decline, both free-cast orders, independent
 serialized answering and changed continuation/history/incarnation refusal.
-These are prepared source, not selected or executed tests. Further source/control
-response and paid additional-cost fixtures belong to the registration follow-up.
+These are prepared source, not selected or executed tests. Additional functions cover real Murder response, original departed-source
+controller, public API row theft refusal, free X=0, paid mandatory discard and
+independent prepaid hidden-library menu equality. Current-control response and
+further optional-cost forms remain registration follow-up qualification scopes.
 All Rust, build-script generation and native behavior remain UNCOMPILED/UNRUN.
 Only pinned formatting, static source audits and diff checks are reported.

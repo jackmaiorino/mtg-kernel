@@ -4305,6 +4305,12 @@ pub fn begin_resumable_resolution(
     resolving_item: StackItem,
     state: &mut GameState,
 ) -> Result<ResumableProgress, String> {
+    if *op == EffectOp::ExileTopEachPlayerThenCastV1
+        || standard_exile::top_batch_item(&resolving_item)
+        || standard_exile::top_batch_waiting(state, ctx)
+    {
+        return Err("top-card free casting requires its genuine native row".into());
+    }
     if source_token_copy_v1::recipe(op)
         || source_token_copy_v1::selected(state, &resolving_item)
         || source_token_copy_v1::waiting(state, ctx)
@@ -4552,6 +4558,14 @@ pub fn resume_resumable_resolution(state: &mut GameState) -> Result<ResumablePro
 
 // These gates retain their public resume order after full choice validation.
 fn validate_generic_resume_driver(state: &GameState) -> Result<(), String> {
+    if state
+        .engine
+        .pending_effect
+        .as_ref()
+        .is_some_and(standard_exile::top_batch_pending)
+    {
+        return Err("top-card free casting has no public resume authority".into());
+    }
     if state.engine.pending_effect.as_ref().is_some_and(|p| {
         source_token_copy_v1::selected(state, &p.resolving_item)
             || source_token_copy_v1::waiting(state, &p.ctx)
@@ -12285,7 +12299,7 @@ fn drive_resumable_inner_with_native_row_v1(
 ) -> Result<ResumableProgress, String> {
     let resumed_owner;
     let native_row = if let Some(owner) = supplied_owner {
-        owner.validate_initial_pending(state)?;
+        owner.validate_supplied_pending(state)?;
         Some(owner)
     } else if state.engine.pending_effect.as_ref().is_some_and(|p| {
         native_waiting_source_v1(state, &p.ctx)
@@ -25666,6 +25680,9 @@ pub(crate) fn acquire_tutelage_resume_v1(
     let Some(pending) = state.engine.pending_effect.as_ref() else {
         return Ok(None);
     };
+    if standard_exile::top_batch_pending(pending) {
+        return Ok(None);
+    }
     if !tutelage_item_v1(state, &pending.resolving_item)
         && !curator_v1::pending_selected(state, pending)
         && !pending
@@ -25854,6 +25871,9 @@ fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
 // ids, kinds, roots and source-contract erasure cannot hide that row; completed
 // historical occurrences alone never select an unrelated future operation.
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if standard_exile::top_batch_waiting(state, ctx) {
+        return true;
+    }
     if source_token_copy_v1::waiting(state, ctx) || sphinx_lore_v1::waiting(state, ctx) {
         return true;
     }
@@ -25904,6 +25924,9 @@ pub(crate) struct NativeExecutionOwnerV1 {
     ctx: ExecCtx,
     root: Box<EffectOp>,
     remaining_stack: Vec<StackItem>,
+    // A consumed resume frame retains its complete original ready input.
+    // Initial execution uses None and keeps the original initial-frame checks.
+    saved_pending: Option<Box<EffectContinuation>>,
 }
 
 // Borrowed only within the native dispatch. A recursive instruction can bind
@@ -25949,7 +25972,15 @@ impl NativeExecutionOwnerV1 {
         Ok(())
     }
 
-    fn validate_initial_pending(&self, state: &GameState) -> Result<(), String> {
+    fn validate_supplied_pending(&self, state: &GameState) -> Result<(), String> {
+        if let Some(expected) = self.saved_pending.as_deref() {
+            if state.engine.pending_effect.as_ref() != Some(expected)
+                || state.stack != self.remaining_stack
+            {
+                return Err("native consumed resume input changed".into());
+            }
+            return Ok(());
+        }
         let pending = state
             .engine
             .pending_effect
@@ -25999,6 +26030,7 @@ impl NativeExecutionOwnerV1 {
             ctx: pending.ctx.clone(),
             root,
             remaining_stack: state.stack.clone(),
+            saved_pending: Some(Box::new(pending.clone())),
         })
     }
 }
@@ -26042,7 +26074,51 @@ pub(crate) fn acquire_native_execution_owner_v1(
         ctx,
         root,
         remaining_stack,
+        saved_pending: None,
     }))
+}
+
+// The exact native ready row is authenticated while still published, then
+// consumed immediately after engine removal. No public row is invented or
+// loaned, so resolution_cast may legitimately create its child spell.
+pub(crate) struct TopBatchResumeOwnerV1 {
+    native: NativeExecutionOwnerV1,
+}
+
+pub(crate) fn acquire_top_batch_resume_v1(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<TopBatchResumeOwnerV1>, String> {
+    let Some(pending) = state.engine.pending_effect.as_ref() else {
+        return Ok(None);
+    };
+    if !standard_exile::top_batch_pending(pending) {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    if pending.resolving_item != *item || pending.choice.is_some() {
+        return Err("top-card cast resume lost its exact ready row".into());
+    }
+    let position = crate::engine::resolution_cast_v1::resolving_index(state, item.v4.stack_item_id)
+        .ok_or("top-card cast resume row absent")?;
+    let mut native = NativeExecutionOwnerV1::from_validated_pending(state)?;
+    if native.remaining_stack.remove(position) != *item
+        || native
+            .remaining_stack
+            .iter()
+            .any(|row| row.v4.stack_item_id == item.v4.stack_item_id)
+    {
+        return Err("top-card cast resume row changed or duplicated".into());
+    }
+    Ok(Some(TopBatchResumeOwnerV1 { native }))
+}
+
+pub(crate) fn resume_owned_top_batch_v1(
+    state: &mut GameState,
+    owner: TopBatchResumeOwnerV1,
+) -> Result<ResumableProgress, String> {
+    owner.native.validate_supplied_pending(state)?;
+    drive_with_native_row_v1(state, &owner.native)
 }
 
 pub(crate) fn execute_owned_native_row_v1(
