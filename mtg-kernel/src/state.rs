@@ -1284,6 +1284,7 @@ pub fn stack_target_contract_is_structurally_valid(
             StackTargetContractV4::Player(_) => matches!(
                 filter,
                 crate::standard_cards_v1::StandardTargetV1::UpToTwoAnyTargets
+                    | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
             ),
         };
         if !matches_kind {

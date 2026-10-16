@@ -1058,6 +1058,7 @@ pub(crate) fn has_damage(op: &EffectOp) -> bool {
             crate::standard_cards_v1::StandardOpV1::SourceLastPowerDamageV1
             | crate::standard_cards_v1::StandardOpV1::DamageEachTarget { .. }
             | crate::standard_cards_v1::StandardOpV1::DamageEachTargetChosenX
+            | crate::standard_cards_v1::StandardOpV1::DamageTargetsByPositionV1 { .. }
             | crate::standard_cards_v1::StandardOpV1::EachControlledCreatureDealsOneDamageToTarget,
         ) => true,
         EffectOp::Sequence(ops) => ops.iter().any(has_damage),

@@ -3493,6 +3493,7 @@ fn fdn_program_for(name: &str) -> Option<Special> {
         mode2: None,
     };
     Some(match name {
+        "Drakuseth, Maw of Flames" => program("None", "MoveObject(ThisSource,Battlefield);attacks:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_contracts:one_damage_batch", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         // Unregistered source recipe. No catalog slot is allocated here.
         "Embercleave" => program("None", "MoveObject(ThisSource,Battlefield);etb:attachExactSourceToTargetControlledCreature;equipped:+1/+1,doubleStrike,trample;equip:3;flash;genericReduction:currentControlledAttackingCreatures", "EffectOp::MoveObject { object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }"),
         "Temporal Manipulation" => program(
@@ -4366,6 +4367,7 @@ fn keywords_for(card: &CardJson) -> String {
             keywords.push("Keywords::FLYING");
             keywords.push("Keywords::VIGILANCE");
         }
+        "Drakuseth, Maw of Flames" => keywords.push("Keywords::FLYING"),
         "Swiftblade Vindicator" => {
             keywords.push("Keywords::DOUBLE_STRIKE");
             keywords.push("Keywords::VIGILANCE");
@@ -7105,6 +7107,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Drakuseth, Maw of Flames" => "source_attacks:captured_source_incarnation_controller:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_target_contracts:individual_legality:one_damage_batch_before_sba",
         "Alesha, Who Laughs at Fate" => "source_attacks:plus_one_counter_exact_source:1;beginning_captured_controller_end_step:intervening_raid_declaration_this_turn:target_own_graveyard_creature_mana_value_at_most_original_source_current_power_or_lki:mandatory_target_before_response_window:captured_controller_costless_may_return_at_resolution:decline_no_zone_change:return_exact_target_graveyard_incarnation_to_owner_battlefield",
         "Nine-Lives Familiar" => "genuine_cast_entry_eight_revival_counters;dies_if_exact_departure_lki_revival_positive;death_trigger_resolution_schedules_one_future_any_end_step;return_exact_graveyard_incarnation_under_captured_ability_controller_with_one_fewer_revival_counter_and_entry_replacements_once",
         "Valkyrie's Call" => "controlled_nontoken_nonangel_effective_creature_dies:capture_source_controller_and_exact_departure:resolve_return_exact_graveyard_incarnation_under_physical_owner:plus_one_counter_replacements_once:additive_angel_and_flying_to_new_incarnation_until_zone_change",
