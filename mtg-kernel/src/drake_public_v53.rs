@@ -264,7 +264,11 @@ fn counters(
         soul,
         incubation,
         revival,
+        fellowship,
     } = live.counters;
+    if fellowship != 0 {
+        return Err(error("V53 does not expose fellowship counters"));
+    }
     if scope == crate::optional_trigger_public_v1::CounterScopeV61::CompleteV61 {
         crate::graveyard_return_public_v61::counter_values(state, id).map_err(error)?;
     }

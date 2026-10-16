@@ -78,6 +78,10 @@ pub struct Counters {
     /// the historical snapshot and hash sequence exactly.
     #[serde(default, skip_serializing_if = "counter_i32_zero")]
     pub revival: i32,
+    /// Banner of Kinship's distinct counter kind. No printing is admitted by
+    /// this storage prerequisite; zero retains every predecessor encoding.
+    #[serde(default, skip_serializing_if = "counter_i32_zero")]
+    pub fellowship: i32,
 }
 
 fn counter_i32_zero(value: &i32) -> bool {
@@ -103,6 +107,7 @@ impl Counters {
             || self.soul != 0
             || self.incubation != 0
             || self.revival != 0
+            || self.fellowship != 0
     }
 }
 
@@ -150,6 +155,10 @@ impl std::hash::Hash for Counters {
         if self.revival != 0 {
             b"revival_counters_v1".hash(state);
             self.revival.hash(state);
+        }
+        if self.fellowship != 0 {
+            b"fellowship_counters_v1".hash(state);
+            self.fellowship.hash(state);
         }
     }
 }

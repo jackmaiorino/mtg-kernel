@@ -8826,10 +8826,19 @@ fn effect_target_ref_visible(
     })
 }
 
-/// Frozen RL card rows have no revival-counter field. Refuse before projecting
-/// any card carrying one through those older shapes. Keep this guard in `rl.rs`
+/// Frozen RL card rows have no revival or fellowship counter field. Refuse
+/// before projecting any card carrying one through those older shapes. Keep this guard in `rl.rs`
 /// so the existing RL source-identity closure covers the behavior.
 fn require_legacy_public_counter_schema(state: &GameState, object: ObjectId) -> Result<()> {
+    if state
+        .objects
+        .try_get(object)
+        .is_some_and(|live| live.counters.fellowship != 0)
+    {
+        return Err(RlContractError(
+            "legacy public counter schema cannot represent fellowship counters".into(),
+        ));
+    }
     if state
         .objects
         .try_get(object)

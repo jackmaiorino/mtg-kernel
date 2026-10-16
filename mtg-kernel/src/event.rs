@@ -2187,7 +2187,8 @@ fn record_counter_lki(state: &mut GameState, object: ObjectId) {
     let reads_soul = live.counters.soul != 0 || definition_reads_soul_lki_v1(live.card_def);
     let reads_revival = live.counters.revival != 0
         || crate::card_def::CARD_DEFS[usize::from(live.card_def)].name == "Nine-Lives Familiar";
-    if !reads_standard && !reads_soul && !reads_revival {
+    let reads_fellowship = live.counters.fellowship != 0;
+    if !reads_standard && !reads_soul && !reads_revival && !reads_fellowship {
         return;
     }
     let mut entries = state.counter_lki_v1.take().unwrap_or_default();

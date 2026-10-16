@@ -180,6 +180,9 @@ fn apply_counter_transfer(
     };
     let placed_i16 = |amount: i16| i16::try_from(scale(i32::from(amount))?).ok();
     let live = state.objects.get(target);
+    if live.counters.fellowship < 0 {
+        return None;
+    }
     let minus_one = live
         .counters
         .minus1_minus1
@@ -206,6 +209,10 @@ fn apply_counter_transfer(
         .counters
         .revival
         .checked_add(scale(counters.revival)?)?;
+    let fellowship = live
+        .counters
+        .fellowship
+        .checked_add(scale(counters.fellowship)?)?;
     let soul_scaled =
         crate::standard_cards_v1::scale_counters_checked_v48(state, player, counters.soul).ok()?;
     let soul_placed =
@@ -255,6 +262,7 @@ fn apply_counter_transfer(
     live.counters.soul = soul;
     live.counters.incubation = incubation;
     live.counters.revival = revival;
+    live.counters.fellowship = fellowship;
     live.v4.lifelink_keyword_counters = lifelink;
     live.v4.time_counters_v1 = time;
     if finality > 0 {
@@ -1035,6 +1043,51 @@ mod doubling_season_transfer_tests_v48 {
         state::Zone,
     };
     #[test]
+    fn native_fellowship_transfer_replacement_lki_restore_and_overflow_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(actor);
+            let source = put(&mut state, actor, "Forest", Zone::Battlefield);
+            let target = put(&mut state, actor, "Forest", Zone::Battlefield);
+            put(&mut state, actor, "Doubling Season", Zone::Battlefield);
+            // Generic native counter-storage and transfer primitives. No
+            // printed Forest or Banner ability is added by this fixture.
+            state.objects.get_mut(source).counters.fellowship = 3;
+            let contract = crate::state::AbilitySourceContractV4::capture(&state, source);
+            let generation = state.objects.get(source).zone_change_count;
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Graveyard),
+            );
+            assert_eq!(state.objects.get(source).counters.fellowship, 0);
+            assert_eq!(
+                state
+                    .counter_lki_for(source, generation)
+                    .unwrap()
+                    .fellowship,
+                3
+            );
+            let transfer = counter_transfer_snapshot(&state, contract);
+            assert_eq!(transfer.counters.fellowship, 3);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for branch in [&mut state, &mut restored] {
+                apply_counter_transfer(branch, target, actor, transfer).unwrap();
+                assert_eq!(branch.objects.get(target).counters.fellowship, 6);
+                let before = branch.clone();
+                let overflow = CounterTransferV1 {
+                    counters: crate::state::Counters {
+                        fellowship: i32::MAX,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                assert!(apply_counter_transfer(branch, target, actor, overflow).is_none());
+                assert_eq!(*branch, before);
+            }
+            assert_eq!(state, restored);
+        }
+    }
+    #[test]
     fn soul_transfer_preserves_value_restore_and_overflow_refusal_both_seats() {
         for actor in [PlayerId::P0, PlayerId::P1] {
             let mut state = ready_state_for(actor);
@@ -1190,6 +1243,7 @@ mod doubling_season_transfer_tests_v48 {
                     soul: 1,
                     incubation: 1,
                     revival: 1,
+                    fellowship: 0,
                 },
                 extras: CounterExtrasV1 {
                     loyalty: 1,
