@@ -1013,6 +1013,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
     "Dragon 5/5 Token",
     "Dragon Token",
     "Dragon Trainer",
+    "Drakuseth, Maw of Flames",
     "Dwynen's Elite",
     "Dwynen, Gilt-Leaf Daen",
     "Eager Trufflesnout",

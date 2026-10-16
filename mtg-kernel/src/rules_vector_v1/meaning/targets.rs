@@ -693,7 +693,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         | S::UpToOneCreature
         | S::TappedOpponentCreature
         | S::CrewedSourceThisTurn => creature(),
-        S::UpToTwoAnyTargets => ObjF::PlayerOrPermanent,
+        S::UpToTwoAnyTargets | S::OneToThreeDistinctAnyTargetsV1 => ObjF::PlayerOrPermanent,
     }
 }
 
@@ -713,6 +713,7 @@ pub(super) fn standard_target_origin(
         | S::TappedOpponentCreature => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
         S::AnotherNonlandPermanent
         | S::UpToTwoAnyTargets
+        | S::OneToThreeDistinctAnyTargetsV1
         | S::UpToOneCreature
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
@@ -767,6 +768,16 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Planeswalker), None, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::OneToThreeDistinctAnyTargetsV1 => {
+            out.target(TargetAtom::PlayerYou);
+            out.target(TargetAtom::PlayerOpponent);
+            object(out, creature(), None, zone);
+            object(out, typed(CardType::Planeswalker), None, zone);
+            out.target(TargetAtom::MultipleTargets);
+            // The frozen vocabulary cannot express a mandatory first slot
+            // followed by optional OTHER slots. Retain exact source payload.
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

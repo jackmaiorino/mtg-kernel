@@ -14,6 +14,14 @@ use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[path = "drakuseth_v1_tests.rs"]
+mod drakuseth_tests;
+
 /// Per-game state for this module's cards. Absent until one of them needs
 /// it, so other catalogs keep their snapshots and hashes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -142,7 +150,7 @@ struct RoomDoorsV1 {
     unlocked: u8,
 }
 
-/// One-object battlefield target filters owned by this module
+/// Native target filters owned by this module
 /// (`TargetSpec::StandardV1`). "Opponent" is relative to the targeting
 /// controller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -169,6 +177,9 @@ pub enum StandardTargetV1 {
     CardInAGraveyard,
     TappedOpponentCreature,
     CrewedSourceThisTurn,
+    /// A mandatory first any-target, then zero to two OTHER any-targets.
+    /// Slots remain ordered even when an earlier target becomes illegal.
+    OneToThreeDistinctAnyTargetsV1,
 }
 
 impl StandardTargetV1 {
@@ -176,6 +187,7 @@ impl StandardTargetV1 {
     pub(crate) fn counts(self) -> (u8, u8) {
         match self {
             Self::UpToTwoAnyTargets => (2, 0),
+            Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
             Self::UpToOneCreature => (1, 0),
             _ => (1, 1),
         }
@@ -209,7 +221,10 @@ pub(crate) fn legal_targets(
     prefix: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    if target == StandardTargetV1::UpToTwoAnyTargets {
+    if matches!(
+        target,
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneToThreeDistinctAnyTargetsV1
+    ) {
         // 115.4: a creature, player or planeswalker; each target once.
         let players = [PlayerId::P0, PlayerId::P1].map(Target::Player);
         let permanents = [PlayerId::P0, PlayerId::P1]
@@ -308,7 +323,7 @@ pub(crate) fn target_matches(
             live.controller == controller && has(CardType::Artifact)
         }
         StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
-        StandardTargetV1::UpToTwoAnyTargets => {
+        StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneToThreeDistinctAnyTargetsV1 => {
             has(CardType::Creature) || has(CardType::Planeswalker)
         }
         StandardTargetV1::UpToOneCreature | StandardTargetV1::CrewedSourceThisTurn => {
@@ -540,6 +555,12 @@ pub enum StandardOpV1 {
     /// Untap only the captured ability-source incarnation, through stun replacement.
     UntapCapturedSourceV1,
     ZulAshurPermissionV1,
+    /// Captured ability damage to the ORIGINAL first and subsequent target slots.
+    /// Drakuseth uses four for slot zero and three for each optional other slot.
+    DamageTargetsByPositionV1 {
+        first_amount: u8,
+        other_amount: u8,
+    },
 }
 
 impl StandardOpV1 {
@@ -1043,6 +1064,47 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
         }
         StandardOpV1::ExileTopFiveMayCastOneInstantOrSorcery => {
             exile_top_five_may_cast_one(state, ctx.controller);
+        }
+        StandardOpV1::DamageTargetsByPositionV1 {
+            first_amount,
+            other_amount,
+        } => {
+            let events = ctx
+                .targets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    if ctx.target_incarnation_matches(index, state)
+                        && ctx.ability_source_contract.is_some_and(|source| {
+                            crate::engine::effect_target_is_legal_from_ability_source(
+                                state,
+                                source,
+                                ctx.controller,
+                                crate::card_def::TargetSpec::StandardV1(
+                                    StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
+                                ),
+                                &ctx.targets,
+                                index,
+                            )
+                        })
+                    {
+                        Some(event::damage_from_exec_ctx_v1(
+                            ctx,
+                            *target,
+                            i32::from(if index == 0 {
+                                *first_amount
+                            } else {
+                                *other_amount
+                            }),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // Resolve all legal original slots in one batch. No target-vector
+            // compaction, intermediate SBA, or artificial extra damage event.
+            event::propose_and_commit_batch(state, events);
         }
         StandardOpV1::DamageEachTarget { amount } => {
             for index in 0..ctx.targets.len() {
@@ -2009,6 +2071,7 @@ pub(crate) fn mana_abilities_active(state: &GameState, object: ObjectId, def: &C
 /// Triggered abilities of this module's cards, by registry name.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
+        "Drakuseth, Maw of Flames" => &DRAKUSETH_TRIGGERS_V1,
         "Thousand Moons Smithy" => &SMITHY_TRIGGERS,
         "Etali, Primal Conqueror" => &ETALI_TRIGGERS,
         "Subterranean Schooner" => &SCHOONER_TRIGGERS,
@@ -2041,6 +2104,23 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         _ => &[],
     }
 }
+
+/// FDN193. Target zero is mandatory; optional targets keep their original slots.
+pub fn drakuseth_attack_v1() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::DamageTargetsByPositionV1 {
+        first_amount: 4,
+        other_amount: 3,
+    })
+}
+
+static DRAKUSETH_TRIGGERS_V1: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    face_index: 0,
+    effect: drakuseth_attack_v1,
+}];
 
 // ---- Blue Sun's Twilight ---------------------------------------------------
 

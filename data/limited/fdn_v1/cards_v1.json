@@ -8094,6 +8094,41 @@
       ],
       "java_file": "Mage.Sets/src/mage/cards/b/BannerOfKinship.java",
       "is_token": false
+    },
+    {
+      "name": "Drakuseth, Maw of Flames",
+      "engine_capability": "partial",
+      "mana_cost": "{4}{R}{R}{R}",
+      "mana_value": 7,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [
+        "Legendary"
+      ],
+      "power": 7,
+      "toughness": 7,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "FDN_reference_drakuseth_partial.dck"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "attacks_mandatory_first_any_target_four",
+        "up_to_two_other_distinct_any_targets_three_each",
+        "original_positional_contracts_one_damage_batch"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DrakusethMawOfFlames.java",
+      "is_token": false
     }
   ]
 }

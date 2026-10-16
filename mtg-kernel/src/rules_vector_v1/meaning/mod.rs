@@ -125,6 +125,13 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
             // Pre-move creature type and exact source identity have no v1 facets.
             out.atoms.push(Atom::Opaque);
         }
+        EffectOp::StandardV1(
+            crate::standard_cards_v1::StandardOpV1::DamageTargetsByPositionV1 { .. },
+        ) => {
+            // Positional amounts and simultaneous per-slot legality have no
+            // complete frozen v1 facets. Preserve the exact typed source.
+            out.atoms.push(Atom::Opaque);
+        }
         EffectOp::StandardV1(_) => {
             // Preserve the exact serialized payload in the source record.
             // Do not invent ordinary facets for new histories, counters,

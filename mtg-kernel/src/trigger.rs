@@ -3921,6 +3921,9 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
     };
     match card.name {
         "Extravagant Replication" => TargetSpec::AnotherControlledNonlandPermanent,
+        "Drakuseth, Maw of Flames" => TargetSpec::StandardV1(
+            crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
+        ),
         "Lagrella, the Magpie" => TargetSpec::UpToTwoOtherCreaturesDifferentControllers,
         "Halana and Alena, Partners" | "Ashroot Animist" => TargetSpec::AnotherControlledCreature,
         "Restless Bivouac" => TargetSpec::ControlledCreature,
