@@ -84,19 +84,19 @@ fn run<O: Owner>(actor: PlayerId, optional: bool, survives: bool) {
     let original = serde_json::to_value(family).unwrap();
     let mut converted = original.clone();
     crate::current_mixed_policy_v1::fishing_public_operands::prepare(&mut converted).unwrap();
-    let host = &converted["Fishing"]["poles"][0]["attached_host"];
+    let host = &converted["facts"]["poles"][0]["attached_host"];
     assert_eq!(host["object"], creature.0);
     assert_eq!(
         host["generation"],
         s.world().objects.get(creature).zone_change_count
     );
     assert_eq!(
-        converted["Fishing"]["poles"][0]["source"],
-        original["Fishing"]["poles"][0]["source"]
+        converted["facts"]["poles"][0]["source"],
+        original["facts"]["poles"][0]["source"]
     );
     for key in ["private_operand", "unknown_generation"] {
         let mut forged = original.clone();
-        forged["Fishing"]["poles"][0]["attached_host"][key] = serde_json::json!(9);
+        forged["facts"]["poles"][0]["attached_host"][key] = serde_json::json!(9);
         assert!(
             crate::current_mixed_policy_v1::fishing_public_operands::prepare(&mut forged).is_err()
         );

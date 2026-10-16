@@ -38,7 +38,7 @@ fn convert(value: &mut Value) -> Result<()> {
         )
         .map_err(|_| error())?;
         if let Some(host) = pole.attached_host {
-            value["Fishing"]["poles"][index]["attached_host"] = relation(host);
+            value["facts"]["poles"][index]["attached_host"] = relation(host);
         }
     }
     for (index, operation) in facts.operations.iter().enumerate() {
@@ -52,16 +52,20 @@ fn convert(value: &mut Value) -> Result<()> {
         if canonical.root_sha256 != operation.root_sha256 {
             return Err(error());
         }
-        value["Fishing"]["operations"][index]["original_host"] = relation(operation.original_host);
+        value["facts"]["operations"][index]["original_host"] = relation(operation.original_host);
         if let Some(fish) = operation.created_fish {
-            value["Fishing"]["operations"][index]["created_fish"] = relation(fish);
+            value["facts"]["operations"][index]["created_fish"] = relation(fish);
         }
     }
     Ok(())
 }
 pub(super) fn prepare(value: &mut Value) -> Result<()> {
     match value {
-        Value::Object(fields) if fields.contains_key("Fishing") => convert(value)?,
+        Value::Object(fields)
+            if fields.get("family").and_then(Value::as_str) == Some("Fishing") =>
+        {
+            convert(value)?;
+        }
         Value::Object(fields) => {
             for child in fields.values_mut() {
                 prepare(child)?;
