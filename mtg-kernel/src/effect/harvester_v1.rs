@@ -1,4 +1,4 @@
-//! Native Harvester prerequisites. Registration is deliberately separate.
+//! FDN54 native Partial Harvester and copy/entry bookkeeping.
 //! A copy exception belongs to layer 1, not a timestamped subtype grant.
 use super::*;
 use crate::state::AbilitySourceContractV4;
@@ -137,7 +137,8 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
             .engine
             .event_history
             .iter()
-            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. }))
+            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. })
+                || matches!(e, event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } if definition(cast.card_def)))
     {
         return Err("Abyssal Harvester requires a distinct complete consumer".into());
     }
@@ -191,7 +192,7 @@ pub(crate) fn catalog_enabled() -> bool {
     cfg!(all(
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
-    )) && card_def::card_id_by_name("Abyssal Harvester").is_some()
+    )) && card_def::card_id_by_name("Abyssal Harvester").is_some_and(definition)
 }
 
 pub(crate) fn record_graveyard_entry(state: &mut GameState, history_index: usize) {
@@ -208,7 +209,13 @@ pub(crate) fn record_graveyard_entry(state: &mut GameState, history_index: usize
     };
     let object = *object;
     let live = state.objects.get(object);
-    if live.v4.is_token || live.spell_copy_origin.is_some() {
+    // Outside the battlefield native reset restores the ordinary printed
+    // card definition. Only creature cards can ever be this target; unrelated
+    // instant/sorcery flashback lifecycles need no Harvester receipts.
+    if live.v4.is_token
+        || live.spell_copy_origin.is_some()
+        || !card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+    {
         return;
     }
     let entry = GraveyardEntryV1 {
@@ -276,7 +283,10 @@ fn generation_after(state: &GameState, object: ObjectId, index: usize) -> Result
         .iter()
         .skip(index + 1)
         .filter(|event| match event {
-            event::CommittedEvent::ZoneChange { object: id, .. } => *id == object,
+            event::CommittedEvent::ZoneChange { object: id, .. }
+            | event::CommittedEvent::Draw {
+                object: Some(id), ..
+            } => *id == object,
             event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source == object,
             event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
                 restored.object == object
@@ -965,6 +975,12 @@ pub(crate) fn definition(id: u16) -> bool {
                 && d.flashback.is_none()
                 && d.activated_abilities.len() == 1
                 && d.activated_abilities[0].cost == [card_def::CostComponent::Tap]
+                && d.activated_abilities[0].activation_zone == Zone::Battlefield
+                && !d.activated_abilities[0].sorcery_speed_only
+                && d.activated_abilities[0].activation_target_filter
+                    == card_def::ActivationTargetFilter::TargetSpecOnly
+                && d.activated_abilities[0].max_activations_per_turn.is_none()
+                && d.activated_abilities[0].face.is_none()
                 && d.activated_abilities[0].target_spec == target_spec()
                 && (d.activated_abilities[0].effect)() == marker()
                 && d.plot_cost.is_none()

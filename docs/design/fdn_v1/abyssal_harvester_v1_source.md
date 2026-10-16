@@ -1,8 +1,10 @@
-# Abyssal Harvester native source preparation
+# Abyssal Harvester native Partial source
 
-This checkpoint implements prerequisites and the closed native resolution
-leaf, not a registered Harvester printing.
-ID 479 waits for the actual Omniscience 478 dependency. No Full, owning,
+The registered native printing appends ID479 after the actual Omniscience478
+merge, with480 native definitions and288 FDN registry rows. The frozen pool
+has245 Full,27 Partial and14 Missing printings, plus the separate Partial
+Kykar Spirit token. The unchanged Full-only deck preflight refuses Harvester.
+No Full, owning,
 numeric, Human, wire, training or sampling permission is granted.
 
 Frozen printing: FDN 54, Scryfall `f2e0f538-5825-47e9-883c-3ec6fd5b25ea`,
@@ -28,11 +30,14 @@ Existing Partial-token creation guards remain in force.
 The closed target facet consumes indexed actual graveyard-entry occurrences,
 with original owner and incarnation. Turn is derived from the existing native
 LifeLossTurnBegan history, not trusted from the new receipt. Generation is
-derived backward through real zone changes and the two native physical cast
+derived backward through real zone changes including successful Draw, and the two native physical cast
 announcement/reversal seams, which otherwise change generation without a
 ZoneChange record. Failed graveyard casts retain the
 original occurrence through a typed rollback relation; they do not invent a
-new put-this-turn event. Entry recording is inactive without the registered
+new put-this-turn event. Only printed creature cards after native zone reset are recorded; instant
+flashback therefore adds no unrelated receipts. A genuine paid Condemn/Draw
+regression covers a physical creature later redrawn, and paid Think Twice
+flashback covers the noncreature exclusion. Entry recording is inactive without the registered
 Harvester catalog. This uses the existing mutable native-world contract.
 
 Three new both-seat source fixtures use explicitly labelled native copy-entry
@@ -42,8 +47,18 @@ uses a genuinely paid original Zombie and Electroduplicate, then a labelled
 Nightmare-entry primitive, selecting a genuinely paid-and-Bolted Elf and
 asserting the actual exile and two life drain across target-stage restore.
 The old Soul receipt now uses the original entry index explicitly, including
-when copy-component receipts intervene. They do not
-claim paid Harvester gameplay. All Rust remains uncompiled and unrun.
+when copy-component receipts intervene. Those three prerequisite groups remain explicitly labelled. Ten additional
+genuine paid Harvester groups cover summoning sickness, either graveyard,
+original targets, Season exemptions and token-only cleanup, source departure
+and native control response, copied haste activation and Witness suppression,
+actual Tutelage mill and Thrill discard, target departure/reentry, restore,
+public API forgery and receipt-only turn/generation/origin tampering.
+Native zone/control/token setup primitives are labelled separately.
+All Rust remains uncompiled and unrun.
 
 Existing Aegis handling of Electroduplicate's separate sacrifice multiplicity
 is unchanged and is not newly qualified by this checkpoint.
+
+The 100 existing engine/optional-trigger producer source arrays explicitly include
+the new helper and its consumed life-loss and Soul entry inputs exactly once,
+without changing their existing framing or source order.

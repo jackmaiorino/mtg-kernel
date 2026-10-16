@@ -1198,3 +1198,627 @@ fn genuine_paid_soul_copy_and_nightmare_entry_primitive_keep_original_etb_creati
         }
     }
 }
+
+// Harvester fixtures below use real registered FDN54, actual paid spells and
+// native activation/payment/publication. Initial lands/library are setup.
+fn hv_ready(p: PlayerId) -> GameState {
+    let mut s = ready(p);
+    for seat in [p, p.opponent()] {
+        for _ in 0..12 {
+            put(&mut s, seat, "Swamp", Zone::Battlefield);
+        }
+    }
+    s
+}
+fn hv_main(s: &mut GameState, p: PlayerId) {
+    for _ in 0..600 {
+        let d = engine::advance_until_decision(s);
+        assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+        if s.active_player == p
+            && s.step == Step::Main1
+            && s.stack.is_empty()
+            && s.players[p.index()]
+                .battlefield
+                .iter()
+                .all(|id| !s.objects.get(*id).summoning_sick)
+            && matches!(d, Decision::CastSpellOrPass {player,..} if player==p)
+        {
+            return;
+        }
+        quiet(s, d);
+    }
+    panic!("actual subsequent own main absent");
+}
+fn hv_death(s: &mut GameState, p: PlayerId) -> ObjectId {
+    let elf = paid(s, p, "Llanowar Elves", 1);
+    cast(s, p.opponent(), "Lightning Bolt", &[Target::Object(elf)], 1);
+    finish(s);
+    assert_eq!(s.objects.get(elf).zone, Zone::Graveyard);
+    assert!(harvester_v1::eligible(s, elf));
+    elf
+}
+fn hv_activate(s: &mut GameState, p: PlayerId, source: ObjectId, target: ObjectId) -> StackItem {
+    priority(s, p);
+    assert!(
+        matches!(engine::advance_until_decision(s), Decision::CastSpellOrPass {activatable_abilities,..}
+        if activatable_abilities.contains(&(source,0)))
+    );
+    let before = taps(s, p);
+    engine::step(s, Action::ActivateAbility(source, 0)).unwrap();
+    assert!(
+        matches!(engine::advance_until_decision(s),Decision::ChooseTargets {spell,player,ref legal_targets,..}
+        if spell==source && player==p && legal_targets.contains(&Target::Object(target)))
+    );
+    let mut replay = restore(s);
+    engine::step(s, Action::ChooseTarget(Target::Object(target))).unwrap();
+    engine::step(&mut replay, Action::ChooseTarget(Target::Object(target))).unwrap();
+    let d = engine::advance_until_decision(s);
+    assert_eq!(d, engine::advance_until_decision(&mut replay));
+    assert_eq!(*s, replay);
+    assert!(matches!(d,Decision::CastSpellOrPass{player,..} if player==p));
+    assert_eq!(taps(s, p) - before, 1);
+    assert!(s.objects.get(source).tapped);
+    let item = s
+        .stack
+        .iter()
+        .find(|row| row.source == source && row.kind == StackItemKind::ActivatedAbility)
+        .unwrap()
+        .clone();
+    assert_eq!(item.controller, p);
+    assert_eq!(item.targets, [Target::Object(target)]);
+    assert_eq!(item.v4.activated_ability_index, Some(0));
+    assert_eq!(item.inline_effect, Some(harvester_v1::marker()));
+    item
+}
+fn hv_nightmares(s: &GameState, p: PlayerId) -> Vec<ObjectId> {
+    s.players[p.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|id| {
+            let o = s.objects.get(*id);
+            o.v4.is_token && engine::has_effective_subtype(s, *id, card_def::Subtype::Nightmare)
+        })
+        .collect()
+}
+fn hv_finish_pair(s: &mut GameState) {
+    let mut replay = restore(s);
+    finish(s);
+    finish(&mut replay);
+    assert_eq!(*s, replay);
+    harvester_v1::validate_state(s).unwrap();
+}
+#[test]
+fn genuine_paid_harvester_printing_sickness_any_graveyard_and_original_target_restore_both_seats() {
+    assert_eq!(id("Abyssal Harvester"), 479);
+    assert!(harvester_v1::definition(479));
+    assert!(card_def::preflight_fully_supported_deck(&[479]).is_err());
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for victim_owner in [p, p.opponent()] {
+            let mut s = hv_ready(p);
+            let early = hv_death(&mut s, p);
+            let h = paid(&mut s, p, "Abyssal Harvester", 3);
+            assert!(harvester_v1::eligible(&s, early));
+            assert!(s.objects.get(h).summoning_sick);
+            assert!(
+                matches!(engine::advance_until_decision(&mut s),Decision::CastSpellOrPass{activatable_abilities,..}
+                if !activatable_abilities.contains(&(h,0)))
+            );
+            let before = s.clone();
+            assert!(engine::step(&mut s, Action::ActivateAbility(h, 0)).is_err());
+            assert_eq!(s, before);
+            hv_main(&mut s, p);
+            let elf = if victim_owner == p {
+                hv_death(&mut s, p)
+            } else {
+                hv_main(&mut s, p.opponent());
+                hv_death(&mut s, p.opponent())
+            };
+            let target_generation = s.objects.get(elf).zone_change_count;
+            hv_activate(&mut s, p, h, elf);
+            assert!(crate::rl::observe_v1(&s, p, 0).is_err());
+            hv_finish_pair(&mut s);
+            assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+            assert!(s.objects.get(elf).zone_change_count > target_generation);
+            let tokens = hv_nightmares(&s, p);
+            assert_eq!(tokens.len(), 1);
+            let token = s.objects.get(tokens[0]);
+            assert_eq!(
+                (token.card_def, token.owner, token.controller),
+                (id("Llanowar Elves"), p, p)
+            );
+            assert!(engine::has_effective_subtype(
+                &s,
+                tokens[0],
+                card_def::Subtype::Elf
+            ));
+            assert!(harvester_v1::copiable_nightmare(&s, tokens[0]).unwrap());
+            assert!(crate::drake_public_v53::capture(&s).is_err());
+        }
+    }
+}
+#[test]
+fn genuine_paid_harvester_season_exempts_all_new_tokens_and_cleans_other_nightmare_copies_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let elf = hv_death(&mut s, p);
+        hv_activate(&mut s, p, h, elf);
+        hv_finish_pair(&mut s);
+        let original = hv_nightmares(&s, p)[0];
+        let (_, electro) = electro(&mut s, p, original);
+        assert!(harvester_v1::copiable_nightmare(&s, electro).unwrap());
+        cast(&mut s, p, "Self-Reflection", &[Target::Object(original)], 6);
+        hv_finish_pair(&mut s);
+        let old = hv_nightmares(&s, p);
+        assert_eq!(old.len(), 3);
+        // An ordinary token is not a Nightmare and must survive cleanup.
+        let ordinary = nightmare_free_elf_primitive(&mut s, p);
+        // A native non-token Nightmare setup must not be exiled by this token-only instruction.
+        let nontoken = put(&mut s, p, "Dreadwing Scavenger", Zone::Battlefield);
+        paid(&mut s, p, "Doubling Season", 5);
+        hv_main(&mut s, p);
+        // Electro's original token may already have sacrificed at an actual end
+        // step. Cleanup must exile all remaining old Nightmare token copies.
+        let old = old
+            .into_iter()
+            .filter(|id| s.objects.get(*id).zone == Zone::Battlefield)
+            .collect::<Vec<_>>();
+        let next = hv_death(&mut s, p);
+        hv_activate(&mut s, p, h, next);
+        hv_finish_pair(&mut s);
+        let new = hv_nightmares(&s, p);
+        assert_eq!(new.len(), 2);
+        for id in old {
+            assert!(!s.players[p.index()].battlefield.contains(&id));
+        }
+        assert_eq!(s.objects.get(ordinary).zone, Zone::Battlefield);
+        assert_eq!(s.objects.get(nontoken).zone, Zone::Battlefield);
+        for id in new {
+            assert_eq!(s.objects.get(id).owner, p);
+            assert!(harvester_v1::copiable_nightmare(&s, id).unwrap());
+        }
+    }
+}
+// Explicit native token-entry setup, not a paid token-producing spell.
+fn nightmare_free_elf_primitive(s: &mut GameState, p: PlayerId) -> ObjectId {
+    let old = s.objects.len();
+    let mut event = event::ProposedEvent::create_token(id("Llanowar Elves"), p);
+    if let event::ProposedEvent::CreateToken(t) = &mut event {
+        t.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
+            copied: true,
+            ..Default::default()
+        });
+    }
+    event::propose_and_commit_batch(s, vec![event]);
+    assert!(s.engine.halted.is_none());
+    s.objects
+        .iter()
+        .find_map(|(id, o)| (id.0 as usize >= old && o.zone == Zone::Battlefield).then_some(id))
+        .unwrap()
+}
+#[test]
+fn genuine_paid_harvester_source_departure_and_control_response_keep_captured_controller_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for control in [false, true] {
+            let mut s = hv_ready(p);
+            let h = paid(&mut s, p, "Abyssal Harvester", 3);
+            hv_main(&mut s, p);
+            let elf = hv_death(&mut s, p);
+            let row = hv_activate(&mut s, p, h, elf);
+            if control {
+                // Genuine native control primitive, not a sorcery response claim.
+                crate::standard_cards_v1::gain_control(&mut s, h, p.opponent());
+            } else {
+                cast(&mut s, p.opponent(), "Unsummon", &[Target::Object(h)], 1);
+            }
+            hv_finish_pair(&mut s);
+            assert_eq!(hv_nightmares(&s, p).len(), 1);
+            assert!(hv_nightmares(&s, p.opponent()).is_empty());
+            assert_eq!(row.v4.ability_source_contract.unwrap().controller, p);
+            assert_eq!(s.objects.get(h).owner, p);
+            assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+        }
+    }
+}
+
+#[test]
+fn genuine_paid_harvester_target_departure_primitive_fizzles_without_cleanup_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let old = hv_death(&mut s, p);
+        hv_activate(&mut s, p, h, old);
+        hv_finish_pair(&mut s);
+        hv_main(&mut s, p);
+        let target = hv_death(&mut s, p);
+        let before = hv_nightmares(&s, p);
+        hv_activate(&mut s, p, h, target);
+        // Native zone-change primitive: there is no claim of a paid instant
+        // graveyard-return spell in this catalog.
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(target, Zone::Hand),
+        );
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(target, Zone::Graveyard),
+        );
+        assert!(harvester_v1::eligible(&s, target));
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(target).zone, Zone::Graveyard);
+        assert_eq!(hv_nightmares(&s, p), before);
+    }
+}
+#[test]
+fn genuine_paid_harvester_public_api_changed_root_kind_unknown_stamp_and_erased_context_refuse_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let target = hv_death(&mut s, p);
+        let item = hv_activate(&mut s, p, h, target);
+        let ctx = crystal_prevention_v1::context(&item);
+        let draw = EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        };
+        for mode in 0..4 {
+            let mut bad = restore(&s);
+            let mut row = item.clone();
+            let mut context = ctx.clone();
+            row.kind = StackItemKind::Spell;
+            row.inline_effect = Some(draw.clone());
+            context.ability_source_contract = None;
+            context.stack_item_id = if mode % 2 == 0 {
+                None
+            } else {
+                Some(crate::ids::StackItemId(u64::MAX))
+            };
+            if mode >= 2 {
+                row.v4.ability_source_contract = None;
+            }
+            let before = bad.clone();
+            assert!(begin_resumable_resolution(&draw, &context, row.clone(), &mut bad).is_err());
+            assert_eq!(bad, before);
+            bad.engine.pending_effect = Some(EffectContinuation {
+                resolving_item: row,
+                ctx: context.clone(),
+                frames: vec![EffectFrame::Program {
+                    op: draw.clone(),
+                    path: vec![],
+                }],
+                choice: None,
+                answered_choice_guard: None,
+            });
+            let before = bad.clone();
+            assert!(resume_resumable_resolution(&mut bad).is_err());
+            assert_eq!(bad, before);
+            let mut bad = restore(&s);
+            execute(&draw, &context, &mut bad);
+            let mut expected = s.clone();
+            expected.engine.halted =
+                Some((engine::UnsupportedMechanic::InvalidEffectContinuation, h));
+            assert_eq!(bad, expected);
+        }
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(target).zone, Zone::Exile);
+    }
+}
+#[test]
+fn genuine_paid_harvester_graveyard_receipt_turn_generation_and_origin_tampering_refuse_readonly_both_seats(
+) {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let _h = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let target = hv_death(&mut s, p);
+        let first=s.engine.event_history.iter().position(|e|matches!(e,CommittedEvent::HarvesterGraveyardEntryV1{entry} if entry.card.object==target)).unwrap();
+        assert!(harvester_v1::eligible(&s, target));
+        hv_main(&mut s, p.opponent());
+        assert!(!harvester_v1::eligible(&s, target));
+        for mode in 0..4 {
+            let mut bad = restore(&s);
+            let current_turn = bad.turn_key_v1();
+            let current_player = bad.active_player;
+            if let CommittedEvent::HarvesterGraveyardEntryV1 { entry } =
+                &mut bad.engine.event_history[first]
+            {
+                match mode {
+                    0 => {
+                        entry.turn = current_turn;
+                        entry.active_player = current_player;
+                    }
+                    1 => entry.card.expected_zone_change_count += 1,
+                    2 => entry.card.expected_zone_change_count -= 1,
+                    _ => {
+                        entry.origin =
+                            harvester_v1::GraveyardOriginV1::ZoneChange { history_index: 0 }
+                    }
+                }
+            }
+            let before = bad.clone();
+            assert!(harvester_v1::validate_state(&bad).is_err());
+            assert_eq!(bad, before);
+            assert!(!harvester_v1::eligible(&bad, target));
+        }
+        // A real later put is eligible again and its origin cannot be relabelled
+        // to the older move of the same physical object.
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(target, Zone::Hand),
+        );
+        event::propose_and_commit(
+            &mut s,
+            event::ProposedEvent::zone_change(target, Zone::Graveyard),
+        );
+        assert!(harvester_v1::eligible(&s, target));
+        harvester_v1::validate_state(&s).unwrap();
+        let mut bad = restore(&s);
+        let old = match bad.engine.event_history[first] {
+            CommittedEvent::HarvesterGraveyardEntryV1 { entry } => entry.origin,
+            _ => unreachable!(),
+        };
+        let last = bad
+            .engine
+            .event_history
+            .iter_mut()
+            .rev()
+            .find_map(|e| {
+                if let CommittedEvent::HarvesterGraveyardEntryV1 { entry } = e {
+                    (entry.card.object == target).then_some(entry)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        last.origin = old;
+        assert!(harvester_v1::validate_state(&bad).is_err());
+    }
+}
+
+fn hv_finish_mill(s: &mut GameState) {
+    for _ in 0..160 {
+        let d = engine::advance_until_decision(s);
+        assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
+        if s.stack.is_empty()
+            && s.engine.pending_effect.is_none()
+            && s.engine.pending_triggers.is_empty()
+        {
+            return;
+        }
+        let action = match d {
+            Decision::ChooseTargets {
+                player,
+                ref legal_targets,
+                ..
+            } => {
+                let target = Target::Player(player.opponent());
+                assert!(legal_targets.contains(&target));
+                Some(Action::ChooseTarget(target))
+            }
+            Decision::ChooseEffectTargets {
+                ref legal_targets,
+                can_finish: false,
+                ..
+            } => Some(Action::ChooseEffectTarget(legal_targets[0])),
+            _ => None,
+        };
+        if let Some(action) = action {
+            let mut replay = restore(s);
+            engine::step(s, action.clone()).unwrap();
+            engine::step(&mut replay, action).unwrap();
+            assert_eq!(*s, replay);
+        } else {
+            quiet(s, d);
+        }
+    }
+    panic!("actual Tutelage chain did not complete");
+}
+#[test]
+fn genuine_paid_harvester_discard_and_mill_from_anywhere_are_eligible_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        // Libraries are declared at construction. Tutelage genuinely mills the
+        // creature and land, so this does not confuse 'put there' with 'died'.
+        let own = vec![id("Forest"); 40];
+        let mut other = own.clone();
+        other[0] = id("Llanowar Elves");
+        let libraries = if p == PlayerId::P0 {
+            [&own[..], &other[..]]
+        } else {
+            [&other[..], &own[..]]
+        };
+        let mut s = GameState::new_from_libraries_with_starting_player_v1(
+            libraries[0],
+            libraries[1],
+            crate::rl::card_name,
+            110_479,
+            p,
+        );
+        s.step = Step::Main1;
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
+        for seat in [p, p.opponent()] {
+            for name in ["Forest", "Island", "Mountain", "Swamp"] {
+                for _ in 0..12 {
+                    put(&mut s, seat, name, Zone::Battlefield);
+                }
+            }
+        }
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        let (_, fast) = electro(&mut s, p, h);
+        paid(&mut s, p, "Sphinx's Tutelage", 3);
+        cast(&mut s, p, "Think Twice", &[], 2);
+        hv_finish_mill(&mut s);
+        let milled = s.players[p.opponent().index()]
+            .graveyard
+            .iter()
+            .copied()
+            .find(|object| s.objects.get(*object).card_def == id("Llanowar Elves"))
+            .unwrap();
+        assert!(harvester_v1::eligible(&s, milled));
+        hv_activate(&mut s, p, fast, milled);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(milled).zone, Zone::Exile);
+        let mut s = hv_ready(p);
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        hv_main(&mut s, p);
+        let discard = put(&mut s, p, "Llanowar Elves", Zone::Hand);
+        priority(&mut s, p);
+        let thrill = put(&mut s, p, "Thrill of Possibility", Zone::Hand);
+        let before = taps(&s, p);
+        engine::step(&mut s, Action::CastSpell(thrill)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut s),Decision::Discard{player,count:1,ref choices} if player==p && choices.contains(&discard))
+        );
+        let mut replay = restore(&s);
+        engine::step(&mut s, Action::Discard(vec![discard])).unwrap();
+        engine::step(&mut replay, Action::Discard(vec![discard])).unwrap();
+        assert_eq!(
+            engine::advance_until_decision(&mut s),
+            engine::advance_until_decision(&mut replay)
+        );
+        assert_eq!(s, replay);
+        assert_eq!(taps(&s, p) - before, 2);
+        assert!(s.stack.last().unwrap().discarded.contains(&discard));
+        hv_finish_pair(&mut s);
+        assert!(harvester_v1::eligible(&s, discard));
+        hv_activate(&mut s, p, h, discard);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(discard).zone, Zone::Exile);
+    }
+}
+#[test]
+fn genuine_paid_harvester_copied_activation_haste_and_printed_ability_suppression_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = hv_ready(p);
+        let h = paid(&mut s, p, "Abyssal Harvester", 3);
+        let (_, copy) = electro(&mut s, p, h);
+        assert!(engine::has_effective_keyword(&s, copy, Keywords::HASTE));
+        assert!(s.objects.get(copy).summoning_sick);
+        let elf = hv_death(&mut s, p);
+        hv_activate(&mut s, p, copy, elf);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Exile);
+        hv_main(&mut s, p);
+        let target = hv_death(&mut s, p);
+        let aura = cast(&mut s, p, "Witness Protection", &[Target::Object(h)], 1);
+        hv_finish_pair(&mut s);
+        assert!(
+            matches!(engine::advance_until_decision(&mut s),Decision::CastSpellOrPass{activatable_abilities,..} if !activatable_abilities.contains(&(h,0)))
+        );
+        cast(
+            &mut s,
+            p.opponent(),
+            "Broken Wings",
+            &[Target::Object(aura)],
+            3,
+        );
+        hv_finish_pair(&mut s);
+        hv_activate(&mut s, p, h, target);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(target).zone, Zone::Exile);
+    }
+}
+
+#[test]
+fn genuine_paid_condemn_then_draw_and_flashback_keep_physical_generation_history_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let own = [id("Forest"); 2];
+        let other = [id("Forest"); 40];
+        let libraries = if p == PlayerId::P0 {
+            [&own[..], &other[..]]
+        } else {
+            [&other[..], &own[..]]
+        };
+        let mut s = GameState::new_from_libraries_with_starting_player_v1(
+            libraries[0],
+            libraries[1],
+            crate::rl::card_name,
+            110_479,
+            p,
+        );
+        s.step = Step::Main1;
+        crate::combat_damage_v1::enable_foundations_combat_v1(&mut s).unwrap();
+        for seat in [p, p.opponent()] {
+            for name in ["Forest", "Island", "Mountain", "Swamp", "Plains"] {
+                for _ in 0..8 {
+                    put(&mut s, seat, name, Zone::Battlefield);
+                }
+            }
+        }
+        paid(&mut s, p, "Abyssal Harvester", 3);
+        let elf = paid(&mut s, p, "Llanowar Elves", 1);
+        hv_main(&mut s, p);
+        for _ in 0..64 {
+            let d = engine::advance_until_decision(&mut s);
+            if let Decision::DeclareAttackers { player, eligible } = d {
+                assert_eq!(player, p);
+                assert!(eligible.contains(&elf));
+                engine::step(&mut s, Action::DeclareAttackers(vec![elf])).unwrap();
+                break;
+            }
+            quiet(&mut s, d);
+        }
+        assert!(s.engine.combat.attackers.contains(&elf));
+        cast(&mut s, p.opponent(), "Condemn", &[Target::Object(elf)], 1);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Library);
+        let mut replay = restore(&s);
+        for _ in 0..2 {
+            cast(&mut s, p, "Think Twice", &[], 2);
+            finish(&mut s);
+            cast(&mut replay, p, "Think Twice", &[], 2);
+            finish(&mut replay);
+            assert_eq!(s, replay);
+            harvester_v1::validate_state(&s).unwrap();
+        }
+        assert_eq!(s.objects.get(elf).zone, Zone::Hand);
+        // Noncreature cards create no Harvester entry, and their real printed
+        // flashback announcement therefore cannot corrupt a retained receipt.
+        let twice = s.players[p.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .find(|object| s.objects.get(*object).card_def == id("Think Twice"))
+            .unwrap();
+        assert!(!s.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::HarvesterGraveyardEntryV1{entry} if entry.card.object==twice)));
+        // A third draw needs a card, so this distinct flashback scene uses the
+        // original declared full library and a genuinely paid physical spell.
+        let mut s = hv_ready(p);
+        let twice = cast(&mut s, p, "Think Twice", &[], 2);
+        hv_finish_pair(&mut s);
+        cast_card(&mut s, p, twice, &[], 3);
+        assert!(s.stack.last().unwrap().is_flashback);
+        hv_finish_pair(&mut s);
+        assert_eq!(s.objects.get(twice).zone, Zone::Exile);
+    }
+}
+
+#[test]
+fn genuine_paid_harvester_target_roster_and_public_rows_ignore_unrevealed_opponent_hand_both_seats()
+{
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut worlds = Vec::new();
+        for secret in ["Forest", "Consuming Aberration"] {
+            let mut s = hv_ready(p);
+            let hidden = put(&mut s, p.opponent(), secret, Zone::Hand);
+            let h = paid(&mut s, p, "Abyssal Harvester", 3);
+            hv_main(&mut s, p);
+            let target = hv_death(&mut s, p);
+            assert!(s.players[p.opponent().index()].hand.contains(&hidden));
+            priority(&mut s, p);
+            let roster = engine::legal_targets_for(harvester_v1::target_spec(), &[], &s);
+            assert_eq!(roster, [Target::Object(target)]);
+            let row = hv_activate(&mut s, p, h, target);
+            let serialized = serde_json::to_string(&row).unwrap();
+            assert!(!serialized.contains(secret));
+            worlds.push((roster, row));
+        }
+        assert_eq!(worlds[0], worlds[1]);
+    }
+}

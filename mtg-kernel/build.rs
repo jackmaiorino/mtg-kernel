@@ -5868,6 +5868,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "None",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
+        "Abyssal Harvester" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program {
+                name: "harvester_exile_copy_nightmare_then_other_nightmare_tokens_v1",
+                effect: "crate::effect::harvester_v1::marker()",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureCardPutIntoGraveyardThisTurnV1)",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Sphinx's Tutelage" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana { colored: Some("U"), generic: 5 }],
             effect: AbilityEffectRecipe::Program {
