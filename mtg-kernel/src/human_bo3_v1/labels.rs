@@ -2953,7 +2953,7 @@ mod next_five_native_label_tests {
             assert!(matches!(
                 engine::advance_until_decision(&mut state),
                 Decision::CastSpellOrPass { player, castable_spells, .. }
-                    if player == caster && castable_spells.contains(&employment)
+                    if player == caster && !castable_spells.contains(&employment)
             ));
             engine::step(&mut state, Action::Pass).unwrap();
             assert!(matches!(
