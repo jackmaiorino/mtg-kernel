@@ -14,6 +14,11 @@ native counters. Every action reference must occur in that actor's authenticated
 public observation. Historical pending/resolving source roles use their original
 public incarnation, not a newer hidden incarnation.
 
+Incarnation-only Ajani target/token, Fishing host/fish, Fiery target and Krenko
+token fields retain their exact two-field public relations. Closed typed parent
+routes mask those relations only in the temporary printing-authority scan.
+They authorize no card identity. Unknown raw `arena_id` shapes still refuse.
+
 Native exact-bound combat feasibility removes impossible answers without changing
 the order of survivors. Library choices use the existing positionless visible
 ordering through a shared pure ordering key. Original library indices remain
@@ -26,6 +31,14 @@ source authentication boundary. Supporting those requires a separately assigned
 sealed owner with its actual revision. Existing Hunter production code is
 preserved. Frozen V1/V2/V53/V59 guards remain in place.
 
+The source authentication guard deliberately refuses nonscan worlds whose native
+Advance is not idempotent. With a genuine paid Drake present, repeating a surface
+decision can append a real `DrakeJournalV1::Enclosing` operation even when its menu
+is unchanged. The complete native-world equality guard remains intact. No receipt
+is stripped, and no caller flag or new source/owner capability substitutes for
+the missing read-only issued-origin API. Drake activation projection is therefore
+unqualified at this checkpoint.
+
 Alesha's current native root is `BindAleshaRaidReturn`, materialized as the bare
 `AleshaRaidReturn` leaf. Its target is mandatory and its legal return executes
 directly. The printed resolution-time optional return is absent in the inherited
@@ -37,10 +50,12 @@ continuation validation, target/source preservation, and genuine paid accept
 and decline/restore fixtures. Reusing an unrelated payment or search purpose
 would change its meaning. That shared optional-protocol work remains pending.
 
-New unrun source fixtures cover paid both-seat ordinary/Familiar/Drake candidate
-mapping, Raid exact targets and original current-versus-departure power, genuine
+Eight unrun source fixtures cover paid both-seat ordinary/Familiar candidate
+mapping and genuine Drake refusal, Raid exact targets and original
+current-versus-departure power, genuine
 Nine-Lives death and delayed ordering, paid Generous Ent equal-visible library
 permutations, exact combat feasibility and owned-scan refusal, opponent hidden
 identity equivalence, serialization/restore, and read-only origin/state/annotation
-forgeries. No test is ignored and no printing or native decision is fabricated.
-Explicit direct counter and combat requirement operands are labelled in source.
+forgeries. Paid Fishing equip also checks incarnation-only relations, unknown
+fields and their absence from printing authority. No test is ignored and no
+printing or native decision is fabricated. Direct combat operands are labelled.

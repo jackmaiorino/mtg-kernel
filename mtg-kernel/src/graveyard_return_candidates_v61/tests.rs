@@ -91,7 +91,7 @@ fn raid_power(value: &GraveyardReturnCandidatesV61, expected: i32, source: Power
 }
 
 #[test]
-fn paid_normal_familiar_and_drake_keep_native_ordinary_rows_counter_meaning_restore_both_seats() {
+fn paid_normal_familiar_mapping_and_drake_nonidempotent_boundary_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready(actor);
         let familiar = paid(&mut state, actor, "Nine-Lives Familiar", None);
@@ -115,31 +115,44 @@ fn paid_normal_familiar_and_drake_keep_native_ordinary_rows_counter_meaning_rest
         );
         assert!(crate::next_five_observation_v59::validate_state(&state).is_err());
         assert!(crate::rl::core_policy_action_candidates_next_five_v59(&origin, &state).is_err());
-        let drake = paid(&mut state, actor, "Drake Hatcher", None);
-        // Native counter-storage operand to isolate the already-implemented
-        // activation payment. This does not fabricate a printing or ability.
-        state.objects.get_mut(drake).counters.incubation = 3;
-        let (_, _, value, _) = current(&mut state);
-        let activation = value
-            .candidates
-            .iter()
-            .find_map(|row| row.drake_activation.as_ref())
-            .unwrap();
-        assert_eq!(activation.source.arena_id, drake.0);
+        paid(&mut state, actor, "Drake Hatcher", None);
+        let mut surface = PolicySurfaceV5::new_with_engine_priority_v1();
+        let origin = surface.next_decision(&mut state).unwrap();
+        let before = serde_json::to_vec(&state).unwrap();
+        let mut probe = state.clone();
+        let mut probe_surface = surface.clone();
+        assert_eq!(probe_surface.next_decision(&mut probe).unwrap(), origin);
+        assert_ne!(probe, state);
+        assert!(probe.engine.event_history[state.engine.event_history.len()..].iter().any(|event|
+            matches!(event, crate::event::CommittedEvent::DrakeJournalV1 { record }
+                if matches!(&record.value, crate::drake_hatcher_v1::custody::JournalV1::Enclosing { .. }))));
+        // Re-entering Advance issues a real enclosing operation even with an
+        // unchanged menu. Retain the full-world guard and prove this boundary;
+        // do not strip receipts or pretend the activation was projected.
+        let refusal = project_v61(
+            &state,
+            &surface,
+            (origin.actor(&state).unwrap(), &origin),
+            0,
+            0,
+            origin.substep(),
+        )
+        .unwrap_err();
         assert_eq!(
-            (activation.before, activation.after, activation.count),
-            (3, 0, 3)
+            refusal.0,
+            "V61 candidates require the actual already-current exact-bound surface"
         );
-        assert!(!activation.countering_refunds_costs);
-        let mut forged = value.clone();
-        forged
-            .candidates
-            .iter_mut()
-            .find_map(|row| row.drake_activation.as_mut())
-            .unwrap()
-            .after += 1;
-        forged.projection_sha256 = commitment(&forged).unwrap();
-        assert!(validate_artifact(&forged).is_err());
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        let restored: GameState = serde_json::from_slice(&before).unwrap();
+        assert!(project_v61(
+            &restored,
+            &surface,
+            (origin.actor(&restored).unwrap(), &origin),
+            0,
+            0,
+            origin.substep()
+        )
+        .is_err());
     }
 }
 
@@ -512,6 +525,107 @@ fn paid_candidate_annotations_actual_origin_and_source_state_forgeries_reject_re
         )
         .is_err());
         assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+        assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+    }
+}
+
+#[test]
+fn paid_fishing_equip_keeps_typed_incarnation_relations_without_printing_authority_both_seats() {
+    use crate::akroma_family_public_v40::FamilyFactsV40 as F;
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let host = paid(&mut state, actor, "Nine-Lives Familiar", None);
+        let pole = paid(&mut state, actor, "Fishing Pole", None);
+        let forests = state.players[actor.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&id| !state.objects.get(id).tapped && state.objects.get(id).name == "Forest")
+            .take(2)
+            .collect::<Vec<_>>();
+        assert_eq!(forests.len(), 2);
+        for forest in forests {
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+            );
+            engine::step(&mut state, Action::ActivateManaAbility(forest)).unwrap();
+            assert!(state.objects.get(forest).tapped);
+        }
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::CastSpellOrPass { activatable_abilities, .. } if activatable_abilities.contains(&(pole, 0)))
+        );
+        engine::step(&mut state, Action::ActivateAbility(pole, 0)).unwrap();
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(host)))
+        );
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(host))).unwrap();
+        settle(&mut state);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+        assert_eq!(state.objects.get(pole).v4.attached_to.unwrap().object, host);
+        let (surface, origin, value, _) = current(&mut state);
+        let family_index = value
+            .observation
+            .common
+            .common
+            .families
+            .iter()
+            .position(|f| matches!(f, F::Fishing(_)))
+            .unwrap();
+        let F::Fishing(fishing) = &value.observation.common.common.families[family_index] else {
+            unreachable!()
+        };
+        let pole_index = fishing
+            .poles
+            .iter()
+            .position(|p| p.source.arena_id == pole.0)
+            .unwrap();
+        let relation = fishing.poles[pole_index].attached_host.unwrap();
+        assert_eq!(
+            (relation.arena_id, relation.zone_change_count),
+            (host.0, state.objects.get(host).zone_change_count)
+        );
+        let before = serde_json::to_vec(&state).unwrap();
+        let authorized = authorized_references(&value.observation).unwrap();
+        let path = format!(
+            "/common/common/families/{family_index}/facts/poles/{pole_index}/attached_host"
+        );
+        let mut raw = serde_json::to_value(&value.observation).unwrap();
+        raw.pointer_mut(&path).unwrap()["zone_change_count"] =
+            (relation.zone_change_count + 1).into();
+        assert!(mask_incarnation_relations(&value.observation, &mut raw).is_err());
+        let mut raw = serde_json::to_value(&value.observation).unwrap();
+        raw.pointer_mut(&path).unwrap()["card_db_id"] = state.objects.get(host).card_def.into();
+        assert!(mask_incarnation_relations(&value.observation, &mut raw).is_err());
+        assert!(serde_json::from_value::<GraveyardReturnObservationV61>(raw).is_err());
+        let mut output = Vec::new();
+        assert!(references(&serde_json::to_value(relation).unwrap(), &mut output).is_err());
+        assert!(output.is_empty());
+        let mut forged = value.clone();
+        let F::Fishing(fishing) = &mut forged.observation.common.common.families[family_index]
+        else {
+            unreachable!()
+        };
+        fishing.poles[pole_index]
+            .attached_host
+            .as_mut()
+            .unwrap()
+            .arena_id = u32::MAX;
+        // Even a forged typed relation contributes no CardStableRef. Only
+        // native recapture can authenticate this relation's actual incarnation.
+        assert_eq!(
+            authorized_references(&forged.observation).unwrap(),
+            authorized
+        );
+        assert!(validate_current(
+            &state,
+            &surface,
+            (origin.actor(&state).unwrap(), &origin),
+            0,
+            0,
+            origin.substep(),
+            &forged
+        )
+        .is_err());
         assert_eq!(serde_json::to_vec(&state).unwrap(), before);
     }
 }

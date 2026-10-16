@@ -179,9 +179,122 @@ fn references(value: &Value, output: &mut Vec<CardStableRefV1>) -> Result<(), Rl
 fn authorized_references(
     value: &GraveyardReturnObservationV61,
 ) -> Result<Vec<CardStableRefV1>, RlContractError> {
+    let mut authority = serde_json::to_value(value).map_err(error)?;
+    mask_incarnation_relations(value, &mut authority)?;
     let mut refs = Vec::new();
-    references(&serde_json::to_value(value).map_err(error)?, &mut refs)?;
+    references(&authority, &mut refs)?;
     Ok(refs)
+}
+
+/// These closed typed parent routes carry incarnation relations, never a
+/// printing identity. Mask only those fields in the temporary authority scan;
+/// the actual complete public observation and its commitments remain intact.
+/// The generic action-reference scan still rejects every incarnation-only or
+/// unknown `arena_id` shape, including one outside these authenticated routes.
+fn mask_incarnation_relations(
+    value: &GraveyardReturnObservationV61,
+    authority: &mut Value,
+) -> Result<(), RlContractError> {
+    use crate::akroma_family_public_v40::FamilyFactsV40 as F;
+    for (index, row) in value.common.common.ajani.activations.iter().enumerate() {
+        let base = format!("/common/common/ajani/activations/{index}");
+        mask_incarnation_relation(authority, &format!("{base}/target"), &row.target)?;
+        mask_incarnation_relation(
+            authority,
+            &format!("{base}/created_tokens"),
+            &row.created_tokens,
+        )?;
+    }
+    for (family_index, family) in value.common.common.families.iter().enumerate() {
+        let base = format!("/common/common/families/{family_index}/facts");
+        match family {
+            F::Fishing(facts) => {
+                for (index, row) in facts.poles.iter().enumerate() {
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{base}/poles/{index}/attached_host"),
+                        &row.attached_host,
+                    )?;
+                }
+                for (index, row) in facts.operations.iter().enumerate() {
+                    let operation = format!("{base}/operations/{index}");
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{operation}/original_host"),
+                        &row.original_host,
+                    )?;
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{operation}/created_fish"),
+                        &row.created_fish,
+                    )?;
+                }
+            }
+            F::Fiery(facts) => {
+                if let Some(row) = &facts.facts.pending_cast_targets {
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{base}/facts/pending_cast_targets/selected_targets"),
+                        &row.selected_targets,
+                    )?;
+                }
+                for (index, row) in facts.facts.death_replacements.iter().enumerate() {
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{base}/facts/death_replacements/{index}/original_target"),
+                        &row.original_target,
+                    )?;
+                }
+            }
+            F::Krenko(facts) => {
+                for (index, row) in facts.facts.activations.iter().enumerate() {
+                    mask_incarnation_relation(
+                        authority,
+                        &format!("{base}/facts/activations/{index}/created_tokens"),
+                        &row.created_tokens,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn mask_incarnation_relation(
+    authority: &mut Value,
+    path: &str,
+    typed: &impl Serialize,
+) -> Result<(), RlContractError> {
+    let expected = serde_json::to_value(typed).map_err(error)?;
+    fn pair(value: &Value) -> bool {
+        match value {
+            Value::Null => true,
+            Value::Array(rows) => rows.iter().all(pair),
+            Value::Object(fields) => {
+                fields.len() == 2
+                    && fields
+                        .get("arena_id")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|v| u32::try_from(v).is_ok())
+                    && fields
+                        .get("zone_change_count")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|v| u32::try_from(v).is_ok())
+            }
+            _ => false,
+        }
+    }
+    let actual = authority
+        .pointer_mut(path)
+        .ok_or_else(|| error("V61 typed incarnation parent route changed"))?;
+    if !pair(&expected) || *actual != expected {
+        return Err(error(
+            "V61 incarnation relation differs from its exact typed parent field",
+        ));
+    }
+    *actual = Value::Null;
+    Ok(())
 }
 fn validate_references(action: &A, authorized: &[CardStableRefV1]) -> Result<(), RlContractError> {
     let mut refs = Vec::new();
@@ -384,6 +497,9 @@ pub(crate) fn project_parts_v61(
     observation::validate_state(state).map_err(error)?;
     // Exact-bound source surfaces authenticate their own private scan. Owned
     // revision surfaces fail here until a separately assigned owner exists.
+    // Nonscan re-entry must also be genuinely idempotent. A native Drake
+    // Enclosing receipt is a real world change, even if its menu is unchanged;
+    // this guard refuses it until an actual read-only issued-origin API exists.
     let mut probe = state.clone();
     let mut probe_surface = surface.clone();
     let actual = probe_surface.next_decision(&mut probe).map_err(error)?;
