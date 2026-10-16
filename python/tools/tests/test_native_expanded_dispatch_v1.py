@@ -401,8 +401,42 @@ class NativeExpandedAdmissionTests(AdmissionTestCase):
         execution = dispatch.read(Path(request["root"]) / "execution.json")
         self.assertGreaterEqual(execution["barrier_seconds"], 0.4)
         self.assertLess(execution["seconds"], execution["barrier_seconds"])
-        # The start is taken at the spawn, before the reservation's lock.
-        self.assertLessEqual(dispatch.read(Path(request["root"]) / "started.json")["started_unix"], recorded[0])
+        # The start is taken at the spawn, before the reservation's lock, and the receipt binds it.
+        started = dispatch.read(Path(request["root"]) / "started.json")
+        self.assertLessEqual(started["started_unix"], recorded[0])
+        self.assertEqual(execution["started_unix"], started["started_unix"])
+
+    def test_only_a_qualification_receipt_records_its_start(self):
+        """A production dispatch's execution record keeps its fields; a qualification's adds its start."""
+        def popen(*args, **kwargs):
+            child = unittest.mock.MagicMock(pid=4242, returncode=1)
+            child.poll.return_value = 1
+            return child
+        for qualification in (False, True):
+            request = self.request(1)
+            request["root"] += f"-{qualification}"
+            request["cold_root"] += f"-{qualification}"
+            if not qualification:
+                request["choice"] = {"path": "admitted", "sha256": "0" * 64}
+            request_ref = self.save(request)
+            with patch.dict(os.environ, {"MTG_HOST_RESERVATION_TOKEN": "test-token"}), \
+                    patch.object(dispatch, "validate_request", return_value=(self.config, self.runtime)), \
+                    patch.object(dispatch, "require_choice"), \
+                    patch.object(dispatch, "placed_config", side_effect=lambda request, config, qualification: config), \
+                    patch.object(dispatch, "set_affinity"), \
+                    patch.object(dispatch, "require_mapped_libraries"), \
+                    patch("host_reservation_v1.status", return_value={"token_fate": "holds"}), \
+                    patch("host_reservation_v1.record_descendant"), \
+                    patch.object(dispatch.subprocess, "Popen", side_effect=popen):
+                with self.assertRaisesRegex(RuntimeError, "native process failed"):
+                    dispatch.execute(Path(request_ref["path"]), qualification)
+            execution = dispatch.read(Path(request["root"]) / "execution.json")
+            started = dispatch.read(Path(request["root"]) / "started.json")
+            if qualification:
+                self.assertEqual(sorted(execution), ["child_seconds", "error", "exit_code", "seconds", "started_unix"])
+                self.assertEqual(execution["started_unix"], started["started_unix"])
+            else:
+                self.assertEqual(sorted(execution), ["child_seconds", "error", "exit_code", "seconds"])
 
     def test_fastest_choice_rejects_profiled_qualification(self):
         choice = self.choice()
@@ -889,7 +923,7 @@ class PackChoiceTests(AdmissionTestCase):
                   "fingerprint": dispatch.output_fingerprint(config, "training", result, self.runtime, True),
                   "completed_games": 1, "completed_updates": 1, "seconds": seconds,
                   "execution": self.save({"exit_code": 0, "error": None, "child_seconds": child_seconds,
-                                          "seconds": seconds - 1}),
+                                          "seconds": seconds - 1, "started_unix": start}),
                   "run": dispatch.pin(native/"run.json"),
                   "archive": self.save({"mismatches": 0, "native_root": str(native),
                       "scheme": "two-deflate1-shards-full-readback/v1",
@@ -981,16 +1015,39 @@ class PackChoiceTests(AdmissionTestCase):
         self.assertEqual((selected["qualification"], selected["projected_seconds"], selected["study_runs"]),
                          (choice["qualifications"][1], 384, 1))
 
+    def test_transport_counts_once_a_run_or_wave_and_the_queue_once(self):
+        """Two runs on a host with 100 s transport and a 50 s queue: solo 2 x (384 + 100) + 50
+        = 1,018 s, the pack one wave of 768 + 100 + 50 = 918 s. Without them the two tie at
+        768 s, and the solo allocation, listed first, stays the fastest."""
+        def priced(select_pack, transport=100, queue=50):
+            choice = self.study(2, self.pack(), select_pack=select_pack)
+            choice["inventory"]["desktop"].update(transport_seconds=transport, queue_seconds=queue,
+                                                  queue_evidence=self.save({"queue": "measured"}))
+            return choice
+        selected = self.admit(priced(True), self.slot([0]))
+        self.assertEqual((selected["projected_seconds"], selected["study_runs"]), (918, 2))
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(priced(False), self.request(2)["placement"])
+        choice = priced(False, 0, 0)
+        solo = self.admit(choice, self.request(2)["placement"])
+        self.assertEqual((solo["qualification"], solo["projected_seconds"]), (choice["qualifications"][1], 768))
+        with self.assertRaisesRegex(ValueError, "fastest"):
+            self.admit(priced(True, 0, 0), self.slot([0]))
+
     def test_pack_refuses_changed_outputs_and_unproven_timing(self):
         with self.assertRaisesRegex(ValueError, "changed the sample or the saved learning outputs"):
             self.admit(self.study(8, self.pack(changed=3)), self.slot([0]))
         for start in (5000, 1000.91):  # far apart, or just past a tenth of the 9 s runs
             with self.assertRaisesRegex(ValueError, "did not start together"):
                 pack = self.pack()
-                later = dispatch.read(pack["packed"][3]["started"]["path"])
-                later["started_unix"] = start
-                pack["packed"][3]["started"] = self.save(later)
+                pack["packed"][3] = dict(slot=3, **self.pack_trial(f"late-{start}", pack["slots"][3], 12, start, 9))
                 self.admit(self.study(8, pack), self.slot([0]))
+        with self.assertRaisesRegex(ValueError, "start time differs from its receipt"):
+            pack = self.pack()  # a start record moved to fit, against the start its receipt binds
+            moved = dispatch.read(pack["packed"][3]["started"]["path"])
+            moved["started_unix"] -= 0.05
+            pack["packed"][3]["started"] = self.save(moved)
+            self.admit(self.study(8, pack), self.slot([0]))
         with self.assertRaisesRegex(ValueError, "solo trial overlapped"):
             self.admit(self.study(8, self.pack(solo_overlap=True)), self.slot([0]))
         with self.assertRaisesRegex(ValueError, "start record"):
@@ -1098,7 +1155,8 @@ class PackChoiceTests(AdmissionTestCase):
                     dispatch.read(dispatch.checked(report["request"])) | {"placement": report["placement"]},
                     self.config, None, "fingerprint")), \
                 patch.object(dispatch, "qualification_sample", return_value="sample"), \
-                patch.object(dispatch, "qualification_work", return_value={"child_seconds": 9}):
+                patch.object(dispatch, "qualification_work",
+                             side_effect=lambda report, *args: dispatch.read(dispatch.checked(report["execution"]))):
             # The computehost's slots (CPUs 0, 2, 4, 5, one class) classify by its record, not by this host.
             self.assertEqual(self.admit(choice, self.slot([0]))["pack"], choice["packs"][0])
 

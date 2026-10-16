@@ -232,7 +232,9 @@ trial ran on its slot, every trial's sample and full output fingerprint equals
 those of the family's serial/parallel qualifications (so each packed output is
 byte-equal to the serial run's), the packed trials started within a tenth of
 the shortest one's native seconds of each other, no solo trial overlapped
-another trial, there is one solo trial per kind and one packed trial per slot,
+another trial (by the start each trial's receipt binds: a qualification's
+execution record carries its native child's start, which must equal its
+start record's), there is one solo trial per kind and one packed trial per slot,
 the slots share one worker count and lie inside the host's eligible CPU set,
 and all three load records name one timed declaration that holds every slot
 CPU and its SMT siblings with no other running claim on its cores. Kinds come

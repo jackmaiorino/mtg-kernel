@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -106,6 +107,51 @@ class SlotTests(PackTestCase):
                                  "root": "/hot/qual-plan0-packed-1", "cold_root": "/cold/qual-plan0-packed-1",
                                  "config": base["config"]})
         self.assertEqual(base["placement"]["cpu_affinity"], [0, 1, 2, 3])
+
+
+class StartTests(PackTestCase):
+    """The real start(): a busy refusal is retried after a pause, anything else fails at once."""
+
+    def start(self, outcomes, retries=3):
+        """start() against a launcher that answers (exit code, stderr) in turn;
+        returns its result, the commands it ran and the pauses it took."""
+        commands, pauses = [], []
+
+        def run(command, **options):
+            self.assertEqual(options, {"capture_output": True, "text": True, "check": False})
+            commands.append(command)
+            code, stderr = outcomes[len(commands) - 1]
+            stdout = json.dumps({"nested": True, "state": "dispatched", "pid": 77}) + "\n" if code == 0 else ""
+            return subprocess.CompletedProcess(command, code, stdout, stderr)
+        with patch.object(pack.subprocess, "run", side_effect=run), \
+                patch.object(pack.time, "sleep", side_effect=pauses.append):
+            try:
+                result = pack.start("qualify", self.root / "t.request.json", "node7", retries, 60)
+            except ValueError as error:
+                result = error
+        return result, commands, pauses
+
+    def test_busy_refusals_are_retried_until_the_dispatch_starts(self):
+        busy = (1, "Held: busy refusal: 3 processes on the host")
+        pid, commands, pauses = self.start([busy, busy, (0, "")])
+        self.assertEqual(pid, 77)
+        self.assertEqual(commands, [[sys.executable, "-B", pack.DISPATCHER, "qualify",
+                                     str(self.root / "t.request.json"), "--compute-host-name", "node7"]] * 3)
+        self.assertEqual(pauses, [60, 60])
+
+    def test_a_dispatch_still_busy_after_every_retry_fails(self):
+        error, commands, pauses = self.start([(1, "busy refusal")] * 3)
+        self.assertRegex(str(error), "qualify .*busy refusal")
+        self.assertEqual((len(commands), pauses), (3, [60, 60]))
+
+    def test_any_other_refusal_or_a_missing_handoff_fails_at_once(self):
+        error, commands, pauses = self.start([(1, "stale or incomplete placement inventory")])
+        self.assertRegex(str(error), "stale or incomplete placement inventory")
+        self.assertEqual((len(commands), pauses), (1, []))
+        with patch.object(pack.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, '{"state": "running"}\n', "")):
+            with self.assertRaisesRegex(ValueError, "running"):
+                pack.start("qualify", self.root / "t.request.json")
 
 
 class SupervisorTestCase(PackTestCase):
@@ -348,6 +394,20 @@ class QualifyTests(PackTestCase):
                      start, wait, ready, state=state)
         self.assertEqual(state["hosts"], {json.dumps({"compute_host_name": "node7"})})
         self.assertEqual(read(self.root / "pack" / "pack.json")["workload"], "family-permuted-units-v1")
+
+    def test_a_failed_solo_trial_stops_the_qualification(self):
+        start, wait, ready, state = self.fakes()
+
+        def failing(request, supervisor, timeout):
+            if state["paths"][request["root"]][0] == "solo-2":
+                raise RuntimeError("solo-2: failure (native process failed)")
+            return wait(request, supervisor, timeout)
+        with self.assertRaisesRegex(RuntimeError, "solo-2: failure"):
+            self.qualify(self.plan([slot([0]), slot([2]), slot([8]), slot([9])]), start, failing, ready, state=state)
+        self.assertEqual(state["calls"], [("start", "solo-0"), ("wait", "solo-0"), ("start", "solo-2")])
+        self.assertEqual(state["storage"], [])  # no packed trial was admitted
+        self.assertFalse((self.root / "pack" / "release.json").exists())
+        self.assertFalse((self.root / "pack" / "pack.json").exists())
 
     def test_a_failed_packed_start_fails_the_waiting_trials(self):
         start, wait, ready, state = self.fakes(fail_start="packed-1")

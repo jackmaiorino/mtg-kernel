@@ -723,8 +723,9 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
     qualification checks, each trial's placement is its slot, every trial's
     sample and outputs equal `reference` (the family's serial/parallel
     qualifications'), the packed trials started together (within a tenth of the
-    shortest one's native seconds) and each solo trial overlapped no other.
-    Its slots share one worker count, and it qualified under a declaration of
+    shortest one's native seconds) and each solo trial overlapped no other, by
+    the start times the trials' receipts bind. Its slots share one worker
+    count, and it qualified under a declaration of
     its slots (pack_load). Kinds come from the host topology recorded at
     qualification, which must still be this host's when the pack is on this
     host. Returns the slowest packed slot's projected seconds, the host's
@@ -774,6 +775,7 @@ def pack_candidate(entry, request, config, runtime, family, choice, eligible, ve
         started = read(resolve(member["started"]))
         require(started["request"] == report["request"], "pack trial start record belongs to another request")
         start = started["started_unix"]
+        require(execution.get("started_unix") == start, "pack trial start time differs from its receipt")
         intervals.append((start, start + positive(execution["child_seconds"], "native child seconds")))
         seconds.append(projected_seconds(report, config, request["kind"]))
     alone, together = intervals[:len(solo)], intervals[len(solo):]
@@ -1020,10 +1022,12 @@ def execute(request_path, qualification):
             child.wait()
         finally:
             child_seconds = time.monotonic() - child_started
+            # A qualification's receipt binds its start, which a pack's evidence compares.
             write(root/"execution.json", {"exit_code": child.returncode, "error": failure,
                                          "child_seconds": child_seconds,
                                          "seconds": time.monotonic() - started,
-                                         **({"barrier_seconds": barrier_seconds} if barrier else {})})
+                                         **({"barrier_seconds": barrier_seconds} if barrier else {}),
+                                         **({"started_unix": started_unix} if qualification else {})})
     if failure:
         raise RuntimeError(failure + "; preserve failed outputs at " + str(root))
     last = None
