@@ -38,11 +38,14 @@ pub enum RecordV1 {
         input_history_index: u64,
     },
 }
-fn links(state: &GameState, ids: &[ObjectId]) -> Vec<ObjectLinkV4> {
+fn links(state: &GameState, ids: &[ObjectId]) -> Result<Vec<ObjectLinkV4>, String> {
     ids.iter()
-        .map(|id| ObjectLinkV4 {
-            object: *id,
-            zone_change_count: state.objects.get(*id).zone_change_count,
+        .map(|id| {
+            let object = state.objects.try_get(*id).ok_or("opening card absent")?;
+            Ok(ObjectLinkV4 {
+                object: *id,
+                zone_change_count: object.zone_change_count,
+            })
         })
         .collect()
 }
@@ -119,16 +122,28 @@ fn kept_hands(state: &GameState) -> Result<Option<[Vec<ObjectLinkV4>; 2]>, Strin
     {
         return Ok(None);
     }
-    Ok(Some(
-        [PlayerId::P0, PlayerId::P1].map(|p| links(state, &state.players[p.index()].hand)),
-    ))
+    Ok(Some([
+        links(state, &state.players[0].hand)?,
+        links(state, &state.players[1].hand)?,
+    ]))
 }
-fn candidates(state: &GameState, hands: &[Vec<ObjectLinkV4>; 2]) -> Vec<ObjectLinkV4> {
-    [state.starting_player, state.starting_player.opponent()]
-        .into_iter()
-        .flat_map(|p| hands[p.index()].iter().copied())
-        .filter(|link| definition(state.objects.get(link.object).card_def))
-        .collect()
+fn candidates(
+    state: &GameState,
+    hands: &[Vec<ObjectLinkV4>; 2],
+) -> Result<Vec<ObjectLinkV4>, String> {
+    let mut result = Vec::new();
+    for player in [state.starting_player, state.starting_player.opponent()] {
+        for link in &hands[player.index()] {
+            let object = state
+                .objects
+                .try_get(link.object)
+                .ok_or("opening candidate absent")?;
+            if definition(object.card_def) {
+                result.push(*link);
+            }
+        }
+    }
+    Ok(result)
 }
 fn already_started(state: &GameState) -> bool {
     state.engine.event_history.iter().any(|e| {
@@ -144,7 +159,10 @@ pub(crate) fn requires_initial_advance(state: &GameState) -> Result<bool, String
     if already_started(state) || state.leyline_opening_v1.is_some() {
         return Ok(false);
     }
-    Ok(kept_hands(state)?.is_some_and(|hands| !candidates(state, &hands).is_empty()))
+    match kept_hands(state)? {
+        Some(hands) => Ok(!candidates(state, &hands)?.is_empty()),
+        None => Ok(false),
+    }
 }
 // This is only the original native opening draw/bottom trace, not game replay.
 // It authenticates kept-card order and generations independently of the new input.
@@ -246,7 +264,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     validate_kept_input(state, at, original)?;
     if original.starting_player != state.starting_player
         || original.candidates.is_empty()
-        || original.candidates != candidates(state, &original.hands)
+        || original.candidates != candidates(state, &original.hands)?
         || original.hands.iter().any(|h| h.len() > 7)
     {
         return Err("opening-hand original roster changed".into());
@@ -354,8 +372,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .filter(|source| !accepted.contains(source))
             .copied()
             .collect::<Vec<_>>();
-        if links(state, &state.players[p.index()].hand) != expected
-            || links(state, &state.players[p.index()].library) != original.libraries[p.index()]
+        if links(state, &state.players[p.index()].hand)? != expected
+            || links(state, &state.players[p.index()].library)? != original.libraries[p.index()]
             || state.players[p.index()].battlefield.len()
                 != accepted
                     .iter()
@@ -383,7 +401,7 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
     validate(state)?;
     if state.leyline_opening_v1.is_none() && !already_started(state) {
         if let Some(hands) = kept_hands(state)? {
-            let candidates = candidates(state, &hands);
+            let candidates = candidates(state, &hands)?;
             if !candidates.is_empty() {
                 let opening = OpeningV1 {
                     input_history_index: state.engine.event_history.len() as u64,
@@ -392,8 +410,10 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
                 let input = InputV1 {
                     starting_player: state.starting_player,
                     hands,
-                    libraries: [PlayerId::P0, PlayerId::P1]
-                        .map(|p| links(state, &state.players[p.index()].library)),
+                    libraries: [
+                        links(state, &state.players[0].library)?,
+                        links(state, &state.players[1].library)?,
+                    ],
                     candidates,
                 };
                 state
