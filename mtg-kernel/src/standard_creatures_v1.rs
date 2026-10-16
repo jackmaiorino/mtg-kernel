@@ -163,6 +163,52 @@ pub(crate) fn counter_transfer_snapshot(
         .unwrap_or_default()
 }
 
+/// New native effects stage their whole operation before calling this helper.
+/// Unlike the historical transfer entry, they never saturate a modifier.
+/// The existing event helper omits zero-count placement events.
+pub(crate) fn place_counters_checked_v1(
+    state: &mut GameState,
+    target: ObjectId,
+    player: crate::ids::PlayerId,
+    snapshot: CounterTransferV1,
+) -> Option<()> {
+    if snapshot == CounterTransferV1::default() {
+        return Some(());
+    }
+    let c = snapshot.counters;
+    for count in [
+        c.plus1_plus1,
+        i32::from(c.minus1_minus1),
+        i32::from(c.minus0_minus1),
+        i32::from(c.stun),
+        i32::from(c.lore),
+        i32::from(c.oil),
+        c.charge,
+        c.net,
+        c.bait,
+        c.soul,
+        c.incubation,
+        c.revival,
+        c.fellowship,
+        i32::from(snapshot.extras.lifelink),
+        i32::from(snapshot.extras.time),
+        i32::from(snapshot.extras.finality),
+    ] {
+        crate::standard_cards_v1::scale_counters_checked_v48(state, player, count).ok()?;
+    }
+    if snapshot.extras.loyalty > 0 {
+        crate::planeswalker_v1::quote_loyalty_counters_v48(state, target, snapshot.extras.loyalty)
+            .ok()?;
+    }
+    // The old transfer retains its signed-loyalty compatibility branch.
+    // New placement uses the full-width checked entry for that ledger.
+    let mut ordinary = snapshot;
+    ordinary.extras.loyalty = 0;
+    apply_counter_transfer(state, target, player, ordinary)?;
+    crate::planeswalker_v1::add_loyalty_counters_checked_v1(state, target, snapshot.extras.loyalty)
+        .ok()
+}
+
 fn apply_counter_transfer(
     state: &mut GameState,
     target: ObjectId,

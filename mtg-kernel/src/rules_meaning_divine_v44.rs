@@ -46,6 +46,10 @@ pub fn producer_sha256() -> String {
             include_str!("../build.rs"),
             include_str!("policy_observation_variable_cast_v1.rs"),
             include_str!("rl_variable_cast_v1.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());

@@ -215,6 +215,9 @@ pub fn producer_sha256() -> String {
             include_str!("life_loss_turn_v1.rs"),
             include_str!("rl.rs"),
             include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             h.update((part.len() as u64).to_le_bytes());
             h.update(part.as_bytes());

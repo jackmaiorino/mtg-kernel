@@ -90,6 +90,9 @@ pub fn producer_sha256() -> String {
             include_str!("card_def.rs"),
             include_str!("mana.rs"),
             include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             hash.update([0]);
             hash.update(source.as_bytes());

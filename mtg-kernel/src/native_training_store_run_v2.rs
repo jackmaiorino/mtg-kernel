@@ -9011,7 +9011,7 @@ mod tests {
             .filter(|(_, def)| def.capability == crate::card_def::CardCapability::Partial)
             .map(|(id, def)| (id as u16, def.name))
             .collect();
-        assert_eq!(crate::card_def::CARD_DEFS.len(), 465);
+        assert_eq!(crate::card_def::CARD_DEFS.len(), 466);
         assert_eq!(
             partials,
             [
@@ -9028,6 +9028,7 @@ mod tests {
                 (462, "Embercleave"),
                 (463, "Banner of Kinship"),
                 (464, "Drakuseth, Maw of Flames"),
+                (465, "Zimone, Paradox Sculptor"),
             ]
         );
         let mut playable = Vec::new();

@@ -58,6 +58,10 @@ pub fn producer_sha256_v1() -> String {
             include_str!("state.rs"),
             include_str!("card_def.rs"),
             include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
+            include_str!("planeswalker_v1.rs"),
         ] {
             h.update([0]);
             h.update(s.as_bytes());

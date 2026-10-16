@@ -180,13 +180,19 @@ pub enum StandardTargetV1 {
     /// A mandatory first any-target, then zero to two OTHER any-targets.
     /// Slots remain ordered even when an earlier target becomes illegal.
     OneToThreeDistinctAnyTargetsV1,
+    /// Zero to two distinct creatures the targeting player controls.
+    UpToTwoControlledCreatures,
+    /// Zero to two distinct artifacts and/or creatures that player controls.
+    UpToTwoControlledArtifactsOrCreatures,
 }
 
 impl StandardTargetV1 {
     /// How many targets this filter takes, and how many at least.
     pub(crate) fn counts(self) -> (u8, u8) {
         match self {
-            Self::UpToTwoAnyTargets => (2, 0),
+            Self::UpToTwoAnyTargets
+            | Self::UpToTwoControlledCreatures
+            | Self::UpToTwoControlledArtifactsOrCreatures => (2, 0),
             Self::OneToThreeDistinctAnyTargetsV1 => (3, 1),
             Self::UpToOneCreature => (1, 0),
             _ => (1, 1),
@@ -256,6 +262,13 @@ pub(crate) fn legal_targets(
     };
     candidates
         .into_iter()
+        .filter(|&id| {
+            !matches!(
+                target,
+                StandardTargetV1::UpToTwoControlledCreatures
+                    | StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
+            ) || !prefix.contains(&Target::Object(id))
+        })
         .filter(|&id| target_matches(target, controller, id, state))
         .filter(|&id| {
             target != StandardTargetV1::CrewedSourceThisTurn
@@ -321,6 +334,12 @@ pub(crate) fn target_matches(
         }
         StandardTargetV1::ControlledArtifact => {
             live.controller == controller && has(CardType::Artifact)
+        }
+        StandardTargetV1::UpToTwoControlledCreatures => {
+            live.controller == controller && has(CardType::Creature)
+        }
+        StandardTargetV1::UpToTwoControlledArtifactsOrCreatures => {
+            live.controller == controller && (has(CardType::Artifact) || has(CardType::Creature))
         }
         StandardTargetV1::AnotherNonlandPermanent => !has(CardType::Land),
         StandardTargetV1::UpToTwoAnyTargets | StandardTargetV1::OneToThreeDistinctAnyTargetsV1 => {
@@ -561,6 +580,11 @@ pub enum StandardOpV1 {
         first_amount: u8,
         other_amount: u8,
     },
+    /// Put one +1/+1 counter on each declared controlled-creature target.
+    PutPlusOneCountersOnTargets,
+    /// Add the current number of every counter kind to each declared target,
+    /// through the normal placement replacements and checked native widths.
+    DoubleAllCountersOnTargets,
 }
 
 impl StandardOpV1 {
@@ -713,6 +737,20 @@ pub(crate) fn register_reflection_delayed_sacrifice(
 
 pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        StandardOpV1::PutPlusOneCountersOnTargets => {
+            crate::counter_target_effects_v1::execute(
+                crate::counter_target_effects_v1::CounterTargetEffectV1::PutPlusOne,
+                ctx,
+                state,
+            );
+        }
+        StandardOpV1::DoubleAllCountersOnTargets => {
+            crate::counter_target_effects_v1::execute(
+                crate::counter_target_effects_v1::CounterTargetEffectV1::DoubleEachKind,
+                ctx,
+                state,
+            );
+        }
         StandardOpV1::ZulAshurPermissionV1 => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,

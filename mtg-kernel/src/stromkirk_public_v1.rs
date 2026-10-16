@@ -102,6 +102,9 @@ pub fn producer_sha256_v1() -> String {
         include_str!("human_bo3_v1/visible.rs"),
         include_str!("human_bo3_v1/labels.rs"),
         include_str!("human_bo3_v1/life_ward_v8.rs"),
+        include_str!("counter_target_effects_v1.rs"),
+        include_str!("zimone_paradox_sculptor_v1.rs"),
+        include_str!("planeswalker_v1.rs"),
     ] {
         hash.update([0]);
         hash.update(source.as_bytes());

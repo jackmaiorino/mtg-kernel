@@ -280,6 +280,35 @@ pub(crate) fn add_loyalty_counters_u32_v48(
     Ok(())
 }
 
+/// New checked placements never narrow a Talent-modified unsigned amount
+/// through the historical signed placement path.
+pub(crate) fn add_loyalty_counters_checked_v1(
+    state: &mut GameState,
+    object: ObjectId,
+    amount: u32,
+) -> Result<(), String> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let counters = quote_loyalty_counters_v48(state, object, amount)?;
+    let permanent = ObjectLinkV4 {
+        object,
+        zone_change_count: state.objects.get(object).zone_change_count,
+    };
+    state
+        .planeswalkers_v1
+        .get_or_insert_with(Default::default)
+        .loyalty
+        .insert(
+            object,
+            LoyaltyV1 {
+                permanent,
+                counters,
+            },
+        );
+    Ok(())
+}
+
 /// Scoped Human V12 recipient facts, not printed planeswalker admission.
 /// Inspect every stored ledger row so stale/hidden/foreign recipients cannot
 /// be silently omitted from the public observation.

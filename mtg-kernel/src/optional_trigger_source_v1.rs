@@ -102,6 +102,8 @@ pub(crate) fn producer(schema: &str) -> String {
         include_str!("standard_legends_v1.rs"),
         include_str!("controlled_creature_grants_v1.rs"),
         include_str!("../build.rs"),
+        include_str!("counter_target_effects_v1.rs"),
+        include_str!("zimone_paradox_sculptor_v1.rs"),
     ] {
         h.update((s.len() as u64).to_le_bytes());
         h.update(s.as_bytes());

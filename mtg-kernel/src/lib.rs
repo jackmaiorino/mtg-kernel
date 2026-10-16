@@ -566,6 +566,7 @@ mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
+mod counter_target_effects_v1;
 mod extravagant_replication_v1;
 pub mod juggernaut_public_v1;
 pub(crate) mod life_gain_turn_v1;
@@ -604,6 +605,7 @@ pub mod trigger;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod xmage_observed_inference_v1;
+mod zimone_paradox_sculptor_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 

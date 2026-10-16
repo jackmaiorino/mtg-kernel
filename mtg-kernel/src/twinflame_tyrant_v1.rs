@@ -249,6 +249,10 @@ pub fn printed_meaning(id: u16) -> Result<PrintedMeaningV1, String> {
         include_str!("engine.rs"),
         include_str!("state.rs"),
         include_str!("../build.rs"),
+        include_str!("counter_target_effects_v1.rs"),
+        include_str!("zimone_paradox_sculptor_v1.rs"),
+        include_str!("standard_creatures_v1.rs"),
+        include_str!("planeswalker_v1.rs"),
     ]
     .join("\0");
     Ok(PrintedMeaningV1 {

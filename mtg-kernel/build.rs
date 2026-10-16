@@ -5815,6 +5815,16 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield", sorcery_speed_only: false, target_spec: "TargetOpponent",
             activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
         }],
+        "Zimone, Paradox Sculptor" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ManaCost("{G}{U}"), AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::Program {
+                name: "zimone_double_all_counter_kinds_v1",
+                effect: "crate::zimone_paradox_sculptor_v1::double_counters()",
+            },
+            activation_zone: "Battlefield", sorcery_speed_only: false,
+            target_spec: "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToTwoControlledArtifactsOrCreatures)",
+            activation_target_filter: "TargetSpecOnly", max_activations_per_turn: None,
+        }],
         "Drake Hatcher" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::RemoveSourceIncubationCounters(3)],
             effect: AbilityEffectRecipe::Program { name: "drake_hatcher_create_drake_v1", effect: "crate::drake_hatcher_v1::create_drake()" },
@@ -7107,6 +7117,7 @@ fn delve_for(name: &str) -> bool {
 /// event, target, and effect part of the generated card database identity.
 fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
+        "Zimone, Paradox Sculptor" => "beginning_captured_controller_combat:captured_source_incarnation_controller:zero_to_two_distinct_controlled_effective_creature_targets:original_target_slots_and_current_exact_incarnation_legality:put_one_plus_one_counter_on_each_legal_target:normal_counter_placement_replacements:checked_widths",
         "Drakuseth, Maw of Flames" => "source_attacks:captured_source_incarnation_controller:mandatory_first_any_target_four:zero_to_two_other_distinct_any_targets_three_each:original_positional_target_contracts:individual_legality:one_damage_batch_before_sba",
         "Alesha, Who Laughs at Fate" => "source_attacks:plus_one_counter_exact_source:1;beginning_captured_controller_end_step:intervening_raid_declaration_this_turn:target_own_graveyard_creature_mana_value_at_most_original_source_current_power_or_lki:mandatory_target_before_response_window:captured_controller_costless_may_return_at_resolution:decline_no_zone_change:return_exact_target_graveyard_incarnation_to_owner_battlefield",
         "Nine-Lives Familiar" => "genuine_cast_entry_eight_revival_counters;dies_if_exact_departure_lki_revival_positive;death_trigger_resolution_schedules_one_future_any_end_step;return_exact_graveyard_incarnation_under_captured_ability_controller_with_one_fewer_revival_counter_and_entry_replacements_once",

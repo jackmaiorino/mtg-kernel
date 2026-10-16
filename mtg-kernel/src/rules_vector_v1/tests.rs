@@ -906,6 +906,9 @@ fn power_toughness_changes_keep_their_sign() {
 /// or `event_time_trigger_programs`; token names are reached through
 /// `CreateToken` programs.
 const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
+    // Native combat trigger is walked through triggers_for and its exact
+    // target extractor. New target refinement stays opaque in frozen v1.
+    "Zimone, Paradox Sculptor",
     "Drake Hatcher",
     // Both native programs are walked through triggers_for. Their exact
     // opponent-cast and ferocious predicates remain opaque in frozen v1.

@@ -113,6 +113,9 @@ pub fn producer_sha256() -> String {
             include_str!("authority_of_the_consuls_v1.rs"),
             include_str!("raid_entry_v1.rs"),
             include_str!("../build.rs"),
+            include_str!("counter_target_effects_v1.rs"),
+            include_str!("zimone_paradox_sculptor_v1.rs"),
+            include_str!("standard_creatures_v1.rs"),
         ] {
             h.update([0]);
             h.update(source.as_bytes());

@@ -686,13 +686,14 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::AnotherNonlandPermanent => ObjF::NonlandPermanent,
-        S::OpponentArtifactOrCreature => ObjF::Permanent,
+        S::OpponentArtifactOrCreature | S::UpToTwoControlledArtifactsOrCreatures => ObjF::Permanent,
         S::ControlledArtifact => typed(CardType::Artifact),
         S::InstantOrSorceryCardInOwnGraveyard | S::CardInAGraveyard => ObjF::AnyCard,
         S::AnotherNonlegendaryControlledCreature
         | S::UpToOneCreature
         | S::TappedOpponentCreature
-        | S::CrewedSourceThisTurn => creature(),
+        | S::CrewedSourceThisTurn
+        | S::UpToTwoControlledCreatures => creature(),
         S::UpToTwoAnyTargets | S::OneToThreeDistinctAnyTargetsV1 => ObjF::PlayerOrPermanent,
     }
 }
@@ -704,9 +705,10 @@ pub(super) fn standard_target_origin(
     match filter {
         S::InstantOrSorceryCardInOwnGraveyard => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::CardInAGraveyard => (Some(ZoneF::Graveyard), None),
-        S::ControlledArtifact | S::AnotherNonlegendaryControlledCreature => {
-            (Some(ZoneF::Battlefield), Some(RelF::You))
-        }
+        S::ControlledArtifact
+        | S::AnotherNonlegendaryControlledCreature
+        | S::UpToTwoControlledCreatures
+        | S::UpToTwoControlledArtifactsOrCreatures => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::OpponentNonlandPermanentManaValueAtMost(_)
         | S::OpponentNonlandPermanent
         | S::OpponentArtifactOrCreature
@@ -727,6 +729,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
     let (zone, relation) = standard_target_origin(filter);
     let zone = zone.expect("every Standard object target has a zone");
     match filter {
+        S::UpToTwoControlledCreatures | S::UpToTwoControlledArtifactsOrCreatures => {
+            // Preserve the native payload without admitting these new target
+            // programs through the frozen v1 facet vocabulary.
+            out.atoms.push(Atom::Opaque);
+        }
         S::OpponentNonlandPermanentManaValueAtMost(maximum) => {
             out.target(TargetAtom::Object {
                 obj: ObjF::NonlandPermanent,
