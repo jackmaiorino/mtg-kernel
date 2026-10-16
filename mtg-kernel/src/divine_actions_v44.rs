@@ -63,6 +63,7 @@ pub(crate) fn candidates_fake_scoped_v50(
         surface,
         (accept_hunter, accept_panda, accept_conqueror, accept_fake),
         false,
+        false,
     )
 }
 pub(crate) fn candidates_next_five_v59(
@@ -70,7 +71,22 @@ pub(crate) fn candidates_next_five_v59(
     state: &GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
-    candidates_current_scope(origin, state, surface, (true, true, true, true), true)
+    candidates_current_scope(
+        origin,
+        state,
+        surface,
+        (true, true, true, true),
+        true,
+        false,
+    )
+}
+pub(crate) fn candidates_graveyard_return_v61(
+    origin: &PolicyDecisionV5,
+    state: &GameState,
+    surface: &PolicySurfaceV5,
+) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
+    crate::graveyard_return_observation_v61::validate_state(state).map_err(RlContractError)?;
+    candidates_current_scope(origin, state, surface, (true, true, true, true), true, true)
 }
 fn candidates_current_scope(
     origin: &PolicyDecisionV5,
@@ -78,6 +94,7 @@ fn candidates_current_scope(
     surface: &PolicySurfaceV5,
     capabilities: (bool, bool, bool, bool),
     accept_next_five: bool,
+    accept_graveyard_return: bool,
 ) -> Result<Option<Vec<CorePolicyActionCandidateV1>>, RlContractError> {
     let (accept_hunter, accept_panda, accept_conqueror, accept_fake) = capabilities;
 
@@ -93,7 +110,9 @@ fn candidates_current_scope(
     if context.is_none() && !priority_offer {
         return Ok(None);
     }
-    let candidates = if accept_next_five {
+    let candidates = if accept_graveyard_return {
+        crate::rl_variable_cast_v1::candidates_graveyard_return_v61(state, surface, origin)?
+    } else if accept_next_five {
         crate::rl_variable_cast_v1::candidates_next_five_v59(state, surface, origin)?
     } else {
         crate::rl_variable_cast_v1::candidates_fake_scoped_v50(

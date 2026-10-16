@@ -738,6 +738,7 @@ pub mod spinner_public_v54;
 
 pub mod alesha_v1;
 pub mod giada_v1;
+pub mod graveyard_return_candidates_v61;
 pub mod graveyard_return_observation_v61;
 pub mod graveyard_return_public_v61;
 pub mod infernal_vessel_v1;
