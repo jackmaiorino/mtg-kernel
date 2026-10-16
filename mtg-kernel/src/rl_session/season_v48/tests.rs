@@ -77,7 +77,16 @@ fn actual_source_old_mode_advance_refuses_readonly_and_v48_publishes_distinct_fa
             &mut state,
             ProposedEvent::zone_change(source, Zone::Battlefield),
         );
-        let mut session = FastActorSessionV1::from_season_v48_fixture_state(state.clone());
+        // Session construction advances through genuine native entry-event
+        // collection. Restore must preserve that issued world, rather than
+        // restore the raw world from before the constructor's advancement.
+        let mut issued = state.clone();
+        assert!(matches!(
+            crate::engine::advance_until_decision(&mut issued),
+            crate::engine::Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        let mut session = FastActorSessionV1::from_season_v48_fixture_state(state);
+        assert_eq!(session.state, issued);
         let expected = self::expected(&session);
         let (observation, _, _) = session
             .season_current_decision_input_v48(expected, actor.into())
@@ -93,6 +102,6 @@ fn actual_source_old_mode_advance_refuses_readonly_and_v48_publishes_distinct_fa
         for _ in 0..3 {
             session.season_restore_v48(&session.snapshot_v1()).unwrap();
         }
-        assert_eq!(session.state, state);
+        assert_eq!(session.state, issued);
     }
 }

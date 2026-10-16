@@ -1080,6 +1080,9 @@ fn real_paid_control_suppression_and_token_copy_do_not_change_graveyard_owner_bo
                 cast_owned(&mut state, other, bolt, Some(Target::Object(copy)));
                 assert!(!state.players[actor.index()].graveyard.contains(&copy));
                 assert!(!state.players[actor.index()].battlefield.contains(&copy));
+                // Native token cessation retains this historical arena marker;
+                // it must not supply a fresh beginning-of-combat trigger.
+                assert_eq!(state.objects.get(copy).zone, Zone::Graveyard);
             }
             // Pay the real opposing kill even when Employment spent its lands.
             put(&mut state, other, "Mountain", Zone::Battlefield);
@@ -1098,7 +1101,10 @@ fn real_paid_control_suppression_and_token_copy_do_not_change_graveyard_owner_bo
                 crate::continuous_characteristics_v1::printed_abilities_active(&state, phoenix)
             );
             put(&mut state, actor, "Serra Angel", Zone::Battlefield);
+            let mut before_combat = restore(&state);
             combat_trigger(&mut state, phoenix);
+            combat_trigger(&mut before_combat, phoenix);
+            same(&state, &before_combat);
             assert_eq!(
                 state
                     .stack
