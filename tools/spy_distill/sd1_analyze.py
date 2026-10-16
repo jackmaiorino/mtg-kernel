@@ -18,9 +18,19 @@ the screen's seed, and each point and interval must be equal.
 
 Custody binds each panel to its endpoint by checkpoint file SHA-256:
   - the parent's recorded checkpoint;
-  - each seed's selected D1 (sd1.py select);
+  - each seed's selected D1 (sd1.py select), whose source file must name it;
   - each phase-2 run's final checkpoint;
   - O-0's, which is stage 0's O-s0.
+A run counts only as the run its name says. Its plan, the run.json beside
+its completion.json, must give every unit its seed's episode id and seed,
+unit by unit in the pilot's schedule: O's own for seed 0 (D2-0 and O-0), and
+sd1-LIN-repK's for seed K of 1 to 7. D2-k's initial source must be D1-k's
+source verbatim, and O-k's the parent's. Each panel's rows and labels are
+verified against their pins before the screen's analyzer reads them.
+RESULT.json's "inputs" pins everything read: the spec, the screen's index and
+result, X4's record and, per lineage that ran phase 2, each D1's selection
+and source, each run's completion.json and run.json, and every panel's rows
+and labels.
 
 Contrasts, each with eight per-pair values (k = 0 to 7):
   d       D2-k minus O-k (primary)
@@ -78,13 +88,14 @@ SPEC:
             "phase2": {"D2-0": PIN, ..., "D2-7": PIN, "O-1": PIN, ..., "O-7": PIN}
                       (each run's completion.json),
             "panels": [{"checkpoint": "r1-D2-3", "opponent": "T1" | "H",
-                        "checkpoint_sha256": SHA, "rows": PATH, "labels": PATH}, ...]},
+                        "checkpoint_sha256": SHA, "rows": PIN, "labels": PIN}, ...]},
      "r2": {"not_run": "fit" | "engineering"}}}
 PIN is {"path": PATH, "sha256": SHA}.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -94,7 +105,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bt1  # noqa: E402
 import phase2  # noqa: E402
 import sd1  # noqa: E402
-from distill_common import LINEAGES, PARENT_CHECKPOINT_SHA256, pilot, pin, read_json, require, write_json  # noqa: E402
+from distill_common import (LINEAGES, PARENT_CHECKPOINT_SHA256, absolute, pilot, pin, read_json,  # noqa: E402
+                            require, write_json)
 
 # The screen's analyzer, this directory's analyze.py, as BT1 loads it by its
 # path: other tool directories hold an analyze.py too.
@@ -384,19 +396,80 @@ def headline(contrasts: dict, contrast: str) -> dict:
 # ----------------------------------------------------------------- custody
 
 
-def completion_checkpoint(entry: dict, what: str) -> str:
-    """A complete 162-update run's final checkpoint file SHA-256."""
+def given(entry: dict) -> dict:
+    """A spec's pin as recorded: its path as given and its SHA-256."""
+    return {"path": entry["path"], "sha256": entry["sha256"]}
+
+
+def read_plan(completion: dict, what: str) -> tuple:
+    """The run.json beside a run's completion.json, which the run driver
+    writes before the run's first update, and its pin (in the completion
+    pin's spelling), from one read."""
+    path = sd1.beside(completion["path"], "run.json")
+    try:
+        data = Path(path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(f"{what}: {path} is missing") from None
+    try:
+        plan = json.loads(data)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ValueError(f"{what}: {path} is not readable JSON ({error})") from None
+    return plan, {"path": path, "sha256": hashlib.sha256(data).hexdigest()}
+
+
+def unit_problem(lineage: str, k: int, cfg: dict, plan: list) -> str | None:
+    """Why a run's units do not carry seed k's episode ids and seeds, unit
+    by unit in the pilot's schedule (sd1.unit_id_seed: O's own for k = 0,
+    sd1-LIN-repK's for k of 1 to 7), or None."""
+    iterations = cfg.get("iterations")
+    if not (isinstance(iterations, list) and len(iterations) == len(plan)):
+        return f"it does not hold the schedule's {len(plan)} updates"
+    for u, (entries, update) in enumerate(zip(plan, iterations)):
+        episodes = update.get("episodes") if isinstance(update, dict) else None
+        if not (isinstance(episodes, list) and len(episodes) == len(entries)):
+            return f"update {u} does not hold the schedule's units"
+        for i, (entry, item) in enumerate(zip(entries, episodes)):
+            episode = item.get("episode") if isinstance(item, dict) else None
+            got = (episode.get("id"), episode.get("seed")) if isinstance(episode, dict) else None
+            if got != sd1.unit_id_seed(lineage, k, entry):
+                return f"update {u} unit {i}: its episode id and seed are not seed {k}'s"
+    return None
+
+
+def run_endpoint(entry: dict, what: str, lineage: str, k: int, initial: dict | None, plan: list) -> tuple:
+    """A complete 162-update run's final checkpoint file SHA-256 and the pins
+    read for it, once the run is the one its name says. The run's plan (the
+    run.json beside its completion.json) must give every unit seed k's
+    episode id and seed, and its initial source must be ``initial``
+    verbatim (D1-k's source, for D2-k) or, with ``initial`` None, the
+    parent's (O-k)."""
     run = sd1.read_pinned(entry, what)
     require(run.get("schema") == phase2.RUN_SCHEMA and run.get("complete") is True
             and run.get("completed_iterations") == pilot.UPDATES, f"{what}: not a complete 162-update run")
-    return run["source"]["checkpoint"]["sha256"]
+    recorded, recorded_pin = read_plan(entry, what)
+    cfg = recorded.get("config") if isinstance(recorded, dict) else None
+    require(isinstance(cfg, dict) and recorded.get("schema") == phase2.RUN_SCHEMA
+            and cfg.get("schema") == phase2.RUN_SCHEMA, f"{what}: the run.json beside it is not a run's plan")
+    problem = unit_problem(lineage, k, cfg, plan)
+    require(problem is None, f"{what}: not seed {k}'s run: {problem}")
+    source = cfg.get("initial_source")
+    if initial is None:
+        require(isinstance(source, dict) and (source.get("checkpoint") or {}).get("sha256")
+                == PARENT_CHECKPOINT_SHA256[lineage], f"{what}: its initial source is not the parent")
+    else:
+        require(sd1.canonical(source) == sd1.canonical(initial),
+                f"{what}: its initial source is not D1-{k}'s source verbatim")
+    return run["source"]["checkpoint"]["sha256"], {"completion": given(entry), "run": recorded_pin}
 
 
-def expected_endpoints(lineage: str, entry: dict) -> dict:
-    """Each endpoint's checkpoint file SHA-256: the parent's, each seed's
-    selected D1 checkpoint, each phase-2 run's final checkpoint, and O-0's
-    as stage 0's O-s0."""
+def expected_endpoints(lineage: str, entry: dict) -> tuple:
+    """Each endpoint's checkpoint file SHA-256, and the pins read for it: the
+    parent's recorded checkpoint; each seed's selected D1 checkpoint, with
+    its selection and source; each phase-2 run's final checkpoint, D2-k
+    from D1-k's source and O-k from the parent, each on seed k's units; and
+    O-0's, stage 0's O-s0, from the parent on O's own units."""
     out = {f"{lineage}-parent": PARENT_CHECKPOINT_SHA256[lineage]}
+    read, sources = {}, {}
     for item in entry["select"]:
         selection = sd1.read_pinned(item, f"{lineage} selection")
         require(selection.get("schema") == sd1.SELECT_SCHEMA and selection.get("lineage") == lineage,
@@ -404,29 +477,43 @@ def expected_endpoints(lineage: str, entry: dict) -> dict:
         k = selection.get("seed")
         require(k in SEEDS and f"{lineage}-D1-{k}" not in out, f"{lineage}: seed {k!r} is selected twice or unknown")
         require(selection.get("reading") == "passes", f"{lineage}: seed {k} has no D1, so the lineage runs no panels")
-        out[f"{lineage}-D1-{k}"] = selection["d1_checkpoint"]["checkpoint"]["sha256"]
+        chosen = selection["d1_checkpoint"]
+        sources[k] = sd1.read_pinned(chosen["source"], f"{lineage} D1-{k} source")
+        require(sources[k].get("checkpoint") == chosen["checkpoint"],
+                f"{lineage} D1-{k}: the source's checkpoint is not the selected one")
+        out[f"{lineage}-D1-{k}"] = chosen["checkpoint"]["sha256"]
+        read[f"{lineage}-D1-{k}"] = {"selection": given(item), "source": given(chosen["source"])}
     require(len(out) == 1 + len(SEEDS), f"{lineage}: every seed's selection is needed")
     runs = entry["phase2"]
     require(set(runs) == {f"D2-{k}" for k in SEEDS} | {f"O-{k}" for k in SEEDS if k},
             f"{lineage}: phase 2 is D2-0 to D2-7 and O-1 to O-7")
-    for name in sorted(runs):
-        out[f"{lineage}-{name}"] = completion_checkpoint(runs[name], f"{lineage} {name}")
-    out[f"{lineage}-O-0"] = completion_checkpoint(entry["o_s0"], f"{lineage} O-s0")
+    plan = pilot.schedule(lineage)["updates"]
+    for name, value in [*sorted(runs.items()), ("O-0", entry["o_s0"])]:
+        role, k = name.split("-")
+        what = f"{lineage} {'O-s0' if name == 'O-0' else name}"
+        out[f"{lineage}-{name}"], read[f"{lineage}-{name}"] = run_endpoint(
+            value, what, lineage, int(k), sources[int(k)] if role == "D2" else None, plan)
     require(len(set(out.values())) == len(out), f"{lineage}: two endpoints name the same checkpoint")
-    return out
+    return out, read
 
 
-def lineage_panels(lineage: str, entry: dict) -> list:
-    """The lineage's 50 panels, each on its endpoint's checkpoint."""
-    expected = expected_endpoints(lineage, entry)
+def lineage_panels(lineage: str, entry: dict) -> tuple:
+    """The lineage's 50 panels, each on its endpoint's checkpoint, with its
+    rows and labels verified against their pins (the panels as the screen's
+    analyzer loads them: rows and labels by path), and the pins read."""
+    expected, read = expected_endpoints(lineage, entry)
     panels = entry["panels"]
     require(sorted((p["checkpoint"], p["opponent"]) for p in panels)
             == sorted((ck, opp) for ck in endpoint_ids(lineage) for opp in OPPONENTS),
             f"{lineage}: the panels must be every endpoint's panel against each opponent, once each")
+    loadable, files = [], {}
     for p in panels:
-        require(p["checkpoint_sha256"] == expected[p["checkpoint"]],
-                f"{p['checkpoint']}-vs-{p['opponent']}: not the endpoint's checkpoint")
-    return panels
+        name = f"{p['checkpoint']}-vs-{p['opponent']}"
+        require(p["checkpoint_sha256"] == expected[p["checkpoint"]], f"{name}: not the endpoint's checkpoint")
+        require(all(sd1.is_pin(p.get(f)) for f in ("rows", "labels")), f"{name}: its rows and labels are pins")
+        files[f"{p['checkpoint']}/{p['opponent']}"] = {f: given(p[f]) for f in ("rows", "labels")}
+        loadable.append({**p, **{f: str(sd1.pinned(p[f], f"{name} {f}")) for f in ("rows", "labels")}})
+    return loadable, {"endpoints": read, "panels": files}
 
 
 # --------------------------------------------------------------------- X4
@@ -501,8 +588,9 @@ def lineage_result(data: dict, table: dict, lineage: str) -> dict:
     return {"primary": primary, "secondary": headline(contrasts, "e"), "change": change, "contrasts": contrasts}
 
 
-def analysis(spec: dict, seed: int = BOOT_SEED, draws: int | None = None) -> dict:
-    """SPEC as in the module docstring."""
+def analysis(spec: dict, seed: int = BOOT_SEED, draws: int | None = None, spec_pin: dict | None = None) -> dict:
+    """SPEC as in the module docstring; ``spec_pin`` is the spec file's pin,
+    recorded with the pins of everything else read."""
     draws = analyze.DRAWS if draws is None else draws
     sd1.pinned(spec["screen_index"], "screen index")
     sd1.pinned(spec["screen_result"], "screen result")
@@ -512,6 +600,8 @@ def analysis(spec: dict, seed: int = BOOT_SEED, draws: int | None = None) -> dic
             and first["screen_result"]["sha256"] == spec["screen_result"]["sha256"],
             "X4 did not pass on these screen files before any SD1 panel")
     require(set(spec["lineages"]) == set(LINEAGES), "the spec names both lineages")
+    inputs = {"spec": spec_pin, **{f: given(spec[f]) for f in ("screen_index", "screen_result", "x4")},
+              "lineages": {}}
     not_run, panels, allowed = {}, [], set()
     for lineage in LINEAGES:
         entry = spec["lineages"][lineage]
@@ -520,11 +610,13 @@ def analysis(spec: dict, seed: int = BOOT_SEED, draws: int | None = None) -> dic
                     f"{lineage}: a lineage without phase 2 names why (fit or engineering) and nothing else")
             not_run[lineage] = entry["not_run"]
             continue
-        panels += lineage_panels(lineage, entry)
+        loadable, inputs["lineages"][lineage] = lineage_panels(lineage, entry)
+        panels += loadable
         allowed |= set(endpoint_ids(lineage))
     ran = [lin for lin in LINEAGES if lin not in not_run]
-    out = {"schema": SCHEMA, "seed": seed, "draws": draws, "x4": first, "deck_labels": sd1.deck_names(),
-           "not_run": not_run, "lineages": {}, "notes": NOTES, "explanations": EXPLANATIONS}
+    out = {"schema": SCHEMA, "seed": seed, "draws": draws, "x4": first, "inputs": inputs,
+           "deck_labels": sd1.deck_names(), "not_run": not_run, "lineages": {}, "notes": NOTES,
+           "explanations": EXPLANATIONS}
     if ran:
         data = analyze.load({"panels": panels}, allowed, pilot.SD1_PANEL_NS)
         table = draw_table(data, seed, draws)
@@ -568,7 +660,9 @@ def main(argv=None) -> int:
         print(json.dumps({"compared": result["compared"], "differing": len(result["differing"]),
                           "pass": result["pass"]}))
         return 0 if result["pass"] else 1
-    result = analysis(read_json(args.spec))
+    data = args.spec.read_bytes()
+    result = analysis(json.loads(data), spec_pin={"path": absolute(args.spec),
+                                                  "sha256": hashlib.sha256(data).hexdigest()})
     write_json(args.out, result)
     print(json.dumps({"method_screen_positive": result["method_screen_positive"],
                       "primary": {lin: v["primary"]["reading"] for lin, v in result["lineages"].items()}}))

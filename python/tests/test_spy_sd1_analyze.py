@@ -2,6 +2,7 @@
 or trained; every panel, selection and run record here is synthetic."""
 import contextlib
 import copy
+import functools
 import hashlib
 import io
 import json
@@ -28,10 +29,14 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def file_pin(path) -> dict:
+    return {"path": str(path), "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest()}
+
+
 def write(path: Path, value) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value), encoding="utf-8")
-    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    return file_pin(path)
 
 
 def pattern(w: int, salt: int = 0, gone=()):
@@ -87,6 +92,12 @@ def write_panel(root: Path, ck: str, opp: str, outcome, checkpoint_sha256: str,
             "rows": str(directory / "rows.jsonl"), "labels": str(directory / "labels.jsonl")}
 
 
+def as_pins(panel: dict) -> dict:
+    """A panel index entry (rows and labels by path, as the screen's index
+    gives them) as SD1's spec gives it: rows and labels as pins."""
+    return {**panel, "rows": file_pin(panel["rows"]), "labels": file_pin(panel["labels"])}
+
+
 def gain(k, opp):
     return 10 + k % 2
 
@@ -110,25 +121,64 @@ def loaded(*lineage_outcomes) -> dict:
     return {key: cases(outcome) for each in lineage_outcomes for key, outcome in each.items()}
 
 
+def model_source(lineage: str, checkpoint: dict) -> dict:
+    """A model source: the lineage's import and feature transfer, and a
+    checkpoint pin."""
+    return {"play_import": {"path": f"/srv/computehost/imports/{lineage}.json", "sha256": sha(f"import-{lineage}")},
+            "feature_transfer": {"expected_feature_contract_digest": sha("contract"),
+                                 "expected_feature_encoding_digest": sha("encoding")},
+            "checkpoint": checkpoint}
+
+
+def parent_source(lineage: str) -> dict:
+    return model_source(lineage, {"path": f"/srv/computehost/{lineage}/parent.json",
+                                  "sha256": S.PARENT_CHECKPOINT_SHA256[lineage]})
+
+
+@functools.lru_cache(maxsize=None)
+def units(lineage: str, k: int) -> str:
+    """A run plan's iterations, as JSON text: seed k's episode id and seed in
+    every unit of the pilot's schedule (O's own for 0, sd1-LIN-repK's
+    otherwise)."""
+    plan = pilot.schedule(lineage)["updates"]
+    return json.dumps([{"episodes": [{"episode": dict(zip(("id", "seed"), sd1.unit_id_seed(lineage, k, e))),
+                                      "opponent": {"kind": "current"}} for e in update]} for update in plan])
+
+
+def write_run(directory: Path, lineage: str, k: int, initial: dict, final_sha256: str) -> dict:
+    """A run's plan (run.json) on seed k's units from ``initial``, and its
+    completion, whose pin is returned."""
+    write(directory / "run.json", {"schema": phase2.RUN_SCHEMA, "git_commit": "0" * 40,
+                                   "config": {"schema": phase2.RUN_SCHEMA, "initial_source": initial,
+                                              "iterations": json.loads(units(lineage, k))}})
+    return write(directory / "completion.json", {
+        "schema": phase2.RUN_SCHEMA, "complete": True, "completed_iterations": pilot.UPDATES,
+        "planned_iterations": pilot.UPDATES,
+        "source": {"checkpoint": {"path": f"{directory.name}/final.json", "sha256": final_sha256}}})
+
+
 def custody(root: Path, lineage: str) -> tuple:
-    """A lineage's eight selections and sixteen run completions, and each
-    endpoint's checkpoint SHA-256."""
+    """A lineage's eight selections with their D1 sources, and sixteen runs
+    (each run.json beside its completion), and each endpoint's checkpoint
+    SHA-256."""
     shas = {ck: S.PARENT_CHECKPOINT_SHA256[lineage] if ck.endswith("-parent") else sha(ck)
             for ck in S.endpoint_ids(lineage)}
-    select = [write(root / lineage / f"select-{k}.json", {
-        "schema": sd1.SELECT_SCHEMA, "lineage": lineage, "seed": k, "reading": "passes",
-        "d1_checkpoint": {"step": 64, "checkpoint": {"path": f"D1-{k}/checkpoint.json",
-                                                     "sha256": shas[f"{lineage}-D1-{k}"]},
-                          "source": {"path": f"D1-{k}/source.json", "sha256": sha(f"source-{k}")},
-                          "state_sha256": sha(f"state-{k}")}}) for k in SEEDS]
-
-    def run(name: str, ck: str) -> dict:
-        return write(root / lineage / name / "completion.json", {
-            "schema": phase2.RUN_SCHEMA, "complete": True, "completed_iterations": pilot.UPDATES,
-            "source": {"checkpoint": {"path": f"{name}/final.json", "sha256": shas[ck]}}})
-    runs = {f"D2-{k}": run(f"D2-{k}", f"{lineage}-D2-{k}") for k in SEEDS}
-    runs.update({f"O-{k}": run(f"O-{k}", f"{lineage}-O-{k}") for k in SEEDS if k})
-    return {"select": select, "o_s0": run("O-s0", f"{lineage}-O-0"), "phase2": runs}, shas
+    sources, select = {}, []
+    for k in SEEDS:
+        checkpoint = {"path": f"/srv/computehost/{lineage}/D1-{k}/checkpoint.json",
+                      "sha256": shas[f"{lineage}-D1-{k}"]}
+        sources[k] = model_source(lineage, checkpoint)
+        source_pin = write(root / lineage / f"D1-{k}" / "source.json", sources[k])
+        select.append(write(root / lineage / f"select-{k}.json", {
+            "schema": sd1.SELECT_SCHEMA, "lineage": lineage, "seed": k, "reading": "passes",
+            "d1_checkpoint": {"step": 64, "checkpoint": checkpoint, "source": source_pin,
+                              "state_sha256": sha(f"state-{k}")}}))
+    runs = {f"D2-{k}": write_run(root / lineage / f"D2-{k}", lineage, k, sources[k], shas[f"{lineage}-D2-{k}"])
+            for k in SEEDS}
+    runs.update({f"O-{k}": write_run(root / lineage / f"O-{k}", lineage, k, parent_source(lineage),
+                                     shas[f"{lineage}-O-{k}"]) for k in SEEDS if k})
+    o_s0 = write_run(root / lineage / "O-s0", lineage, 0, parent_source(lineage), shas[f"{lineage}-O-0"])
+    return {"select": select, "o_s0": o_s0, "phase2": runs}, shas
 
 
 def screen_pins(root: Path, passed: bool = True) -> dict:
@@ -140,10 +190,19 @@ def screen_pins(root: Path, passed: bool = True) -> dict:
     return {"screen_index": index, "screen_result": result, "x4": record}
 
 
-def entries(lineage: str, shas: dict) -> list:
-    """Panel index entries whose rows a patched loader supplies."""
-    return [{"checkpoint": ck, "opponent": opp, "checkpoint_sha256": shas[ck], "rows": "-", "labels": "-"}
-            for ck in S.endpoint_ids(lineage) for opp in OPPONENTS]
+def entries(root: Path, lineage: str, shas: dict) -> list:
+    """Panel spec entries whose rows a patched loader supplies: each pins
+    one placeholder file as its rows and labels."""
+    placeholder = root / "placeholder.jsonl"
+    placeholder.write_text("{}\n", encoding="utf-8")
+    return [{"checkpoint": ck, "opponent": opp, "checkpoint_sha256": shas[ck], "rows": file_pin(placeholder),
+             "labels": file_pin(placeholder)} for ck in S.endpoint_ids(lineage) for opp in OPPONENTS]
+
+
+def loadable(panels: list) -> list:
+    """Spec panels as the screen's analyzer loads them: rows and labels by
+    path."""
+    return [{**p, "rows": p["rows"]["path"], "labels": p["labels"]["path"]} for p in panels]
 
 
 class Temp(unittest.TestCase):
@@ -420,11 +479,21 @@ class Readings(unittest.TestCase):
 class Custody(Temp):
     def test_each_endpoint_binds_to_its_checkpoint(self):
         entry, shas = custody(self.root, "r1")
-        self.assertEqual(S.expected_endpoints("r1", entry), shas)
+        endpoints, read = S.expected_endpoints("r1", entry)
+        self.assertEqual(endpoints, shas)
         self.assertEqual(len(shas), 25)
         self.assertEqual(shas["r1-parent"], S.PARENT_CHECKPOINT_SHA256["r1"])
-        panels = entries("r1", shas)
-        self.assertEqual(S.lineage_panels("r1", {**entry, "panels": panels}), panels)
+        self.assertEqual(set(read), set(shas) - {"r1-parent"})
+        self.assertEqual(read["r1-D1-3"], {"selection": entry["select"][3],
+                                           "source": file_pin(self.root / "r1" / "D1-3" / "source.json")})
+        for name, pinned in [("D2-5", entry["phase2"]["D2-5"]), ("O-0", entry["o_s0"])]:
+            self.assertEqual(read[f"r1-{name}"], {"completion": pinned, "run": file_pin(
+                Path(pinned["path"]).parent / "run.json")})
+        panels = entries(self.root, "r1", shas)
+        self.assertEqual(S.lineage_panels("r1", {**entry, "panels": panels}),
+                         (loadable(panels), {"endpoints": read, "panels": {
+                             f"{p['checkpoint']}/{p['opponent']}": {"rows": p["rows"], "labels": p["labels"]}
+                             for p in panels}}))
 
     def refuses(self, message: str, entry: dict) -> None:
         with self.assertRaisesRegex(ValueError, message):
@@ -432,7 +501,7 @@ class Custody(Temp):
 
     def test_refusals(self):
         entry, shas = custody(self.root, "r1")
-        panels = entries("r1", shas)
+        panels = entries(self.root, "r1", shas)
         base = {**entry, "panels": panels}
         self.refuses("every endpoint's panel against each opponent", {**base, "panels": panels[1:]})
         wrong = copy.deepcopy(panels)
@@ -452,10 +521,99 @@ class Custody(Temp):
         partial.update(complete=False, completed_iterations=100)
         self.refuses("r1 D2-4: not a complete 162-update run",
                      {**base, "phase2": {**entry["phase2"], "D2-4": write(self.root / "partial.json", partial)}})
-        self.refuses("two endpoints name the same checkpoint",
-                     {**base, "phase2": {**entry["phase2"], "D2-6": entry["phase2"]["O-6"]}})
         changed = dict(entry["o_s0"], sha256=sha("changed"))
         self.refuses("r1 O-s0: .* is missing or differs", {**base, "o_s0": changed})
+        # Two runs whose final checkpoints are one file.
+        twin = json.loads(Path(entry["phase2"]["D2-6"]["path"]).read_text(encoding="utf-8"))
+        twin["source"]["checkpoint"]["sha256"] = shas["r1-O-6"]
+        (self.root / "twin").mkdir()
+        (self.root / "twin" / "run.json").write_bytes((self.root / "r1" / "D2-6" / "run.json").read_bytes())
+        self.refuses("two endpoints name the same checkpoint",
+                     {**base, "phase2": {**entry["phase2"], "D2-6": write(self.root / "twin" / "completion.json",
+                                                                          twin)}})
+
+    def test_a_run_is_the_run_its_name_says(self):
+        entry, shas = custody(self.root, "r1")
+        base = {**entry, "panels": entries(self.root, "r1", shas)}
+        runs = entry["phase2"]
+
+        def moved(name: str, completion: dict, plan_from: str | None) -> dict:
+            """``completion``'s bytes in a new directory beside another run's
+            run.json (or none)."""
+            directory = self.root / "moved" / name
+            directory.mkdir(parents=True)
+            (directory / "completion.json").write_bytes(Path(completion["path"]).read_bytes())
+            if plan_from is not None:
+                (directory / "run.json").write_bytes((self.root / "r1" / plan_from / "run.json").read_bytes())
+            return file_pin(directory / "completion.json")
+
+        def plan(name: str, value) -> dict:
+            directory = self.root / "plans" / name
+            write(directory / "run.json", value)
+            return write(directory / "completion.json", json.loads(Path(runs["D2-5"]["path"]).read_text(
+                encoding="utf-8")))
+
+        # Its plan is read beside its completion.
+        self.refuses("r1 D2-2: .*run.json is missing", {**base, "phase2": {**runs, "D2-2": moved("D2-2", runs["D2-2"],
+                                                                                                 None)}})
+        # Its units carry its own seed's episode ids and seeds.
+        self.refuses("r1 D2-3: not seed 3's run: update 0 unit 0: its episode id and seed are not seed 3's",
+                     {**base, "phase2": {**runs, "D2-3": moved("D2-3", runs["D2-3"], "D2-4")}})
+        self.refuses("r1 O-s0: not seed 0's run",
+                     {**base, "o_s0": moved("O-s0", entry["o_s0"], "O-1")})
+        self.refuses("r1 O-1: not seed 1's run", {**base, "phase2": {**runs, "O-1": moved("O-1", runs["O-1"], "D2-0")}})
+        recorded = json.loads((self.root / "r1" / "D2-5" / "run.json").read_text(encoding="utf-8"))
+        late = copy.deepcopy(recorded)
+        late["config"]["iterations"][161]["episodes"][3]["episode"]["seed"] += 1
+        self.refuses("r1 D2-5: not seed 5's run: update 161 unit 3: its episode id and seed are not seed 5's",
+                     {**base, "phase2": {**runs, "D2-5": plan("late", late)}})
+        short = copy.deepcopy(recorded)
+        short["config"]["iterations"].pop()
+        self.refuses("r1 D2-5: not seed 5's run: it does not hold the schedule's 162 updates",
+                     {**base, "phase2": {**runs, "D2-5": plan("short", short)}})
+        for name, value in (("list", [recorded]), ("other", {**recorded, "schema": "another"}),
+                            ("bare", {"schema": phase2.RUN_SCHEMA})):
+            self.refuses("r1 D2-5: the run.json beside it is not a run's plan",
+                         {**base, "phase2": {**runs, "D2-5": plan(name, value)}})
+        # D2-k starts from D1-k's source, verbatim; O-k from the parent.
+        for initial in (parent_source("r1"), json.loads((self.root / "r1" / "D1-4" / "source.json").read_text(
+                encoding="utf-8")), {**recorded["config"]["initial_source"], "checkpoint": {
+                    **recorded["config"]["initial_source"]["checkpoint"], "path": "Q:/elsewhere/checkpoint.json"}}):
+            other = copy.deepcopy(recorded)
+            other["config"]["initial_source"] = initial
+            self.refuses("r1 D2-5: its initial source is not D1-5's source verbatim",
+                         {**base, "phase2": {**runs, "D2-5": plan("initial", other)}})
+        from_d1 = json.loads((self.root / "r1" / "O-2" / "run.json").read_text(encoding="utf-8"))
+        from_d1["config"]["initial_source"] = json.loads((self.root / "r1" / "D1-2" / "source.json").read_text(
+            encoding="utf-8"))
+        directory = self.root / "from-d1"
+        write(directory / "run.json", from_d1)
+        o_2 = write(directory / "completion.json", json.loads(Path(runs["O-2"]["path"]).read_text(encoding="utf-8")))
+        self.refuses("r1 O-2: its initial source is not the parent", {**base, "phase2": {**runs, "O-2": o_2}})
+
+    def test_d1_sources_and_panel_files_are_pinned(self):
+        entry, shas = custody(self.root, "r1")
+        panels = entries(self.root, "r1", shas)
+        base = {**entry, "panels": panels}
+        source = self.root / "r1" / "D1-3" / "source.json"
+        source.write_text(source.read_text(encoding="utf-8") + " ", encoding="utf-8")
+        self.refuses("r1 D1-3 source: .* is missing or differs", base)
+        entry, shas = custody(self.root / "again", "r1")
+        selection = json.loads(Path(entry["select"][2]["path"]).read_text(encoding="utf-8"))
+        selection["d1_checkpoint"]["source"] = write(self.root / "elsewhere.json", model_source(
+            "r1", {"path": "/srv/computehost/r1/D1-6/checkpoint.json", "sha256": shas["r1-D1-6"]}))
+        self.refuses("r1 D1-2: the source's checkpoint is not the selected one",
+                     {**entry, "panels": panels, "select": entry["select"][:2] + [
+                         write(self.root / "select-2.json", selection)] + entry["select"][3:]})
+        panels = entries(self.root / "again", "r1", shas)
+        base = {**entry, "panels": panels}
+        Path(panels[0]["rows"]["path"]).write_text("{}\n{}\n", encoding="utf-8")
+        self.refuses("r1-parent-vs-T1 rows: .* is missing or differs", base)
+        panels = entries(self.root / "again", "r1", shas)
+        bare = copy.deepcopy(panels)
+        bare[5]["labels"] = bare[5]["labels"]["path"]
+        self.refuses(f"{bare[5]['checkpoint']}-vs-{bare[5]['opponent']}: its rows and labels are pins",
+                     {**entry, "panels": bare})
 
 
 # --------------------------------------------------------------------- X4
@@ -533,10 +691,18 @@ class Analysis(Temp):
 
     def test_one_lineage_from_panel_files(self):
         entry, shas = custody(self.root, "r1")
-        panels = [write_panel(self.root / "panels", ck, opp, outcome, shas[ck])
+        panels = [as_pins(write_panel(self.root / "panels", ck, opp, outcome, shas[ck]))
                   for (ck, opp), outcome in outcomes("r1").items()]
         spec = self.spec({"r1": {**entry, "panels": panels}, "r2": {"not_run": "fit"}})
         out = S.analysis(spec, draws=DRAWS)
+        # The record pins everything read.
+        endpoints, read = S.expected_endpoints("r1", entry)
+        self.assertEqual(out["inputs"], {
+            "spec": None, **{f: spec[f] for f in ("screen_index", "screen_result", "x4")},
+            "lineages": {"r1": {"endpoints": read, "panels": {
+                f"{p['checkpoint']}/{p['opponent']}": {"rows": p["rows"], "labels": p["labels"]} for p in panels}}}})
+        self.assertEqual(len(out["inputs"]["lineages"]["r1"]["panels"]), 50)
+        self.assertEqual(out["inputs"]["lineages"]["r1"]["endpoints"]["r1-O-0"]["completion"], entry["o_s0"])
         self.assertEqual((out["seed"], out["draws"], out["not_run"]), (2026101601, DRAWS, {"r2": "fit"}))
         r1 = out["lineages"]["r1"]
         self.assertEqual(r1["primary"]["reading"], "improvement established")
@@ -564,8 +730,8 @@ class Analysis(Temp):
         self.assertEqual(len(out["deck_labels"]), DECKS)
         json.dumps(out)
         # A panel drawn under the frozen panel's seeds is refused.
-        frozen = write_panel(self.root / "frozen", "r1-O-2", "T1", outcomes("r1")[("r1-O-2", "T1")],
-                             shas["r1-O-2"], pilot.PANEL_NS)
+        frozen = as_pins(write_panel(self.root / "frozen", "r1-O-2", "T1", outcomes("r1")[("r1-O-2", "T1")],
+                                     shas["r1-O-2"], pilot.PANEL_NS))
         swapped = [frozen if (p["checkpoint"], p["opponent"]) == ("r1-O-2", "T1") else p for p in panels]
         with self.assertRaisesRegex(ValueError, "panel, checkpoint or seed differs"):
             S.analysis(self.spec({"r1": {**entry, "panels": swapped}, "r2": {"not_run": "fit"}}), draws=DRAWS)
@@ -580,8 +746,8 @@ class Analysis(Temp):
             self.assertEqual({(p["checkpoint"], p["opponent"]) for p in index["panels"]}, set(data))
             self.assertTrue(all(ck in allowed for ck, _ in data))
             return data
-        spec = self.spec({"r1": {**r1_entry, "panels": entries("r1", r1_shas)},
-                          "r2": {**r2_entry, "panels": entries("r2", r2_shas)}})
+        spec = self.spec({"r1": {**r1_entry, "panels": entries(self.root, "r1", r1_shas)},
+                          "r2": {**r2_entry, "panels": entries(self.root, "r2", r2_shas)}})
         with mock.patch.object(A, "load", load):
             return S.analysis(spec, draws=DRAWS)
 
@@ -627,7 +793,7 @@ class Analysis(Temp):
 
     def test_refusals(self):
         entry, shas = custody(self.root, "r1")
-        lineages = {"r1": {**entry, "panels": entries("r1", shas)}, "r2": {"not_run": "fit"}}
+        lineages = {"r1": {**entry, "panels": entries(self.root, "r1", shas)}, "r2": {"not_run": "fit"}}
         with self.assertRaisesRegex(ValueError, "X4 did not pass"):
             S.analysis(self.spec(lineages, passed=False), draws=DRAWS)
         spec = self.spec(lineages)
@@ -654,7 +820,11 @@ class Analysis(Temp):
             self.assertEqual(S.main(["analyze", "--spec", spec_path["path"], "--out", str(out)]), 0)
         self.assertEqual(json.loads(stdout.getvalue()), {"method_screen_positive": False,
                                                           "primary": {"r1": "not answered", "r2": "not answered"}})
-        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["draws"], DRAWS)
+        result = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(result["draws"], DRAWS)
+        self.assertEqual(result["inputs"]["spec"], {"path": S.absolute(spec_path["path"]),
+                                                    "sha256": spec_path["sha256"]})
+        self.assertEqual(result["inputs"]["lineages"], {})
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import struct
 import sys
 import tarfile
@@ -55,7 +56,9 @@ def schedule(lineage="r1") -> list:
 class Temp(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        # Custody reads no file through a link, so the fixtures live under the directory's real path (a temporary
+        # directory may itself sit under one, as /var does on macOS).
+        self.root = Path(os.path.realpath(self.temp.name))
 
     def tearDown(self):
         self.temp.cleanup()
@@ -100,7 +103,10 @@ class Split(unittest.TestCase):
             write_lines(path, schedule())
             with mock.patch("sys.stdout"):
                 sd1.main(["split", "--lineage", "r1", "--schedule", str(path), "--out", str(Path(d) / "S.json")])
-            self.assertEqual(json.loads((Path(d) / "S.json").read_text())["counts"]["held_out"], 36)
+            written = json.loads((Path(d) / "S.json").read_text())
+            self.assertEqual(written["counts"]["held_out"], 36)
+            # The split pins the schedule it was fixed on.
+            self.assertEqual(written["schedule"], common.pin(path))
             with self.assertRaisesRegex(ValueError, "not the r2 schedule"):
                 sd1.schedule_cases(path, "r2")
 
@@ -122,43 +128,103 @@ def record(case, lineage="r1", actions=(0, 1, 0, 2), end="win"):
 
 
 class Records(Temp):
-    def files(self, cases):
-        paths = []
-        for c in cases:
-            paths.append(str(self.root / "records" / c["id"] / "game.jsonl"))
-            write_lines(Path(paths[-1]), [record(c)])
-        listing = self.root / "list.txt"
-        listing.write_text("\n".join(paths) + "\n", encoding="utf-8")
-        return paths, listing
+    """A lineage's record files as custody's copies of its role r1-records,
+    and the schedule custody verified."""
 
-    def test_each_scheduled_case_binds_one_record_file(self):
-        cases = schedule()
-        sched = self.root / "formal-r1.jsonl"
-        write_lines(sched, cases)
-        paths, listing = self.files(cases)
-        out = sd1.records("r1", sched, listing)
-        self.assertEqual([c["id"] for c in out["cases"]], [c["id"] for c in cases])
-        self.assertEqual(out["cases"][0]["record"]["path"], paths[0])
-        self.assertFalse(out["custody_checked"])
-        expect = {c["id"]: c["record"]["sha256"] for c in out["cases"]}
-        self.assertTrue(sd1.records("r1", sched, listing, expect)["custody_checked"])
-        with self.assertRaisesRegex(ValueError, "custody SHA-256"):
-            sd1.records("r1", sched, listing, {**expect, cases[5]["id"]: "0" * 64})
+    def setUp(self):
+        super().setUp()
+        self.cases = schedule()
+        self.sched = write_lines(self.root / "screen" / "formal-r1.jsonl", self.cases)
+        self.paths, members = [], []
+        for c in self.cases:
+            copy_pin = write_lines(self.root / "custody" / "members" / "formal" / c["id"] / "game.jsonl", [record(c)])
+            self.paths.append(copy_pin["path"])
+            members.append({"role": "r1-records", "member": f"formal/{c['id']}/game.jsonl", "kind": "record",
+                            "sha256": copy_pin["sha256"], "id": c["id"], "extracted": copy_pin})
+        self.custody = {"schema": sd1.CUSTODY_SCHEMA, "pass": True, "forbidden": [HOT],
+                        "files": [{"role": "r1-schedule", **self.sched, "verified": True}], "members": members}
+        self.custody_path = self.write_custody(self.custody)
+        self.listing = self.list_files(self.paths)
 
-    def test_a_custody_gap_stops(self):
-        cases = schedule()
-        sched = self.root / "formal-r1.jsonl"
-        write_lines(sched, cases)
-        paths, listing = self.files(cases[:-1])
+    def fresh(self, name: str) -> Path:
+        """A new file name for each call, so earlier files stay as written."""
+        self.written = getattr(self, "written", 0) + 1
+        return self.root / "inputs" / f"{self.written}-{name}"
+
+    def write_custody(self, value: dict) -> Path:
+        return Path(write(self.fresh("CUSTODY.json"), value)["path"])
+
+    def list_files(self, paths) -> Path:
+        listing = self.fresh("list.txt")
+        listing.parent.mkdir(parents=True, exist_ok=True)
+        listing.write_text("".join(p + "\n" for p in paths), encoding="utf-8")
+        return listing
+
+    def records(self, listing=None, custody=None, schedule_path=None, role="r1-records"):
+        return sd1.records("r1", Path(schedule_path or self.sched["path"]), listing or self.listing,
+                           custody or self.custody_path, role)
+
+    def recustody(self, index: int, rows: list) -> Path:
+        """Custody whose copy ``index`` holds ``rows``, with their SHA-256."""
+        value = copy.deepcopy(self.custody)
+        copy_pin = write_lines(Path(self.paths[index]), rows)
+        value["members"][index].update(sha256=copy_pin["sha256"], extracted=copy_pin)
+        return self.write_custody(value)
+
+    def test_each_scheduled_case_binds_one_custody_copy(self):
+        out = self.records()
+        self.assertEqual([c["id"] for c in out["cases"]], [c["id"] for c in self.cases])
+        self.assertEqual(out["cases"][0]["record"], {"path": self.paths[0],
+                                                     "sha256": self.custody["members"][0]["sha256"]})
+        self.assertEqual((out["schedule"], out["record_list"], out["custody"], out["role"]),
+                         (common.pin(self.sched["path"]), common.pin(self.listing), common.pin(self.custody_path),
+                          "r1-records"))
+        with mock.patch("sys.stdout"):
+            self.assertEqual(sd1.main(["records", "--lineage", "r1", "--schedule", self.sched["path"],
+                                       "--record-list", str(self.listing), "--custody", str(self.custody_path),
+                                       "--role", "r1-records", "--out", str(self.root / "RECORDS.json")]), 0)
+        self.assertEqual(json.loads((self.root / "RECORDS.json").read_text(encoding="utf-8")), out)
+
+    def test_a_custody_gap_or_mismatch_stops(self):
         with self.assertRaisesRegex(ValueError, "not exactly the schedule's cases"):
-            sd1.records("r1", sched, listing)
-        paths, listing = self.files(cases)
-        write_lines(Path(paths[3]), [record(cases[3]), record(cases[3])])
+            self.records(self.list_files(self.paths[:-1]))
+        with self.assertRaisesRegex(ValueError, "the record list repeats a file"):
+            self.records(self.list_files(self.paths + self.paths[3:4]))
+        with self.assertRaisesRegex(ValueError, "is not an absolute path"):
+            self.records(self.list_files([f"formal/{self.cases[0]['id']}/game.jsonl"] + self.paths[1:]))
+        stray = write_lines(self.root / "elsewhere" / "game.jsonl", [record(self.cases[0])])
+        with self.assertRaisesRegex(ValueError, "is not one of custody's r1-records copies"):
+            self.records(self.list_files([stray["path"]] + self.paths[1:]))
+        # A copy whose bytes changed after custody.
+        write_lines(Path(self.paths[5]), [record(self.cases[5], end="loss")])
+        with self.assertRaisesRegex(ValueError, f"not custody's {self.custody['members'][5]['sha256']} for member "
+                                                f"formal/{self.cases[5]['id']}/game.jsonl"):
+            self.records()
+        write_lines(Path(self.paths[5]), [record(self.cases[5])])
+        self.assertEqual(len(self.records()["cases"]), len(self.cases))
         with self.assertRaisesRegex(ValueError, "exactly one budget_game row"):
-            sd1.records("r1", sched, listing)
-        write_lines(Path(paths[3]), [record(cases[4])])
-        with self.assertRaisesRegex(ValueError, "two record files"):
-            sd1.records("r1", sched, listing)
+            self.records(custody=self.recustody(3, [record(self.cases[3]), record(self.cases[3])]))
+        with self.assertRaisesRegex(ValueError, f"its record is '{self.cases[4]['id']}', not custody's case "
+                                                f"{self.cases[3]['id']}"):
+            self.records(custody=self.recustody(3, [record(self.cases[4])]))
+        write_lines(Path(self.paths[3]), [record(self.cases[3])])
+        # A copy custody holds with no case id: the record's own id binds it, once.
+        value = copy.deepcopy(self.custody)
+        twin = write_lines(Path(self.paths[4]), [record(self.cases[3])])
+        value["members"][4].update(id=None, sha256=twin["sha256"], extracted=twin)
+        with self.assertRaisesRegex(ValueError, f"{self.cases[3]['id']}: two record files"):
+            self.records(custody=self.write_custody(value))
+
+    def test_custody_binds_the_schedule_the_role_and_the_roots(self):
+        with self.assertRaisesRegex(ValueError, "is not the r1 schedule custody verified"):
+            self.records(schedule_path=write_lines(self.root / "other" / "formal-r1.jsonl", self.cases[::-1])["path"])
+        with self.assertRaisesRegex(ValueError, "is not a custody record that passed"):
+            self.records(custody=self.write_custody({**self.custody, "pass": False}))
+        with self.assertRaisesRegex(ValueError, "custody holds no copy of role 'r2-records'"):
+            self.records(role="r2-records")
+        holding = common.absolute(self.root / "custody" / "members")
+        with self.assertRaisesRegex(ValueError, f"lies under the hot or holding root {holding}"):
+            self.records(custody=self.write_custody({**self.custody, "forbidden": [HOT, holding]}))
 
 
 # ------------------------------------------------------------------ games
@@ -251,6 +317,29 @@ class Games(Temp):
         with self.assertRaisesRegex(ValueError, "frozen schedule"):
             self.run_games()
 
+    def test_a_record_file_the_rebuild_could_not_read_voids_its_game_by_file(self):
+        # The engine's input void row: the list's line as its file, a null id and the reason.
+        unread = {"schema": sd1.REBUILD_SCHEMA, "file": self.replays[0]["file"], "id": None,
+                  "void": "the listed file cannot be read: access denied"}
+        self.rebuilds[0] = unread
+        out = self.run_games()
+        self.assertEqual((out["kept"], out["void"]), (19, 1))
+        self.assertEqual(self.status()["void"], [{"id": self.cases[0]["id"],
+                                                  "reason": "root rebuild: the listed file cannot be read: access "
+                                                            "denied"}])
+        # A malformed line of a file the rebuild read gives its own row, and voids that game too.
+        self.rebuilds.append({**unread, "file": self.replays[1]["file"], "void": "line 2 is not JSON"})
+        with self.assertRaisesRegex(ValueError, "engineering: 2 of 20"):
+            self.run_games()
+        self.assertEqual(self.status()["void"][1], {"id": self.cases[1]["id"], "reason": "root rebuild: line 2 is not "
+                                                                                          "JSON"})
+        self.rebuilds[-1] = {**unread, "file": str(self.root / "unlisted.jsonl")}
+        with self.assertRaisesRegex(ValueError, "an input void row of the rebuild names no listed record file"):
+            self.run_games()
+        self.rebuilds[-1] = {"schema": sd1.REBUILD_SCHEMA, "file": self.replays[1]["file"], "id": None}
+        with self.assertRaisesRegex(ValueError, "not an input void row"):
+            self.run_games()
+
 
 # ------------------------------------------------------- bank and targets
 
@@ -274,7 +363,9 @@ class Pipeline(Temp):
 
     def lineage(self, lineage):
         cases = schedule(lineage)
-        the_split = sd1.split(lineage, cases)
+        # The split pins the schedule it was fixed on (as the split command writes it), the one the rebuild checked.
+        sched = write_lines(self.root / lineage / f"formal-{lineage}.jsonl", cases)
+        the_split = {**sd1.split(lineage, cases), "schedule": sched}
         held = [c for c in cases if the_split["games"][c["id"]] == "held_out"]
         train = [c for c in cases if the_split["games"][c["id"]] == "training"]
         chosen = [train[0], train[2], held[0], held[2]]
@@ -286,7 +377,7 @@ class Pipeline(Temp):
             roots = [root(first, [2, 0, 1], **EVIDENCE, view="tie_minimum" if i == 1 else "untied"),
                      root(9, [1, 0], **FLAT, view="work_limit" if i == 2 else "untied")]
             rebuild_rows.append({"schema": sd1.REBUILD_SCHEMA, "id": c["id"], "own": c["own"], "void": None,
-                                 "roots": roots, "first_choice_step": first,
+                                 "schedule_sha256": sched["sha256"], "roots": roots, "first_choice_step": first,
                                  "plain": [{"step": 20, "refreshed": None, "remaining_before": 0},
                                            {"step": 22, "refreshed": "miss", "remaining_before": 64000}],
                                  "choosers": {"new_root": 2, "reused": 3, "plain": 2}, "one_action": 1})
@@ -299,7 +390,7 @@ class Pipeline(Temp):
             bank_rows.append({"game": c["id"], "step": 12, "k": 2, "chooser": "reused", "target": 0,
                               "parent_logits": f32_bits([0.0, 0.0])})
         rebuild_rows.append({"schema": sd1.REBUILD_SCHEMA, "id": void_case["id"], "own": void_case["own"],
-                             "void": "root rebuild: x"})
+                             "schedule_sha256": sched["sha256"], "void": "root rebuild: x"})
         rebuild = write_lines(self.root / lineage / "rebuild.jsonl", rebuild_rows)
         games_file = write_lines(self.root / lineage / "games.jsonl", [{"id": g} for g in kept])
         status = {"schema": sd1.GAMES_SCHEMA, "lineage": lineage, "rebuild": rebuild, "games": 6,
@@ -396,6 +487,21 @@ class Pipeline(Temp):
         self.assertEqual(len(rows), 8)
         self.assertTrue(all(r["mean"]["leader"] == r["x"] for r in rows))
 
+    def test_targets_read_the_split_fixed_on_the_rebuilds_schedule(self):
+        fixtures = self.checks(games_count=40)
+        spec = {lin: {"split": fx["split"], "games": fx["games"], "bank_check": fx["check_pin"]}
+                for lin, fx in fixtures.items()}
+        the_split = json.loads(Path(fixtures["r2"]["split"]["path"]).read_text(encoding="utf-8"))
+        other = write_lines(self.root / "other" / "formal-r2.jsonl", schedule("r2")[::-1])
+        spec["r2"]["split"] = write(self.root / "other" / "SPLIT.json", {**the_split, "schedule": other})
+        with self.assertRaisesRegex(ValueError, "r2: the split was fixed on another schedule than the one the "
+                                                "rebuild checked"):
+            sd1.targets(spec, self.root / "stage2", names=NAMES)
+        del the_split["schedule"]
+        spec["r2"]["split"] = write(self.root / "other" / "SPLIT.json", the_split)
+        with self.assertRaisesRegex(ValueError, "r2: the split pins no schedule"):
+            sd1.targets(spec, self.root / "stage2", names=NAMES)
+
     def test_the_mean_rule_adapter_reads_the_record_counts(self):
         rule = sd1.mean_rule(**EVIDENCE)
         self.assertEqual((rule["leader"], rule["separated"], rule["evidence"]), (0, [1], True))
@@ -452,6 +558,11 @@ class SelectFixture(Temp):
                        128: dict(training=0.1, held=(8, 6, 7, 7)), 256: dict(training=0.1, held=(7, 7, 7, 7))}
         for s in sd1.GATED_STEPS[4:]:
             self.points[s] = dict(training=0.1, held=(9, 9, 9, 9))
+        # The split's held-out games and their matchups, as the probe's held-out rows name them.
+        self.split = {"schema": sd1.SPLIT_SCHEMA, "lineage": "r1",
+                      "games": {f"g{i}": "held_out" for i in range(len(MATCHUPS))},
+                      "matchups": {f"g{i}": [NAMES.index(own), NAMES.index(other)]
+                                   for i, (own, other) in enumerate(MATCHUPS)}}
 
     def probe_of(self, candidates):
         return {"schema": sd1.PROBE_SCHEMA, "complete": True, "lineage": "r1", "parent": {"p": 1},
@@ -467,7 +578,7 @@ class SelectFixture(Temp):
 
     def select(self, probe=None, rerun=None, split=None):
         return sd1.select("r1", 3, probe or self.probe(), self.reference, self.full, rerun or self.rerun,
-                          split, names=NAMES)
+                          split or self.split, names=NAMES)
 
 
 class Select(SelectFixture):
@@ -547,7 +658,7 @@ class Select(SelectFixture):
         out = self.select(self.probe({64: dict(training=float("nan"), held=(8, 6, 9, 7))}))
         self.assertEqual(out["g3"]["cause"], "a non-finite value at step 64")
         self.telemetry[100]["archive_loss"] = float("inf")
-        write(Path(self.telemetry_pin["path"]), self.telemetry)
+        self.full["telemetry"] = write(Path(self.telemetry_pin["path"]), self.telemetry)
         out = self.select()
         self.assertEqual(out["g3"]["cause"], "a non-finite value at step 128")
         probe = self.probe()
@@ -583,9 +694,34 @@ class Select(SelectFixture):
         with self.assertRaisesRegex(ValueError, "not the split's"):
             self.select(split=the_split)
 
+    def test_the_runs_telemetry_is_read_against_its_pin_and_the_split_is_this_lineages(self):
+        self.telemetry[100]["archive_loss"] = float("inf")
+        write(Path(self.telemetry_pin["path"]), self.telemetry)
+        with self.assertRaisesRegex(ValueError, "SD1-T-s3 telemetry: .* is missing or differs"):
+            self.select()
+        self.telemetry[100]["archive_loss"] = 0.2
+        write(Path(self.telemetry_pin["path"]), self.telemetry)
+        self.assertEqual(self.select()["reading"], "passes")
+        with self.assertRaisesRegex(ValueError, "not this lineage's split"):
+            self.select(split={**self.split, "lineage": "r2"})
+
+    def test_the_cli_pins_every_input(self):
+        names = ("probe", "reference", "full", "rerun", "split")
+        paths = {name: write(self.root / f"{name}.json", value)["path"]
+                 for name, value in zip(names, (self.probe(), self.reference, self.full, self.rerun, self.split))}
+        argv = ["select", "--lineage", "r1", "--seed", "3", *(x for name in names for x in (f"--{name}", paths[name])),
+                "--out", str(self.root / "SELECT.json")]
+        with mock.patch("sys.stdout"), mock.patch.object(sd1, "deck_names", return_value=NAMES):
+            self.assertEqual(sd1.main(argv), 0)
+        record = json.loads((self.root / "SELECT.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["reading"], "passes")
+        self.assertEqual(record["inputs"], {name: common.pin(paths[name]) for name in names})
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            sd1.main([a for a in argv if a not in ("--split", paths["split"])])
+
     def test_the_run_must_be_this_seeds_keep_set_cell(self):
         with self.assertRaisesRegex(ValueError, "SD1-T-s4"):
-            sd1.select("r1", 4, self.probe(), self.reference, self.full, self.rerun, names=NAMES)
+            sd1.select("r1", 4, self.probe(), self.reference, self.full, self.rerun, self.split, names=NAMES)
         self.assertEqual(sd1.cell_label(0), "SD1-T-s0")
         with self.assertRaises(ValueError):
             sd1.cell_label(8)
@@ -837,25 +973,95 @@ class PanelNamespace(Temp):
 
 
 class ToolChecks(Temp):
-    def test_known_answer_compares_every_kept_games_root_with_bt1s_live_map(self):
-        rebuild = [{"id": "a", "void": None, "roots": [root(1, [1, 0], [10, 2], [6, 0], 0),
-                                                      root(5, [0, 1], [10, 2], [6, 0], 0, view="tie_minimum")]},
-                   {"id": "b", "void": "root rebuild: x", "roots": []}]
-        bt1_rows = [{"game": "a", "step": 1, "chooser": "new_root", "live": [1, 0], "n": [10, 2], "wins": [6, 0],
-                     "x": 0, "visits": 12},
-                    {"game": "a", "step": 5, "chooser": "new_root", "live": [1, 0], "n": [10, 2], "wins": [6, 0],
-                     "x": 0, "visits": 12},
-                    {"game": "a", "step": 7, "chooser": "reused"},
-                    {"game": "b", "step": 2, "chooser": "new_root"}]
-        paths = {"r1": Path(write_lines(self.root / "rebuild.jsonl", rebuild)["path"])}
-        rows = {"r1": Path(write_lines(self.root / "ROWS-r1.jsonl", bt1_rows)["path"])}
+    def known(self):
+        """BT1's five r1 archive jobs and their records; the rebuild kept a, voided b by id, could not read c's
+        file (an input void row) and wrote no row for d or e."""
+        self.records = {g: str(self.root / "archive" / g / "game.jsonl") for g in "abcde"}
+        self.jobs = {"jobs": [{"label": f"BT1-{g}", "lineage": "r1", "id": g, "index": i, "record": self.records[g],
+                               "record_sha256": "0" * 64} for i, g in enumerate("abcde")]}
+        self.archive = write_lines(self.root / "archive-r1.jsonl", [{"id": g} for g in "abcde"])
+        base = {"schema": sd1.REBUILD_SCHEMA, "schedule_sha256": self.archive["sha256"], "key_mode": sd1.KEY_MODE}
+        self.rebuild = [{**base, "id": "a", "file": self.records["a"], "void": None,
+                         "roots": [root(1, [1, 0], [10, 2], [6, 0], 0), root(5, [0, 1], [10, 2], [6, 0], 0,
+                                                                             view="tie_minimum")]},
+                        {**base, "id": "b", "file": self.records["b"], "void": "step 3: a reused", "roots": []},
+                        {"schema": sd1.REBUILD_SCHEMA, "file": self.records["c"], "id": None,
+                         "void": "the listed file cannot be read"}]
+        new_root = {"chooser": "new_root", "live": [1, 0], "n": [10, 2], "wins": [6, 0], "x": 0, "visits": 12}
+        self.bt1_rows = [{"game": "a", "step": 1, **new_root}, {"game": "a", "step": 5, **new_root},
+                         {"game": "a", "step": 7, "chooser": "reused"}, {"game": "b", "step": 2, **new_root},
+                         {"game": "c", "step": 3, **new_root}, {"game": "d", "step": 4, **new_root}]
+
+    def run_known(self, rebuild=None, rows=None, jobs=None):
+        paths = {"r1": Path(write_lines(self.root / "rebuild.jsonl", rebuild or self.rebuild)["path"])}
+        bt1 = {"r1": Path(write_lines(self.root / "ROWS-r1.jsonl", rows or self.bt1_rows)["path"])}
         with mock.patch.object(sd1, "MIN_KNOWN_ROOTS", 1):
-            out = sd1.known_answer(paths, rows)
+            return sd1.known_answer(paths, bt1, {"r1": Path(self.archive["path"])}, jobs or self.jobs)
+
+    def test_known_answer_compares_every_kept_games_root_with_bt1s_live_map(self):
+        self.known()
+        out = self.run_known()
         r1 = out["lineages"]["r1"]
-        self.assertEqual((r1["bt1_new_root_rows"], r1["roots_compared"], r1["roots_not_replayed"]), (3, 2, 1))
+        self.assertEqual((r1["bt1_new_root_rows"], r1["roots_compared"], r1["roots_not_replayed"], r1["roots_absent"]),
+                         (5, 2, 2, 1))
         self.assertEqual(r1["roots_differing"], [["a", 5]])
-        self.assertEqual(r1["void_games"], [{"id": "b", "reason": "root rebuild: x"}])
+        self.assertEqual(r1["void_games"], [{"id": "b", "reason": "step 3: a reused"}])
+        self.assertEqual(r1["unreadable_games"], [{"id": "c", "file": self.records["c"],
+                                                   "reason": "the listed file cannot be read"}])
+        self.assertEqual((r1["games_not_replayed"], r1["games_absent"], r1["jobs_without_rows"]),
+                         (["b", "c"], ["d"], ["d", "e"]))
+        self.assertEqual((r1["failures"], r1["schedule"]), ([], common.pin(self.archive["path"])))
         self.assertFalse(out["pass"])
+        # Without the differing root and the absent game, every kept root matches.
+        rows = [r for r in self.bt1_rows if (r["game"], r["step"]) not in (("a", 5), ("d", 4))]
+        self.assertTrue(self.run_known(rows=rows)["pass"])
+        # A root of BT1's rows in a game the rebuild kept, which the rebuild did not rebuild, is missing.
+        out = self.run_known(rows=rows + [{**rows[0], "step": 9}])
+        self.assertEqual(out["lineages"]["r1"]["roots_missing"], [["a", 9]])
+        self.assertFalse(out["pass"])
+
+    def test_known_answer_binds_each_rebuild_row_to_bt1s_job_schedule_and_key_mode(self):
+        self.known()
+        rows = [r for r in self.bt1_rows if (r["game"], r["step"]) not in (("a", 5), ("d", 4))]
+        changes = {
+            "x: not one of BT1's r1 jobs": lambda rb: rb.append({**rb[0], "id": "x"}),
+            "a: the rebuild read": lambda rb: rb[0].update(file=self.records["b"]),
+            "a: not checked against the schedule": lambda rb: rb[0].update(schedule_sha256=None),
+            "a: read in key mode 'repaired-v1', not repaired-v2": lambda rb: rb[0].update(key_mode="repaired-v1"),
+            "an input void row names no BT1 r1 job's record": lambda rb: rb[2].update(file=str(self.root / "z.jsonl"))}
+        for needle, change in changes.items():
+            with self.subTest(needle):
+                rebuild = copy.deepcopy(self.rebuild)
+                change(rebuild)
+                out = self.run_known(rebuild=rebuild, rows=rows)
+                self.assertIn(needle, "\n".join(out["lineages"]["r1"]["failures"]))
+                self.assertFalse(out["pass"])
+        # A voided game needs no key mode; a spelling of its record path with backslashes is the same file.
+        rebuild = copy.deepcopy(self.rebuild)
+        del rebuild[1]["key_mode"]
+        rebuild[0]["file"] = self.records["a"].replace("/", "\\")
+        self.assertTrue(self.run_known(rebuild=rebuild, rows=rows)["pass"])
+        with self.assertRaisesRegex(ValueError, "a: two jobs"):
+            self.run_known(rows=rows, jobs={"jobs": self.jobs["jobs"] + self.jobs["jobs"][:1]})
+
+    def test_the_known_answer_cli_pins_the_jobs_and_each_lineages_files(self):
+        self.known()
+        rows = [r for r in self.bt1_rows if (r["game"], r["step"]) not in (("a", 5), ("d", 4))]
+        rebuild = write_lines(self.root / "rebuild.jsonl", self.rebuild)["path"]
+        bt1 = write_lines(self.root / "ROWS-r1.jsonl", rows)["path"]
+        jobs = write(self.root / "JOBS.json", self.jobs)["path"]
+        argv = ["known-answer", "--rebuild", f"r1={rebuild}", "--rows", f"r1={bt1}", "--schedule",
+                f"r1={self.archive['path']}", "--jobs", jobs, "--out", str(self.root / "KNOWN.json")]
+        with mock.patch("sys.stdout"), mock.patch.object(sd1, "MIN_KNOWN_ROOTS", 1):
+            self.assertEqual(sd1.main(argv), 0)
+        record = json.loads((self.root / "KNOWN.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["jobs"], common.pin(jobs))
+        self.assertEqual(record["lineages"]["r1"]["rebuild"], common.pin(rebuild))
+        with mock.patch("sys.stdout"):
+            self.assertEqual(sd1.main(argv), 1, "1,000 roots per lineage")
+        with self.assertRaisesRegex(ValueError, "give its rebuild output and schedule"):
+            sd1.main([a for a in argv if not a.startswith("--schedule") and a != f"r1={self.archive['path']}"]
+                     + ["--schedule", f"r2={self.archive['path']}"])
 
     def test_bt1_regression_counts_reproduced_rows(self):
         rows = [{"chooser": "new_root", **EVIDENCE, "rules": {"mean": sd1.mean_rule(**EVIDENCE)}},
@@ -891,6 +1097,19 @@ class ToolChecks(Temp):
             out = sd1.o_check("r1", mine, moved, Path("o.json"))
             self.assertEqual(out["first_differing_update"], {"update": 8, "fields": ["after_state_sha256"]})
             self.assertFalse(out["pass"])
+            # A recorded receipt that is retained but differs from its pin fails the check; a missing one ends the
+            # comparison.
+            self.assertEqual((out["recorded_end"], out["recorded_mismatch"]), (None, False))
+            out = sd1.o_check("r1", mine, same, Path("o.json"))
+            self.assertEqual(out["recorded_end"], {"iteration": 40, "problem": "missing"})
+            changed = self.completion("changed", [f"s{i}" for i in range(162)])
+            Path(changed["iterations"][60]["path"]).write_text("{}", encoding="utf-8")
+            out = sd1.o_check("r1", mine, changed, Path("o.json"))
+            self.assertEqual((out["recorded_end"]["iteration"], out["recorded_mismatch"], out["compared_updates"]),
+                             (60, True, 60))
+            self.assertIn("not its pin's", out["recorded_end"]["problem"])
+            self.assertIsNone(out["first_differing_update"])
+            self.assertFalse(out["pass"])
 
 
 # ------------------------------------------------------- stage 0: custody
@@ -906,6 +1125,15 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def link_directory(link: Path, target: Path) -> None:
+    """A directory link: a junction on Windows (which needs no privilege), a symbolic link elsewhere."""
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
 def as_pin(path: str, data: bytes) -> dict:
     return {"path": path, "sha256": digest(data)}
 
@@ -916,150 +1144,301 @@ def write_bytes(path: Path, data: bytes) -> dict:
     return {"path": str(path), "sha256": digest(data)}
 
 
+# The utility screen's models: each lineage's parent and the fixed references, one checkpoint file each.
+MODELS = {"r1": b'{"checkpoint":"r1"}', "r2": b'{"checkpoint":"r2"}', "t1": b'{"checkpoint":"T1"}',
+          "a48": b'{"checkpoint":"A48"}'}
+
+
 class Custody(Temp):
-    """A sealed EVIDENCE.tar like the utility screen's: two input bundles
-    (the desktop's and computehost's, staged on the desktop with computehost's
-    paths inside), a desktop game and a computehost game with their job
-    specs, ANALYSIS-SOURCES-001 and the allocation it pins."""
+    """The utility screen's sealed evidence, synthetic. EVIDENCE.tar holds two input bundles (the desktop's,
+    and computehost's staged on the desktop with computehost's own paths inside, so that the two differ only
+    in paths), three formal search jobs with their records and job specs (r1's first on the desktop and its
+    second on computehost, r2's on the desktop), the formal analysis index, ANALYSIS-SOURCES-001 and the
+    allocation. Its source seal and custody completion sit beside it in two durable copies; the hot root keeps
+    a third copy, which SD1 never reads. SCHEDULE.json with the frozen schedules, and BT1's known answer, are
+    read in place."""
+
+    CASES = {"r1": ["formal-r1-o0-v1-s0", "formal-r1-o2-v3-s1"], "r2": ["formal-r2-o4-v5-s0"]}
+    REMOTE_CASES = ("formal-r1-o2-v3-s1",)
 
     def setUp(self):
         super().setUp()
-        self.sealed = {}
-        self.objects = {}
-        for host, runtime in (("desk", f"{HOT}/inputs-001/desk"), ("remote", REMOTE)):
-            local = f"{HOT}/inputs-001/{host}"
-            checkpoint, parameters = b'{"checkpoint":1}', b"parameters"
-            ck, par = digest(checkpoint), digest(parameters)
-            self.objects = {"checkpoint": ck, "parameters": par}
-            self.seal(f"inputs/{host}/objects/{ck}.json", f"{local}/objects/{ck}.json", checkpoint)
-            self.seal(f"inputs/{host}/objects/{par}.bin", f"{local}/objects/{par}.bin", parameters)
-            imported = json.dumps({"schema": "import",
-                                   "parameters": as_pin(f"{runtime}/objects/{par}.bin", parameters)}).encode()
-            self.seal(f"inputs/{host}/metadata/import.json", f"{local}/metadata/import.json", imported)
-            source = {"checkpoint": as_pin(f"{runtime}/objects/{ck}.json", checkpoint),
-                      "play_import": as_pin(f"{runtime}/metadata/import.json", imported), "feature_transfer": {}}
-            self.seal(f"inputs/{host}/sources/r1-source.json", f"{local}/sources/r1-source.json",
-                      json.dumps(source).encode())
-            self.seal(f"inputs/{host}/bin/regret.exe", f"{local}/bin/regret.exe", b"binary")
-        desk_source = f"{HOT}/inputs-001/desk/sources/r1-source.json"
-        self.seal("formal/job-001/game.jsonl", f"{HOT}/formal/job-001/game.jsonl",
-                  b'{"kind":"budget_game","id":"g1"}\n')
-        # Windows spellings: backslashes and another case name the same file.
-        self.seal("formal/job-001/command.json", f"{HOT}/formal/job-001/command.json", json.dumps({
-            "command": [f"{HOT}/inputs-001/desk/bin/regret.exe".replace("/", "\\"), "source=" + desk_source,
-                        "out=" + f"{HOT}/formal/job-001/game.jsonl".replace("/", "\\"), "mode=s4a-budget"],
-            "environment": {"OPPONENTS": f"T1={desk_source},A48={desk_source.upper()}", "S4A_MODEL": "r1"},
-            "cwd": f"{HOT}/formal/job-001".replace("/", "\\")}).encode())
-        self.seal("remote-runs/job-002/game.jsonl", f"{HOT}/remote-runs/job-002/game.jsonl",
-                  b'{"kind":"budget_game","id":"g2"}\n')
-        self.seal("remote-runs/job-002/command.json", f"{HOT}/remote-runs/job-002/command.json", json.dumps({
-            "command": [f"{REMOTE}/bin/regret.exe", f"source={REMOTE}/sources/r1-source.json",
-                        f"out={REMOTE_RUNS}/job-002/game.jsonl", "mode=s4a-budget"],
-            "environment": {"OPPONENTS": f"T1={REMOTE}/sources/r1-source.json",
-                            "TRACE": f"{REMOTE_RUNS}/scratch/trace"},
-            "cwd": f"{REMOTE_RUNS}/job-002"}).encode())
-        allocation = b'{"allocation":1}'
-        self.seal("metadata/allocation.json", f"{HOT}/allocation.json", allocation)
-        records = [as_pin(*self.sealed[m]) for m in ("formal/job-001/game.jsonl", "remote-runs/job-002/game.jsonl")]
-        self.seal("metadata/ANALYSIS-SOURCES-001.json", f"{HOT}/ANALYSIS-SOURCES-001.json", json.dumps(
-            {"records": records, "allocation": as_pin(f"{HOT}/allocation.json", allocation)}).encode())
-        self.seal("metadata/stale.json", f"{HOT}/stale.json", json.dumps(
-            {"allocation": {"path": f"{HOT}/allocation.json", "sha256": "0" * 64}}).encode())
-        build = self.root / "build" / "EVIDENCE.tar"
-        build.parent.mkdir()
-        with tarfile.open(build, "w", format=tarfile.USTAR_FORMAT) as tar:
-            for name, (_, data) in sorted(self.sealed.items()):
-                info = tarfile.TarInfo(name)
-                info.size, info.mtime = len(data), 0
-                tar.addfile(info, io.BytesIO(data))
-        archive = build.read_bytes()
-        desk_bytes = self.sealed["inputs/desk/sources/r1-source.json"][1]
-        self.targets = [self.root / "cold" / "evidence-002", self.root / "recovery" / "evidence-002"]
-        seal = {"schema": sd1.SEAL_SCHEMA, "complete": True, "originals_retained": True,
-                "files": [{"name": m, "bytes": len(d), "sha256": digest(d)}
-                          for m, (_, d) in sorted(self.sealed.items())],
-                "original_archive_members": [{"original": as_pin(o, d), "member": m}
-                                             for m, (o, d) in sorted(self.sealed.items())]
-                # An alias: another retained original path of a sealed member.
-                + [{"original": as_pin(f"{HOT}/staged/r1-source.json", desk_bytes),
-                    "member": "inputs/desk/sources/r1-source.json"}],
-                "archives": [{"path": common.absolute(t / "EVIDENCE.tar"), "sha256": digest(archive)}
-                             for t in self.targets],
-                "completion_record": "CUSTODY-COMPLETION.json"}
-        for t in self.targets:
-            write_bytes(t / "EVIDENCE.tar", archive)
-            write(t / "SOURCE-SEAL.json", seal)
-        seals = [common.pin(t / "SOURCE-SEAL.json") for t in self.targets]
-        for t in self.targets:
-            write(t / "CUSTODY-COMPLETION.json",
-                  {"complete": True, "archives": seal["archives"], "source_seals": seals})
-        write_bytes(self.root / "hot-copy" / "EVIDENCE.tar", archive)
-        self.parent = write(self.root / "screen" / "parent-r1.json", {"parent": 1})
-        self.binary = write_bytes(self.root / "runtime" / "regret_census_v1.exe", b"binary")
+        self.out_dir = self.root / "sd1" / "custody"
+        # Paths the seal does not hold are rewritten into SD1's own root and kept there, never read.
+        self.unsealed = common.absolute(self.out_dir / "unsealed")
+        self.build()
 
     def seal(self, member: str, original: str, data: bytes):
         self.sealed[member] = (original, data)
 
-    def member(self, name: str, role: str, remap: bool = False) -> dict:
-        entry = {"role": role, "member": name, "sha256": digest(self.sealed[name][1])}
-        return {**entry, "remap": True} if remap else entry
+    def build(self, name="screen", remote_parameters=b"parameters", desk_environment=None, scheduled=None,
+              analysis_binds=True):
+        """The evidence under ROOT/NAME. ``remote_parameters`` are the bytes computehost's import descriptor
+        pins; ``desk_environment`` adds to r1's desktop job spec's environment; ``scheduled`` replaces the
+        frozen schedules' cases; ``analysis_binds`` False leaves the index out of ANALYSIS-SOURCES-001."""
+        self.base = base = self.root / name
+        self.sealed = {}
+        for host in ("desk", "remote"):
+            local = f"{HOT}/inputs-001/{host}"
+            runtime = local if host == "desk" else REMOTE
+            parameters = b"parameters" if host == "desk" else remote_parameters
+            par = digest(parameters)
+            self.seal(f"inputs/{host}/objects/{par}.bin", f"{local}/objects/{par}.bin", parameters)
+            imported = json.dumps({"schema": "import",
+                                   "parameters": as_pin(f"{runtime}/objects/{par}.bin", parameters)}).encode()
+            self.seal(f"inputs/{host}/metadata/import.json", f"{local}/metadata/import.json", imported)
+            for model, data in MODELS.items():
+                ck = digest(data)
+                self.seal(f"inputs/{host}/objects/{ck}.json", f"{local}/objects/{ck}.json", data)
+                source = {"checkpoint": as_pin(f"{runtime}/objects/{ck}.json", data),
+                          "play_import": as_pin(f"{runtime}/metadata/import.json", imported),
+                          "feature_transfer": {"expected_feature_contract_digest": "c"}}
+                self.seal(f"inputs/{host}/sources/{model}-source.json", f"{local}/sources/{model}-source.json",
+                          json.dumps(source).encode())
+            for lineage in common.LINEAGES:
+                games = f'{{"games":"{lineage}"}}\n'.encode()
+                self.seal(f"inputs/{host}/frozen/games-{lineage}.jsonl", f"{local}/frozen/games-{lineage}.jsonl",
+                          games)
+                bank_spec = {"lineage": lineage, "games": as_pin(f"{runtime}/frozen/games-{lineage}.jsonl", games)}
+                self.seal(f"inputs/{host}/frozen/bank-spec-{lineage}.json", f"{local}/frozen/bank-spec-{lineage}.json",
+                          json.dumps(bank_spec).encode())
+                self.seal(f"inputs/{host}/cases/{lineage}-cases.json", f"{local}/cases/{lineage}-cases.json",
+                          f"cases {lineage}".encode())
+            self.seal(f"inputs/{host}/bin/regret.exe", f"{local}/bin/regret.exe", b"binary")
+        # An alias: another retained original path of a sealed member.
+        self.aliases = [(f"{HOT}/staged/r1-source.json", "inputs/desk/sources/r1-source.json")]
+        # SCHEDULE.json and the frozen schedules beside it, read in place.
+        scheduled = scheduled or self.CASES
+        files = {}
+        for lineage, cases in scheduled.items():
+            frozen = write_lines(base / "utility" / f"formal-{lineage}.jsonl",
+                                 [{"id": case, "lineage": lineage} for case in cases])
+            files[f"formal-{lineage}.jsonl"] = {"sha256": frozen["sha256"], "cases": len(cases)}
+        schedule_pin = write(base / "utility" / "SCHEDULE.json", {"schema": "schedule", "files": files})
+        entries = []
+        for lineage, cases in self.CASES.items():
+            for i, case in enumerate(cases):
+                remote = case in self.REMOTE_CASES
+                member = f"{'remote-runs' if remote else 'formal'}/{case}-search-v1"
+                folder_original = f"{HOT}/{member}"
+                folder = f"{REMOTE_RUNS}/{case}-search-v1" if remote else folder_original
+                runtime = REMOTE if remote else f"{HOT}/inputs-001/desk"
+                self.seal(f"{member}/game.jsonl", f"{folder_original}/game.jsonl",
+                          json.dumps({"kind": "budget_game", "id": case, "lineage": lineage}).encode() + b"\n")
+                command = [f"{runtime}/bin/regret.exe", f"source={runtime}/sources/{lineage}-source.json",
+                           f"out={folder}/game.jsonl", "mode=s4a-budget", "workers=1", f"first_game={i}", "games=1"]
+                environment = {"BANK_SPEC": f"{runtime}/frozen/bank-spec-{lineage}.json", "S4A_MODEL": lineage,
+                               "OPPONENTS": f"T1={runtime}/sources/t1-source.json,"
+                                            f"A48={runtime}/sources/a48-source.json",
+                               "BUDGET_CASES": f"{runtime}/cases/{lineage}-cases.json", "BUDGET_TOTAL": "1",
+                               "BUDGET_ARM": "search-v1", "BUDGET_KEY_MODE": "repaired"}
+                cwd = folder
+                if remote:
+                    # computehost's scratch, which the seal does not hold.
+                    environment["TRACE"] = f"{REMOTE_RUNS}/scratch/{case}"
+                elif lineage == "r1":
+                    # Windows spellings (backslashes, another case) name the same files; the scratch under the
+                    # hot root is not sealed.
+                    command[0] = command[0].replace("/", "\\")
+                    command[2] = "out=" + f"{folder}/game.jsonl".replace("/", "\\")
+                    environment["OPPONENTS"] = (f"T1={runtime}/sources/t1-source.json,"
+                                                f"A48={runtime.upper()}/sources/a48-source.json")
+                    environment["TRACE"] = f"{HOT}/formal/scratch/{case}"
+                    environment.update(desk_environment or {})
+                    cwd = folder.replace("/", "\\")
+                self.seal(f"{member}/command.json", f"{folder_original}/command.json",
+                          json.dumps({"command": command, "environment": environment, "cwd": cwd}).encode())
+                entries.append({"id": f"{case}-search-v1", "row": as_pin(*self.sealed[f"{member}/game.jsonl"]),
+                                "host": "computehost" if remote else "desktop", "classification": "formal"})
+                entries.append({"id": f"{case}-plain-v1", "row": None, "host": "desktop", "classification": "formal"})
+        allocation = b'{"allocation":1}'
+        self.seal("metadata/allocation.json", f"{HOT}/allocation.json", allocation)
+        self.index_bytes = json.dumps({"schema": sd1.INDEX_SCHEMA, "source_spec": "formal",
+                                       "allocation": as_pin(f"{HOT}/allocation.json", allocation),
+                                       "schedule": schedule_pin, "entries": entries}).encode()
+        self.seal("metadata/INDEX.json", f"{HOT}/analysis/INDEX.json", self.index_bytes)
+        bound = {"allocation": as_pin(f"{HOT}/allocation.json", allocation)}
+        if analysis_binds:
+            bound["index"] = as_pin(f"{HOT}/analysis/INDEX.json", self.index_bytes)
+        self.analysis_bytes = json.dumps(bound).encode()
+        self.seal("metadata/ANALYSIS-SOURCES-001.json", f"{HOT}/ANALYSIS-SOURCES-001.json", self.analysis_bytes)
+        self.seal("metadata/stale.json", f"{HOT}/stale.json",
+                  json.dumps({"allocation": {"path": f"{HOT}/allocation.json", "sha256": "0" * 64}}).encode())
+        self.seal("metadata/notes.txt", f"{HOT}/notes.txt", b"notes")
+        self.seal("metadata/broken.json", f"{HOT}/broken.json", b"{broken")
+        tar_path = base / "build" / "EVIDENCE.tar"
+        tar_path.parent.mkdir(parents=True)
+        with tarfile.open(tar_path, "w", format=tarfile.USTAR_FORMAT) as tar:
+            for member, (_, data) in sorted(self.sealed.items()):
+                info = tarfile.TarInfo(member)
+                info.size, info.mtime = len(data), 0
+                tar.addfile(info, io.BytesIO(data))
+        archive = tar_path.read_bytes()
+        self.targets = [base / "cold" / "evidence-002", base / "recovery" / "evidence-002"]
+        self.seal_value = {
+            "schema": sd1.SEAL_SCHEMA, "complete": True, "originals_retained": True,
+            "files": [{"name": m, "bytes": len(d), "sha256": digest(d)} for m, (_, d) in sorted(self.sealed.items())],
+            "original_archive_members": [{"original": as_pin(o, d), "member": m}
+                                         for m, (o, d) in sorted(self.sealed.items())]
+            + [{"original": as_pin(o, self.sealed[m][1]), "member": m} for o, m in self.aliases],
+            "archives": [{"path": common.absolute(t / "EVIDENCE.tar"), "sha256": digest(archive)}
+                         for t in self.targets],
+            "completion_record": "CUSTODY-COMPLETION.json", "completion_rule": sd1.COMPLETION_RULE}
+        for t in self.targets:
+            write_bytes(t / "EVIDENCE.tar", archive)
+        write_bytes(base / "hot-copy" / "EVIDENCE.tar", archive)
+        # BT1's known answer, read in place: its jobs' archive records, the BUDGET inputs and the archive's
+        # schedules under its budget root.
+        budget = base / "bt1" / "budget"
+        inputs = {rel: write(budget / rel, {"input": rel})["sha256"]
+                  for rel in ("frozen/bank-spec-r1.json", "frozen/bank-spec-r2.json", "sources/a48-source.json",
+                              "sources/r1-source.json", "sources/r2-source.json", "sources/t1-source.json")}
+        archive_games = {"r1": ["archive-r1-g0", "archive-r1-g1"], "r2": ["archive-r2-g0"]}
+        case_files, jobs = {}, []
+        for lineage, ids in archive_games.items():
+            case_files[lineage] = write_lines(budget / "schedule" / f"archive-{lineage}.jsonl",
+                                              [{"id": gid} for gid in ids])["sha256"]
+            for gid in ids:
+                record_pin = write_lines(base / "bt1" / "archive" / gid / "game.jsonl", [{"id": gid}])
+                jobs.append({"label": f"BT1-{gid}", "lineage": lineage, "id": gid, "index": len(jobs),
+                             "record": common.absolute(record_pin["path"]), "record_sha256": record_pin["sha256"],
+                             "archive_host": "desktop", "archive_cpu_seconds": 1.0})
+        write(base / "bt1" / "JOBS.json", {"jobs": jobs})
+        write(base / "bt1" / "CASE-PINS.json", {"bank_binding": "bank", "input_pins": inputs,
+                                                 "case_files": case_files, "games_checked": len(jobs),
+                                                 "fields": ["id"], "passed": True})
+        self.parent = common.pin(write(base / "distillation" / "parent-r1.json", {"parent": 1})["path"])
+        self.reseal(lambda seal: None)
 
-    def spec(self, target: int = 0, **changes) -> dict:
-        durable = self.targets[target]
-        members = [self.member("formal/job-001/game.jsonl", "record-r1"),
-                   {"role": "record-r1", "original": as_pin(*self.sealed["remote-runs/job-002/game.jsonl"])},
-                   self.member("formal/job-001/command.json", "job-spec", remap=True),
-                   self.member("remote-runs/job-002/command.json", "job-spec", remap=True),
-                   self.member("metadata/ANALYSIS-SOURCES-001.json", "analysis-sources", remap=True),
-                   self.member("metadata/allocation.json", "allocation")]
-        for name in sorted(self.sealed):
-            if name.startswith("inputs/") and not name.endswith(".exe"):
-                members.append(self.member(name, "input", remap="/sources/" in name or "/metadata/" in name))
-        value = {"schema": sd1.CUSTODY_SPEC_SCHEMA, "seal": common.pin(durable / "SOURCE-SEAL.json"),
-                 "archive": common.pin(durable / "EVIDENCE.tar"),
-                 "completion": common.pin(durable / "CUSTODY-COMPLETION.json"),
-                 "forbidden": [HOT, common.absolute(self.root / "hot-copy")], "members": members,
-                 "rewrite": [{"from": f"{HOT}/inputs-001/desk/bin/regret.exe", "to": self.binary["path"]},
-                             {"from": f"{REMOTE}/bin/regret.exe", "to": self.binary["path"]},
-                             {"from": REMOTE, "to": f"{HOT}/inputs-001/remote"},
-                             {"from": REMOTE_RUNS, "to": f"{HOT}/remote-runs"}],
-                 "keep": [f"{REMOTE_RUNS}/scratch"],
-                 "files": [{"role": "parent", **self.parent}, {"role": "utility-binary", **self.binary}],
-                 "counts": {"record-r1": 2, "job-spec": 2}}
+    def reseal(self, change) -> dict:
+        """Both durable copies' seals, changed by ``change``, and completion records pinning them; the spec."""
+        seal = copy.deepcopy(self.seal_value)
+        change(seal)
+        for t in self.targets:
+            write(t / "SOURCE-SEAL.json", seal)
+        seals = [common.pin(t / "SOURCE-SEAL.json") for t in self.targets]
+        for t in self.targets:
+            write(t / "CUSTODY-COMPLETION.json", {"schema": sd1.COMPLETION_SCHEMA, "complete": True,
+                                                  "archives": seal["archives"], "source_seals": seals})
+        return self.spec()
+
+    def retar(self, entries) -> dict:
+        """Both durable archives rewritten with ``entries`` [(name, bytes, or None for a directory)] and both
+        seals resealed to pin them; the spec."""
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+            for name, data in entries:
+                info = tarfile.TarInfo(name)
+                info.mtime = 0
+                if data is None:
+                    info.type = tarfile.DIRTYPE
+                else:
+                    info.size = len(data)
+                tar.addfile(info, None if data is None else io.BytesIO(data))
+        archive = buffer.getvalue()
+        for t in self.targets:
+            write_bytes(t / "EVIDENCE.tar", archive)
+
+        def change(seal):
+            for entry in seal["archives"]:
+                entry["sha256"] = digest(archive)
+        return self.reseal(change)
+
+    def spec(self, **changes) -> dict:
+        base = self.base
+        value = {"schema": sd1.CUSTODY_SPEC_SCHEMA,
+                 "durable": [{"seal": common.pin(t / "SOURCE-SEAL.json"), "archive": common.pin(t / "EVIDENCE.tar"),
+                              "completion": common.pin(t / "CUSTODY-COMPLETION.json")} for t in self.targets],
+                 "forbidden": [HOT, common.absolute(base / "hot-copy")],
+                 "index": as_pin(f"{HOT}/analysis/INDEX.json", self.index_bytes),
+                 "analysis_sources": as_pin(f"{HOT}/ANALYSIS-SOURCES-001.json", self.analysis_bytes),
+                 "schedule": common.pin(base / "utility" / "SCHEDULE.json"),
+                 "known_answer": {"jobs": common.pin(base / "bt1" / "JOBS.json"),
+                                  "case_pins": common.pin(base / "bt1" / "CASE-PINS.json"),
+                                  "budget_root": common.absolute(base / "bt1" / "budget")},
+                 "rewrite": [{"from": REMOTE, "to": f"{HOT}/inputs-001/remote"},
+                             {"from": REMOTE_RUNS, "to": f"{HOT}/remote-runs"},
+                             {"from": f"{REMOTE_RUNS}/scratch", "to": f"{self.unsealed}/remote-scratch"},
+                             {"from": f"{HOT}/formal/scratch", "to": f"{self.unsealed}/formal-scratch"}],
+                 "keep": [self.unsealed],
+                 "files": [{"role": "parent", **self.parent}],
+                 "counts": {"r1-records": 2, "r1-jobs": 2, "r2-records": 1, "r2-jobs": 1, "parent": 1}}
         value.update(changes)
         return value
 
+    def mine(self, out_dir: Path, *parts) -> str:
+        return common.absolute(Path(out_dir).joinpath(*parts))
+
+    def listed(self, out: dict, role: str) -> list:
+        return Path(out["lists"][role]["path"]).read_text(encoding="utf-8").splitlines()
+
     def test_members_extract_through_the_seal_and_inner_paths_name_sd1s_copies(self):
-        out_dir = self.root / "sd1" / "custody"
-        out = sd1.custody(self.spec(), out_dir)
+        spec = self.spec()
+        out = sd1.custody(spec, self.out_dir)
         self.assertEqual(out["failures"], [])
         self.assertTrue(out["pass"])
+        self.assertEqual(out["extracted_from"], spec["durable"][0]["archive"])
+        self.assertTrue(out["completion_rule"]["holds"])
         members = {m["member"]: m for m in out["members"]}
-        self.assertEqual(len(members), 6 + 2 * 4)
         for name in members:
-            self.assertEqual((out_dir / "members" / name).read_bytes(), self.sealed[name][1])
+            self.assertEqual((self.out_dir / "members" / name).read_bytes(), self.sealed[name][1])
+        roles = {role: sum(m["role"] == role for m in out["members"]) for role in
+                 ("index", "analysis-sources", "allocation", "r1-records", "r1-jobs", "r2-records", "r2-jobs")}
+        self.assertEqual(roles, {"index": 1, "analysis-sources": 1, "allocation": 1, "r1-records": 2, "r1-jobs": 2,
+                                 "r2-records": 1, "r2-jobs": 1})
+        self.assertEqual(members["inputs/desk/sources/r1-source.json"]["originals"],
+                         [f"{HOT}/inputs-001/desk/sources/r1-source.json", f"{HOT}/staged/r1-source.json"])
+        self.assertEqual(out["index"]["search_records"], {"r1": 2, "r2": 1})
+        self.assertTrue(out["analysis_sources"]["binds"])
+        self.assertEqual(out["known_answer"]["games"], {"r1": 2, "r2": 1})
+        file_roles = {}
+        for f in out["files"]:
+            self.assertTrue(f["verified"], f)
+            file_roles[f["role"]] = file_roles.get(f["role"], 0) + 1
+        self.assertEqual(file_roles, {"schedule": 1, "r1-schedule": 1, "r2-schedule": 1, "known-answer": 2,
+                                      "r1-archive": 2, "r2-archive": 1, "budget-inputs": 6,
+                                      "r1-archive-schedule": 1, "r2-archive-schedule": 1, "parent": 1})
 
         def mine(*parts):
-            return common.absolute(out_dir.joinpath(*parts))
+            return self.mine(self.out_dir, *parts)
 
-        desk = json.loads((out_dir / "remapped/formal/job-001/command.json").read_text(encoding="utf-8"))
-        desk_source = mine("remapped", "inputs/desk/sources/r1-source.json")
-        self.assertEqual(desk["command"], [self.binary["path"], "source=" + desk_source,
-                                           "out=" + mine("members", "formal/job-001/game.jsonl"), "mode=s4a-budget"])
-        self.assertEqual(desk["environment"], {"OPPONENTS": f"T1={desk_source},A48={desk_source}", "S4A_MODEL": "r1"})
-        self.assertEqual(desk["cwd"], mine("members", "formal/job-001"))
-        remote = json.loads((out_dir / "remapped/remote-runs/job-002/command.json").read_text(encoding="utf-8"))
-        remote_source = mine("remapped", "inputs/remote/sources/r1-source.json")
-        self.assertEqual(remote["command"], [self.binary["path"], "source=" + remote_source,
-                                             "out=" + mine("members", "remote-runs/job-002/game.jsonl"),
-                                             "mode=s4a-budget"])
-        self.assertEqual(remote["cwd"], mine("members", "remote-runs/job-002"))
-        self.assertEqual(remote["environment"]["TRACE"], f"{REMOTE_RUNS}/scratch/trace")
-        self.assertEqual(members["remote-runs/job-002/command.json"]["kept"], [f"{REMOTE_RUNS}/scratch/trace"])
-        # The source's pins name SD1's copies: the checkpoint's bytes as
-        # sealed, the descriptor remapped in turn (so its SHA-256 is new).
-        ck, par = self.objects["checkpoint"], self.objects["parameters"]
-        source = json.loads(Path(remote_source).read_text(encoding="utf-8"))
+        # The desktop's job spec: every path names SD1's copies, whatever its spelling.
+        desk_case, remote_case = self.CASES["r1"]
+        desk = json.loads((self.out_dir / "remapped" / "formal" / f"{desk_case}-search-v1" / "command.json")
+                          .read_text(encoding="utf-8"))
+        self.assertEqual(desk["command"], [mine("members", "inputs/desk/bin/regret.exe"),
+                                           "source=" + mine("remapped", "inputs/desk/sources/r1-source.json"),
+                                           "out=" + mine("members", f"formal/{desk_case}-search-v1/game.jsonl"),
+                                           "mode=s4a-budget", "workers=1", "first_game=0", "games=1"])
+        self.assertEqual(desk["environment"]["OPPONENTS"],
+                         f"T1={mine('remapped', 'inputs/desk/sources/t1-source.json')},"
+                         f"A48={mine('remapped', 'inputs/desk/sources/a48-source.json')}")
+        self.assertEqual(desk["environment"]["BANK_SPEC"], mine("remapped", "inputs/desk/frozen/bank-spec-r1.json"))
+        self.assertEqual(desk["environment"]["BUDGET_CASES"], mine("members", "inputs/desk/cases/r1-cases.json"))
+        self.assertEqual(desk["cwd"], mine("members", f"formal/{desk_case}-search-v1"))
+        # An unsealed path under the hot root is rewritten into SD1's own root and kept, never read.
+        self.assertEqual(desk["environment"]["TRACE"], f"{self.unsealed}/formal-scratch/{desk_case}")
+        self.assertEqual(members[f"formal/{desk_case}-search-v1/command.json"]["kept"],
+                         [{"from": f"{HOT}/formal/scratch/{desk_case}",
+                           "to": f"{self.unsealed}/formal-scratch/{desk_case}"}])
+        # computehost's job spec, staged on the desktop: its runtime and run roots go through the rewrite rules,
+        # and its scratch takes the longest rule, into SD1's own root.
+        remote = json.loads((self.out_dir / "remapped" / "remote-runs" / f"{remote_case}-search-v1" / "command.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(remote["command"][:3], [mine("members", "inputs/remote/bin/regret.exe"),
+                                                 "source=" + mine("remapped", "inputs/remote/sources/r1-source.json"),
+                                                 "out=" + mine("members",
+                                                               f"remote-runs/{remote_case}-search-v1/game.jsonl")])
+        self.assertEqual(remote["cwd"], mine("members", f"remote-runs/{remote_case}-search-v1"))
+        self.assertEqual(remote["environment"]["TRACE"], f"{self.unsealed}/remote-scratch/{remote_case}")
+        self.assertEqual(members[f"remote-runs/{remote_case}-search-v1/command.json"]["kept"],
+                         [{"from": f"{REMOTE_RUNS}/scratch/{remote_case}",
+                           "to": f"{self.unsealed}/remote-scratch/{remote_case}"}])
+        self.assertFalse(Path(self.unsealed).exists())
+        # The source's pins name SD1's copies: the checkpoint's bytes as sealed, the descriptor remapped in turn
+        # (so its SHA-256 is new).
+        ck, par = digest(MODELS["r1"]), digest(b"parameters")
+        source = json.loads(Path(mine("remapped", "inputs/remote/sources/r1-source.json")).read_text(encoding="utf-8"))
         self.assertEqual(source["checkpoint"], {"path": mine("members", f"inputs/remote/objects/{ck}.json"),
                                                 "sha256": ck})
         descriptor = members["inputs/remote/metadata/import.json"]["remapped"]
@@ -1067,110 +1446,385 @@ class Custody(Temp):
         self.assertNotEqual(descriptor["sha256"], digest(self.sealed["inputs/remote/metadata/import.json"][1]))
         self.assertEqual(json.loads(Path(descriptor["path"]).read_text(encoding="utf-8"))["parameters"],
                          {"path": mine("members", f"inputs/remote/objects/{par}.bin"), "sha256": par})
-        analysis = json.loads((out_dir / "remapped/metadata/ANALYSIS-SOURCES-001.json").read_text(encoding="utf-8"))
-        self.assertEqual([r["path"] for r in analysis["records"]],
-                         [mine("members", "formal/job-001/game.jsonl"),
-                          mine("members", "remote-runs/job-002/game.jsonl")])
         for m in out["members"]:
             if m.get("remapped"):
-                self.assertNotIn("utility-hot", Path(m["remapped"]["path"]).read_text(encoding="utf-8").casefold())
-        self.assertEqual(Path(out["lists"]["record-r1"]["path"]).read_text(encoding="utf-8").splitlines(),
-                         [mine("members", "formal/job-001/game.jsonl"),
-                          mine("members", "remote-runs/job-002/game.jsonl")])
-        self.assertEqual(Path(out["lists"]["parent"]["path"]).read_text(encoding="utf-8").splitlines(),
-                         [self.parent["path"]])
-        self.assertEqual(members["remote-runs/job-002/game.jsonl"]["originals"],
-                         [f"{HOT}/remote-runs/job-002/game.jsonl"])
-        self.assertEqual(members["inputs/desk/sources/r1-source.json"]["originals"],
-                         [f"{HOT}/inputs-001/desk/sources/r1-source.json", f"{HOT}/staged/r1-source.json"])
-        # The recovery copy is the other durable archive.
-        self.assertTrue(sd1.custody(self.spec(target=1), self.root / "sd1" / "again")["pass"])
+                text = Path(m["remapped"]["path"]).read_text(encoding="utf-8").casefold()
+                self.assertNotIn("utility-hot", text, m["member"])
+                self.assertNotIn("/srv/computehost", text, m["member"])
+        # The two hosts' inputs are one input set, paths aside: their bytes differ only in the paths they spell.
+        r1 = out["inputs"]["r1"]
+        self.assertTrue(r1["one_input_set"])
+        self.assertEqual({f: len(v) for f, v in r1["raw_sha256"].items()}, {f: 2 for f in sd1.INPUT_LISTS})
+        self.assertEqual({f: len(v) for f, v in r1["identity_sha256"].items()}, {f: 1 for f in sd1.INPUT_LISTS})
+        self.assertEqual(r1["inputs"]["source"], members["inputs/desk/sources/r1-source.json"]["remapped"])
+        self.assertEqual(self.listed(out, "r1-source"), [mine("remapped", "inputs/desk/sources/r1-source.json")])
+        self.assertEqual(self.listed(out, "r2-a48"), [mine("remapped", "inputs/desk/sources/a48-source.json")])
+        self.assertEqual(self.listed(out, "r1-bank-spec"), [mine("remapped", "inputs/desk/frozen/bank-spec-r1.json")])
+        self.assertEqual(self.listed(out, "r1-records"),
+                         [mine("members", f"formal/{desk_case}-search-v1/game.jsonl"),
+                          mine("members", f"remote-runs/{remote_case}-search-v1/game.jsonl")])
+        self.assertEqual(self.listed(out, "r1-jobs"),
+                         [mine("remapped", f"formal/{desk_case}-search-v1/command.json"),
+                          mine("remapped", f"remote-runs/{remote_case}-search-v1/command.json")])
+        self.assertEqual(self.listed(out, "parent"), [self.parent["path"]])
+        # The recovery copy serves as well.
+        swapped = self.spec(durable=spec["durable"][::-1])
+        again = sd1.custody(swapped, self.root / "sd1" / "again")
+        self.assertTrue(again["pass"], again["failures"])
+        self.assertEqual(again["extracted_from"], swapped["durable"][0]["archive"])
 
-    def test_every_gap_and_mismatch_is_listed_and_refuses(self):
+    def test_records_reads_custodys_copies_of_each_lineages_records(self):
+        out = sd1.custody(self.spec(), self.out_dir)
+        held = write(self.root / "CUSTODY.json", out)["path"]
+        for lineage, cases in self.CASES.items():
+            listing = Path(out["lists"][f"{lineage}-records"]["path"])
+            read = sd1.records(lineage, self.base / "utility" / f"formal-{lineage}.jsonl", listing, Path(held),
+                               f"{lineage}-records")
+            self.assertEqual([c["id"] for c in read["cases"]], cases)
+            self.assertEqual([c["record"]["path"] for c in read["cases"]],
+                             listing.read_text(encoding="utf-8").splitlines())
+        # Another copy of the same bytes is not one of custody's copies.
+        elsewhere = self.root / "elsewhere" / "game.jsonl"
+        write_bytes(elsewhere, Path(self.listed(out, "r2-records")[0]).read_bytes())
+        listing = self.root / "elsewhere-list.txt"
+        listing.write_text(common.absolute(elsewhere) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "is not one of custody's r2-records copies"):
+            sd1.records("r2", self.base / "utility" / "formal-r2.jsonl", listing, Path(held), "r2-records")
+
+    def test_one_source_across_hosts_compares_what_each_descriptor_names_paths_aside(self):
+        # computehost's import descriptor pins other parameters: its sources are other inputs.
+        self.build("differs", remote_parameters=b"other parameters")
+        out = sd1.custody(self.spec(), self.out_dir)
+        r1 = out["inputs"]["r1"]
+        self.assertFalse(r1["one_input_set"])
+        self.assertIsNone(r1["inputs"])
+        self.assertEqual({f: len(v) for f, v in r1["identity_sha256"].items()},
+                         {"source": 2, "bank_spec": 1, "T1": 2, "A48": 2})
+        failures = "\n".join(out["failures"])
+        for field in ("source", "T1", "A48"):
+            self.assertIn(f"r1: its jobs name 2 different {field} inputs, paths aside, not one", failures)
+        self.assertNotIn("bank_spec inputs", failures)
+        self.assertNotIn("r1-source", out["lists"])
+        self.assertTrue(out["inputs"]["r2"]["one_input_set"])
+        self.assertFalse(out["pass"])
+
+    def test_an_unsealed_path_is_kept_only_when_rewritten_into_sd1s_root(self):
+        desk_case, remote_case = self.CASES["r1"]
+        desk_job = f"formal/{desk_case}-search-v1/command.json"
+        remote_job = f"remote-runs/{remote_case}-search-v1/command.json"
+        # Without the keep prefix the rewritten paths resolve nowhere.
+        failures = "\n".join(sd1.custody(self.spec(keep=[]), self.root / "a")["failures"])
+        self.assertIn(f"{desk_job}: {HOT}/formal/scratch/{desk_case} resolves to no sealed member, verified file or "
+                      "directory", failures)
+        self.assertIn(f"{remote_job}: {REMOTE_RUNS}/scratch/{remote_case} resolves to no", failures)
+        # Without the rules into SD1's root the hot root's scratch stays in the text, which the scan, run on the
+        # final text, refuses.
+        rules = [r for r in self.spec()["rewrite"] if "scratch" not in r["from"]]
+        failures = "\n".join(sd1.custody(self.spec(rewrite=rules), self.root / "b")["failures"])
+        self.assertIn(f"{desk_job}: {HOT}/formal/scratch/{desk_case} resolves to no", failures)
+        self.assertIn(f"{desk_job}: its remapped copy still names {HOT}", failures)
+        self.assertIn(f"{remote_job}: {REMOTE_RUNS}/scratch/{remote_case} resolves to no", failures)
+        # A keep prefix under a forbidden root is refused before anything is read.
+        with self.assertRaisesRegex(ValueError, f"keep: {HOT}/formal/scratch lies under the forbidden root {HOT}"):
+            sd1.custody(self.spec(keep=[f"{HOT}/formal/scratch"]), self.root / "c")
+        self.assertFalse((self.root / "c").exists())
+
+    def test_the_longest_rewrite_prefix_applies_once(self):
+        # The rules' order does not matter, and a rewritten path is not rewritten again: computehost's runtime
+        # goes to its bundle on the desktop, not on to the last rule's target.
+        rules = self.spec()["rewrite"][::-1] + [{"from": f"{HOT}/inputs-001/remote", "to": "/srv/elsewhere"}]
+        out = sd1.custody(self.spec(rewrite=rules), self.out_dir)
+        self.assertEqual(out["failures"], [])
+        remote_case = self.CASES["r1"][1]
+        remote = json.loads((self.out_dir / "remapped" / "remote-runs" / f"{remote_case}-search-v1" / "command.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(remote["environment"]["TRACE"], f"{self.unsealed}/remote-scratch/{remote_case}")
+        # Without the rules computehost's runtime resolves nowhere.
+        failures = "\n".join(sd1.custody(self.spec(rewrite=[]), self.root / "none")["failures"])
+        self.assertIn(f"remote-runs/{remote_case}-search-v1/command.json: {REMOTE}/bin/regret.exe resolves to no "
+                      "sealed member, verified file or directory", failures)
+
+    def test_unc_and_verbatim_spellings_are_paths(self):
+        desk_case = self.CASES["r1"][0]
+        record = f"{HOT}/formal/{desk_case}-search-v1/game.jsonl"
+        self.build("unc", desk_environment={"COPY": "\\\\?\\" + record.replace("/", "\\"),
+                                            "SHARE": "\\\\fileserver\\share\\notes.json",
+                                            "MIRROR": "//fileserver/share/notes.json"})
+        out = sd1.custody(self.spec(), self.out_dir)
+        job = f"formal/{desk_case}-search-v1/command.json"
+        failures = "\n".join(out["failures"])
+        self.assertIn(f"{job}: \\\\fileserver\\share\\notes.json resolves to no sealed member", failures)
+        self.assertIn(f"{job}: //fileserver/share/notes.json resolves to no sealed member", failures)
+        remapped = json.loads((self.out_dir / "remapped" / job).read_text(encoding="utf-8"))
+        # A verbatim spelling of a sealed original names that member.
+        self.assertEqual(remapped["environment"]["COPY"],
+                         self.mine(self.out_dir, "members", f"formal/{desk_case}-search-v1/game.jsonl"))
+
+    def test_every_gap_and_mismatch_is_listed_and_the_cli_exits_1(self):
         spec = self.spec()
-        par = self.objects["parameters"]
-        spec["members"] = [m for m in spec["members"] if m.get("member") != f"inputs/remote/objects/{par}.bin"]
-        spec["members"][0] = {**spec["members"][0], "sha256": "0" * 64}
-        spec["members"].append(self.member("metadata/stale.json", "allocation", remap=True))
-        spec["files"].append({"role": "parent", "path": str(self.root / "screen" / "missing.json"), "sha256": "1" * 64})
-        Path(self.binary["path"]).write_bytes(b"another binary")
-        spec["keep"] = []
-        spec["counts"]["job-spec"] = 3
+        jobs = json.loads(Path(spec["known_answer"]["jobs"]["path"]).read_text(encoding="utf-8"))["jobs"]
+        Path(jobs[0]["record"]).write_bytes(b"changed")
+        missing_input = self.base / "bt1" / "budget" / "sources" / "t1-source.json"
+        missing_input.unlink()
+        spec["files"].append({"role": "notes", "path": common.absolute(self.base / "missing.json"), "sha256": "1" * 64})
+        spec["members"] = [{"role": "stale", "member": "metadata/stale.json",
+                            "sha256": digest(self.sealed["metadata/stale.json"][1]), "remap": True},
+                           {"role": "notes", "member": "metadata/allocation.json", "sha256": "0" * 64}]
+        spec["counts"] = {**spec["counts"], "r1-records": 3}
         spec_path = write(self.root / "spec.json", spec)["path"]
         with mock.patch("sys.stdout"):
-            code = sd1.main(["custody", "--spec", spec_path, "--out-dir", str(self.root / "sd1"),
-                             "--out", str(self.root / "RECORD-PINS.json")])
+            code = sd1.main(["custody", "--spec", spec_path, "--out-dir", str(self.out_dir),
+                             "--out", str(self.root / "CUSTODY.json")])
         self.assertEqual(code, 1)
-        record = json.loads((self.root / "RECORD-PINS.json").read_text(encoding="utf-8"))
+        record = json.loads((self.root / "CUSTODY.json").read_text(encoding="utf-8"))
         self.assertFalse(record["pass"])
+        self.assertEqual(record["spec"], common.pin(spec_path))
         failures = "\n".join(record["failures"])
-        for needle in ("no member formal/job-001/game.jsonl with SHA-256 " + "0" * 64,
-                       "missing.json is missing",
-                       "regret_census_v1.exe has SHA-256 " + digest(b"another binary"),
-                       f"is sealed as inputs/remote/objects/{par}.bin, which custody did not extract",
-                       "metadata/stale.json: the pin of " + f"{HOT}/allocation.json has SHA-256 " + "0" * 64,
-                       f"{REMOTE_RUNS}/scratch/trace resolves to no extracted member",
-                       f"{REMOTE}/bin/regret.exe resolves to no extracted member",
-                       "role job-spec: the spec lists 2 members and files, not 3"):
+        for needle in (f"r1-archive file: {jobs[0]['record']} has SHA-256 {digest(b'changed')}",
+                       f"budget-inputs file: {common.absolute(missing_input)} is missing",
+                       f"notes file: {common.absolute(self.base / 'missing.json')} is missing",
+                       f"metadata/stale.json: the pin of {HOT}/allocation.json has SHA-256 {'0' * 64}, but the file "
+                       f"it names has {digest(self.sealed['metadata/allocation.json'][1])}",
+                       f"members[1] (notes): the seal lists no member metadata/allocation.json with SHA-256 {'0' * 64}",
+                       "role r1-records: custody holds 2 members and files, not 3"):
             self.assertIn(needle, failures)
-        self.assertEqual(record["spec"]["sha256"], digest(Path(spec_path).read_bytes()))
 
-    def test_only_a_durable_archive_beside_its_complete_seal_is_read(self):
-        out = sd1.custody(self.spec(archive=common.pin(self.root / "hot-copy" / "EVIDENCE.tar")), self.root / "a")
-        self.assertIn("is not one of the seal's durable archives", "\n".join(out["failures"]))
-        self.assertFalse((self.root / "a" / "members").exists())
-        out = sd1.custody(self.spec(seal=common.pin(self.targets[1] / "SOURCE-SEAL.json")), self.root / "b")
-        self.assertIn("the seal does not sit beside the archive", out["failures"])
-        out = sd1.custody(self.spec(seal={**self.spec()["seal"], "sha256": "0" * 64}), self.root / "c")
-        self.assertIn("the source seal: ", out["failures"][0])
-        self.assertIn("no member is extracted: the seal or the archive did not verify", out["failures"])
-        incomplete = json.loads((self.targets[0] / "SOURCE-SEAL.json").read_text(encoding="utf-8"))
-        incomplete["complete"] = False
-        out = sd1.custody(self.spec(seal=write(self.targets[0] / "SOURCE-SEAL.json", incomplete)), self.root / "d")
-        self.assertIn("the source seal is not a complete search-player-utility source seal", out["failures"])
-        other = write(self.targets[0] / "CUSTODY-COMPLETION.json", {"complete": True, "archives": [],
-                                                                     "source_seals": []})
-        out = sd1.custody(self.spec(completion=other), self.root / "e")
-        self.assertIn("the custody completion is not complete for this seal and archive", out["failures"])
+    def test_the_index_must_be_the_schedules_and_analysis_sources_must_bind_it(self):
+        other = as_pin(f"{HOT}/analysis/INDEX.json", b"another index")
+        out = sd1.custody(self.spec(index=other), self.root / "other")
+        self.assertIn(f"the formal analysis index: the seal maps no member with SHA-256 {other['sha256']} to "
+                      f"{HOT}/analysis/INDEX.json", out["failures"])
+        self.build("short", scheduled={"r1": self.CASES["r1"], "r2": self.CASES["r2"] + ["formal-r2-o6-v7-s1"]})
+        failures = "\n".join(sd1.custody(self.spec(), self.root / "a")["failures"])
+        self.assertIn("r2: the index's 1 search-arm records are not exactly the frozen schedule's 2 cases", failures)
+        self.build("unbound", analysis_binds=False)
+        out = sd1.custody(self.spec(), self.root / "b")
+        self.assertIn(f"ANALYSIS-SOURCES-001 does not bind the index {digest(self.index_bytes)}", out["failures"])
+        self.assertFalse(out["analysis_sources"]["binds"])
+
+    def test_only_a_durable_archive_under_the_seals_completion_rule_is_read(self):
+        first, second = self.spec()["durable"]
+        # The hot root's copy is not one of the seal's durable archives; members come from the copy that verifies.
+        hot = common.pin(self.base / "hot-copy" / "EVIDENCE.tar")
+        out = sd1.custody(self.spec(durable=[{**first, "archive": hot}, second]), self.root / "hot")
+        self.assertIn(f"durable copy 1: {hot['path']} with this SHA-256 is not one of the seal's durable archives",
+                      out["failures"])
+        self.assertIn("the seal's completion rule: the seal's durable archives are not the two archives given",
+                      out["failures"])
+        self.assertEqual(out["extracted_from"], second["archive"])
+        self.assertFalse(out["pass"])
+        wrong = {"sha256": "0" * 64}
+        given = [
+            ([{**first, "seal": {**first["seal"], **wrong}}, second],
+             f"durable copy 1: the source seal: {first['seal']['path']} has SHA-256 {first['seal']['sha256']}"),
+            ([first, {**second, "completion": first["completion"]}],
+             "durable copy 2: its seal, archive and completion record are not side by side"),
+            ([{**first, "seal": {**first["seal"], **wrong}}, {**second, "seal": {**second["seal"], **wrong}}],
+             "no member is extracted: the seal or the archive did not verify"),
+        ]
+        for i, (durable, needle) in enumerate(given):
+            with self.subTest(needle):
+                out = sd1.custody(self.spec(durable=durable), self.root / f"given-{i}")
+                self.assertIn(needle, "\n".join(out["failures"]))
+                self.assertFalse(out["pass"])
+        self.assertEqual(out["members"], [])
+        self.assertFalse((self.root / f"given-{len(given) - 1}" / "members").exists())
+        # The two completion records differ.
+        other = write(self.targets[1] / "CUSTODY-COMPLETION.json", {
+            **json.loads((self.targets[1] / "CUSTODY-COMPLETION.json").read_text(encoding="utf-8")), "note": 1})
+        out = sd1.custody(self.spec(durable=[first, {**second, "completion": other}]), self.root / "differ")
+        self.assertIn("the seal's completion rule: the two completion records differ", out["failures"])
+        # Seals that say otherwise, in both durable copies.
+        position = next(i for i, f in enumerate(self.seal_value["files"]) if f["name"] == "metadata/INDEX.json")
+        size = len(self.index_bytes)
+
+        def longer(seal):
+            seal["files"][position]["bytes"] += 1
+        sealed = [
+            (lambda seal: seal.update(completion_rule="Either copy will do."),
+             "the seal's completion rule: the seal states another completion rule than the one custody checks"),
+            (lambda seal: seal.update(completion_record="OTHER.json"),
+             "durable copy 1: its completion record is not the seal's 'OTHER.json'"),
+            (lambda seal: seal["files"].append(seal["files"][0]),
+             f"the seal lists an unsafe, repeated or unhashed member {self.seal_value['files'][0]['name']!r}"),
+            (lambda seal: seal.update(complete=False),
+             "durable copy 1: the source seal is not a complete search-player-utility source seal"),
+            (longer, f"metadata/INDEX.json: {size} bytes in the archive, not the seal's {size + 1}"),
+        ]
+        for i, (change, needle) in enumerate(sealed):
+            with self.subTest(needle):
+                out = sd1.custody(self.reseal(change), self.root / f"sealed-{i}")
+                self.assertIn(needle, "\n".join(out["failures"]))
+                self.assertFalse(out["pass"])
+
+    def test_an_archive_member_unlike_the_seals_is_not_extracted(self):
+        allocation = self.sealed["metadata/allocation.json"][1]
+        other = b"x" * len(allocation)
+        changed = {"metadata/allocation.json": other, "inputs/desk/bin/regret.exe": None}
+        entries = [(m, changed.get(m, d)) for m, (_, d) in sorted(self.sealed.items())]
+        entries.append(("inputs/desk/cases/r2-cases.json", self.sealed["inputs/desk/cases/r2-cases.json"][1]))
+        out = sd1.custody(self.retar(entries), self.out_dir)
+        for needle in (f"metadata/allocation.json: extracted with SHA-256 {digest(other)}, not {digest(allocation)}",
+                       "inputs/desk/bin/regret.exe: not one regular file in the archive",
+                       "inputs/desk/cases/r2-cases.json: not one regular file in the archive"):
+            self.assertIn(needle, out["failures"])
+        self.assertFalse((self.out_dir / "members" / "metadata" / "allocation.json").exists())
+        self.assertFalse(out["pass"])
+
+    def test_a_seal_that_maps_an_original_two_ways_is_not_read(self):
+        stale = self.sealed["metadata/stale.json"][1]
+        first = self.seal_value["original_archive_members"][0]
+        given = [
+            (lambda seal: seal["original_archive_members"][0]["original"].update(sha256="0" * 64),
+             f"the seal maps {first['original']['path']!r} to {first['member']!r} with another SHA-256"),
+            (lambda seal: seal["original_archive_members"].append(
+                {"original": as_pin(f"{HOT}/allocation.json", stale), "member": "metadata/stale.json"}),
+             f"the seal maps {HOT}/allocation.json to two members"),
+        ]
+        for i, (change, needle) in enumerate(given):
+            with self.subTest(needle):
+                out = sd1.custody(self.reseal(change), self.root / f"seal-{i}")
+                self.assertIn(needle, out["failures"])
+                self.assertIn("no member is extracted: the seal or the archive did not verify", out["failures"])
+
+    def test_a_member_custody_cannot_remap_or_a_repeated_entry_is_a_failure(self):
+        job = f"formal/{self.CASES['r1'][0]}-search-v1/command.json"
+        # r1's desktop job names itself as its bank spec.
+        self.build("cycle", desk_environment={"BANK_SPEC": f"{HOT}/{job}"})
+        spec = self.spec(members=[
+            {"role": "notes", "member": "metadata/notes.txt", "sha256": digest(b"notes"), "remap": True},
+            {"role": "notes", "member": "metadata/broken.json", "sha256": digest(b"{broken"), "remap": True},
+            {"role": "notes", "original": as_pin(f"{HOT}/notes.txt", b"notes")}],
+            files=[{"role": "parent", **self.parent}, {"role": "parent", **self.parent}])
+        failures = "\n".join(sd1.custody(spec, self.out_dir)["failures"])
+        for needle in (f"{job}: its pins form a cycle",
+                       "metadata/notes.txt: only JSON and JSONL members are remapped",
+                       "metadata/broken.json: not readable JSON (",
+                       "members[2] (notes): metadata/notes.txt is listed twice",
+                       f"{self.parent['path']} is listed twice"):
+            self.assertIn(needle, failures)
 
     def test_a_malformed_spec_or_a_used_directory_refuses_before_reading(self):
-        bad = self.spec()
-        bad["members"].append({"role": "input", "member": "../outside", "sha256": "0" * 64})
-        with self.assertRaisesRegex(ValueError, r"malformed: members\[14\]"):
-            sd1.custody(bad, self.root / "a")
-        with self.assertRaisesRegex(ValueError, "unknown field 'extra'"):
-            sd1.custody({**self.spec(), "extra": 1}, self.root / "a")
-        with self.assertRaisesRegex(ValueError, "rewrite"):
-            sd1.custody(self.spec(rewrite=[{"from": "relative/path", "to": HOT}]), self.root / "a")
+        known = self.spec()["known_answer"]
+        cases = {
+            r"members\[0\]": self.spec(members=[{"role": "notes", "member": "../outside", "sha256": "0" * 64}]),
+            "unknown field 'extra'": {**self.spec(), "extra": 1},
+            "missing field 'known_answer'": {k: v for k, v in self.spec().items() if k != "known_answer"},
+            "durable: both durable copies": self.spec(durable=self.spec()["durable"][:1]),
+            "forbidden: a nonempty list of absolute paths": self.spec(forbidden=[]),
+            "known_answer: ": self.spec(known_answer={**known, "budget_root": "relative/root"}),
+            "index: a pin": self.spec(index={"path": f"{HOT}/analysis/INDEX.json"}),
+            "rewrite: a list of": self.spec(rewrite=[{"from": "relative/path", "to": HOT}]),
+            "rewrite: two rules rewrite the same prefix": self.spec(rewrite=[{"from": REMOTE, "to": "/srv/a"},
+                                                                             {"from": REMOTE + "/", "to": "/srv/b"}]),
+            f"keep: {HOT}/x lies under the forbidden root {HOT}": self.spec(keep=[f"{HOT}/x"]),
+            r"members\[0\]: .*a role custody does not derive": self.spec(members=[
+                {"role": "r1-records", "member": "metadata/stale.json", "sha256": "0" * 64}]),
+            r"files\[0\]: \{role, path, sha256\}, the path absolute": self.spec(files=[
+                {"role": "parent", "path": "relative/parent.json", "sha256": "0" * 64}]),
+            r"files\[0\]: .*a role custody does not derive": self.spec(files=[{"role": "schedule", **self.parent}]),
+            "counts: ": self.spec(counts={"parent": -1}),
+        }
+        for needle, spec in cases.items():
+            with self.subTest(needle):
+                with self.assertRaisesRegex(ValueError, "malformed: .*" + needle):
+                    sd1.custody(spec, self.root / "a")
         used = self.root / "used"
         write(used / "x.json", {})
         with self.assertRaisesRegex(ValueError, "not a fresh directory"):
             sd1.custody(self.spec(), used)
-        with self.assertRaisesRegex(ValueError, "hot or holding root"):
-            sd1.custody(self.spec(forbidden=[common.absolute(self.root)]), self.root / "new")
+        with self.assertRaisesRegex(ValueError, "the output directory: .* lies under the hot or holding root"):
+            sd1.custody(self.spec(forbidden=[HOT, common.absolute(self.root)], keep=[]), self.root / "new")
+        # A keep prefix reached through a link into a forbidden root is under it.
+        link_directory(self.root / "alias", self.base / "hot-copy")
+        with self.assertRaisesRegex(ValueError, "malformed: keep: .* lies under the forbidden root"):
+            sd1.custody(self.spec(keep=[common.absolute(self.root / "alias" / "kept")]), self.root / "a")
         self.assertFalse((self.root / "a").exists())
+        self.assertFalse((self.root / "new").exists())
+
+    def test_no_file_is_read_under_a_forbidden_root_or_through_a_link(self):
+        spec = self.spec()
+        # BT1's archive records reached through a directory link.
+        link_directory(self.base / "linked", self.base / "bt1" / "archive")
+        jobs = json.loads(Path(spec["known_answer"]["jobs"]["path"]).read_text(encoding="utf-8"))
+        jobs["jobs"][0]["record"] = common.absolute(self.base / "linked" / jobs["jobs"][0]["id"] / "game.jsonl")
+        spec["known_answer"] = {**spec["known_answer"], "jobs": write(self.base / "bt1" / "JOBS.json", jobs)}
+        # The hot root's copy, by another spelling and through a link.
+        link_directory(self.base / "alias-hot", self.base / "hot-copy")
+        tar_sha = digest((self.base / "hot-copy" / "EVIDENCE.tar").read_bytes())
+        spec["files"] += [{"role": "notes", "path": common.absolute(self.base / "bt1") + "/../hot-copy/EVIDENCE.tar",
+                           "sha256": tar_sha},
+                          {"role": "notes", "path": common.absolute(self.base / "alias-hot" / "EVIDENCE.tar"),
+                           "sha256": tar_sha}]
+        out = sd1.custody(spec, self.out_dir)
+        failures = "\n".join(out["failures"])
+        hot_copy = common.absolute(self.base / "hot-copy")
+        self.assertIn(f"r1-archive file: {jobs['jobs'][0]['record']}: {self.base / 'linked'} is a symbolic link or "
+                      "junction, which custody does not follow", failures)
+        self.assertIn(f"notes file: {spec['files'][1]['path']} lies under the hot or holding root {hot_copy}", failures)
+        self.assertIn(f"notes file: {spec['files'][2]['path']} lies under the hot or holding root {hot_copy}", failures)
+        self.assertFalse(out["pass"])
+
+    def test_roots_know_a_forbidden_directory_by_any_spelling_real_path_or_identity(self):
+        hot = self.root / "hot"
+        hot.mkdir()
+        roots = sd1.Roots([common.absolute(hot), HOT])
+        self.assertEqual(roots.containing(common.absolute(hot) + "/x/../y"), common.absolute(hot))
+        self.assertEqual(roots.containing("q:\\UTILITY-HOT\\formal\\x"), HOT)
+        self.assertEqual(roots.containing("//?/Q:/utility-hot/x"), HOT)
+        self.assertEqual(roots.containing("Q:/utility-hot. /x"), HOT)
+        self.assertIsNone(roots.containing(common.absolute(self.root / "hotter" / "x")))
+        self.assertIsNone(roots.containing("Q:/utility-hotter/x"))
+        link_directory(self.root / "alias", hot)
+        self.assertEqual(roots.containing(str(self.root / "alias" / "x")), common.absolute(hot))
+        # Another mount or short name of the directory has its file identity.
+        other = self.root / "mount"
+        other.mkdir()
+        target, real_stat = os.path.realpath(other), os.stat
+        hot_stat = real_stat(hot)
+
+        def stat(path, *args, **kwargs):
+            return hot_stat if os.fspath(path) == target else real_stat(path, *args, **kwargs)
+        with mock.patch.object(sd1.os, "stat", stat):
+            self.assertEqual(roots.containing(str(other / "x" / "y")), common.absolute(hot))
+        self.assertIsNone(roots.containing(str(other / "x")))
+        # A path is read only when it is absolute, outside every root, with no link on it.
+        self.assertEqual(sd1.path_problem("relative/x.json", roots), "relative/x.json is not an absolute path")
+        (hot.parent / "real" / "sub").mkdir(parents=True)
+        link_directory(self.root / "link", self.root / "real")
+        inside = str(self.root / "link" / "sub" / "f.json")
+        self.assertEqual(sd1.path_problem(inside, roots),
+                         f"{inside}: {self.root / 'link'} is a symbolic link or junction, which custody does not "
+                         "follow")
+        self.assertIsNone(sd1.path_problem(str(self.root / "real" / "sub" / "f.json"), roots))
 
 
 # ------------------------------------------------ stage 0: parent identity
 
 
 class Parents(Temp):
+    """Each lineage's own copies of its parent, T1 and A48: the utility screen's input sources and the
+    distillation screen's (its parent is O's recorded initial source). T1's and A48's checkpoints are one file
+    each across lineages."""
+
     def setUp(self):
         super().setUp()
         self.recorded, self.entries = {}, {}
-        for name in ("r1", "r2", "T1", "A48"):
-            checkpoint, parameters = f"checkpoint {name}".encode(), f"parameters {name}".encode()
-            self.recorded[name] = digest(checkpoint)
-            for side in ("utility", "screen"):
-                folder = self.root / side / name
-                source = self.source(folder, checkpoint, parameters)
-                if side == "screen" and name in common.LINEAGES:
-                    # The distillation screen's parent is O's recorded initial source.
-                    config = write(folder / "O-config.json", {"initial_source": source, "iterations": []})
-                    entry = {**config, "field": ["initial_source"]}
-                else:
-                    entry = {"path": write(folder / "source.json", source)["path"]}
-                self.entries.setdefault(name, {})[side] = entry
+        for lineage in common.LINEAGES:
+            for name in sd1.PARENT_SOURCES:
+                key = lineage if name == "parent" else name
+                checkpoint, parameters = f"checkpoint {key}".encode(), f"parameters {key}".encode()
+                self.recorded[key] = digest(checkpoint)
+                for side in ("utility", "screen"):
+                    folder = self.root / side / lineage / name
+                    source = self.source(folder, checkpoint, parameters)
+                    if side == "screen" and name == "parent":
+                        # The distillation screen's parent is O's recorded initial source.
+                        config = write(folder / "O-config.json", {"initial_source": source, "iterations": []})
+                        entry = {**config, "field": ["initial_source"]}
+                    else:
+                        entry = {"path": write(folder / "source.json", source)["path"]}
+                    self.entries.setdefault(lineage, {}).setdefault(name, {})[side] = entry
 
     def source(self, folder: Path, checkpoint: bytes, parameters: bytes, transfer="c") -> dict:
         descriptor = write(folder / "import.json", {"schema": "import",
@@ -1181,58 +1835,124 @@ class Parents(Temp):
     def spec(self) -> dict:
         return {"schema": sd1.PARENTS_SPEC_SCHEMA, **copy.deepcopy(self.entries)}
 
-    def parents(self, spec: dict) -> dict:
-        with mock.patch.dict(sd1.RECORDED_CHECKPOINTS, self.recorded):
-            return sd1.parents(spec)
+    def recorded_pins(self):
+        return mock.patch.multiple(sd1, PARENT_CHECKPOINT_SHA256={lin: self.recorded[lin] for lin in common.LINEAGES},
+                                   REFERENCE_CHECKPOINTS={name: self.recorded[name] for name in ("T1", "A48")})
 
-    def test_the_parents_and_references_are_their_recorded_checkpoints_and_sources(self):
-        self.assertEqual(sd1.RECORDED_CHECKPOINTS, {**common.PARENT_CHECKPOINT_SHA256,
-                                                    "T1": sd1.T1_CHECKPOINT_SHA256, "A48": sd1.A48_CHECKPOINT_SHA256})
+    def parents(self, spec: dict, forbidden=(HOT,)) -> dict:
+        with self.recorded_pins():
+            return sd1.parents(spec, list(forbidden))
+
+    def test_each_lineages_parent_and_references_are_their_recorded_checkpoints_and_sources(self):
+        self.assertEqual(sd1.REFERENCE_CHECKPOINTS, {"T1": sd1.T1_CHECKPOINT_SHA256, "A48": sd1.A48_CHECKPOINT_SHA256})
+        self.assertEqual(sd1.PARENT_SOURCES, ("parent", "T1", "A48"))
         out = self.parents(self.spec())
         self.assertEqual(out["failures"], [])
         self.assertTrue(out["pass"])
-        self.assertTrue(all(out["sources"][name]["sources_match"] for name in self.recorded))
+        self.assertEqual(out["forbidden"], [HOT])
+        for lineage in common.LINEAGES:
+            self.assertEqual(sorted(out["lineages"][lineage]), sorted(sd1.PARENT_SOURCES))
+            for name, row in out["lineages"][lineage].items():
+                self.assertTrue(row["sources_match"])
+                recorded = self.recorded[lineage if name == "parent" else name]
+                self.assertEqual(row["recorded_checkpoint_sha256"], recorded)
+                self.assertEqual(row["utility"]["checkpoint"]["sha256"], row["recorded_checkpoint_sha256"])
+        # Every file each side read is pinned: the source file, its checkpoint, its import descriptor and the
+        # parameters that descriptor pins.
+        folder = self.root / "screen" / "r2" / "A48"
+        self.assertEqual(out["lineages"]["r2"]["A48"]["screen"]["read"],
+                         [common.pin(folder / name) for name in ("source.json", "ck.json", "import.json", "par.bin")])
+        self.assertEqual(out["lineages"]["r1"]["parent"]["screen"]["read"][0],
+                         common.pin(self.root / "screen" / "r1" / "parent" / "O-config.json"))
+        # T1 and A48 need only the utility screen's sources.
         spec = self.spec()
-        del spec["T1"]["screen"], spec["A48"]["screen"]
+        del spec["r1"]["T1"]["screen"], spec["r2"]["A48"]["screen"]
         out = self.parents(spec)
         self.assertTrue(out["pass"])
-        self.assertNotIn("sources_match", out["sources"]["T1"])
+        self.assertNotIn("sources_match", out["lineages"]["r1"]["T1"])
+        self.assertNotIn("screen", out["lineages"]["r2"]["A48"])
 
     def test_a_different_checkpoint_or_source_fails_with_every_reason(self):
         spec = self.spec()
-        # r1: the utility screen's descriptor names other parameters.
+        # r1's parent: the utility screen's descriptor names other parameters.
         other = self.source(self.root / "other" / "r1", b"checkpoint r1", b"other parameters")
-        spec["r1"]["utility"] = {"path": write(self.root / "other" / "r1" / "source.json", other)["path"]}
-        # r2: the distillation screen's config changed after its pin.
-        Path(spec["r2"]["screen"]["path"]).write_text("{}", encoding="utf-8")
-        # T1: its checkpoint's bytes changed in place.
-        Path(self.root / "utility" / "T1" / "ck.json").write_bytes(b"changed")
-        # A48: a source whose checkpoint is not the recorded A48 (another transfer besides).
+        spec["r1"]["parent"]["utility"] = {"path": write(self.root / "other" / "r1" / "source.json", other)["path"]}
+        # r2's parent: the distillation screen's config changed after its pin.
+        Path(spec["r2"]["parent"]["screen"]["path"]).write_text("{}", encoding="utf-8")
+        # r1's T1: its checkpoint's bytes changed in place.
+        Path(self.root / "utility" / "r1" / "T1" / "ck.json").write_bytes(b"changed")
+        # r2's A48: a source whose checkpoint is T1's (another transfer besides).
         wrong = self.source(self.root / "other" / "A48", b"checkpoint T1", b"parameters A48", transfer="d")
-        spec["A48"]["utility"] = {"path": write(self.root / "other" / "A48" / "source.json", wrong)["path"]}
+        spec["r2"]["A48"]["utility"] = {"path": write(self.root / "other" / "A48" / "source.json", wrong)["path"]}
+        custody = write(self.root / "CUSTODY.json", {"schema": sd1.CUSTODY_SCHEMA, "pass": True, "forbidden": [HOT]})
         out_path = self.root / "PARENTS.json"
-        with mock.patch.dict(sd1.RECORDED_CHECKPOINTS, self.recorded), mock.patch("sys.stdout"):
-            code = sd1.main(["parents", "--spec", write(self.root / "spec.json", spec)["path"], "--out", str(out_path)])
+        spec_pin = write(self.root / "spec.json", spec)
+        with self.recorded_pins(), mock.patch("sys.stdout"):
+            code = sd1.main(["parents", "--spec", spec_pin["path"], "--custody", custody["path"], "--out",
+                             str(out_path)])
         self.assertEqual(code, 1)
-        failures = json.loads(out_path.read_text(encoding="utf-8"))["failures"]
-        text = "\n".join(failures)
-        self.assertIn("r1: the utility screen's source differs from the distillation screen's in ['play_import']", text)
-        self.assertIn("r2: the distillation screen's source: ", text)
-        self.assertIn("T1: the utility screen's source checkpoint: ", text)
-        self.assertIn(f"A48: the utility screen's source: its checkpoint is {self.recorded['T1']}, not the recorded "
-                      f"{self.recorded['A48']}", text)
-        self.assertIn("A48: the utility screen's source differs from the distillation screen's in "
+        record = json.loads(out_path.read_text(encoding="utf-8"))
+        self.assertEqual((record["spec"], record["custody"]), (common.pin(spec_pin["path"]),
+                                                               common.pin(custody["path"])))
+        text = "\n".join(record["failures"])
+        self.assertIn("r1 parent: the utility screen's source differs from the distillation screen's in "
+                      "['play_import']", text)
+        self.assertIn("r2 parent: the distillation screen's source: ", text)
+        self.assertIn("r1 T1: the utility screen's source checkpoint: ", text)
+        self.assertIn(f"r2 A48: the utility screen's source: its checkpoint is {self.recorded['T1']}, not the "
+                      f"recorded {self.recorded['A48']}", text)
+        self.assertIn("r2 A48: the utility screen's source differs from the distillation screen's in "
                       "['checkpoint', 'feature_transfer']", text)
+        self.assertEqual(len(record["failures"]), 5, text)
 
-    def test_the_spec_names_both_screens_sources_of_each_parent(self):
+    def test_no_file_is_read_under_a_forbidden_root_or_through_a_link(self):
+        held = common.absolute(self.root / "screen" / "r1")
+        out = self.parents(self.spec(), forbidden=(HOT, held))
+        self.assertIn(f"r1 parent: the distillation screen's source: {self.entries['r1']['parent']['screen']['path']} "
+                      f"lies under the hot or holding root {held}, which SD1 never reads", out["failures"])
+        self.assertEqual(sum(f.startswith("r1 ") for f in out["failures"]), 3)
+        self.assertFalse(any(f.startswith("r2 ") for f in out["failures"]))
+        # A copy reached through a directory link is refused.
+        link = self.root / "linked"
+        link_directory(link, self.root / "utility" / "r2")
         spec = self.spec()
-        del spec["r1"]["screen"]
-        with self.assertRaisesRegex(ValueError, "r1: the utility screen's source and the distillation screen's"):
+        spec["r2"]["T1"]["utility"] = {"path": str(link / "T1" / "source.json")}
+        out = self.parents(spec)
+        self.assertIn(f"r2 T1: the utility screen's source: {link / 'T1' / 'source.json'}: {link} is a symbolic link "
+                      "or junction, which custody does not follow", out["failures"])
+
+    def test_the_spec_names_each_lineages_three_sources(self):
+        spec = self.spec()
+        del spec["r1"]["parent"]["screen"]
+        with self.assertRaisesRegex(ValueError, "r1 parent: the utility screen's source and the distillation"):
             self.parents(spec)
         spec = self.spec()
-        del spec["A48"]
-        with self.assertRaisesRegex(ValueError, "naming r1, r2, T1 and A48"):
+        del spec["r2"]["A48"]
+        with self.assertRaisesRegex(ValueError, "r2: name its parent, T1 and A48"):
             self.parents(spec)
+        spec = self.spec()
+        del spec["r2"]
+        with self.assertRaisesRegex(ValueError, "naming r1 and r2"):
+            self.parents(spec)
+        spec = self.spec()
+        spec["r1"]["T1"]["utility"]["extra"] = 1
+        out = self.parents(spec)
+        self.assertIn("r1 T1: the utility screen's source: give {path, optional sha256, optional field}",
+                      out["failures"])
+        spec = self.spec()
+        missing = common.absolute(self.root / "nowhere" / "source.json")
+        spec["r1"]["A48"]["utility"] = {"path": missing}
+        spec["r2"]["parent"]["screen"]["field"] = ["other_source"]
+        spec["r2"]["T1"]["utility"] = {"path": write(self.root / "not-a-source.json", {"checkpoint": 1})["path"]}
+        out = self.parents(spec)
+        self.assertIn(f"r1 A48: the utility screen's source: {missing} is missing", out["failures"])
+        self.assertIn(f"r2 parent: the distillation screen's source: {spec['r2']['parent']['screen']['path']} has no "
+                      "field ['other_source']", out["failures"])
+        self.assertIn("r2 T1: the utility screen's source: not a model source with checkpoint and play_import pins",
+                      out["failures"])
+        self.assertEqual(len(out["failures"]), 3, out["failures"])
+        with self.assertRaisesRegex(ValueError, "parents reads custody's forbidden roots"):
+            self.parents(self.spec(), forbidden=())
 
 
 # --------------------------------------- stage 0: the probe's references
@@ -1273,13 +1993,17 @@ class ReferenceCheck(Temp):
                    "parent learner_offers": lambda p: p["candidates"][0]["learner_offers"]["rows"][1].update(
                        self_top=True),
                    "O-final state_sha256": lambda p: p["candidates"][1].update(state_sha256="other"),
-                   "anchor": lambda p: p["anchor"]["held_out"].update(sha256="d" * 64)}
+                   "anchor": lambda p: p["anchor"]["held_out"].update(sha256="d" * 64),
+                   "offers": lambda p: p["offers"].append({"path": "sd1/more-offers.json", "sha256": "e" * 64}),
+                   # The probe must read the screen's bank: another bank fails the check.
+                   "banks": lambda p: p["banks"][0]["bank"].update(sha256="f" * 64)}
         for name, change in changes.items():
             mine = self.probe("sd1")
             change(mine)
             out = sd1.reference_check("r1", mine, screen)
             self.assertEqual(out["differing"], [name])
             self.assertFalse(out["pass"])
+            self.assertEqual(out["banks_equal"], name != "banks")
         with self.assertRaisesRegex(ValueError, "another lineage"):
             sd1.reference_check("r2", self.probe("sd1"), screen)
         lacking = self.probe("sd1")
@@ -1318,7 +2042,7 @@ class FitTable(SelectFixture):
         selections, probes = [], []
         for k in sd1.SEEDS:
             full, rerun, probe = self.seed_inputs(k, (changes or {}).get(k))
-            selections.append(sd1.select("r1", k, probe, self.reference, full, rerun, names=NAMES))
+            selections.append(sd1.select("r1", k, probe, self.reference, full, rerun, self.split, names=NAMES))
             probes.append(probe)
         return selections, probes
 
@@ -1410,17 +2134,55 @@ class FitTable(SelectFixture):
 
 
 class ConfigsCheck(PhaseTwoFixture):
-    def configs(self) -> tuple:
-        selections = [self.selection(k) for k in sd1.SEEDS]
-        cfgs = sd1.phase2_configs("r1", self.o_config, selections, 4, "runs")
-        cfgs["O-0"] = phase2.config("r1", self.o_config, None, 6, "runs/r1-O-s0/native")
-        return selections, cfgs
+    @classmethod
+    def setUpClass(cls):
+        """Every seed's selection and the sixteen configs under one root, built once for the class: D2-k and O-k
+        (k from 1) from sd1.py phase2, and O-0, stage 0's O-s0, from phase2.py's reproduction of O. "qualify" is
+        the same set at other worker counts under another root; "retention" is built with phase2.py's replicate
+        seeds and ids fallen back to the retention trace's namespace (sd1.py's phase2 is the module it imports)."""
+        super().setUpClass()
+        shared = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(shared.cleanup)
+        builder = PhaseTwoFixture("setUp")
+        builder.setUp()
+        builder.root = Path(shared.name)
+        used = sd1.phase2
+        real_id, real_seed = used.replicate_id, used.replicate_seed
+
+        def retention_id(lineage, replicate, entry, namespace=used.RETENTION_NS):
+            return real_id(lineage, replicate, entry, used.RETENTION_NS)
+
+        def retention_seed(lineage, replicate, own, other, j, namespace=used.RETENTION_NS):
+            return real_seed(lineage, replicate, own, other, j, used.RETENTION_NS)
+
+        def build(workers: int, name: str) -> str:
+            root = common.absolute(builder.root / name)
+            selections = [builder.selection(k) for k in sd1.SEEDS]
+            cfgs = sd1.phase2_configs("r1", builder.o_config, selections, workers, root)
+            cfgs["O-0"] = phase2.config("r1", builder.o_config, None, workers + 2, f"{root}/r1-O-0/native")
+            return json.dumps([selections, cfgs, root])
+        try:
+            cls.built = {"train": build(4, "train"), "qualify": build(8, "qualify")}
+            with mock.patch.object(used, "replicate_id", retention_id), \
+                    mock.patch.object(used, "replicate_seed", retention_seed):
+                cls.built["retention"] = build(4, "train")
+        finally:
+            builder.tearDown()
+
+    def configs(self, which: str = "train") -> tuple:
+        """A fresh copy of a set built in setUpClass: (selections, configs, root)."""
+        return tuple(json.loads(self.built[which]))
+
+    def failed(self, out: dict) -> list:
+        return sorted(k for k, v in out["checks"].items() if not v)
 
     def test_placement_aside_each_config_differs_from_o_0_only_as_designed(self):
-        selections, cfgs = self.configs()
-        out = sd1.configs_check("r1", self.o_config, selections, cfgs)
-        self.assertTrue(out["pass"], out["checks"])
-        self.assertEqual(len(out["checks"]), 17)
+        selections, cfgs, root = self.configs()
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs, root)
+        self.assertTrue(out["pass"], out["problems"])
+        # O-0; D1-k's source, D2-k and the directory of each of sixteen runs; O-k from 1; distinct directories.
+        self.assertEqual(len(out["checks"]), 1 + 8 + 8 + 7 + 16 + 1)
+        self.assertEqual((out["root"], out["qualification_compared"]), (root, False))
         units = sum(len(u["episodes"]) for u in self.o_config["iterations"])
         diff = out["differences_from_O-0"]
         self.assertEqual(diff["O-0"], {"fields": [], "units": units, "same_updates": True, "episode_ids": 0,
@@ -1432,41 +2194,108 @@ class ConfigsCheck(PhaseTwoFixture):
         self.assertEqual(out["placement"]["D2-1"]["collection_workers"], 4)
 
     def test_any_other_difference_fails_the_gate(self):
-        selections, cfgs = self.configs()
+        selections, cfgs, root = self.configs()
         bad = copy.deepcopy(cfgs)
         bad["O-2"]["iterations"][5]["episodes"][0]["episode"]["starting_player"] ^= 1
         bad["D2-4"] = copy.deepcopy(cfgs["D2-5"])
         bad["O-0"] = copy.deepcopy(cfgs["O-1"])
         bad["O-6"]["update_backend"] = {"kind": "other"}
         bad["O-7"]["output_directory"] = bad["O-5"]["output_directory"]
-        out = sd1.configs_check("r1", self.o_config, selections, bad)
+        out = sd1.configs_check("r1", self.o_config, selections, bad, root)
         self.assertFalse(out["pass"])
-        self.assertEqual(sorted(k for k, v in out["checks"].items() if not v),
-                         ["D2-4 is O-4 from D1-4", "O-0 is O's recorded config with the named parent",
-                          "O-2 is O-0 on replicate 2's seeds and episode ids",
-                          "O-6 is O-0 on replicate 6's seeds and episode ids",
+        # D2-k is compared with O-k, so a changed O-k fails its pair too.
+        self.assertEqual(self.failed(out),
+                         ["D2-0 is O-0 from D1-0", "D2-2 is O-2 from D1-2",
+                          "D2-4 is O-4 from D1-4", "D2-4 writes r1-D2-4/native under the root",
+                          "D2-6 is O-6 from D1-6",
+                          "O-0 is O's recorded config with the named parent, its units O's own",
+                          "O-0 writes r1-O-0/native under the root",
+                          "O-2 is O-0 on seed 2's unit seeds and episode ids",
+                          "O-6 is O-0 on seed 6's unit seeds and episode ids",
+                          "O-7 writes r1-O-7/native under the root",
                           "each run writes its own output directory"])
+        self.assertIn("update 5 unit 0: its episode differs in more than its id and seed",
+                      out["problems"]["O-2 is O-0 on seed 2's unit seeds and episode ids"])
         diff = out["differences_from_O-0"]
         self.assertEqual((diff["O-2"]["other_unit_fields"], diff["O-6"]["fields"]), (1, ["update_backend"]))
 
+    def test_each_run_writes_its_own_directory_under_the_root(self):
+        selections, cfgs, root = self.configs()
+        # Two runs swap directories: each fails its own, though no two runs share one.
+        cfgs["D2-1"]["output_directory"], cfgs["O-1"]["output_directory"] = (
+            cfgs["O-1"]["output_directory"], cfgs["D2-1"]["output_directory"])
+        # O-0 is held to the same rule: stage 0's O-s0 runs in ROOT/LIN-O-0/native.
+        cfgs["O-0"]["output_directory"] = f"{root}/r1-O-s0/native"
+        # Another spelling of the same directory is the same directory.
+        cfgs["D2-2"]["output_directory"] = f"{root}/scratch/../r1-D2-2/native/"
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs, root)
+        self.assertEqual(self.failed(out), ["D2-1 writes r1-D2-1/native under the root",
+                                            "O-0 writes r1-O-0/native under the root",
+                                            "O-1 writes r1-O-1/native under the root"])
+        self.assertTrue(out["checks"]["each run writes its own output directory"])
+        self.assertEqual(out["problems"]["O-0 writes r1-O-0/native under the root"],
+                         f"its output directory is '{root}/r1-O-s0/native', not {root}/r1-O-0/native")
+
+    def test_the_gate_restates_the_designs_seeds_and_ids(self):
+        # Configs whose replicate seeds and ids fell back to the retention trace's namespace pass phase2.py's own
+        # checks but not the gate's, which derives them from the design's formulas.
+        selections, cfgs, root = self.configs("retention")
+        self.assertTrue(self.first_episode(cfgs["O-3"])["id"].startswith(f"{phase2.RETENTION_NS}-r1-rep3-"))
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs, root)
+        self.assertEqual(self.failed(out), sorted(f"O-{k} is O-0 on seed {k}'s unit seeds and episode ids"
+                                                  for k in range(1, 8)))
+        self.assertIn("not seed 3's 'sd1-r1-rep3-",
+                      out["problems"]["O-3 is O-0 on seed 3's unit seeds and episode ids"])
+
+    def test_each_config_is_its_qualification_config_but_for_placement(self):
+        selections, cfgs, root = self.configs()
+        _, qualification, _ = self.configs("qualify")
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs, root, qualification)
+        self.assertTrue(out["pass"], out["problems"])
+        self.assertTrue(out["qualification_compared"])
+        self.assertEqual(len(out["checks"]), 41 + 16)
+        qualification["D2-3"]["learning_rate"] = 0.5
+        out = sd1.configs_check("r1", self.o_config, selections, cfgs, root, qualification)
+        self.assertEqual(self.failed(out), ["D2-3 is its qualification config, worker counts and output directory "
+                                            "aside"])
+        self.assertEqual(out["problems"][self.failed(out)[0]], "it differs in ['learning_rate']")
+        with self.assertRaisesRegex(ValueError, "the qualification set names D2-0 to D2-7 and O-0 to O-7"):
+            sd1.configs_check("r1", self.o_config, selections, cfgs, root,
+                              {k: v for k, v in qualification.items() if k != "O-0"})
+
     def test_the_cli_reads_all_sixteen_configs_and_every_selection(self):
-        selections, cfgs = self.configs()
+        selections, cfgs, root = self.configs()
+        _, qualification, _ = self.configs("qualify")
         o_path = write(self.root / "O.json", self.o_config)["path"]
         select = [write(self.root / f"SELECT-{k}.json", s)["path"] for k, s in enumerate(selections)]
-        configs = [f"{name}={write(self.root / f'{name}.json', cfg)['path']}" for name, cfg in sorted(cfgs.items())]
-        base = ["configs-check", "--lineage", "r1", "--o-config", o_path, "--select", *select,
+        configs = [f"{name}={write(self.root / 'cfg' / f'{name}.json', cfg)['path']}"
+                   for name, cfg in sorted(cfgs.items())]
+        qualify = [f"{name}={write(self.root / 'qual' / f'{name}.json', cfg)['path']}"
+                   for name, cfg in sorted(qualification.items())]
+        base = ["configs-check", "--lineage", "r1", "--o-config", o_path, "--select", *select, "--root", root,
                 "--out", str(self.root / "CONFIGS.json")]
         with mock.patch("sys.stdout"):
             self.assertEqual(sd1.main(base + ["--config", *configs]), 0)
         record = json.loads((self.root / "CONFIGS.json").read_text(encoding="utf-8"))
         self.assertTrue(record["pass"])
         self.assertEqual(sorted(record["configs"]), sorted(sd1.PHASE2_RUNS))
-        with self.assertRaisesRegex(ValueError, "the gate reads D2-0 to D2-7 and O-0 to O-7"):
+        self.assertEqual(record["configs"]["O-0"], common.pin(self.root / "cfg" / "O-0.json"))
+        self.assertIsNone(record["qualification"])
+        with mock.patch("sys.stdout"):
+            self.assertEqual(sd1.main(base + ["--config", *configs, "--qualification", *qualify]), 0)
+        record = json.loads((self.root / "CONFIGS.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["qualification"]["D2-7"], common.pin(self.root / "qual" / "D2-7.json"))
+        self.assertTrue(record["qualification_compared"])
+        with self.assertRaisesRegex(ValueError, "--config: give NAME=PATH once for each of D2-0"):
             sd1.main(base + ["--config", *configs[1:]])
-        with self.assertRaisesRegex(ValueError, "once for each"):
+        with self.assertRaisesRegex(ValueError, "--config: give NAME=PATH once"):
             sd1.main(base + ["--config", *configs, configs[0]])
+        with self.assertRaisesRegex(ValueError, "--qualification: give NAME=PATH once"):
+            sd1.main(base + ["--config", *configs, "--qualification", *qualify[1:]])
         with self.assertRaisesRegex(ValueError, "every seed's selection"):
-            sd1.main(base[:6] + select[:7] + base[-2:] + ["--config", *configs])
+            sd1.main(base[:6] + select[:7] + base[-4:] + ["--config", *configs])
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            sd1.main(base[:-4] + base[-2:] + ["--config", *configs])
 
 
 if __name__ == "__main__":

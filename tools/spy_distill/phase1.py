@@ -23,12 +23,14 @@ CLI (JSON on stdout):
   probe  --lineage r1 --parent P.json --o-final O.json --games GAMES.jsonl --bank BANK.json
          [--completion-games GAMES.jsonl --completion-bank BANK.json]
          [--evidence-training KEEP.json --evidence-held-out KEEP.json]
-         --anchor ANCHOR.json --offers OFFERS.json --phase1 PHASE1.json [PHASE1.json ...]
+         --anchor ANCHOR.json --offers OFFERS.json [--phase1 PHASE1.json [PHASE1.json ...]]
          --output-directory DIR --out CMD.json
 ``--bank`` is the bank command's bank.json; ``--phase1`` the full runs'
 phase1.json receipts, whose checkpoint sources become candidates
-``U-step-N`` and ``L-step-N``. The optional evidence files are search-evidence
-distillation's two keep-set files (collab
+``U-step-N`` and ``L-step-N``. Without ``--phase1`` the probe reads the parent
+and O-final alone: a reference probe, such as search-evidence distillation's
+stage-0 exactness probe on the screen's bank. The optional evidence files are
+search-evidence distillation's two keep-set files (collab
 LANES/search-evidence-distillation-20261016), keyed to the training bank: the
 probe then also reads each candidate's evidence fit and its held-out anchor
 readings over all decks, the non-Spy decks and each deck. Without them the
@@ -162,7 +164,7 @@ def main(argv=None) -> int:
     q = sub.add_parser("probe")
     q.add_argument("--o-final", type=Path, required=True)
     q.add_argument("--offers", type=Path, required=True)
-    q.add_argument("--phase1", type=Path, nargs="+", required=True)
+    q.add_argument("--phase1", type=Path, nargs="+", default=[])
     q.add_argument("--completion-games", type=Path)
     q.add_argument("--completion-bank", type=Path)
     q.add_argument("--evidence-training", type=Path)
