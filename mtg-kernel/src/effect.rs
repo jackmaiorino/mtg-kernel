@@ -433,6 +433,7 @@ pub(crate) mod perforating_artist_v1 {
         validate_origin(state, &pending.resolving_item)?;
         let item = &pending.resolving_item;
         let expected_ctx = ExecCtx {
+            niv_damage_origin_v1: crate::event::niv_damage_origin_for_saved_item_v1(state, item),
             stack_item_id: Some(item.v4.stack_item_id),
             source: item.source,
             controller: item.controller,
@@ -3663,6 +3664,10 @@ pub struct ExecCtx {
     /// not originate from a real stack item leave this absent.
     #[serde(default)]
     pub stack_item_id: Option<StackItemId>,
+    /// Exact native resolution origin used only to bind a later damage event
+    /// to its source incarnation if that permanent leaves before damage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) niv_damage_origin_v1: Option<crate::event::NivDamageOriginV1>,
     pub source: ObjectId,
     pub controller: PlayerId,
     pub targets: Vec<Target>,
@@ -3809,6 +3814,10 @@ impl std::hash::Hash for ExecCtx {
             std::hash::Hash::hash(&kind, state);
         }
         std::hash::Hash::hash(&self.cauldron_grant, state);
+        if let Some(origin) = self.niv_damage_origin_v1 {
+            std::hash::Hash::hash(&0x6e69_765f_646d_676f_u64, state);
+            std::hash::Hash::hash(&origin, state);
+        }
     }
 }
 
@@ -9119,6 +9128,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
 
     if pending.ctx.stack_item_id != Some(pending.resolving_item.v4.stack_item_id)
+        || pending.ctx.niv_damage_origin_v1
+            != crate::event::niv_damage_origin_for_saved_item_v1(state, &pending.resolving_item)
         || pending.ctx.source != pending.resolving_item.source
         || pending.ctx.controller != pending.resolving_item.controller
         || pending.ctx.targets != pending.resolving_item.targets
@@ -14952,10 +14963,25 @@ fn validate_resumable_discard_details(
 }
 
 impl ExecCtx {
+    /// Compare the semantic stack context while leaving the private Niv damage
+    /// handoff to its owning continuation validator. This token is checked
+    /// against the authentic saved stack row before effect execution.
+    pub(crate) fn same_except_niv_damage_origin_v1(&self, other: &Self) -> bool {
+        if self.niv_damage_origin_v1 == other.niv_damage_origin_v1 {
+            return self == other;
+        }
+        let mut left = self.clone();
+        let mut right = other.clone();
+        left.niv_damage_origin_v1 = None;
+        right.niv_damage_origin_v1 = None;
+        left == right
+    }
+
     pub fn no_targets(source: ObjectId, controller: PlayerId) -> ExecCtx {
         ExecCtx {
             cauldron_grant: Default::default(),
             stack_item_id: None,
+            niv_damage_origin_v1: None,
             source,
             controller,
             targets: Vec::new(),
@@ -17706,10 +17732,25 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 return;
             }
             let target = ctx.resolve_target(*target);
-            event::propose_and_commit(
-                state,
-                event::ProposedEvent::damage(ctx.source, target, *amount),
-            );
+            let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            if let Some(origin) = ctx.niv_damage_origin_v1 {
+                if !crate::event::niv_damage_origin_matches_context_v1(
+                    origin,
+                    ctx.stack_item_id,
+                    ctx.source,
+                    ctx.ability_source_contract,
+                ) {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                    damage.niv_damage_origin_v1 = Some(origin);
+                }
+            }
+            event::propose_and_commit(state, proposal);
         }
         EffectOp::CreatureTargetPowerDamage {
             source_index,
@@ -17857,10 +17898,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
         EffectOp::DealDamageDynamic { target, amount } => {
             let target = ctx.resolve_target(*target);
             let amount = crate::engine::evaluate_dynamic_value(state, *amount, ctx.controller);
-            event::propose_and_commit(
-                state,
-                event::ProposedEvent::damage(ctx.source, target, amount),
-            );
+            event::propose_and_commit(state, event::damage_from_exec_ctx_v1(ctx, target, amount));
         }
         EffectOp::DamageCannotBePreventedThisTurn => {
             let timestamp = crate::engine::next_timestamp(state);
@@ -19548,7 +19586,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                         && !excluded_subtype
                             .is_in_subtype_ids(&crate::engine::effective_subtype_ids(state, id))
                 })
-                .map(|id| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
+                .map(|id| event::damage_from_exec_ctx_v1(ctx, Target::Object(id), *amount))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -20203,8 +20241,8 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             // sequential individual commits that could see each other's
             // side effects mid-resolution.
             let opponent = ctx.controller.opponent();
-            let mut events = vec![event::ProposedEvent::damage(
-                ctx.source,
+            let mut events = vec![event::damage_from_exec_ctx_v1(
+                ctx,
                 Target::Player(opponent),
                 *amount,
             )];
@@ -20214,9 +20252,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     .iter()
                     .copied()
                     .filter(|&id| crate::engine::object_has_type(state, id, CardType::Creature))
-                    .map(|id| {
-                        event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount)
-                    }),
+                    .map(|id| event::damage_from_exec_ctx_v1(ctx, Target::Object(id), *amount)),
             );
             event::propose_and_commit_batch(state, events);
         }
@@ -20225,9 +20261,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
                 .filter(|object| creature_matches_filter(state, *object, filter, ctx.controller))
-                .map(|object| {
-                    event::ProposedEvent::damage(ctx.source, Target::Object(object), *amount)
-                })
+                .map(|object| event::damage_from_exec_ctx_v1(ctx, Target::Object(object), *amount))
                 .collect();
             event::propose_and_commit_batch(state, events);
         }
@@ -20354,7 +20388,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
                     (ctx.target_incarnation_matches(index, state)
                         && live.zone == Zone::Battlefield
                         && crate::engine::object_has_type(state, object, CardType::Creature))
-                    .then(|| event::ProposedEvent::damage(ctx.source, target, *amount))
+                    .then(|| event::damage_from_exec_ctx_v1(ctx, target, *amount))
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);
@@ -20396,7 +20430,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             let amount = amount.saturating_mul(*multiplier);
             event::propose_and_commit(
                 state,
-                event::ProposedEvent::damage(ctx.source, ctx.resolve_target(*target), amount),
+                event::damage_from_exec_ctx_v1(ctx, ctx.resolve_target(*target), amount),
             );
         }
         EffectOp::ExileTargetPlayersGraveyards => {
@@ -20618,7 +20652,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             };
             event::propose_and_commit(
                 state,
-                event::ProposedEvent::damage(ctx.source, Target::Player(controller), *amount),
+                event::damage_from_exec_ctx_v1(ctx, Target::Player(controller), *amount),
             );
         }
         EffectOp::CreateTokensForOtherControlledCreaturesNamed { name, token_def } => {
@@ -21563,7 +21597,7 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
             if amount > 0 {
                 event::propose_and_commit(
                     state,
-                    event::ProposedEvent::damage(ctx.source, ctx.resolve_target(*target), amount),
+                    event::damage_from_exec_ctx_v1(ctx, ctx.resolve_target(*target), amount),
                 );
             }
         }
@@ -23066,6 +23100,7 @@ mod tests {
     fn deal_damage_to_target_player_reduces_life() {
         let mut state = two_card_libraries();
         let ctx = ExecCtx {
+            niv_damage_origin_v1: None,
             cauldron_grant: Default::default(),
             stack_item_id: None,
             source: ObjectId(0),
@@ -23097,6 +23132,7 @@ mod tests {
         let creature = state.draw_card(PlayerId::P1).unwrap();
         state.move_hand_to_battlefield(PlayerId::P1, creature);
         let ctx = ExecCtx {
+            niv_damage_origin_v1: None,
             cauldron_grant: Default::default(),
             stack_item_id: None,
             source: ObjectId(0),

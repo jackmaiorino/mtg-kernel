@@ -803,8 +803,8 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 {
                     event::propose_and_commit(
                         state,
-                        ProposedEvent::damage(
-                            ctx.source,
+                        crate::event::damage_from_exec_ctx_v1(
+                            ctx,
                             ctx.targets[index],
                             i32::from(ctx.x_value),
                         ),
@@ -1060,7 +1060,11 @@ pub(crate) fn execute(op: &StandardOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 {
                     event::propose_and_commit(
                         state,
-                        ProposedEvent::damage(ctx.source, ctx.targets[index], i32::from(*amount)),
+                        crate::event::damage_from_exec_ctx_v1(
+                            ctx,
+                            ctx.targets[index],
+                            i32::from(*amount),
+                        ),
                     );
                 }
             }

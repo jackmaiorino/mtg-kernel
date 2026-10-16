@@ -89,6 +89,184 @@ pub struct DamageProposed {
     /// path. Ordinary proposals leave this absent; committed Damage bytes
     /// and hashes remain unchanged.
     pub historical_source: Option<StackItemId>,
+    /// Private, in-flight origin carried by a genuine resolving permanent
+    /// ability. It is intentionally absent from proposal serialization; the
+    /// damage receipt is emitted only by Niv's final damage commit.
+    #[serde(skip)]
+    pub(crate) niv_damage_origin_v1: Option<NivDamageOriginV1>,
+}
+
+impl std::hash::Hash for DamageProposed {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use std::hash::Hash;
+        self.source.hash(state);
+        self.target.hash(state);
+        self.amount.hash(state);
+        self.touched_by.hash(state);
+        self.is_combat.hash(state);
+        self.historical_source.hash(state);
+        if let Some(origin) = self.niv_damage_origin_v1 {
+            0x6e69_765f_646d_676f_u64.hash(state);
+            origin.hash(state);
+        }
+    }
+}
+
+/// Narrow private handoff minted only from the actual resolving stack row.
+/// Resumable state is checked against that saved row before execution continues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NivDamageOriginV1 {
+    stack_item_id: StackItemId,
+    source: crate::state::AbilitySourceContractV4,
+}
+
+fn same_niv_source_incarnation_v1(
+    left: crate::state::AbilitySourceContractV4,
+    right: crate::state::AbilitySourceContractV4,
+) -> bool {
+    left.source == right.source
+        && left.card_def == right.card_def
+        && left.owner == right.owner
+        && left.zone == right.zone
+        && left.zone_change_count == right.zone_change_count
+}
+
+fn niv_departed_source_contract_v1(
+    state: &GameState,
+    wanted: crate::state::AbilitySourceContractV4,
+) -> Option<crate::state::AbilitySourceContractV4> {
+    let mut found = None;
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = event
+        else {
+            continue;
+        };
+        if !same_niv_source_incarnation_v1(*source, wanted) {
+            continue;
+        }
+        let departure = usize::try_from(*departure_history_index).ok()?;
+        if at != departure.checked_add(1)?
+            || !matches!(state.engine.event_history.get(departure),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+        {
+            return None;
+        }
+        if found.replace(*source).is_some() {
+            return None;
+        }
+    }
+    found
+}
+
+fn niv_source_departure_before_v1(
+    state: &GameState,
+    wanted: crate::state::AbilitySourceContractV4,
+    before_history_index: usize,
+) -> Result<Option<crate::state::AbilitySourceContractV4>, ()> {
+    let mut found = None;
+    for (at, event) in state.engine.event_history.iter().enumerate() {
+        let CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+            source,
+            departure_history_index,
+        } = event
+        else {
+            continue;
+        };
+        if !same_niv_source_incarnation_v1(*source, wanted) {
+            continue;
+        }
+        let departure = usize::try_from(*departure_history_index).map_err(|_| ())?;
+        if at != departure.checked_add(1).ok_or(())?
+            || !matches!(state.engine.event_history.get(departure),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+        {
+            return Err(());
+        }
+        if departure < before_history_index && found.replace(*source).is_some() {
+            return Err(());
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn niv_mizzet_catalog_enabled_v1() -> bool {
+    crate::card_def::CARD_DEFS
+        .iter()
+        .any(|definition| definition.is_executable() && definition.name == "Niv-Mizzet, Visionary")
+}
+
+/// Validate the handoff expected for a native saved resolving row. Callers
+/// must already have authenticated this saved row through the owning resolver.
+pub(crate) fn niv_damage_origin_for_saved_item_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Option<NivDamageOriginV1> {
+    if !niv_mizzet_catalog_enabled_v1()
+        || !item
+            .inline_effect
+            .as_ref()
+            .is_some_and(crate::effect::crystal_prevention_v1::has_damage)
+        || !matches!(
+            item.kind,
+            crate::state::StackItemKind::TriggeredAbility
+                | crate::state::StackItemKind::ActivatedAbility
+        )
+    {
+        return None;
+    }
+    let source = item.v4.ability_source_contract?;
+    if source.source != item.source
+        || crate::engine::validate_historical_ability_source_contract(state, source).is_err()
+    {
+        return None;
+    }
+    Some(NivDamageOriginV1 {
+        stack_item_id: item.v4.stack_item_id,
+        source,
+    })
+}
+
+/// Mint only while the actual, unique stack-top row remains present.
+pub(crate) fn niv_damage_origin_for_resolving_item_v1(
+    state: &GameState,
+    item: &crate::state::StackItem,
+) -> Option<NivDamageOriginV1> {
+    if state.stack.last() != Some(item)
+        || state
+            .stack
+            .iter()
+            .filter(|live| live.v4.stack_item_id == item.v4.stack_item_id)
+            .count()
+            != 1
+    {
+        return None;
+    }
+    niv_damage_origin_for_saved_item_v1(state, item)
+}
+
+pub(crate) fn niv_damage_origin_matches_context_v1(
+    origin: NivDamageOriginV1,
+    stack_item_id: Option<StackItemId>,
+    source: ObjectId,
+    source_contract: Option<crate::state::AbilitySourceContractV4>,
+) -> bool {
+    stack_item_id == Some(origin.stack_item_id)
+        && source == origin.source.source
+        && source_contract == Some(origin.source)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +405,7 @@ impl ProposedEvent {
             touched_by: Vec::new(),
             is_combat: false,
             historical_source: None,
+            niv_damage_origin_v1: None,
         })
     }
     pub fn zone_change(object: ObjectId, to_zone: Zone) -> ProposedEvent {
@@ -471,6 +650,37 @@ impl ProposedEvent {
             ProposedEvent::Transform(e) => &mut e.touched_by,
         };
         v.push(id);
+    }
+}
+
+/// Preserve the privately minted resolving-ability origin across every
+/// ordinary effect damage leaf. Unauthenticated direct proposals keep the
+/// historical `None` shape.
+pub(crate) fn damage_from_exec_ctx_v1(
+    ctx: &crate::effect::ExecCtx,
+    target: Target,
+    amount: i32,
+) -> ProposedEvent {
+    let mut proposal = ProposedEvent::damage(ctx.source, target, amount);
+    if let ProposedEvent::Damage(damage) = &mut proposal {
+        attach_niv_damage_origin_v1(ctx, damage);
+    }
+    proposal
+}
+
+pub(crate) fn attach_niv_damage_origin_v1(
+    ctx: &crate::effect::ExecCtx,
+    damage: &mut DamageProposed,
+) {
+    if niv_mizzet_catalog_enabled_v1() {
+        damage.niv_damage_origin_v1 = ctx.niv_damage_origin_v1.filter(|origin| {
+            niv_damage_origin_matches_context_v1(
+                *origin,
+                ctx.stack_item_id,
+                damage.source,
+                ctx.ability_source_contract,
+            )
+        });
     }
 }
 
@@ -1546,6 +1756,13 @@ pub enum CommittedEvent {
         observer: crate::state::AbilitySourceContractV4,
         damage_history_index: u64,
     },
+    /// Exact source incarnation and controller immediately before it left
+    /// the battlefield. Emitted only when the Niv printing is present in the
+    /// selected catalog, including departures before Niv enters.
+    NivMizzetVisionaryDamageSourceDepartureV1 {
+        source: crate::state::AbilitySourceContractV4,
+        departure_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -1581,11 +1798,16 @@ fn capture_niv_mizzet_visionary_damage_v1(
     if damage.amount <= 0 || damage.is_combat {
         return Vec::new();
     }
-    let source = if let Some(stack_item) = damage.historical_source {
+    let bound_source = if let Some(stack_item) = damage.historical_source {
         match crate::source_power_activation_v1::damage_source(state, damage.source, stack_item) {
             Ok(facts) => facts.source,
             Err(_) => return Vec::new(),
         }
+    } else if let Some(origin) = damage.niv_damage_origin_v1 {
+        if origin.source.source != damage.source {
+            return Vec::new();
+        }
+        origin.source
     } else {
         let Some(live) = state.objects.try_get(damage.source) else {
             return Vec::new();
@@ -1595,14 +1817,36 @@ fn capture_niv_mizzet_visionary_damage_v1(
         }
         crate::source_power_activation_v1::capture_damage_source(state, damage.source).source
     };
+    let Some(source_object) = state.objects.try_get(bound_source.source) else {
+        return Vec::new();
+    };
+    let source = if source_object.card_def == bound_source.card_def
+        && source_object.owner == bound_source.owner
+        && source_object.zone_change_count == bound_source.zone_change_count
+        && matches!(source_object.zone, Zone::Battlefield | Zone::Stack)
+    {
+        // A source still in its exact incarnation uses its controller at the
+        // damage event, even when control changed after its ability triggered.
+        crate::state::AbilitySourceContractV4::capture(state, bound_source.source)
+    } else if let Some(departed) = niv_departed_source_contract_v1(state, bound_source) {
+        // When the source has left, only the exact generation's adjacent
+        // departure receipt can supply its last controller. Never infer from
+        // owner/current controller of a reentered object.
+        departed
+    } else if damage.niv_damage_origin_v1.is_some() {
+        return Vec::new();
+    } else {
+        bound_source
+    };
     let Some(source_object) = state.objects.try_get(source.source) else {
         return Vec::new();
     };
     if source_object.owner != source.owner
         || source_object.card_def != source.card_def
         || source_object.zone_change_count < source.zone_change_count
-        || source.controller != state.objects.get(damage.source).controller
-            && damage.historical_source.is_none()
+        || (damage.historical_source.is_none()
+            && damage.niv_damage_origin_v1.is_none()
+            && source.controller != state.objects.get(damage.source).controller)
     {
         return Vec::new();
     }
@@ -1754,6 +1998,8 @@ fn niv_mizzet_visionary_damage_amount_v1(
             } if *found_observer == observer && *found_index == damage_history_index)
         })
         .count();
+    let departed_source = niv_source_departure_before_v1(state, damage_source, history_index)
+        .map_err(|_| observer.source)?;
     if marker_index <= history_index
         || marker_count != 1
         || observer_receipt_count != 1
@@ -1767,6 +2013,7 @@ fn niv_mizzet_visionary_damage_amount_v1(
         || observer.controller == *recipient
         || damage_source.source != *source
         || damage_source.controller != observer.controller
+        || departed_source.is_some_and(|departure| departure != damage_source)
     {
         return Err(observer.source);
     }
@@ -2924,6 +3171,7 @@ pub(crate) fn commit_twinflame_ordered_scalar(
             _ => unreachable!(),
         };
     damage.historical_source = choice.historical_source;
+    damage.niv_damage_origin_v1 = choice.niv_damage_origin_v1;
     damage.touched_by = choice.touched.clone();
     let proposed = ProposedEvent::Damage(damage);
     let gain = lifelink_gain_for(state, &proposed);
@@ -3532,6 +3780,7 @@ fn commit_with_entry_batch_and_source_color(
         Vec::new()
     };
     let mut alesha_power_departure = None;
+    let mut niv_source_departure = None;
     let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
     let committed = match event {
         ProposedEvent::Damage(d) => {
@@ -3697,6 +3946,14 @@ fn commit_with_entry_batch_and_source_color(
                     source.card_def,
                     source.zone_change_count,
                     crate::engine::effective_power(state, z.object),
+                ));
+            }
+            if from == Zone::Battlefield
+                && z.to_zone != Zone::Battlefield
+                && niv_mizzet_catalog_enabled_v1()
+            {
+                niv_source_departure = Some(crate::state::AbilitySourceContractV4::capture(
+                    state, z.object,
                 ));
             }
             commit_zone_change(
@@ -4090,6 +4347,30 @@ fn commit_with_entry_batch_and_source_color(
     );
     let entry_history_index = state.engine.event_history.len();
     state.engine.event_history.push(committed);
+    if let Some(source) = niv_source_departure {
+        if let Some(departure_history_index) = state
+            .engine
+            .event_history
+            .len()
+            .checked_sub(1)
+            .and_then(|index| u64::try_from(index).ok())
+        {
+            if matches!(state.engine.event_history.last(),
+                Some(CommittedEvent::ZoneChange { object, from, to, controller_before })
+                    if *object == source.source
+                        && *from == source.zone
+                        && *from == Zone::Battlefield
+                        && to != from
+                        && *controller_before == source.controller)
+            {
+                let receipt = CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+                    source,
+                    departure_history_index,
+                };
+                state.engine.event_history.push(receipt);
+            }
+        }
+    }
     if !niv_mizzet_damage_captures.is_empty() {
         let damage_history_index = state.engine.event_history.len() - 1;
         let Some(CommittedEvent::Damage {
@@ -5966,6 +6247,7 @@ mod tests {
                 amount,
                 is_combat: true,
                 historical_source: None,
+                niv_damage_origin_v1: None,
                 touched_by: Vec::new(),
             })
         };

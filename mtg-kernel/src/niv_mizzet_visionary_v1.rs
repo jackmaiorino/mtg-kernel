@@ -56,6 +56,8 @@ mod tests {
         state.players[actor.index()].mana_pool[ManaColor::C.pool_index()] = 4;
         state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 1;
         state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        state.players[responder.index()].mana_pool[ManaColor::C.pool_index()] = 1;
+        state.players[responder.index()].mana_pool[ManaColor::B.pool_index()] = 2;
         engine::step(&mut state, Action::CastSpell(niv)).unwrap();
         finish(&mut state);
         assert_eq!(state.objects.get(niv).zone, Zone::Battlefield);
@@ -100,6 +102,141 @@ mod tests {
             Action::ChooseTarget(Target::Player(actor.opponent())),
         )
         .unwrap();
+    }
+
+    fn archer_trigger_on_stack(
+        actor: PlayerId,
+        archer: ObjectId,
+        state: &mut GameState,
+    ) -> crate::state::StackItem {
+        let bolt = put(state, actor, "Lightning Bolt", Zone::Hand);
+        state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        engine::step(state, Action::CastSpell(bolt)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::ChooseTargets { spell, .. } if spell == bolt
+        ));
+        engine::step(
+            state,
+            Action::ChooseTarget(Target::Player(actor.opponent())),
+        )
+        .unwrap();
+        let pending = match engine::advance_until_decision(state) {
+            Decision::OrderTriggers { pending, .. } => pending,
+            decision => panic!("expected Archer cast trigger ordering, got {decision:?}"),
+        };
+        let archer_index = pending
+            .iter()
+            .position(|trigger| trigger.source == archer)
+            .expect("Firebrand Archer cast trigger");
+        let mut order: Vec<_> = (0..pending.len())
+            .filter(|index| *index != archer_index)
+            .collect();
+        order.push(archer_index);
+        engine::step(state, Action::OrderTriggers(order)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::CastSpellOrPass { player, .. } if player == actor
+        ));
+        let archer_trigger = state.stack.last().expect("Archer trigger on stack").clone();
+        assert_eq!(archer_trigger.source, archer);
+        assert_eq!(archer_trigger.controller, actor);
+        archer_trigger
+    }
+
+    fn pass_until_archer_trigger_returns(
+        state: &mut GameState,
+        archer_trigger: &crate::state::StackItem,
+    ) {
+        for _ in 0..48 {
+            if state
+                .stack
+                .last()
+                .is_some_and(|item| item.v4.stack_item_id == archer_trigger.v4.stack_item_id)
+            {
+                return;
+            }
+            match engine::advance_until_decision(state) {
+                Decision::CastSpellOrPass { .. } => engine::step(state, Action::Pass).unwrap(),
+                Decision::OrderTriggers { pending, .. } => engine::step(
+                    state,
+                    Action::OrderTriggers((0..pending.len()).rev().collect()),
+                )
+                .unwrap(),
+                other => panic!("unexpected decision while response resolves: {other:?}"),
+            }
+        }
+        panic!("response did not leave the original Archer trigger on top");
+    }
+
+    fn murder_archer_before_its_trigger_damage(
+        actor: PlayerId,
+        archer: ObjectId,
+        state: &mut GameState,
+    ) {
+        let responder = actor.opponent();
+        let archer_trigger = archer_trigger_on_stack(actor, archer, state);
+        engine::step(state, Action::Pass).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::CastSpellOrPass { player, .. } if player == responder
+        ));
+        let murder = put(state, responder, "Murder", Zone::Hand);
+        engine::step(state, Action::CastSpell(murder)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(state),
+            Decision::ChooseTargets { spell, .. } if spell == murder
+        ));
+        engine::step(state, Action::ChooseTarget(Target::Object(archer))).unwrap();
+        pass_until_archer_trigger_returns(state, &archer_trigger);
+        assert_eq!(state.objects.get(archer).zone, Zone::Graveyard);
+        let departure = state
+            .engine
+            .event_history
+            .iter()
+            .enumerate()
+            .find_map(|(at, event)| match event {
+                CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 {
+                    source,
+                    departure_history_index,
+                } if source.source == archer && source.controller == actor => {
+                    Some((at, *source, *departure_history_index))
+                }
+                _ => None,
+            })
+            .expect("actual departure LKI receipt");
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. }
+                        if source.source == archer
+                ))
+                .count(),
+            1,
+        );
+        assert_eq!(departure.0 as u64, departure.2 + 1);
+        assert!(matches!(
+            state.engine.event_history.get(departure.2 as usize),
+            Some(CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Battlefield,
+                to: Zone::Graveyard,
+                controller_before,
+            }) if *object == archer
+                && *controller_before == actor
+                && departure.1.zone_change_count + 1 == state.objects.get(archer).zone_change_count
+        ));
+        finish(state);
+        assert_eq!(
+            state.players[actor.index()].library.len(),
+            16,
+            "the Archer damage uses its pre-departure controller and draws one; Bolt then draws three"
+        );
+        assert_eq!(state.players[responder.index()].life, 16);
     }
 
     fn advance_to_archer_damage_trigger(actor: PlayerId, archer: ObjectId, state: &mut GameState) {
@@ -263,6 +400,79 @@ mod tests {
                 "Niv remains controlled at cleanup"
             );
             assert_eq!(state.players[actor.index()].hand.len(), 8 + expected_draws);
+        }
+    }
+
+    fn run_controlled_departure_case(actor: PlayerId) {
+        let responder = actor.opponent();
+        let (mut state, _niv, archer, _fae) = cast_niv(actor);
+        state.players[responder.index()].mana_pool[ManaColor::C.pool_index()] = 4;
+        state.players[responder.index()].mana_pool[ManaColor::B.pool_index()] = 2;
+        state.players[responder.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+        let archer_trigger = archer_trigger_on_stack(actor, archer, &mut state);
+
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == responder
+        ));
+        let employment = put(&mut state, responder, "Involuntary Employment", Zone::Hand);
+        engine::step(&mut state, Action::CastSpell(employment)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { spell, .. } if spell == employment
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(archer))).unwrap();
+        pass_until_archer_trigger_returns(&mut state, &archer_trigger);
+        assert_eq!(state.objects.get(archer).controller, responder);
+        assert_eq!(archer_trigger.controller, actor);
+
+        // The saved resolving trigger survives a real native snapshot after
+        // the source changes controller but before it departs.
+        let restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored, state);
+        state = restored;
+
+        engine::step(&mut state, Action::Pass).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { player, .. } if player == responder
+        ));
+        let murder = put(&mut state, responder, "Murder", Zone::Hand);
+        engine::step(&mut state, Action::CastSpell(murder)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseTargets { spell, .. } if spell == murder
+        ));
+        engine::step(&mut state, Action::ChooseTarget(Target::Object(archer))).unwrap();
+        pass_until_archer_trigger_returns(&mut state, &archer_trigger);
+        assert_eq!(state.objects.get(archer).zone, Zone::Graveyard);
+        assert!(state.engine.event_history.iter().any(|event| matches!(
+            event,
+            CommittedEvent::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. }
+                if source.source == archer && source.controller == responder
+        )));
+        finish(&mut state);
+        assert_eq!(
+            state.players[actor.index()].library.len(),
+            17,
+            "after control changes before departure, Niv draws only for Lightning Bolt"
+        );
+    }
+
+    #[test]
+    fn paid_damage_source_control_before_departure_uses_current_departure_controller_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            run_controlled_departure_case(actor);
+        }
+    }
+
+    #[test]
+    fn paid_archer_damage_after_murder_uses_departure_controller_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _niv, archer, _fae) = cast_niv(actor);
+            murder_archer_before_its_trigger_damage(actor, archer, &mut state);
         }
     }
 

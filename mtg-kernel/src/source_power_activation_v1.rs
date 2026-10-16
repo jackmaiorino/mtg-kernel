@@ -476,7 +476,8 @@ pub(crate) fn execute(ctx: &ExecCtx, state: &mut GameState) {
         .expect("validated definition-owned source-power receipt")
         .max(0);
     if power > 0 {
-        let mut proposal = ProposedEvent::damage(ctx.source, Target::Object(target), power);
+        let mut proposal =
+            crate::event::damage_from_exec_ctx_v1(ctx, Target::Object(target), power);
         if let ProposedEvent::Damage(damage) = &mut proposal {
             damage.historical_source = ctx.stack_item_id;
         }

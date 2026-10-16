@@ -230,6 +230,7 @@ mod fdn {
                 keyword,
             },
             &ExecCtx {
+                niv_damage_origin_v1: None,
                 stack_item_id: None,
                 source,
                 controller: state.objects.get(source).controller,

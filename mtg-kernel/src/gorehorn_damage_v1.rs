@@ -411,6 +411,7 @@ pub(crate) fn acquire_owner(
 }
 fn context(item: &StackItem) -> ExecCtx {
     ExecCtx {
+        niv_damage_origin_v1: None,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,
@@ -558,7 +559,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparedV1, String> {
     if rows.next().is_some()
         || r.index as usize != i
         || r.index <= p.index
-        || r.ctx != context(&p.item)
+        || !r.ctx.same_except_niv_damage_origin_v1(&context(&p.item))
         || r.facts.source.source != s.source
         || r.facts.source.owner != s.owner
         || r.facts.source.zone_change_count != s.zone_change_count
@@ -633,7 +634,7 @@ pub(crate) fn execute_owned(
     owner: &OwnerV1,
 ) -> Result<(), String> {
     if *op != crate::trigger::gorehorn_raider_effect()
-        || *ctx != context(&owner.item)
+        || !ctx.same_except_niv_damage_origin_v1(&context(&owner.item))
         || state
             .stack
             .iter()
@@ -656,6 +657,7 @@ pub(crate) fn execute_owned(
             touched_by: vec![],
             is_combat: false,
             historical_source: Some(owner.item.v4.stack_item_id),
+            niv_damage_origin_v1: None,
         };
         damage_operation = Some(crate::event::propose_and_commit_gorehorn_owned(
             state, d, index, owner,

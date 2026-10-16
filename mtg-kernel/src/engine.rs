@@ -15953,6 +15953,11 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         return ResolutionProgress::Suspended;
     }
     let current = state.stack.last().expect("resolving item exists").clone();
+    // Capture this only from the unique real top item while it is still on
+    // the public stack. Ordinary resolution removes the row before executing
+    // the effect, so later damage cannot re-authenticate by searching it.
+    let niv_damage_origin_v1 =
+        crate::event::niv_damage_origin_for_resolving_item_v1(state, &current);
     let fixed_removal_owner = match crate::fixed_source_damage_v3::acquire_removal(state, &current)
     {
         Ok(owner) => owner,
@@ -16242,6 +16247,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // previous resolution. See `EngineState::pending_kicked_source`'s doc.
     state.engine.pending_kicked_source = if item.kicked { Some(item.source) } else { None };
     let ctx = ExecCtx {
+        niv_damage_origin_v1,
         stack_item_id: Some(item.v4.stack_item_id),
         source: item.source,
         controller: item.controller,

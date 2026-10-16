@@ -62,7 +62,10 @@ fn begin_at(state: &GameState, index: u32) -> Result<&BeginV1, String> {
         || b.root != crate::trigger::gorehorn_raider_effect()
         || !publication_matches(state, &b.item, &p.item)
         || b.pending.as_ref().is_none_or(|pending| {
-            pending.resolving_item != *b.item || pending.ctx != context(&p.item)
+            pending.resolving_item != *b.item
+                || !pending
+                    .ctx
+                    .same_except_niv_damage_origin_v1(&context(&p.item))
         })
     {
         return Err("Gorehorn Crystal begin changed original authority".into());
@@ -80,7 +83,7 @@ pub(crate) fn begin_owned(
     item: &StackItem,
 ) -> Result<(), String> {
     if !beginnings(state, item.v4.stack_item_id).is_empty()
-        || context(item) != context(&owner.item)
+        || !context(item).same_except_niv_damage_origin_v1(&context(&owner.item))
         || !publication_matches(state, item, &owner.item)
         || state
             .stack
@@ -125,7 +128,7 @@ pub(crate) fn prepare_owned(
             target: crate::effect::TargetRef::Target(0),
             amount: 2
         }
-    ) || *ctx != context(&owner.item)
+    ) || !ctx.same_except_niv_damage_origin_v1(&context(&owner.item))
         || state
             .stack
             .iter()
@@ -190,7 +193,7 @@ pub(crate) fn finish_owned(
             item,
             &publication(state, item.v4.stack_item_id)?.item,
         )
-        || context(item) != context(&owner.item)
+        || !context(item).same_except_niv_damage_origin_v1(&context(&owner.item))
     {
         return Err("Gorehorn Crystal completion lost its removed owner".into());
     }
