@@ -2736,6 +2736,9 @@ pub enum EffectOp {
     SphinxLoreV1 {
         attack_history_index: u64,
     },
+    /// Simultaneously exile each player's top card, then optionally cast the
+    /// nonlands in any order during this resolution.
+    ExileTopEachPlayerThenCastV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4237,6 +4240,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }
@@ -14488,6 +14492,19 @@ fn drive_resumable_inner_with_native_row_v1(
                 let player = continuation.ctx.resolve_player(player, state);
                 standard_discard::random_exile(state, player, minimum_cards)?;
             }
+            EffectOp::ExileTopEachPlayerThenCastV1 => {
+                if standard_exile::start_batch(
+                    state,
+                    &mut continuation,
+                    vec![PlayerRef::Controller, PlayerRef::Opponent],
+                    ExileCastPredicateV1::Nonland,
+                    false,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::ExileUntilThenCastV1 {
                 players,
                 predicate,
@@ -19777,6 +19794,7 @@ fn execute_with_native_row_v1(
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
         | EffectOp::ExileUntilThenCastV1 { .. }
+        | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }
         | EffectOp::MayDiscardCardOtherwiseV1 { .. }
         | EffectOp::MaySacrificeNonlandOtherwiseV1 { .. }

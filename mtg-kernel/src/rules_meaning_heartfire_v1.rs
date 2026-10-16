@@ -88,6 +88,10 @@ pub fn source_sha256() -> String {
             "resolution_cast_v1.rs",
             include_str!("resolution_cast_v1.rs"),
         ),
+        (
+            "effect/standard_exile.rs",
+            include_str!("effect/standard_exile.rs"),
+        ),
     ] {
         hash.update(path.as_bytes());
         hash.update([0]);

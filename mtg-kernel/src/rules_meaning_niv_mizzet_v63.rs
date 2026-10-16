@@ -113,6 +113,7 @@ pub fn producer_sha256() -> String {
             include_str!("standard_keywords_v1.rs"),
             include_str!("engine/omniscience_cast_v1.rs"),
             include_str!("resolution_cast_v1.rs"),
+            include_str!("effect/standard_exile.rs"),
         ] {
             h.update((text.len() as u64).to_le_bytes());
             h.update(text.as_bytes());

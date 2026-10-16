@@ -84,6 +84,7 @@ pub(crate) fn target_ref(target: TargetRef, env: &Env) -> (Option<RelF>, ObjF) {
 /// Facets of one resolution program. Recurses through nested programs.
 pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
     match op {
+        EffectOp::ExileTopEachPlayerThenCastV1 => out.atoms.push(Atom::Opaque),
         EffectOp::LookTopSelectV1 { rule, .. }
             if rule.selection.is_some_and(|r| {
                 matches!(

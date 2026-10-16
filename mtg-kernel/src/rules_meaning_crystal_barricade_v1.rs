@@ -103,6 +103,10 @@ pub fn producer_sha256() -> String {
                 "resolution_cast_v1.rs",
                 include_str!("resolution_cast_v1.rs"),
             ),
+            (
+                "effect/standard_exile.rs",
+                include_str!("effect/standard_exile.rs"),
+            ),
         ] {
             h.update(path.as_bytes());
             h.update([0]);
