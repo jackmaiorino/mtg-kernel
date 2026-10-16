@@ -1,4 +1,5 @@
 //! Complete V51 public envelope plus current Elenda facts, with a distinct owner contract.
+use crate::akroma_family_public_v40::diagnose_observation_error as diagnostic;
 use crate::{
     ids::PlayerId, policy_surface_v5::PolicySurfaceV5,
     ravenous_observation_v51::RavenousObservationV51, rl::RlContractError, state::GameState,
@@ -79,7 +80,9 @@ pub(crate) fn observe_parts_v52(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<ElendaPublicPartsV52, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
+    validate_state(state)
+        .map_err(|error| diagnostic("elenda.state", error))
+        .map_err(RlContractError)?;
     let (common, families) = crate::ravenous_observation_v51::observe_parts_complete_base_v52(
         state,
         surface,
@@ -87,16 +90,21 @@ pub(crate) fn observe_parts_v52(
         step,
         physical,
         substep,
-    )?;
-    common.validate_artifact()?;
+    )
+    .map_err(|error| diagnostic("elenda.inherited", error))?;
+    common
+        .validate_artifact()
+        .map_err(|error| diagnostic("elenda.inherited_artifact", error))?;
     let mut value = ElendaObservationV52 {
         schema: SCHEMA.into(),
         producer_sha256: producer_sha256(),
         common,
-        elenda: crate::elenda_public_v52::capture(state)?,
+        elenda: crate::elenda_public_v52::capture(state)
+            .map_err(|error| diagnostic("elenda.facts", error))?,
         projection_sha256: String::new(),
     };
-    value.projection_sha256 = commitment(&value)?;
+    value.projection_sha256 =
+        commitment(&value).map_err(|error| diagnostic("elenda.commitment", error))?;
     Ok((value, families))
 }
 pub fn validate_current(

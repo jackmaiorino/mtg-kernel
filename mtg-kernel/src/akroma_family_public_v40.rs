@@ -1,4 +1,14 @@
 //! V40 family parts. No predecessor observation or model identity is exported by this union.
+// Failure-only fixture diagnostics. Fixed source labels never include errors,
+// worlds, decisions, journals or operands. Every original error is unchanged.
+pub(crate) fn diagnose_observation_error<E>(stage: &'static str, error: E) -> E {
+    #[cfg(test)]
+    eprintln!("complete observation validation failed at {stage}");
+    #[cfg(not(test))]
+    let _ = stage;
+    error
+}
+
 use crate::ids::PlayerId;
 use crate::policy_surface_v5::PolicySurfaceV5;
 use crate::rl::RlContractError;
@@ -922,107 +932,154 @@ pub(crate) fn build_for_scope(
     )?;
     let game_outcome_projection = base.projection.clone();
     let mut parts = vec![
-        FamilyProjectionV40::Early(Box::new(crate::akroma_early_public_v40::build(
-            state,
-            base.projection,
-            actor,
-        )?)),
-        FamilyProjectionV40::Sower(Box::new(crate::sower_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
-        FamilyProjectionV40::Frenzied(Box::new(crate::frenzied_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
-        FamilyProjectionV40::Wildwood(Box::new(crate::wildwood_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
+        FamilyProjectionV40::Early(Box::new(
+            crate::akroma_early_public_v40::build(state, base.projection, actor).map_err(
+                |error| diagnose_observation_error("family.akroma_early_public_v40", error),
+            )?,
+        )),
+        FamilyProjectionV40::Sower(Box::new(
+            crate::sower_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.sower_public_v1", error))?,
+        )),
+        FamilyProjectionV40::Frenzied(Box::new(
+            crate::frenzied_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.frenzied_public_v1", error))?,
+        )),
+        FamilyProjectionV40::Wildwood(Box::new(
+            crate::wildwood_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.wildwood_public_v1", error))?,
+        )),
         FamilyProjectionV40::Authority(Box::new(
             crate::authority_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.authority_public_v1", error))?,
         )),
         FamilyProjectionV40::Employment(Box::new(
             crate::employment_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.employment_public_v1", error))?,
         )),
-        FamilyProjectionV40::Cerberus(Box::new(crate::cerberus_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
+        FamilyProjectionV40::Cerberus(Box::new(
+            crate::cerberus_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.cerberus_public_v1", error))?,
+        )),
         FamilyProjectionV40::Librarian(Box::new(
             crate::librarian_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.librarian_public_v1", error))?,
         )),
         FamilyProjectionV40::ExtraTurn(Box::new(
             crate::extra_turn_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.extra_turn_public_v1", error))?,
         )),
         FamilyProjectionV40::Juggernaut(Box::new(
             crate::juggernaut_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.juggernaut_public_v1", error))?,
         )),
-        FamilyProjectionV40::Ashroot(Box::new(crate::ashroot_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
+        FamilyProjectionV40::Ashroot(Box::new(
+            crate::ashroot_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.ashroot_public_v1", error))?,
+        )),
         FamilyProjectionV40::Banishing(Box::new(
             crate::banishing_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.banishing_public_v1", error))?,
         )),
         FamilyProjectionV40::Stromkirk(Box::new(
             crate::stromkirk_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.stromkirk_public_v1", error))?,
         )),
-        FamilyProjectionV40::Gourmand(Box::new(crate::gourmand_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
-        FamilyProjectionV40::Garruk(Box::new(crate::garruk_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
-        FamilyProjectionV40::Crystal(Box::new(crate::crystal_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
-        FamilyProjectionV40::Arahbo(Box::new(crate::arahbo_public_v1::parts_for_common_scope(
-            state, surface, actor, step, physical, substep, scope,
-        )?)),
+        FamilyProjectionV40::Gourmand(Box::new(
+            crate::gourmand_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.gourmand_public_v1", error))?,
+        )),
+        FamilyProjectionV40::Garruk(Box::new(
+            crate::garruk_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.garruk_public_v1", error))?,
+        )),
+        FamilyProjectionV40::Crystal(Box::new(
+            crate::crystal_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.crystal_public_v1", error))?,
+        )),
+        FamilyProjectionV40::Arahbo(Box::new(
+            crate::arahbo_public_v1::parts_for_common_scope(
+                state, surface, actor, step, physical, substep, scope,
+            )
+            .map_err(|error| diagnose_observation_error("family.arahbo_public_v1", error))?,
+        )),
         FamilyProjectionV40::Strongbox(Box::new(
             crate::strongbox_public_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.strongbox_public_v1", error))?,
         )),
         FamilyProjectionV40::Fiery(Box::new(
             crate::fiery_observation_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.fiery_observation_v1", error))?,
         )),
         FamilyProjectionV40::Krenko(Box::new(
             crate::krenko_observation_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.krenko_observation_v1", error))?,
         )),
         FamilyProjectionV40::ZulAshur(Box::new(
             crate::zul_ashur_observation_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| {
+                diagnose_observation_error("family.zul_ashur_observation_v1", error)
+            })?,
         )),
         FamilyProjectionV40::Banner(Box::new(
             crate::banner_observation_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| diagnose_observation_error("family.banner_observation_v1", error))?,
         )),
         FamilyProjectionV40::Inspiration(Box::new(
             crate::inspiration_observation_v1::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| {
+                diagnose_observation_error("family.inspiration_observation_v1", error)
+            })?,
         )),
         FamilyProjectionV40::Fishing(Box::new(FishingProjectionV40 {
             parts: crate::fishing_pole_observation_v39::parts_for_common_scope(
                 state, surface, actor, step, physical, substep, scope,
-            )?,
+            )
+            .map_err(|error| {
+                diagnose_observation_error("family.fishing_pole_observation_v39", error)
+            })?,
             actions: Vec::new(),
         })),
     ];
@@ -1050,7 +1107,8 @@ pub(crate) fn build_for_scope(
     parts.push(FamilyProjectionV40::Twinflame(Box::new(
         crate::twinflame_observation_v1::parts_for_common_scope(
             state, surface, actor, step, physical, substep, scope,
-        )?,
+        )
+        .map_err(|error| diagnose_observation_error("family.twinflame_observation_v1", error))?,
     )));
     Ok(parts)
 }
@@ -1141,8 +1199,9 @@ pub(crate) fn merge_projection(
         let raw = &base.surface.engine_context;
         let proposed = &incoming.surface.engine_context;
         if raw.pending_triggers.len() != proposed.pending_triggers.len() {
-            return Err(RlContractError(
-                "mixed family changed pending roster shape".into(),
+            return Err(diagnose_observation_error(
+                "family_merge.mixed_family_changed_pending_roster_shape",
+                RlContractError("mixed family changed pending roster shape".into()),
             ));
         }
         let mut permitted = base.clone();
@@ -1157,15 +1216,19 @@ pub(crate) fn merge_projection(
             row.source = next.source.clone();
         }
         if permitted != *incoming {
-            return Err(RlContractError(
-                "mixed family needs an additional explicit projection field".into(),
+            return Err(diagnose_observation_error(
+                "family_merge.mixed_family_needs_an_additional_explicit_projection_field",
+                RlContractError(
+                    "mixed family needs an additional explicit projection field".into(),
+                ),
             ));
         }
         if proposed.current_stage != raw.current_stage {
             let stage = &mut merged.surface.engine_context.current_stage;
             if *stage != raw.current_stage && *stage != proposed.current_stage {
-                return Err(RlContractError(
-                    "mixed families disagree on current stage".into(),
+                return Err(diagnose_observation_error(
+                    "family_merge.mixed_families_disagree_on_current_stage",
+                    RlContractError("mixed families disagree on current stage".into()),
                 ));
             }
             *stage = proposed.current_stage;
@@ -1174,8 +1237,9 @@ pub(crate) fn merge_projection(
             if next.source != raw.pending_triggers[index].source {
                 let current = &mut merged.surface.engine_context.pending_triggers[index].source;
                 if *current != raw.pending_triggers[index].source && *current != next.source {
-                    return Err(RlContractError(
-                        "mixed families disagree on captured observer".into(),
+                    return Err(diagnose_observation_error(
+                        "family_merge.mixed_families_disagree_on_captured_observer",
+                        RlContractError("mixed families disagree on captured observer".into()),
                     ));
                 }
                 *current = next.source.clone();
