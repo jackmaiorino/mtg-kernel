@@ -31,6 +31,7 @@
 //! exceeding it aborts before model or optimizer mutation.
 
 use crate::native_policy_value_net_v1::{
+    accumulate_input_major_row_v1,
     NativeEncodedDecisionViewV1,
     NativeNamedParameterV1,
     NativePolicyValueErrorV1,
@@ -3384,6 +3385,18 @@ fn forward_with_tape(
     config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
     encoded: NativeEncodedDecisionViewV1<'_>,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
+    forward_with_tape_input_major_v1(parameters, None, config, encoded)
+}
+
+/// `forward_with_tape`, with the hidden-width layers' rows on the vectorized
+/// kernel when `input_major` holds the parameters' input-major weights. The
+/// tape's bits are the same either way.
+fn forward_with_tape_input_major_v1(
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
     #[cfg(test)]
     FORWARD_WITH_TAPE_CALL_COUNT_V1.with(|count| count.set(count.get() + 1));
     let counts = encoded.validate(config)?;
@@ -3422,6 +3435,7 @@ fn forward_with_tape(
         TapeSpanV1::checked_v1(object_input_start, f32_arena.len() - object_input_start)?;
     let object_encoder = two_layer_forward_into_arena_v1(
         parameters,
+        input_major,
         OBJECT_SPEC,
         object_input,
         counts.object_count,
@@ -3463,6 +3477,7 @@ fn forward_with_tape(
             TapeSpanV1::checked_v1(edge_input_start, f32_arena.len() - edge_input_start)?;
         let tape = two_layer_forward_into_arena_v1(
             parameters,
+            input_major,
             EDGE_SPEC,
             edge_input,
             counts.edge_count,
@@ -3498,6 +3513,7 @@ fn forward_with_tape(
     let node_input = TapeSpanV1::checked_v1(node_input_start, f32_arena.len() - node_input_start)?;
     let node_update = two_layer_forward_into_arena_v1(
         parameters,
+        input_major,
         NODE_SPEC,
         node_input,
         counts.object_count,
@@ -3519,8 +3535,14 @@ fn forward_with_tape(
     append_external_f32_v1(&mut f32_arena, &pooling_scratch)?;
     let state_input =
         TapeSpanV1::checked_v1(state_input_start, f32_arena.len() - state_input_start)?;
-    let state_encoder =
-        two_layer_forward_into_arena_v1(parameters, STATE_SPEC, state_input, 1, &mut f32_arena)?;
+    let state_encoder = two_layer_forward_into_arena_v1(
+        parameters,
+        input_major,
+        STATE_SPEC,
+        state_input,
+        1,
+        &mut f32_arena,
+    )?;
 
     resize_tape_scratch_v1(
         &mut pooling_scratch,
@@ -3557,6 +3579,7 @@ fn forward_with_tape(
         )?;
         let tape = two_layer_forward_into_arena_v1(
             parameters,
+            input_major,
             ACTION_REF_SPEC,
             action_ref_input,
             counts.action_ref_count,
@@ -3587,6 +3610,7 @@ fn forward_with_tape(
         TapeSpanV1::checked_v1(action_input_start, f32_arena.len() - action_input_start)?;
     let action_encoder = two_layer_forward_into_arena_v1(
         parameters,
+        input_major,
         ACTION_SPEC,
         action_input,
         counts.action_count,
@@ -3608,6 +3632,7 @@ fn forward_with_tape(
         TapeSpanV1::checked_v1(scorer_input_start, f32_arena.len() - scorer_input_start)?;
     let scorer_hidden = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         SCORER_FIRST_WEIGHT,
         SCORER_FIRST_BIAS,
         scorer_input,
@@ -3619,6 +3644,7 @@ fn forward_with_tape(
     tanh_span_in_place_v1(&mut f32_arena, scorer_hidden);
     let logits = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         SCORER_SECOND_WEIGHT,
         SCORER_SECOND_BIAS,
         scorer_hidden,
@@ -3630,6 +3656,7 @@ fn forward_with_tape(
 
     let value_hidden = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         VALUE_FIRST_WEIGHT,
         VALUE_FIRST_BIAS,
         state_encoder.second_output,
@@ -3641,6 +3668,7 @@ fn forward_with_tape(
     tanh_span_in_place_v1(&mut f32_arena, value_hidden);
     let value = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         VALUE_SECOND_WEIGHT,
         VALUE_SECOND_BIAS,
         value_hidden,
@@ -4026,6 +4054,7 @@ fn tanh_span_in_place_v1(arena: &mut [f32], span: TapeSpanV1) {
 
 fn two_layer_forward_into_arena_v1(
     parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
     spec: TwoLayerSpecV1,
     input: TapeSpanV1,
     rows: usize,
@@ -4033,6 +4062,7 @@ fn two_layer_forward_into_arena_v1(
 ) -> Result<TwoLayerTapeV1, NativePolicyTrainErrorV1> {
     let first_output = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         spec.first_weight,
         spec.first_bias,
         input,
@@ -4044,6 +4074,7 @@ fn two_layer_forward_into_arena_v1(
     tanh_span_in_place_v1(arena, first_output);
     let second_output = linear_forward_into_arena_v1(
         parameters,
+        input_major,
         spec.second_weight,
         spec.second_bias,
         first_output,
@@ -4101,9 +4132,58 @@ fn two_layer_backward_into<'t>(
     )
 }
 
+/// Input-major copies of the learner's hidden-width weights, made once per
+/// step so the forward can run their rows on the inference kernel
+/// (`accumulate_input_major_row_v1`). Each output is still its bias plus the
+/// products in input order, so the forward's bits are unchanged.
+pub(super) struct InputMajorWeightsV1 {
+    /// By parameter index: `(input_dim, weight_t)` for a `[hidden, input]`
+    /// weight, `weight_t[input * HIDDEN_DIM_V1 + output]`.
+    weights: Vec<Option<(usize, Vec<f32>)>>,
+}
+
+impl InputMajorWeightsV1 {
+    pub(super) fn of_v1(parameters: &[NativeNamedParameterV1]) -> Self {
+        let weights = parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| match *parameter.shape.as_slice() {
+                [HIDDEN_DIM_V1, input_dim]
+                    if index != CARD_EMBEDDING
+                        && input_dim > 0
+                        && parameter.values.len() == HIDDEN_DIM_V1 * input_dim =>
+                {
+                    let mut weight_t = vec![0.0; parameter.values.len()];
+                    for (output, row) in parameter.values.chunks_exact(input_dim).enumerate() {
+                        for (input, &value) in row.iter().enumerate() {
+                            weight_t[input * HIDDEN_DIM_V1 + output] = value;
+                        }
+                    }
+                    Some((input_dim, weight_t))
+                }
+                _ => None,
+            })
+            .collect();
+        Self { weights }
+    }
+
+    /// The input-major weight for a layer with these dimensions, if held.
+    fn get_v1(&self, weight_index: usize, input_dim: usize, output_dim: usize) -> Option<&[f32]> {
+        match self.weights.get(weight_index)? {
+            Some((held_input_dim, weight_t))
+                if *held_input_dim == input_dim && output_dim == HIDDEN_DIM_V1 =>
+            {
+                Some(weight_t)
+            }
+            _ => None,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn linear_forward_into_arena_v1(
     parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
     weight_index: usize,
     bias_index: usize,
     input: TapeSpanV1,
@@ -4129,6 +4209,8 @@ fn linear_forward_into_arena_v1(
     if input.end_v1() > arena.len() {
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
+    let input_major =
+        input_major.and_then(|weights| weights.get_v1(weight_index, input_dim, output_dim));
     let output = append_zeroed_f32_v1(arena, output_len)?;
     {
         let (input_arena, output_arena) = arena.split_at_mut(output.start);
@@ -4137,7 +4219,13 @@ fn linear_forward_into_arena_v1(
         for row in 0..rows {
             let input_row = &input[row * input_dim..(row + 1) * input_dim];
             let output_row = &mut output_values[row * output_dim..(row + 1) * output_dim];
-            linear_forward_ordered_v1(weight, bias, input_row, output_row);
+            match input_major {
+                Some(weight_t) => {
+                    output_row.copy_from_slice(bias);
+                    accumulate_input_major_row_v1(weight_t, input_row, output_row);
+                }
+                None => linear_forward_ordered_v1(weight, bias, input_row, output_row),
+            }
         }
     }
     validate_finite_slice("linear_forward", output.values_v1(arena))?;
@@ -4203,6 +4291,93 @@ fn linear_backward_into(
         return Err(NativePolicyTrainErrorV1::ParameterManifest);
     }
     resize_zeroed_v1(d_input, rows * input_dim);
+    linear_backward_rows_v1(
+        &LinearBackwardRowsV1 {
+            weight,
+            weight_index,
+            bias_index,
+            input,
+            rows,
+            input_dim,
+            output_dim,
+            d_output,
+        },
+        gradients,
+        d_input,
+    );
+    if weight_index == SCORER_SECOND_WEIGHT {
+        // Torch's pinned Windows CPU reduction visits the scorer's legal-action
+        // rows in reverse storage order for this final scalar bias sum.
+        // Combined with reverse autograd graph traversal above, this is full
+        // reverse group/substep/action order and retains the observed residual
+        // that becomes material under Adam eps=1e-8.  Other linear biases keep
+        // their established accumulation path.
+        for output_index in 0..output_dim {
+            for row in (0..rows).rev() {
+                gradients[bias_index][output_index] += d_output[row * output_dim + output_index];
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One `linear_backward_into` call's inputs, after its shape checks.
+struct LinearBackwardRowsV1<'a> {
+    weight: &'a [f32],
+    weight_index: usize,
+    bias_index: usize,
+    input: &'a [f32],
+    rows: usize,
+    input_dim: usize,
+    output_dim: usize,
+    d_output: &'a [f32],
+}
+
+/// `linear_backward_into`'s row loop: each weight gradient element and each
+/// input gradient element receives its terms in the original order.
+fn linear_backward_rows_v1(
+    rows: &LinearBackwardRowsV1<'_>,
+    gradients: &mut [Vec<f32>],
+    d_input: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: AVX2 support was detected at run time just above.
+        unsafe { linear_backward_rows_avx2_v1(rows, gradients, d_input) };
+        return;
+    }
+    linear_backward_rows_body_v1(rows, gradients, d_input);
+}
+
+/// `linear_backward_rows_body_v1` with 8-wide vectors. AVX2 does not enable
+/// FMA, so every product is still rounded before its add; each element's
+/// sequence of operations, and so its bits, is unchanged.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn linear_backward_rows_avx2_v1(
+    rows: &LinearBackwardRowsV1<'_>,
+    gradients: &mut [Vec<f32>],
+    d_input: &mut [f32],
+) {
+    linear_backward_rows_body_v1(rows, gradients, d_input);
+}
+
+#[inline(always)]
+fn linear_backward_rows_body_v1(
+    rows: &LinearBackwardRowsV1<'_>,
+    gradients: &mut [Vec<f32>],
+    d_input: &mut [f32],
+) {
+    let &LinearBackwardRowsV1 {
+        weight,
+        weight_index,
+        bias_index,
+        input,
+        rows,
+        input_dim,
+        output_dim,
+        d_output,
+    } = rows;
     for row in 0..rows {
         let input_begin = row * input_dim;
         let output_begin = row * output_dim;
@@ -4230,20 +4405,6 @@ fn linear_backward_into(
             }
         }
     }
-    if weight_index == SCORER_SECOND_WEIGHT {
-        // Torch's pinned Windows CPU reduction visits the scorer's legal-action
-        // rows in reverse storage order for this final scalar bias sum.
-        // Combined with reverse autograd graph traversal above, this is full
-        // reverse group/substep/action order and retains the observed residual
-        // that becomes material under Adam eps=1e-8.  Other linear biases keep
-        // their established accumulation path.
-        for output_index in 0..output_dim {
-            for row in (0..rows).rev() {
-                gradients[bias_index][output_index] += d_output[row * output_dim + output_index];
-            }
-        }
-    }
-    Ok(())
 }
 
 fn resize_zeroed_v1(values: &mut Vec<f32>, len: usize) {
