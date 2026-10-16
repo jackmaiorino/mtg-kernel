@@ -52,10 +52,17 @@ pub(crate) fn capture_damage_source(
 }
 
 pub(crate) fn before_departure(state: &mut GameState, source: ObjectId) {
+    before_departure_with_pt(state, source, None);
+}
+pub(crate) fn before_departure_with_pt(
+    state: &mut GameState,
+    source: ObjectId,
+    frozen: Option<(i32, i32)>,
+) {
     if !needs_stats(state, source) {
         return;
     }
-    crate::creature_stats_lki_v1::record_creature_stats_lki(state, source);
+    crate::creature_stats_lki_v1::record_creature_stats_lki_with_pt(state, source, frozen);
     let damage_source = capture_damage_source(state, source);
     state
         .engine

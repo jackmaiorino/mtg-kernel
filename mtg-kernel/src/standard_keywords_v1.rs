@@ -391,12 +391,20 @@ fn needs_power_lki(card_def: u16) -> bool {
 /// leave triggers, and descend (700.14) for a permanent card going to its
 /// owner's graveyard.
 pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zone) {
+    before_zone_change_with_power(state, object, to, None);
+}
+pub(crate) fn before_zone_change_with_power(
+    state: &mut GameState,
+    object: ObjectId,
+    to: Zone,
+    frozen: Option<i32>,
+) {
     let live = state.objects.get(object);
     if live.zone == Zone::Battlefield && needs_power_lki(live.card_def) {
         let marker = CommittedEvent::PowerBeforeLeavingBattlefield {
             object,
             zone_change_count: live.zone_change_count,
-            power: crate::engine::effective_power(state, object),
+            power: frozen.unwrap_or_else(|| crate::engine::effective_power(state, object)),
         };
         state.engine.event_log.push(marker.clone());
         state.engine.event_history.push(marker);
@@ -413,6 +421,10 @@ pub(crate) fn before_zone_change(state: &mut GameState, object: ObjectId, to: Zo
         state.engine.event_log.push(marker.clone());
         state.engine.event_history.push(marker);
     }
+    record_descended_zone_change_v1(state, object, to);
+}
+/// Native characteristic bookkeeping without publishing a departure receipt.
+pub(crate) fn record_descended_zone_change_v1(state: &mut GameState, object: ObjectId, to: Zone) {
     let live = state.objects.get(object);
     let def = &CARD_DEFS[usize::from(live.card_def)];
     let permanent_card = [

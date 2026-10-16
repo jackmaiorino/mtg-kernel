@@ -3379,6 +3379,79 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
         batch_without_linked_aura_v1(state, vec![event]);
         return;
     }
+    if needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event)) {
+        // Replace on a private proposal scene. A refused final PT must not
+        // consume a prevention shield or publish its bookkeeping either.
+        let mut replaced = state.clone();
+        let Some(final_event) = apply_replacements(&mut replaced, event) else {
+            if let Some((_, source)) = replaced.engine.halted {
+                halt_zone_pt_v1(state, source);
+            } else {
+                *state = replaced;
+            }
+            return;
+        };
+        if crate::doubling_season_v48::preflight_entry_roster(
+            &replaced,
+            std::slice::from_ref(&final_event),
+        )
+        .is_err()
+            || crate::doubling_season_v48::preflight_token_initialization(
+                &replaced,
+                std::slice::from_ref(&final_event),
+            )
+            .is_err()
+        {
+            halt_zone_pt_v1(state, ObjectId(0));
+            return;
+        }
+        match crate::linked_aura_operation_v1::prepare_entry_colors(
+            &mut replaced,
+            std::slice::from_ref(&final_event),
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                *state = replaced;
+                return;
+            }
+            Err(_) => {
+                halt_zone_pt_v1(state, ObjectId(0));
+                return;
+            }
+        }
+        let input = crate::doubling_season_v48::entry_input(&replaced, &final_event);
+        let plan = match FinalZonePtPlanV1::capture(
+            &replaced,
+            std::slice::from_ref(&final_event),
+            None,
+            None,
+            std::slice::from_ref(&input),
+            &[],
+        ) {
+            Ok(plan) => plan,
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        };
+        let lifelink_gain = lifelink_gain_for(&replaced, &final_event);
+        *state = replaced;
+        commit_with_entry_batch_and_source_color(
+            state,
+            final_event,
+            None,
+            None,
+            None,
+            (None, None),
+            ((None, false), None, input, None, Some(&plan)),
+        );
+        if state.engine.halted.is_none() {
+            if let Some((player, amount)) = lifelink_gain {
+                commit(state, ProposedEvent::life_gain(player, amount));
+            }
+        }
+        return;
+    }
     if let Some(final_event) = apply_replacements(state, event) {
         let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
@@ -3543,10 +3616,70 @@ fn commit_with_ability_lki_and_entry_batch(
         frozen_death_captures,
         authority_batch,
         entry_batches,
-        (entry_context, None, None, None),
+        (entry_context, None, None, None, None),
     );
 }
-type EntryContextWithSourceColorV1 = (
+
+fn prepare_zone_entry_characteristics_v1(
+    event: &ProposedEvent,
+    entry_characteristics: &mut Option<(
+        ObjectId,
+        crate::garruks_uprising_v1::EntryCharacteristicsV1,
+    )>,
+) -> Result<(), ObjectId> {
+    if let ProposedEvent::ZoneChange(change) = event {
+        if let Some(revival) = change.battlefield_revival_v1 {
+            if revival < 0 {
+                return Err(change.object);
+            }
+        }
+        if let Some(request) = change.battlefield_x_v48.as_ref() {
+            if change.to_zone != Zone::Battlefield || request.original < 0 {
+                return Err(change.object);
+            }
+            let entry =
+                entry_characteristics.get_or_insert_with(|| (change.object, Default::default()));
+            if entry.0 != change.object
+                || entry
+                    .1
+                    .x_counters
+                    .is_some_and(|count| count != request.original)
+                || entry
+                    .1
+                    .attached_to
+                    .is_some_and(|host| Some(host) != request.host)
+            {
+                return Err(change.object);
+            }
+            entry.1.x_counters = Some(request.original);
+            entry.1.attached_to = request.host;
+            entry.1.bestowed = request.host.is_some();
+        }
+        // A destination rewrite that does not enter the battlefield must not
+        // install the entry-only characteristic on the card in another zone.
+        if change.to_zone == Zone::Battlefield {
+            if let Some(subtype) = change.battlefield_added_subtype_v1 {
+                let entry = entry_characteristics
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    return Err(change.object);
+                }
+                entry.1.added_subtype_v1 = Some(subtype);
+            }
+            if change.battlefield_grant_flying_v1 {
+                let entry = entry_characteristics
+                    .get_or_insert_with(|| (change.object, Default::default()));
+                if entry.0 != change.object {
+                    return Err(change.object);
+                }
+                entry.1.grant_flying_v1 = true;
+            }
+        }
+    }
+    Ok(())
+}
+
+type EntryContextWithSourceColorV1<'a> = (
     (
         Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
         bool,
@@ -3554,6 +3687,7 @@ type EntryContextWithSourceColorV1 = (
     Option<crate::controlled_creature_grants_v1::DepartureColorV1>,
     Option<crate::doubling_season_v48::ReplacementInputV48>,
     Option<u64>,
+    Option<&'a FinalZonePtPlanV1>,
 );
 fn commit_with_entry_batch_and_source_color(
     state: &mut GameState,
@@ -3565,81 +3699,21 @@ fn commit_with_entry_batch_and_source_color(
         Option<&mut crate::garruks_uprising_v1::EntryBatchV1>,
         Option<&mut crate::arahbo_v1::EntryBatchV1>,
     ),
-    entry_context: EntryContextWithSourceColorV1,
+    entry_context: EntryContextWithSourceColorV1<'_>,
 ) {
-    let (mut entry_context, frozen_source_color, frozen_counter_input, token_input_index) =
-        entry_context;
-    if let ProposedEvent::ZoneChange(change) = &event {
-        if let Some(revival) = change.battlefield_revival_v1 {
-            if revival < 0 {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    change.object,
-                ));
-                return;
-            }
-        }
-        if let Some(request) = change.battlefield_x_v48.as_ref() {
-            if change.to_zone != Zone::Battlefield || request.original < 0 {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    change.object,
-                ));
-                return;
-            }
-            let entry = entry_context
-                .0
-                .get_or_insert_with(|| (change.object, Default::default()));
-            if entry.0 != change.object
-                || entry
-                    .1
-                    .x_counters
-                    .is_some_and(|count| count != request.original)
-                || entry
-                    .1
-                    .attached_to
-                    .is_some_and(|host| Some(host) != request.host)
-            {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    change.object,
-                ));
-                return;
-            }
-            entry.1.x_counters = Some(request.original);
-            entry.1.attached_to = request.host;
-            entry.1.bestowed = request.host.is_some();
-        }
-        // A destination rewrite that does not enter the battlefield must not
-        // install the entry-only characteristic on the card in another zone.
-        if change.to_zone == Zone::Battlefield {
-            if let Some(subtype) = change.battlefield_added_subtype_v1 {
-                let entry = entry_context
-                    .0
-                    .get_or_insert_with(|| (change.object, Default::default()));
-                if entry.0 != change.object {
-                    state.engine.halted = Some((
-                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                        change.object,
-                    ));
-                    return;
-                }
-                entry.1.added_subtype_v1 = Some(subtype);
-            }
-            if change.battlefield_grant_flying_v1 {
-                let entry = entry_context
-                    .0
-                    .get_or_insert_with(|| (change.object, Default::default()));
-                if entry.0 != change.object {
-                    state.engine.halted = Some((
-                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                        change.object,
-                    ));
-                    return;
-                }
-                entry.1.grant_flying_v1 = true;
-            }
-        }
+    let (
+        mut entry_context,
+        frozen_source_color,
+        frozen_counter_input,
+        token_input_index,
+        zone_plan,
+    ) = entry_context;
+    if let Err(source) = prepare_zone_entry_characteristics_v1(&event, &mut entry_context.0) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return;
     }
     let counter_input =
         frozen_counter_input.or_else(|| crate::doubling_season_v48::entry_input(state, &event));
@@ -3783,6 +3857,29 @@ fn commit_with_entry_batch_and_source_color(
             change.to_zone = Zone::Exile;
         }
     }
+    let local_zone_plan = if zone_plan.is_none()
+        && needs_final_zone_pt_plan_v1(state, std::slice::from_ref(&event))
+    {
+        match FinalZonePtPlanV1::capture(
+            state,
+            std::slice::from_ref(&event),
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            entry_context.0,
+            std::slice::from_ref(&counter_input),
+            &[],
+        ) {
+            Ok(plan) => Some(plan),
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let zone_plan = zone_plan.or(local_zone_plan.as_ref());
     // A frozen observer may outlive its source, but a rewritten destination
     // is not a death. Finality and sacrifice replacements must not publish
     // a capture beside a battlefield-to-exile event.
@@ -3805,8 +3902,6 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         Vec::new()
     };
-    let mut alesha_power_departure = None;
-    let mut niv_source_departure = None;
     let niv_mizzet_damage_captures = capture_niv_mizzet_visionary_damage_v1(state, &event);
     let tutelage_observers = match &event {
         ProposedEvent::Draw(draw) => state
@@ -3823,495 +3918,27 @@ fn commit_with_entry_batch_and_source_color(
             .collect::<Vec<_>>(),
         _ => Vec::new(),
     };
-    let committed = match event {
-        ProposedEvent::Damage(d) => {
-            let source_has_deathtouch = d.amount > 0
-                && d.historical_source.map_or_else(
-                    || {
-                        state.objects.try_get(d.source).is_some()
-                            && crate::engine::has_effective_keyword(
-                                state,
-                                d.source,
-                                crate::card_def::Keywords::DEATHTOUCH,
-                            )
-                    },
-                    |id| {
-                        crate::source_power_activation_v1::damage_source(state, d.source, id)
-                            .expect("validated historical source")
-                            .deathtouch
-                    },
-                );
-            match d.target {
-                Target::Object(id) => {
-                    let planeswalker = crate::engine::object_has_type(
-                        state,
-                        id,
-                        crate::card_def::CardType::Planeswalker,
-                    );
-                    if planeswalker {
-                        crate::planeswalker_v1::damage(state, id, d.amount);
-                    }
-                    let creature = crate::engine::object_has_type(
-                        state,
-                        id,
-                        crate::card_def::CardType::Creature,
-                    );
-                    let obj = state.objects.get_mut(id);
-                    if !planeswalker || creature {
-                        let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
-                            state.engine.halted = Some((
-                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                                d.source,
-                            ));
-                            return;
-                        };
-                        obj.damage = damage;
-                        obj.v4.deathtouch_damage |= source_has_deathtouch;
-                    }
-                }
-                Target::StackItem(_) => return,
-                Target::Player(p) => {
-                    let lost = d.amount;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    if lost > 0 {
-                        state.record_life_loss_v1(p);
-                    }
-                    state.players[p.index()].life -= lost;
-                    #[cfg(feature = "standard-magezero-fixtures")]
-                    crate::standard_cards_v1::record_life(state, p, 0, lost);
-                }
-            }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            if let Some(id) = d.historical_source {
-                let facts = crate::source_power_activation_v1::damage_source(state, d.source, id)
-                    .expect("validated historical source");
-                crate::standard_cards_v1::after_historical_damage(
-                    state,
-                    facts,
-                    d.amount,
-                    d.is_combat,
-                );
-            } else {
-                crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
-            }
-            CommittedEvent::Damage {
-                source: d.source,
-                target: d.target,
-                amount: d.amount,
-            }
-        }
-        ProposedEvent::ZoneChange(mut z) => {
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
-            #[cfg(not(feature = "standard-magezero-fixtures"))]
-            let _ = &mut z;
-            crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
-            let from = state.objects.get(z.object).zone;
-            if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
-                crate::engine::record_different_controller_target_departure(state, z.object);
-            }
-            crate::standard_cards_v1::before_departure(state, z.object);
-            if from == Zone::Battlefield
-                && crate::standard_cards_v1::active_aegis_copy(state, z.object)
-            {
-                let marker = CommittedEvent::LeftBattlefieldCopyV1 {
-                    source: crate::state::AbilitySourceContractV4::capture(state, z.object),
-                    face_index: state.objects.get(z.object).v4.face_index,
-                };
-                state.engine.event_log.push(marker.clone());
-                state.engine.event_history.push(marker);
-            }
-            let controller_before = state.objects.get(z.object).controller;
-            if from == Zone::Battlefield {
-                let live = state.objects.get(z.object);
-                if live.v4.face_index != 0
-                    && crate::standard_cards_v1::records_departure_face(
-                        &crate::card_def::CARD_DEFS[live.card_def as usize],
-                    )
-                {
-                    let marker = CommittedEvent::LeftBattlefieldFaceV1 {
-                        object: z.object,
-                        zone_change_count: live.zone_change_count,
-                        face_index: live.v4.face_index,
-                    };
-                    state.engine.event_log.push(marker.clone());
-                    state.engine.event_history.push(marker);
-                }
-            }
-            if from == Zone::Battlefield {
-                record_counter_lki(state, z.object);
-                #[cfg(feature = "standard-magezero-fixtures")]
-                crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
-                crate::ashroot_animist_v1::before_departure(state, z.object);
-                crate::source_power_activation_v1::before_departure(state, z.object);
-                crate::gorehorn_damage_v1::before_departure(state, z.object);
-                crate::equipment_damage_source_v4::before_departure(state, z.object);
-            }
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
-            if from == Zone::Battlefield
-                && abilities_removed_before.unwrap_or_else(|| {
-                    !crate::continuous_characteristics_v1::printed_abilities_active(state, z.object)
-                })
-            {
-                let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
-                    object: z.object,
-                    zone_change_count: state.objects.get(z.object).zone_change_count,
-                };
-                state.engine.event_log.push(marker.clone());
-                state.engine.event_history.push(marker);
-            }
-            #[cfg(feature = "limited-fdn-fixtures")]
-            let creature_died = from == Zone::Battlefield
-                && z.to_zone == Zone::Graveyard
-                && crate::engine::object_has_type(
-                    state,
-                    z.object,
-                    crate::card_def::CardType::Creature,
-                );
-            #[cfg(feature = "limited-fdn-fixtures")]
-            if from == Zone::Battlefield {
-                crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
-            }
-            if from == Zone::Battlefield
-                && z.to_zone != Zone::Battlefield
-                && crate::card_def::CARD_DEFS
-                    .get(usize::from(state.objects.get(z.object).card_def))
-                    .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
-            {
-                let source = state.objects.get(z.object);
-                alesha_power_departure = Some((
-                    z.object,
-                    source.card_def,
-                    source.zone_change_count,
-                    crate::engine::effective_power(state, z.object),
-                ));
-            }
-            if from == Zone::Battlefield
-                && z.to_zone != Zone::Battlefield
-                && niv_mizzet_catalog_enabled_v1()
-            {
-                niv_source_departure = Some(crate::state::AbilitySourceContractV4::capture(
-                    state, z.object,
-                ));
-            }
-            commit_zone_change(
-                state,
-                z.object,
-                z.to_zone,
-                z.library_placement,
-                z.preserve_known_identity,
-                z.library_insert_visibility,
-                z.force_battlefield_tapped,
-                z.battlefield_face_index,
-                z.battlefield_controller,
-                (
-                    authority_batch
-                        .as_ref()
-                        .map(|batch| batch.observers.as_slice()),
-                    {
-                        let mut entry = entering_characteristics
-                            .as_ref()
-                            .filter(|(object, _)| *object == z.object)
-                            .map(|(_, face)| *face);
-                        if let Some(stun) = z.battlefield_stun_v48 {
-                            entry.get_or_insert_with(Default::default).stun_counters_v48 =
-                                Some(stun);
-                        }
-                        entry
-                    },
-                    counter_input.as_ref(),
-                    z.battlefield_revival_v1,
-                ),
-            );
-            #[cfg(feature = "limited-fdn-fixtures")]
-            if creature_died && state.objects.get(z.object).zone == Zone::Graveyard {
-                state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
-                    turn: state.turn_key_v1(),
-                    active_player: state.active_player,
-                });
-            }
-            CommittedEvent::ZoneChange {
-                object: z.object,
-                from,
-                to: z.to_zone,
-                controller_before,
-            }
-        }
-        ProposedEvent::LifeLoss(l) => {
-            let amount = l.amount;
-            #[cfg(feature = "standard-magezero-fixtures")]
-            let amount = crate::standard_statics_v1::modified_life_loss(state, l.player, amount);
-            #[cfg(feature = "standard-magezero-fixtures")]
-            if amount > 0 {
-                state.record_life_loss_v1(l.player);
-            }
-            state.players[l.player.index()].life -= amount;
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_cards_v1::record_life(state, l.player, 0, amount);
-            CommittedEvent::LifeLoss {
-                player: l.player,
-                amount,
-            }
-        }
-        ProposedEvent::LifeGain(g) => {
-            if g.amount <= 0 {
-                return;
-            }
-            state.players[g.player.index()].life += g.amount;
-            #[cfg(feature = "standard-magezero-fixtures")]
-            crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);
-            CommittedEvent::LifeGain {
-                player: g.player,
-                amount: g.amount,
-            }
-        }
-        ProposedEvent::Draw(d) => {
-            let empty_before = state.players[d.player.index()].library.is_empty();
-            let drawn = state.draw_card(d.player);
-            if empty_before {
-                state.players[d.player.index()].drew_from_empty = true;
-            }
-            if drawn.is_some() {
-                state.players[d.player.index()].draws_this_turn += 1;
-            }
-            CommittedEvent::Draw {
-                player: d.player,
-                object: drawn,
-            }
-        }
-        ProposedEvent::Tap(t) => {
-            state.objects.get_mut(t.object).tapped = true;
-            CommittedEvent::Tap { object: t.object }
-        }
-        ProposedEvent::ManaAdd(m) => {
-            for &c in &m.colors {
-                state.players[m.player.index()].mana_pool[c.pool_index()] += 1;
-            }
-            CommittedEvent::ManaAdded {
-                player: m.player,
-                colors: m.colors,
-            }
-        }
-        ProposedEvent::CreateToken(t) => {
-            let token_def = &crate::card_def::CARD_DEFS[t.token_def as usize];
-            let name = token_def.object_name.to_string();
-            let object = state.objects.push(crate::state::GameObject {
-                card_def: t.token_def,
-                name,
-                owner: t.controller,
-                controller: t.controller,
-                zone: Zone::Battlefield,
-                tapped: false,
-                // A token entering the battlefield is exactly as summoning-
-                // sick as any other permanent that just entered (see
-                // `commit_zone_change`'s identical `= true` a few lines
-                // down for the ordinary cast/move path) -- this was
-                // hardcoded `false` and never flipped, the one "enters
-                // battlefield" path that skipped setting it. Found via the
-                // branch-differential pilot (Sol #89/#91): a Blood Token's
-                // controlled-since-turn-start flag disagreed with the
-                // reference engine's `wasControlledFromStartOfControllerTurn()`
-                // immediately after Voldaren Epicure's ETB created it.
-                summoning_sick: true,
-                damage: 0,
-                counters: Default::default(),
-                attachments: Vec::new(),
-                v4: {
-                    let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
-                    // Creation itself makes this object a token, including
-                    // copies whose printed definition is an ordinary card.
-                    v4.is_token = true;
-                    v4.entered_battlefield_turn = Some(state.turn_key_v1());
-                    v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
-                    v4
-                },
-                spell_copy_origin: None,
-                plotted_turn: None,
-                zone_change_count: 0,
-            });
-            if let Some(face_index) = t.entry_face_index {
-                let face = token_def
-                    .transform_face
-                    .as_ref()
-                    .filter(|_| face_index == 1)
-                    .expect("copied transformed token requires a defined back face");
-                let live = state.objects.get_mut(object);
-                live.v4.is_token = true;
-                live.v4.face_index = face_index;
-                live.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
-                live.v4.effective_subtype_ids =
-                    face.subtypes.iter().map(|s| s.stable_id()).collect();
-                live.v4.effective_subtype_ids.sort_unstable();
-                live.v4.effective_subtype_ids.dedup();
-                live.name = face.name.to_string();
-            }
-            if cfg!(feature = "limited-fdn-fixtures") {
-                let timestamp = crate::engine::next_timestamp(state);
-                state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
-            }
-            state.players[t.controller.index()].battlefield.push(object);
-            let enters_tapped = t.entry_tapped
-                || permanent_enters_battlefield_tapped(state, object, t.controller)
-                || authority_batch.as_ref().map_or_else(
-                    || {
-                        crate::authority_of_the_consuls_v1::enters_tapped(
-                            state,
-                            object,
-                            t.controller,
-                        )
-                    },
-                    |batch| {
-                        crate::authority_of_the_consuls_v1::enters_tapped_from_observers(
-                            state,
-                            object,
-                            t.controller,
-                            &batch.observers,
-                        )
-                    },
-                );
-            state.objects.get_mut(object).tapped = enters_tapped;
-            if let Some(init) = &t.initialization_v48 {
-                if let Some(host) = init.attached_to {
-                    // Legality and incarnation were checked for the whole roster
-                    // before any entry. This is untargeted attachment on entry.
-                    if state
-                        .attach_object_exact(object, 0, host.object, host.zone_change_count)
-                        .is_err()
-                    {
-                        state.engine.halted = Some((
-                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                            object,
-                        ));
-                        return;
-                    }
-                }
-                if init.haste_until_end_of_turn {
-                    let timestamp = crate::engine::next_timestamp(state);
-                    state.engine.until_end_of_turn.push(
-                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
-                            object_id: object,
-                            object_zone_change_count: 0,
-                            layer: crate::engine::Layers::ABILITY_ADDING,
-                            timestamp,
-                            duration: crate::engine::EffectDuration::EndOfTurn,
-                            keywords: crate::card_def::Keywords::HASTE,
-                        },
-                    );
-                }
-                if let Some(source) = init.sacrifice_at_end_step {
-                    let binding = crate::effect::EffectObjectBinding {
-                        object,
-                        expected_zone: Zone::Battlefield,
-                        expected_zone_change_count: 0,
-                    };
-                    crate::standard_cards_v1::register_reflection_delayed_sacrifice(
-                        state, binding, source,
-                    );
-                }
-                if init.attacking
-                    && state.engine.combat.attackers_declared
-                    && state.active_player == t.controller
-                    && matches!(
-                        state.step,
-                        crate::state::Step::DeclareAttackers
-                            | crate::state::Step::DeclareBlockers
-                            | crate::state::Step::CombatDamage
-                    )
-                {
-                    state.engine.combat.attackers.push(object);
-                }
-            }
-            initialize_entry_counters(state, object, false, counter_input.as_ref());
-            if season_entry_active {
-                crate::standard_cards_v1::initialize_entry_counters(
-                    state,
-                    object,
-                    counter_input.as_ref(),
-                );
-            }
-            if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    object,
-                ));
-                return;
-            }
-            if let Some(init) = &t.initialization_v48 {
-                if init.plus_one_counters > 0 {
-                    let amount = crate::doubling_season_v48::entry_amount(
-                        state,
-                        counter_input.as_ref(),
-                        t.controller,
-                        init.plus_one_counters,
-                    )
-                    .expect("initialized token counter roster preflighted");
-                    state.objects.get_mut(object).counters.plus1_plus1 += amount;
-                }
-            }
-            if crate::ajani_full_v42::selected_definition(t.token_def) {
-                crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
-                crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
-            }
-            CommittedEvent::CreateToken {
-                object,
-                token_def: t.token_def,
-                controller: t.controller,
-                replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48(
-                    token_input_index,
-                ),
-            }
-        }
-        ProposedEvent::Transform(t) if t.face_index == 0 => {
-            // Back to the front face (a nightbound permanent as it becomes
-            // day): the definition's own characteristics.
-            let obj = state.objects.get_mut(t.object);
-            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-            assert!(
-                obj.v4.face_index == 1 && def.transform_face.is_some(),
-                "transform_in_place to the front face needs a transformed permanent"
-            );
-            obj.v4.face_index = 0;
-            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(def.colors);
-            obj.v4.effective_subtype_ids = def
-                .subtypes
-                .iter()
-                .map(|subtype| subtype.stable_id())
-                .collect();
-            obj.v4.effective_subtype_ids.sort_unstable();
-            obj.v4.effective_subtype_ids.dedup();
-            obj.name = def.object_name.to_string();
-            CommittedEvent::Transformed {
-                object: t.object,
-                face_index: 0,
-            }
-        }
-        ProposedEvent::Transform(t) => {
-            let obj = state.objects.get_mut(t.object);
-            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-            let Some(face) = (t.face_index == 1)
-                .then_some(def.transform_face.as_ref())
-                .flatten()
-            else {
-                panic!("transform_in_place requested an undefined face");
-            };
-            obj.v4.face_index = t.face_index;
-            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
-            obj.v4.effective_subtype_ids = face
-                .subtypes
-                .iter()
-                .map(|subtype| subtype.stable_id())
-                .collect();
-            obj.v4.effective_subtype_ids.sort_unstable();
-            obj.v4.effective_subtype_ids.dedup();
-            obj.name = face.name.to_string();
-            CommittedEvent::Transformed {
-                object: t.object,
-                face_index: t.face_index,
-            }
-        }
+    let Some(MaterializedEventV1 {
+        committed,
+        alesha_power_departure,
+        niv_source_departure,
+    }) = materialize_event_v1(
+        state,
+        event,
+        NativeMaterializationInputV1 {
+            authority_observers: authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            entering_characteristics,
+            counter_input: &counter_input,
+            season_entry_active,
+            token_input_index,
+            mode: NativeMaterializationV1::Commit(zone_plan),
+            abilities_removed_before,
+        },
+    )
+    else {
+        return;
     };
     let saga_source = match &committed {
         CommittedEvent::ZoneChange {
@@ -4343,25 +3970,12 @@ fn commit_with_entry_batch_and_source_color(
         _ => None,
     };
     if let Some(object) = entry_counter_object {
-        if crate::linked_aura_operation_v1::initialize_kinship_entry(
-            state,
-            &entry_color_proposal,
-            object,
-        )
-        .is_err()
+        if let Err(source) =
+            initialize_materialized_entry_v1(state, &entry_color_proposal, object, &counter_input)
         {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                object,
-            ));
-            return;
-        }
-        // All fixed, X and token-entry counters already exist, while no entry
-        // event or observer has been published. Use the original batch input.
-        if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                object,
+                source,
             ));
             return;
         }
@@ -4629,6 +4243,896 @@ fn commit_with_entry_batch_and_source_color(
     }
 }
 
+fn initialize_materialized_entry_v1(
+    state: &mut GameState,
+    entry_color_proposal: &ProposedEvent,
+    object: ObjectId,
+    counter_input: &Option<crate::doubling_season_v48::ReplacementInputV48>,
+) -> Result<(), ObjectId> {
+    if crate::linked_aura_operation_v1::initialize_kinship_entry(
+        state,
+        entry_color_proposal,
+        object,
+    )
+    .is_err()
+    {
+        return Err(object);
+    }
+    // All fixed, X and token-entry counters already exist, while no entry
+    // event or observer has been published. Use the original batch input.
+    if crate::giada_v1::apply_entry_counters(state, object, counter_input.as_ref()).is_err() {
+        return Err(object);
+    }
+    Ok(())
+}
+
+/// A fresh, private numeric scene plan. It contains no executable permission and
+/// never survives this synchronous commit. Departures read the original scene.
+struct FinalZonePtPlanV1 {
+    departures: Vec<(crate::state::ObjectLinkV4, (i32, i32))>,
+}
+#[derive(Clone, Copy)]
+enum NativeMaterializationV1<'a> {
+    Commit(Option<&'a FinalZonePtPlanV1>),
+    FinalScene(&'a FinalZonePtPlanV1),
+}
+impl NativeMaterializationV1<'_> {
+    fn is_scene(self) -> bool {
+        matches!(self, Self::FinalScene(_))
+    }
+    fn departure_pt(self, state: &GameState, id: ObjectId) -> Option<(i32, i32)> {
+        let plan = match self {
+            Self::Commit(plan) => plan?,
+            Self::FinalScene(plan) => plan,
+        };
+        let generation = state.objects.get(id).zone_change_count;
+        plan.departures.iter().find_map(|(link, pt)| {
+            (link.object == id && link.zone_change_count == generation).then_some(*pt)
+        })
+    }
+}
+fn aberration_definition_v1(id: u16) -> bool {
+    crate::card_def::CARD_DEFS
+        .get(usize::from(id))
+        .is_some_and(|d| {
+            d.is_executable() && crate::engine::consuming_aberration_cda_for_v1(d.name)
+        })
+}
+/// Select only actual battlefield characteristics, including suppressed forms
+/// and reversible native copies. This is a cost guard, not an execution permit.
+pub(crate) fn has_potential_aberration_battlefield_v1(state: &GameState) -> bool {
+    state
+        .objects
+        .iter()
+        .any(|(_, o)| o.zone == Zone::Battlefield && aberration_definition_v1(o.card_def))
+        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, aberration_definition_v1)
+}
+fn needs_final_zone_pt_plan_v1(state: &GameState, events: &[ProposedEvent]) -> bool {
+    if !events.iter().any(|event| {
+        matches!(
+            event,
+            ProposedEvent::ZoneChange(_)
+                | ProposedEvent::CreateToken(_)
+                | ProposedEvent::Transform(_)
+        )
+    }) {
+        return false;
+    }
+    // Suppression and face-down characteristics do not exclude a source: this
+    // very zone batch can remove the Aura or copy that currently hides its CDA.
+    has_potential_aberration_battlefield_v1(state)
+        || events.iter().any(|event| match event {
+            ProposedEvent::ZoneChange(z) if z.to_zone == Zone::Battlefield => {
+                aberration_definition_v1(state.objects.get(z.object).card_def)
+            }
+            ProposedEvent::CreateToken(t) => aberration_definition_v1(t.token_def),
+            _ => false,
+        })
+}
+impl FinalZonePtPlanV1 {
+    fn capture(
+        original: &GameState,
+        events: &[ProposedEvent],
+        authority_observers: Option<&[crate::state::AbilitySourceContractV4]>,
+        characteristics: Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+        counter_inputs: &[Option<crate::doubling_season_v48::ReplacementInputV48>],
+        attachments: &[(
+            crate::effect::EffectObjectBinding,
+            crate::effect::EffectObjectBinding,
+        )],
+    ) -> Result<Self, ObjectId> {
+        if events.len() != counter_inputs.len() {
+            return Err(ObjectId(0));
+        }
+        let mut plan = Self {
+            departures: Vec::new(),
+        };
+        for event in events {
+            if let ProposedEvent::ZoneChange(z) = event {
+                let object = original.objects.get(z.object);
+                if object.zone == Zone::Battlefield {
+                    let pt = crate::engine::checked_effective_pt(original, z.object)
+                        .map_err(|_| z.object)?;
+                    plan.departures.push((
+                        crate::state::ObjectLinkV4 {
+                            object: z.object,
+                            zone_change_count: object.zone_change_count,
+                        },
+                        pt,
+                    ));
+                }
+            }
+        }
+        // This is characteristic materialization, not event replay: no public
+        // step/resume, replacement consumption, committed-event observation
+        // or linked return runs here. Native entry initialization is shared;
+        // its private bookkeeping never escapes this discarded scene. All
+        // members exist before the one layer-7 query.
+        let mut scene = original.clone();
+        for (event, input) in events.iter().zip(counter_inputs) {
+            let mut entry = characteristics;
+            prepare_zone_entry_characteristics_v1(event, &mut entry)?;
+            let season = crate::doubling_season_v48::requires_successor(original)
+                || input
+                    .as_ref()
+                    .is_some_and(|input| !input.seasons.is_empty());
+            let Some(materialized) = materialize_event_v1(
+                &mut scene,
+                event.clone(),
+                NativeMaterializationInputV1 {
+                    authority_observers,
+                    entering_characteristics: entry,
+                    counter_input: input,
+                    season_entry_active: season,
+                    token_input_index: None,
+                    mode: NativeMaterializationV1::FinalScene(&plan),
+                    abilities_removed_before: None,
+                },
+            ) else {
+                return Err(scene
+                    .engine
+                    .halted
+                    .map_or(ObjectId(0), |(_, source)| source));
+            };
+            if let Some((_, source)) = scene.engine.halted {
+                return Err(source);
+            }
+            let entrant = match &materialized.committed {
+                CommittedEvent::ZoneChange {
+                    object,
+                    to: Zone::Battlefield,
+                    ..
+                }
+                | CommittedEvent::CreateToken { object, .. } => Some(*object),
+                _ => None,
+            };
+            if let Some(object) = entrant {
+                initialize_materialized_entry_v1(&mut scene, event, object, input)?;
+                // Native static boosts authenticate the actual chosen entry
+                // against its real materialized row. Reuse the existing private
+                // constructor in this discarded scene; do not approximate that
+                // boost by merely writing v4.chosen_color.
+                let entry_index = scene.engine.event_history.len();
+                scene
+                    .engine
+                    .event_history
+                    .push(materialized.committed.clone());
+                crate::linked_aura_operation_v1::commit_entry_color(
+                    &mut scene,
+                    event,
+                    object,
+                    entry_index,
+                )
+                .and_then(|_| {
+                    crate::linked_aura_operation_v1::commit_kinship_entry(
+                        &mut scene,
+                        event,
+                        object,
+                        entry_index,
+                    )
+                })
+                .map_err(|_| object)?;
+                if !season {
+                    crate::standard_cards_v1::initialize_entry_counters(
+                        &mut scene,
+                        object,
+                        input.as_ref(),
+                    );
+                }
+            }
+        }
+        for &(aura, host) in attachments {
+            if scene.objects.get(aura.object).zone == Zone::Battlefield {
+                let generation = scene.objects.get(aura.object).zone_change_count;
+                scene
+                    .attach_object_exact(
+                        aura.object,
+                        generation,
+                        host.object,
+                        host.expected_zone_change_count,
+                    )
+                    .map_err(|_| aura.object)?;
+            }
+        }
+        // Lifelink is simultaneous with the damage. The exact source/controller
+        // and replaced amount come from the original scene, as in actual commit.
+        for (_, player, amount) in batch_lifelink_gains_v1(original, events)? {
+            scene.players[player.index()].life = scene.players[player.index()]
+                .life
+                .checked_add(amount)
+                .ok_or(ObjectId(0))?;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(&mut scene, player, amount, 0);
+        }
+        if let Some((_, source)) = scene.engine.halted {
+            return Err(source);
+        }
+        crate::engine::validate_battlefield_pt(&scene)?;
+        Ok(plan)
+    }
+}
+fn batch_lifelink_gains_v1(
+    state: &GameState,
+    events: &[ProposedEvent],
+) -> Result<Vec<(ObjectId, PlayerId, i32)>, ObjectId> {
+    let mut gains: Vec<(ObjectId, PlayerId, i32)> = Vec::new();
+    for event in events {
+        let Some((player, amount)) = lifelink_gain_for(state, event) else {
+            continue;
+        };
+        let ProposedEvent::Damage(damage) = event else {
+            unreachable!("only damage causes lifelink");
+        };
+        if let Some((_, _, total)) = gains
+            .iter_mut()
+            .find(|(source, controller, _)| *source == damage.source && *controller == player)
+        {
+            *total = total.checked_add(amount).ok_or(damage.source)?;
+        } else {
+            gains.push((damage.source, player, amount));
+        }
+    }
+    Ok(gains)
+}
+fn direct_zone_scene_events_v1(state: &GameState, events: &[ProposedEvent]) -> Vec<ProposedEvent> {
+    events
+        .iter()
+        .cloned()
+        .map(|mut event| {
+            let fiery = state.engine.active_replacements.iter().any(|r| {
+                matches!(
+                    r.kind,
+                    ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+                ) && replacement_applies(r, &event, state)
+            });
+            if fiery {
+                // The only eligible replacement is destination-only, with no
+                // consumable shield bookkeeping. Other replacements remain owned
+                // by the caller's ordinary propose pass.
+                if let ProposedEvent::ZoneChange(z) = &mut event {
+                    z.to_zone = Zone::Exile;
+                }
+            }
+            if let ProposedEvent::ZoneChange(z) = &mut event {
+                if z.to_zone == Zone::Graveyard
+                    && state
+                        .objects
+                        .get(z.object)
+                        .v4
+                        .creature_upgrade
+                        .as_ref()
+                        .is_some_and(|u| u.finality > 0)
+                {
+                    z.to_zone = Zone::Exile;
+                }
+            }
+            event
+        })
+        .collect()
+}
+fn direct_zone_pt_plan_v1(
+    state: &GameState,
+    events: &[ProposedEvent],
+) -> Result<Option<FinalZonePtPlanV1>, ObjectId> {
+    if !needs_final_zone_pt_plan_v1(state, events) {
+        return Ok(None);
+    }
+    let final_events = direct_zone_scene_events_v1(state, events);
+    let inputs = final_events
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>();
+    FinalZonePtPlanV1::capture(state, &final_events, None, None, &inputs, &[]).map(Some)
+}
+
+fn halt_zone_pt_v1(state: &mut GameState, source: ObjectId) {
+    state.engine.halted = Some((
+        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+        source,
+    ));
+}
+
+/// The same native allocator/reset is used by commit and the final-scene check.
+/// Scene mode never publishes departure receipts or invokes event observers.
+struct NativeMaterializationInputV1<'a> {
+    authority_observers: Option<&'a [crate::state::AbilitySourceContractV4]>,
+    entering_characteristics:
+        Option<(ObjectId, crate::garruks_uprising_v1::EntryCharacteristicsV1)>,
+    counter_input: &'a Option<crate::doubling_season_v48::ReplacementInputV48>,
+    season_entry_active: bool,
+    token_input_index: Option<u64>,
+    mode: NativeMaterializationV1<'a>,
+    abilities_removed_before: Option<bool>,
+}
+fn materialize_event_v1(
+    state: &mut GameState,
+    event: ProposedEvent,
+    input: NativeMaterializationInputV1<'_>,
+) -> Option<MaterializedEventV1> {
+    let NativeMaterializationInputV1 {
+        authority_observers,
+        entering_characteristics,
+        counter_input,
+        season_entry_active,
+        token_input_index,
+        mode,
+        abilities_removed_before,
+    } = input;
+    let mut alesha_power_departure = None;
+    let mut niv_source_departure = None;
+    let committed = match event {
+        ProposedEvent::Damage(d) => {
+            let source_has_deathtouch = d.amount > 0
+                && d.historical_source.map_or_else(
+                    || {
+                        state.objects.try_get(d.source).is_some()
+                            && crate::engine::has_effective_keyword(
+                                state,
+                                d.source,
+                                crate::card_def::Keywords::DEATHTOUCH,
+                            )
+                    },
+                    |id| {
+                        crate::source_power_activation_v1::damage_source(state, d.source, id)
+                            .expect("validated historical source")
+                            .deathtouch
+                    },
+                );
+            match d.target {
+                Target::Object(id) => {
+                    let planeswalker = crate::engine::object_has_type(
+                        state,
+                        id,
+                        crate::card_def::CardType::Planeswalker,
+                    );
+                    if planeswalker {
+                        crate::planeswalker_v1::damage(state, id, d.amount);
+                    }
+                    let creature = crate::engine::object_has_type(
+                        state,
+                        id,
+                        crate::card_def::CardType::Creature,
+                    );
+                    let obj = state.objects.get_mut(id);
+                    if !planeswalker || creature {
+                        let Some(damage) = obj.damage.checked_add(d.amount.max(0) as u32) else {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                d.source,
+                            ));
+                            return None;
+                        };
+                        obj.damage = damage;
+                        obj.v4.deathtouch_damage |= source_has_deathtouch;
+                    }
+                }
+                Target::StackItem(_) => return None,
+                Target::Player(p) => {
+                    let lost = d.amount;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    let lost = crate::standard_statics_v1::modified_life_loss(state, p, lost);
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    if lost > 0 {
+                        state.record_life_loss_v1(p);
+                    }
+                    state.players[p.index()].life -= lost;
+                    #[cfg(feature = "standard-magezero-fixtures")]
+                    crate::standard_cards_v1::record_life(state, p, 0, lost);
+                }
+            }
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if let Some(id) = d.historical_source {
+                let facts = crate::source_power_activation_v1::damage_source(state, d.source, id)
+                    .expect("validated historical source");
+                crate::standard_cards_v1::after_historical_damage(
+                    state,
+                    facts,
+                    d.amount,
+                    d.is_combat,
+                );
+            } else {
+                crate::standard_cards_v1::after_damage(state, d.source, d.amount, d.is_combat);
+            }
+            CommittedEvent::Damage {
+                source: d.source,
+                target: d.target,
+                amount: d.amount,
+            }
+        }
+        ProposedEvent::ZoneChange(mut z) => {
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+            #[cfg(not(feature = "standard-magezero-fixtures"))]
+            let _ = &mut z;
+            let from = state.objects.get(z.object).zone;
+            let departure_pt = mode.departure_pt(state, z.object);
+            let departure_power = departure_pt.map(|pt| pt.0);
+            let controller_before = state.objects.get(z.object).controller;
+            #[cfg(feature = "limited-fdn-fixtures")]
+            let creature_died = from == Zone::Battlefield
+                && z.to_zone == Zone::Graveyard
+                && crate::engine::object_has_type(
+                    state,
+                    z.object,
+                    crate::card_def::CardType::Creature,
+                );
+            if !mode.is_scene() {
+                crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
+                if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
+                    crate::engine::record_different_controller_target_departure(state, z.object);
+                }
+                crate::standard_cards_v1::before_departure(state, z.object);
+                if from == Zone::Battlefield
+                    && crate::standard_cards_v1::active_aegis_copy(state, z.object)
+                {
+                    let marker = CommittedEvent::LeftBattlefieldCopyV1 {
+                        source: crate::state::AbilitySourceContractV4::capture(state, z.object),
+                        face_index: state.objects.get(z.object).v4.face_index,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+                if from == Zone::Battlefield {
+                    let live = state.objects.get(z.object);
+                    if live.v4.face_index != 0
+                        && crate::standard_cards_v1::records_departure_face(
+                            &crate::card_def::CARD_DEFS[live.card_def as usize],
+                        )
+                    {
+                        let marker = CommittedEvent::LeftBattlefieldFaceV1 {
+                            object: z.object,
+                            zone_change_count: live.zone_change_count,
+                            face_index: live.v4.face_index,
+                        };
+                        state.engine.event_log.push(marker.clone());
+                        state.engine.event_history.push(marker);
+                    }
+                }
+                if from == Zone::Battlefield {
+                    record_counter_lki(state, z.object);
+                    if departure_pt.is_some() {
+                        crate::creature_stats_lki_v1::record_creature_stats_lki_with_pt(
+                            state,
+                            z.object,
+                            departure_pt,
+                        );
+                    } else {
+                        #[cfg(feature = "standard-magezero-fixtures")]
+                        crate::standard_statics_v1::record_creature_stats_lki(state, z.object);
+                    }
+                    if departure_power.is_some() {
+                        crate::ashroot_animist_v1::before_departure_with_power(
+                            state,
+                            z.object,
+                            departure_power,
+                        );
+                    } else {
+                        crate::ashroot_animist_v1::before_departure(state, z.object);
+                    }
+                    if departure_pt.is_some() {
+                        crate::source_power_activation_v1::before_departure_with_pt(
+                            state,
+                            z.object,
+                            departure_pt,
+                        );
+                    } else {
+                        crate::source_power_activation_v1::before_departure(state, z.object);
+                    }
+                    crate::gorehorn_damage_v1::before_departure(state, z.object);
+                    crate::equipment_damage_source_v4::before_departure(state, z.object);
+                }
+                #[cfg(feature = "standard-magezero-fixtures")]
+                if departure_power.is_some() {
+                    crate::standard_keywords_v1::before_zone_change_with_power(
+                        state,
+                        z.object,
+                        z.to_zone,
+                        departure_power,
+                    );
+                } else {
+                    crate::standard_keywords_v1::before_zone_change(state, z.object, z.to_zone);
+                }
+                if from == Zone::Battlefield
+                    && abilities_removed_before.unwrap_or_else(|| {
+                        !crate::continuous_characteristics_v1::printed_abilities_active(
+                            state, z.object,
+                        )
+                    })
+                {
+                    let marker = CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                        object: z.object,
+                        zone_change_count: state.objects.get(z.object).zone_change_count,
+                    };
+                    state.engine.event_log.push(marker.clone());
+                    state.engine.event_history.push(marker);
+                }
+                #[cfg(feature = "limited-fdn-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+                }
+                if from == Zone::Battlefield
+                    && z.to_zone != Zone::Battlefield
+                    && crate::card_def::CARD_DEFS
+                        .get(usize::from(state.objects.get(z.object).card_def))
+                        .is_some_and(|definition| definition.name == "Alesha, Who Laughs at Fate")
+                {
+                    let source = state.objects.get(z.object);
+                    alesha_power_departure = Some((
+                        z.object,
+                        source.card_def,
+                        source.zone_change_count,
+                        departure_power
+                            .unwrap_or_else(|| crate::engine::effective_power(state, z.object)),
+                    ));
+                }
+                if from == Zone::Battlefield
+                    && z.to_zone != Zone::Battlefield
+                    && niv_mizzet_catalog_enabled_v1()
+                {
+                    niv_source_departure = Some(crate::state::AbilitySourceContractV4::capture(
+                        state, z.object,
+                    ));
+                }
+                refresh_creature_power_lki(state, z.object, from, departure_power);
+            } else {
+                #[cfg(feature = "standard-magezero-fixtures")]
+                crate::standard_keywords_v1::record_descended_zone_change_v1(
+                    state, z.object, z.to_zone,
+                );
+                #[cfg(feature = "limited-fdn-fixtures")]
+                if from == Zone::Battlefield {
+                    crate::standard_cards_v1::end_aegis_copies_before_departure(state, z.object);
+                }
+            }
+            materialize_zone_change_v1(
+                state,
+                z.object,
+                z.to_zone,
+                z.library_placement,
+                z.preserve_known_identity,
+                z.library_insert_visibility,
+                z.force_battlefield_tapped,
+                z.battlefield_face_index,
+                z.battlefield_controller,
+                (
+                    authority_observers,
+                    {
+                        let mut entry = entering_characteristics
+                            .as_ref()
+                            .filter(|(object, _)| *object == z.object)
+                            .map(|(_, face)| *face);
+                        if let Some(stun) = z.battlefield_stun_v48 {
+                            entry.get_or_insert_with(Default::default).stun_counters_v48 =
+                                Some(stun);
+                        }
+                        entry
+                    },
+                    counter_input.as_ref(),
+                    z.battlefield_revival_v1,
+                ),
+            );
+            #[cfg(feature = "limited-fdn-fixtures")]
+            if !mode.is_scene()
+                && creature_died
+                && state.objects.get(z.object).zone == Zone::Graveyard
+            {
+                state.creature_death_turn_v1 = Some(crate::state::CreatureDeathTurnV1 {
+                    turn: state.turn_key_v1(),
+                    active_player: state.active_player,
+                });
+            }
+            CommittedEvent::ZoneChange {
+                object: z.object,
+                from,
+                to: z.to_zone,
+                controller_before,
+            }
+        }
+        ProposedEvent::LifeLoss(l) => {
+            let amount = l.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            let amount = crate::standard_statics_v1::modified_life_loss(state, l.player, amount);
+            #[cfg(feature = "standard-magezero-fixtures")]
+            if amount > 0 {
+                state.record_life_loss_v1(l.player);
+            }
+            state.players[l.player.index()].life -= amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, l.player, 0, amount);
+            CommittedEvent::LifeLoss {
+                player: l.player,
+                amount,
+            }
+        }
+        ProposedEvent::LifeGain(g) => {
+            if g.amount <= 0 {
+                return None;
+            }
+            state.players[g.player.index()].life += g.amount;
+            #[cfg(feature = "standard-magezero-fixtures")]
+            crate::standard_cards_v1::record_life(state, g.player, g.amount, 0);
+            CommittedEvent::LifeGain {
+                player: g.player,
+                amount: g.amount,
+            }
+        }
+        ProposedEvent::Draw(d) => {
+            let empty_before = state.players[d.player.index()].library.is_empty();
+            let drawn = state.draw_card(d.player);
+            if empty_before {
+                state.players[d.player.index()].drew_from_empty = true;
+            }
+            if drawn.is_some() {
+                state.players[d.player.index()].draws_this_turn += 1;
+            }
+            CommittedEvent::Draw {
+                player: d.player,
+                object: drawn,
+            }
+        }
+        ProposedEvent::Tap(t) => {
+            state.objects.get_mut(t.object).tapped = true;
+            CommittedEvent::Tap { object: t.object }
+        }
+        ProposedEvent::ManaAdd(m) => {
+            for &c in &m.colors {
+                state.players[m.player.index()].mana_pool[c.pool_index()] += 1;
+            }
+            CommittedEvent::ManaAdded {
+                player: m.player,
+                colors: m.colors,
+            }
+        }
+        ProposedEvent::CreateToken(t) => {
+            let token_def = &crate::card_def::CARD_DEFS[t.token_def as usize];
+            let name = token_def.object_name.to_string();
+            let object = state.objects.push(crate::state::GameObject {
+                card_def: t.token_def,
+                name,
+                owner: t.controller,
+                controller: t.controller,
+                zone: Zone::Battlefield,
+                tapped: false,
+                // A token entering the battlefield is exactly as summoning-
+                // sick as any other permanent that just entered (see
+                // `commit_zone_change`'s identical `= true` a few lines
+                // down for the ordinary cast/move path) -- this was
+                // hardcoded `false` and never flipped, the one "enters
+                // battlefield" path that skipped setting it. Found via the
+                // branch-differential pilot (Sol #89/#91): a Blood Token's
+                // controlled-since-turn-start flag disagreed with the
+                // reference engine's `wasControlledFromStartOfControllerTurn()`
+                // immediately after Voldaren Epicure's ETB created it.
+                summoning_sick: true,
+                damage: 0,
+                counters: Default::default(),
+                attachments: Vec::new(),
+                v4: {
+                    let mut v4 = crate::state::ObjectStateV4::from_card_def(t.token_def);
+                    // Creation itself makes this object a token, including
+                    // copies whose printed definition is an ordinary card.
+                    v4.is_token = true;
+                    v4.entered_battlefield_turn = Some(state.turn_key_v1());
+                    v4.entered_battlefield_this_turn = cfg!(feature = "standard-magezero-fixtures");
+                    v4
+                },
+                spell_copy_origin: None,
+                plotted_turn: None,
+                zone_change_count: 0,
+            });
+            if let Some(face_index) = t.entry_face_index {
+                let face = token_def
+                    .transform_face
+                    .as_ref()
+                    .filter(|_| face_index == 1)
+                    .expect("copied transformed token requires a defined back face");
+                let live = state.objects.get_mut(object);
+                live.v4.is_token = true;
+                live.v4.face_index = face_index;
+                live.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+                live.v4.effective_subtype_ids =
+                    face.subtypes.iter().map(|s| s.stable_id()).collect();
+                live.v4.effective_subtype_ids.sort_unstable();
+                live.v4.effective_subtype_ids.dedup();
+                live.name = face.name.to_string();
+            }
+            if cfg!(feature = "limited-fdn-fixtures") {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
+            }
+            state.players[t.controller.index()].battlefield.push(object);
+            let enters_tapped = t.entry_tapped
+                || permanent_enters_battlefield_tapped(state, object, t.controller)
+                || authority_observers.map_or_else(
+                    || {
+                        crate::authority_of_the_consuls_v1::enters_tapped(
+                            state,
+                            object,
+                            t.controller,
+                        )
+                    },
+                    |observers| {
+                        crate::authority_of_the_consuls_v1::enters_tapped_from_observers(
+                            state,
+                            object,
+                            t.controller,
+                            observers,
+                        )
+                    },
+                );
+            state.objects.get_mut(object).tapped = enters_tapped;
+            if let Some(init) = &t.initialization_v48 {
+                if let Some(host) = init.attached_to {
+                    // Legality and incarnation were checked for the whole roster
+                    // before any entry. This is untargeted attachment on entry.
+                    if state
+                        .attach_object_exact(object, 0, host.object, host.zone_change_count)
+                        .is_err()
+                    {
+                        state.engine.halted = Some((
+                            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                            object,
+                        ));
+                        return None;
+                    }
+                }
+                if init.haste_until_end_of_turn {
+                    let timestamp = crate::engine::next_timestamp(state);
+                    state.engine.until_end_of_turn.push(
+                        crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                            object_id: object,
+                            object_zone_change_count: 0,
+                            layer: crate::engine::Layers::ABILITY_ADDING,
+                            timestamp,
+                            duration: crate::engine::EffectDuration::EndOfTurn,
+                            keywords: crate::card_def::Keywords::HASTE,
+                        },
+                    );
+                }
+                if let Some(source) = init.sacrifice_at_end_step {
+                    let binding = crate::effect::EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Battlefield,
+                        expected_zone_change_count: 0,
+                    };
+                    crate::standard_cards_v1::register_reflection_delayed_sacrifice(
+                        state, binding, source,
+                    );
+                }
+                if init.attacking
+                    && state.engine.combat.attackers_declared
+                    && state.active_player == t.controller
+                    && matches!(
+                        state.step,
+                        crate::state::Step::DeclareAttackers
+                            | crate::state::Step::DeclareBlockers
+                            | crate::state::Step::CombatDamage
+                    )
+                {
+                    state.engine.combat.attackers.push(object);
+                }
+            }
+            initialize_entry_counters(state, object, false, counter_input.as_ref());
+            if season_entry_active {
+                crate::standard_cards_v1::initialize_entry_counters(
+                    state,
+                    object,
+                    counter_input.as_ref(),
+                );
+            }
+            if initialize_entry_lore_v48(state, object, counter_input.as_ref()).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    object,
+                ));
+                return None;
+            }
+            if let Some(init) = &t.initialization_v48 {
+                if init.plus_one_counters > 0 {
+                    let amount = crate::doubling_season_v48::entry_amount(
+                        state,
+                        counter_input.as_ref(),
+                        t.controller,
+                        init.plus_one_counters,
+                    )
+                    .expect("initialized token counter roster preflighted");
+                    state.objects.get_mut(object).counters.plus1_plus1 += amount;
+                }
+            }
+            if crate::ajani_full_v42::selected_definition(t.token_def) {
+                crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
+                crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
+            }
+            CommittedEvent::CreateToken {
+                object,
+                token_def: t.token_def,
+                controller: t.controller,
+                replacement_input_v48: crate::doubling_season_v48::TokenInputRefV48(
+                    token_input_index,
+                ),
+            }
+        }
+        ProposedEvent::Transform(t) if t.face_index == 0 => {
+            // Back to the front face (a nightbound permanent as it becomes
+            // day): the definition's own characteristics.
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            assert!(
+                obj.v4.face_index == 1 && def.transform_face.is_some(),
+                "transform_in_place to the front face needs a transformed permanent"
+            );
+            obj.v4.face_index = 0;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(def.colors);
+            obj.v4.effective_subtype_ids = def
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = def.object_name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: 0,
+            }
+        }
+        ProposedEvent::Transform(t) => {
+            let obj = state.objects.get_mut(t.object);
+            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+            let Some(face) = (t.face_index == 1)
+                .then_some(def.transform_face.as_ref())
+                .flatten()
+            else {
+                panic!("transform_in_place requested an undefined face");
+            };
+            obj.v4.face_index = t.face_index;
+            obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+            obj.v4.effective_subtype_ids = face
+                .subtypes
+                .iter()
+                .map(|subtype| subtype.stable_id())
+                .collect();
+            obj.v4.effective_subtype_ids.sort_unstable();
+            obj.v4.effective_subtype_ids.dedup();
+            obj.name = face.name.to_string();
+            CommittedEvent::Transformed {
+                object: t.object,
+                face_index: t.face_index,
+            }
+        }
+    };
+    Some(MaterializedEventV1 {
+        committed,
+        alesha_power_departure,
+        niv_source_departure,
+    })
+}
+struct MaterializedEventV1 {
+    committed: CommittedEvent,
+    alesha_power_departure: Option<(ObjectId, u16, u32, i32)>,
+    niv_source_departure: Option<crate::state::AbilitySourceContractV4>,
+}
+
 /// Runs the replace/prevent pass independently on every event in `events`
 /// (each is evaluated against the currently-active replacements as if it
 /// were the only proposal in flight -- true simultaneity: none of them can
@@ -4800,6 +5304,64 @@ fn batch_with_aura_token_hosts_v1(
         return;
     }
     let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
+    if needs_final_zone_pt_plan_v1(state, &events) {
+        let mut replaced = state.clone();
+        let survivors = events
+            .into_iter()
+            .filter_map(|event| apply_replacements(&mut replaced, event))
+            .collect::<Vec<_>>();
+        if let Some((_, source)) = replaced.engine.halted {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+        match crate::linked_aura_operation_v1::prepare_entry_colors(&mut replaced, &survivors) {
+            Ok(true) => {}
+            Ok(false) => {
+                *state = replaced;
+                return;
+            }
+            Err(_) => {
+                halt_zone_pt_v1(state, ObjectId(0));
+                return;
+            }
+        }
+        let inputs = survivors
+            .iter()
+            .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
+            .collect::<Vec<_>>();
+        let plan = match FinalZonePtPlanV1::capture(
+            &replaced,
+            &survivors,
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            None,
+            &inputs,
+            &attachments,
+        ) {
+            Ok(plan) => plan,
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        };
+        *state = replaced;
+        commit_batch_survivors(
+            state,
+            survivors,
+            authority_batch,
+            EntryBatchCommitContextV1 {
+                garruk_batch,
+                arahbo_batch,
+                attachments,
+                raid_history_start,
+                token_input,
+                token_requests,
+            },
+            Some(plan),
+        );
+        return;
+    }
     let survivors: Vec<ProposedEvent> = events
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
@@ -4816,6 +5378,7 @@ fn batch_with_aura_token_hosts_v1(
             token_input,
             token_requests,
         },
+        None,
     );
 }
 /// The private owning driver has already finished every replacement choice.
@@ -4842,7 +5405,7 @@ pub(crate) fn commit_crystal_prepared_batch(
         token_input: None,
         token_requests: Vec::new(),
     };
-    commit_batch_survivors(state, survivors, authority_batch, context);
+    commit_batch_survivors(state, survivors, authority_batch, context, None);
 }
 pub(crate) fn commit_twinflame_prepared_combat(
     state: &mut GameState,
@@ -4861,7 +5424,7 @@ pub(crate) fn commit_twinflame_prepared_combat(
         token_input: None,
         token_requests: Vec::new(),
     };
-    commit_batch_survivors(state, survivors, authority, context);
+    commit_batch_survivors(state, survivors, authority, context, None);
     if state.engine.halted.is_some() {
         return Err("actual combat prepared commit halted".into());
     }
@@ -4883,6 +5446,7 @@ fn commit_batch_survivors(
     survivors: Vec<ProposedEvent>,
     mut authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
+    prepared_zone_plan: Option<FinalZonePtPlanV1>,
 ) {
     if crate::doubling_season_v48::preflight_token_initialization(state, &survivors).is_err()
         || crate::doubling_season_v48::preflight_entry_roster(state, &survivors).is_err()
@@ -4893,17 +5457,45 @@ fn commit_batch_survivors(
         ));
         return;
     }
-    match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
-        Ok(true) => {}
-        Ok(false) => return,
-        Err(_) => {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                ObjectId(0),
-            ));
-            return;
+    if prepared_zone_plan.is_none() {
+        match crate::linked_aura_operation_v1::prepare_entry_colors(state, &survivors) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(_) => {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0),
+                ));
+                return;
+            }
         }
     }
+    let planned_counter_inputs = survivors
+        .iter()
+        .map(|event| crate::doubling_season_v48::entry_input(state, event))
+        .collect::<Vec<_>>();
+    let zone_plan = if let Some(plan) = prepared_zone_plan {
+        Some(plan)
+    } else if needs_final_zone_pt_plan_v1(state, &survivors) {
+        match FinalZonePtPlanV1::capture(
+            state,
+            &survivors,
+            authority_batch
+                .as_ref()
+                .map(|batch| batch.observers.as_slice()),
+            None,
+            &planned_counter_inputs,
+            &context.attachments,
+        ) {
+            Ok(plan) => Some(plan),
+            Err(source) => {
+                halt_zone_pt_v1(state, source);
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let conqueror_batch = crate::bloodthirsty_conqueror_v49::RecorderV49::capture(state);
     let EntryBatchCommitContextV1 {
         mut garruk_batch,
@@ -4982,11 +5574,7 @@ fn commit_batch_survivors(
     } else {
         None
     };
-    let mut counter_inputs = survivors
-        .iter()
-        .map(|event| crate::doubling_season_v48::entry_input(state, event))
-        .collect::<Vec<_>>()
-        .into_iter();
+    let mut counter_inputs = planned_counter_inputs.into_iter();
     crate::linked_aura_operation_v1::begin_batch(state);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
@@ -5017,7 +5605,13 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input, token_input_index),
+                (
+                    (None, true),
+                    frozen_color,
+                    counter_input,
+                    token_input_index,
+                    zone_plan.as_ref(),
+                ),
             );
         }
     } else {
@@ -5037,7 +5631,13 @@ fn commit_batch_survivors(
                 captures,
                 authority_batch.as_mut(),
                 (garruk_batch.as_mut(), arahbo_batch.as_mut()),
-                ((None, true), frozen_color, counter_input, token_input_index),
+                (
+                    (None, true),
+                    frozen_color,
+                    counter_input,
+                    token_input_index,
+                    zone_plan.as_ref(),
+                ),
             );
         }
     }
@@ -5104,6 +5704,18 @@ fn commit_batch_survivors(
 /// Freeze only new death observers; retain the existing per-member sacrifice,
 /// replacement, zone-change and unrelated-event order exactly.
 pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[ObjectId]) {
+    let planned_events = chosen
+        .iter()
+        .copied()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
         &chosen
@@ -5163,7 +5775,7 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
                 Some(captures),
                 None,
                 (None, None),
-                ((None, false), frozen_color, None, None),
+                ((None, false), frozen_color, None, None, zone_plan.as_ref()),
             );
         }
     }
@@ -5171,6 +5783,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
 /// One simultaneous SBA death group. Preserve the existing direct-commit
 /// semantics while freezing death observers before any member leaves.
 pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<ObjectId>) {
+    let planned_events = dying
+        .iter()
+        .copied()
+        .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
+        .collect::<Vec<_>>();
+    let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
+        Ok(plan) => plan,
+        Err(source) => {
+            halt_zone_pt_v1(state, source);
+            return;
+        }
+    };
     crate::linked_aura_operation_v1::begin_batch(state);
     crate::gorehorn_damage_v1::before_batch_departures(
         state,
@@ -5202,7 +5826,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
-            if frozen_color.is_some() {
+            if frozen_color.is_some() || zone_plan.is_some() {
                 commit_with_entry_batch_and_source_color(
                     state,
                     ProposedEvent::zone_change(id, Zone::Graveyard),
@@ -5210,7 +5834,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     None,
                     None,
                     (None, None),
-                    ((None, false), frozen_color, None, None),
+                    ((None, false), frozen_color, None, None, zone_plan.as_ref()),
                 );
             } else {
                 commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -5246,7 +5870,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
             Some(captures),
             None,
             (None, None),
-            ((None, false), frozen_color, None, None),
+            ((None, false), frozen_color, None, None, zone_plan.as_ref()),
         );
     }
     crate::linked_aura_operation_v1::end_batch(state);
@@ -5493,7 +6117,7 @@ fn permanent_enters_battlefield_tapped(
 /// the stack is an engine action (see `engine::begin_cast`), never
 /// something a card's own effect program does.
 #[allow(clippy::too_many_arguments)]
-fn commit_zone_change(
+fn materialize_zone_change_v1(
     state: &mut GameState,
     id: ObjectId,
     to_zone: Zone,
@@ -5542,7 +6166,6 @@ fn commit_zone_change(
         (from_zone == Zone::Stack && to_zone == Zone::Battlefield)
             .then_some(state.objects.get(id).controller)
     });
-    refresh_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
             let position = state.players[owner.index()]
@@ -5896,7 +6519,12 @@ fn commit_zone_change(
 /// Refresh the exact battlefield generation's last-known power immediately
 /// before it leaves. Paid-cost bindings, Alesha's waiting Raid, and other
 /// authenticated consumers retain their own generation-scoped copy.
-fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+fn refresh_creature_power_lki(
+    state: &mut GameState,
+    id: ObjectId,
+    from_zone: Zone,
+    frozen_power: Option<i32>,
+) {
     if from_zone != Zone::Battlefield {
         return;
     }
@@ -5905,7 +6533,7 @@ fn refresh_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zo
     };
     let generation = object.zone_change_count;
     let card_def = object.card_def;
-    let power = crate::engine::effective_power(state, id);
+    let power = frozen_power.unwrap_or_else(|| crate::engine::effective_power(state, id));
     let refresh = |references: &mut Vec<crate::state::PaidCostRefV4>| {
         for reference in references {
             if reference.object == id
