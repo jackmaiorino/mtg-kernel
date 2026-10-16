@@ -47,14 +47,14 @@ validation, a consumed pre-pop native row owner and genuine paid accept/decline
 and restore source fixtures. Its Niv integration retains an exact absent damage
 origin. Those native fixtures remain uncompiled and unrun.
 
-This candidate checkpoint still emits
-`alesha_optional_resolution_supported: false`. Native availability does not
-qualify this candidate's optional-stage annotation or executable authority.
-Candidate-specific waiting/answered Boolean mapping, exact native execution and
-restore coverage remain unsupported and untested here; no candidate owner,
-model, Human or transport permission is inferred from the native repair. The
-flag describes that remaining candidate boundary, rather than absence of the
-native printed ability.
+The composed candidate producer now emits
+`alesha_optional_resolution_supported: true`, including waiting/answered typed
+Boolean annotations. The separate sealed V61 owner authenticates the original
+issued origin without repeating Advance, so its supported Drake/owned-scan path
+does not inherit the standalone source helper's refusal above. Neither factual
+candidate flag nor a source artifact grants executable authority. Owning, numeric
+and Human source integrations have their own private bindings and unrun fixtures;
+Partial printing status and deck-preflight refusal remain unchanged.
 
 Eight unrun source fixtures cover paid both-seat ordinary/Familiar candidate
 mapping and genuine Drake refusal, Raid exact targets and original

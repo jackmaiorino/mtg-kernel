@@ -524,6 +524,9 @@ fn label(
     human: PlayerSeatV1,
     families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
     next_five: Option<&crate::next_five_public_v59::FactsV59>,
+    graveyard_return: Option<
+        &crate::graveyard_return_observation_v61::GraveyardReturnObservationV61,
+    >,
 ) -> Result<String, Error> {
     if let Some(label) = ravenous_facts::label(action, observation, handles, human)? {
         return Ok(label);
@@ -849,6 +852,11 @@ fn label(
         return Ok(label);
     }
     let parts = parts(observation);
+    if let Some(obs) = graveyard_return {
+        return super::labels::label_parts_graveyard_return_v61(
+            action, &parts, handles, human, obs,
+        );
+    }
     match next_five {
         Some(facts) => super::labels::label_parts_v59(action, &parts, handles, human, facts),
         None => super::labels::label_parts_v8(action, &parts, handles, human),
@@ -867,6 +875,7 @@ pub(super) fn project_base_with_handles(
         human,
         families,
         true,
+        None,
         None,
         None,
         None,
@@ -921,6 +930,7 @@ pub(super) fn project_elenda_base_with_handles(
         Some(elenda),
         None,
         None,
+        None,
     )?;
     let state = exact_state::project(state, observation, &handles)?;
     Ok((state, actions, indexes, handles))
@@ -950,6 +960,7 @@ pub(super) fn project_prepared_base_with_handles(
         true,
         Some(&observation.common.elenda),
         Some(observation),
+        None,
         None,
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
@@ -990,6 +1001,48 @@ pub(super) fn project_next_five_base_with_handles(
         Some(&observation.common.elenda),
         None,
         Some(observation),
+        None,
+    )?;
+    let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
+    let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
+    Ok((
+        super::elenda_v52::HumanVisibleStateElendaV52 {
+            predecessor,
+            elenda,
+        },
+        actions,
+        indexes,
+        handles,
+    ))
+}
+
+/// The complete V61 validator owns all compatibility artifacts. No legacy
+/// validator or predecessor envelope grants access to revival-bearing state.
+pub(super) fn project_graveyard_return_base_with_handles(
+    candidates: &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
+    actions: &[ActionSemanticV1],
+    human: PlayerSeatV1,
+    families: &[crate::akroma_family_public_v40::FamilyProjectionV40],
+) -> Result<
+    (
+        super::elenda_v52::HumanVisibleStateElendaV52,
+        Vec<HumanLegalActionV1>,
+        Vec<u32>,
+        Handles,
+    ),
+    Error,
+> {
+    let observation = &candidates.observation;
+    let (state, actions, indexes, handles) = project_with_handles(
+        &observation.common.common,
+        actions,
+        human,
+        families,
+        true,
+        Some(&observation.common.elenda),
+        None,
+        None,
+        Some(candidates),
     )?;
     let predecessor = exact_state::project(state, &observation.common.common, &handles)?;
     let elenda = super::elenda_v52::facts(&observation.common.elenda, &handles)?;
@@ -1020,14 +1073,28 @@ fn project_with_handles(
     elenda: Option<&crate::elenda_public_v52::FactsV52>,
     prepared: Option<&crate::prepared_observation_v57::PreparedObservationV57>,
     next_five: Option<&crate::next_five_observation_v59::NextFiveObservationV59>,
+    graveyard_candidates: Option<
+        &crate::graveyard_return_candidates_v61::GraveyardReturnCandidatesV61,
+    >,
 ) -> Result<ProjectionWithHandles, Error> {
+    let graveyard_return = graveyard_candidates.map(|v| &v.observation);
     if observation.acting_player != human {
         return Err(Error::NotHumanTurn);
     }
     if actions.is_empty() {
         return Err(Error::UnsupportedPrompt);
     }
-    if let Some(next_five) = next_five {
+    if let Some(obs) = graveyard_return {
+        crate::graveyard_return_observation_v61::validate_artifact(obs)
+            .map_err(|_| Error::InvalidVisibleReference)?;
+        if &obs.common.common != observation
+            || Some(&obs.common.elenda) != elenda
+            || next_five.is_some()
+            || prepared.is_some()
+        {
+            return Err(Error::InvalidVisibleReference);
+        }
+    } else if let Some(next_five) = next_five {
         crate::next_five_observation_v59::validate_artifact(next_five)
             .map_err(|_| Error::InvalidVisibleReference)?;
         if &next_five.common.common != observation
@@ -1086,7 +1153,12 @@ fn project_with_handles(
     ravenous_facts::register(&observation.ravenous, &mut handles)?;
     super::akroma_families_v40::register(families, &mut handles)?;
     let next_five_facts = next_five
-        .map(|obs| super::next_five_v59::register(&obs.next_five, &mut handles))
+        .map(|o| &o.next_five)
+        .or_else(|| graveyard_return.map(|o| &o.next_five))
+        .map(|facts| super::next_five_v59::register(facts, &mut handles))
+        .transpose()?;
+    let graveyard_facts = graveyard_return
+        .map(|o| super::graveyard_return_v61::facts(&o.graveyard_return, &mut handles))
         .transpose()?;
     for row in &observation.ajani.permanents {
         handles.insert(&row.source)?;
@@ -1141,7 +1213,16 @@ fn project_with_handles(
     for row in &observation.eaten.payments {
         handles.insert(&row.source_at_payment)?;
     }
-    let prepared_facts = if let Some(obs) = prepared {
+    let prepared_facts = if let Some(obs) = graveyard_return {
+        Some(super::prepared_v57::facts_parts(
+            &obs.drake,
+            &obs.spinner,
+            &obs.quandary,
+            &obs.phoenix,
+            &mut handles,
+            true,
+        )?)
+    } else if let Some(obs) = prepared {
         Some(super::prepared_v57::facts(obs, &mut handles, true)?)
     } else if let Some(obs) = next_five {
         Some(super::prepared_v57::facts_parts(
@@ -1352,7 +1433,15 @@ fn project_with_handles(
     }
     if let Some(facts) = &prepared_facts {
         if let Some(next_five) = &next_five_facts {
-            handles.canonicalize_parts_with_prepared(&initial, unary, &(facts, next_five))?;
+            if let Some(graveyard) = &graveyard_facts {
+                handles.canonicalize_parts_with_prepared(
+                    &initial,
+                    unary,
+                    &(facts, next_five, graveyard),
+                )?;
+            } else {
+                handles.canonicalize_parts_with_prepared(&initial, unary, &(facts, next_five))?;
+            }
         } else {
             handles.canonicalize_parts_with_prepared(&initial, unary, facts)?;
         }
@@ -1365,7 +1454,12 @@ fn project_with_handles(
         .enumerate()
         .map(|(index, action)| {
             Ok((
-                if let Some(label) = prepared
+                if let Some(row)=graveyard_candidates.and_then(|v|v.candidates.get(index)).and_then(|v|v.drake_activation.as_ref()) {
+                    let source=handles.name(&row.source)?;
+                    format!("Activate {source}: remove {} incubation counters ({} to {}); create a 2/2 blue Drake token with flying",row.count,row.before,row.after)
+                } else if let Some(label) = graveyard_return.map(|obs|super::graveyard_return_v61::choice_label(obs,action,&handles)).transpose()?.flatten() {
+                    label
+                } else if let Some(label) = prepared
                     .map(|obs| super::prepared_v57::activation_label(obs, index, &handles))
                     .transpose()?
                     .flatten()
@@ -1408,6 +1502,7 @@ fn project_with_handles(
                             human,
                             families,
                             next_five.map(|value| &value.next_five),
+                            graveyard_return,
                         )?,
                     }
                 } else {
@@ -1418,6 +1513,7 @@ fn project_with_handles(
                         human,
                         families,
                         next_five.map(|value| &value.next_five),
+                        graveyard_return,
                     )?
                 },
                 u32::try_from(index).map_err(|_| Error::InvalidAction)?,

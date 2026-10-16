@@ -81,6 +81,15 @@ pub fn producer_sha256() -> String {
             include_str!("rl_session/flat_action_v3.rs"),
             include_str!("policy_surface_v5.rs"),
             include_str!("policy_surface_v5/hunter_order_v45.rs"),
+            include_str!("human_bo3_v1.rs"),
+            include_str!("human_bo3_v1/graveyard_return_v61.rs"),
+            include_str!("human_bo3_v1/ravenous_v51.rs"),
+            include_str!("human_bo3_v1/ravenous_v51/exact_state.rs"),
+            include_str!("human_bo3_v1/next_five_v59.rs"),
+            include_str!("human_bo3_v1/prepared_v57.rs"),
+            include_str!("human_bo3_v1/elenda_v52.rs"),
+            include_str!("human_bo3_v1/labels.rs"),
+            include_str!("human_bo3_v1/visible.rs"),
         ] {
             hash.update((part.len() as u64).to_le_bytes());
             hash.update(part.as_bytes());
