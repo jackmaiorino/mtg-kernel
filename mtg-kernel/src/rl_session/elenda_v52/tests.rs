@@ -203,6 +203,12 @@ fn genuine_paid_duress_revealed_hatcher_refuses_v51_v52_without_rewriting_origin
             Action::ChooseTarget(Target::Player(actor.opponent())),
         )
         .unwrap();
+        // Target selection records the answer; the next native advance
+        // finalizes the cast and pays its printed cost before giving priority.
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
         assert_eq!(
             state.players[actor.index()].mana_pool[crate::mana::ManaColor::B.pool_index()],
             9
@@ -665,6 +671,16 @@ fn paid_independent_hidden_worlds_public_validation_and_dto_forgery_both_seats()
         let public_b = drain_to(&mut b, 0);
         assert_eq!(public_a, public_b);
         assert_eq!(
+            serde_json::to_vec(&public_a).unwrap(),
+            serde_json::to_vec(&public_b).unwrap()
+        );
+        // Compare complete original executable candidates in their native
+        // order, not only their public semantic descriptions.
+        assert_eq!(
+            a.inner.current.as_ref().unwrap().candidates,
+            b.inner.current.as_ref().unwrap().candidates
+        );
+        assert_eq!(
             a.decision_v52().unwrap().actions,
             b.decision_v52().unwrap().actions
         );
@@ -703,16 +719,44 @@ fn paid_independent_hidden_worlds_public_validation_and_dto_forgery_both_seats()
             assert!(validate(&forged).is_err());
             assert_eq!(gameplay(&a), before);
         }
-        let text = serde_json::to_string(&public_b).unwrap();
-        for private in [
-            "prebatch",
-            "private_snapshot",
-            "source_type_inputs",
-            "operation_world",
-            "historical_source",
-        ] {
-            assert!(!text.contains(private));
+        // Static printed facts legitimately describe a prebatch capture.
+        // Authenticate those complete meanings, and reject private payload
+        // fields throughout the unchanged DTO rather than banning their words
+        // inside public rules text.
+        for meaning in &public_b.common.hunter.meanings {
+            crate::rules_meaning_high_society_hunter_v1::validate(meaning).unwrap();
         }
+        fn no_private_fields(value: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, value) in fields {
+                        for private in [
+                            "prebatch",
+                            "private_snapshot",
+                            "source_type_inputs",
+                            "operation_world",
+                            "historical_source",
+                        ] {
+                            assert!(!key.contains(private), "private DTO field:{key}");
+                        }
+                        no_private_fields(value);
+                    }
+                }
+                serde_json::Value::Array(values) => values.iter().for_each(no_private_fields),
+                _ => {}
+            }
+        }
+        no_private_fields(&serde_json::to_value(&public_b).unwrap());
+        let saved_a = a.snapshot_v52();
+        let saved_b = b.snapshot_v52();
+        a.restore_v52(&saved_a).unwrap();
+        b.restore_v52(&saved_b).unwrap();
+        let restored_a = a.decision_v52().unwrap();
+        let restored_b = b.decision_v52().unwrap();
+        assert_eq!(restored_a.observation, public_a);
+        assert_eq!(restored_b.observation, public_b);
+        assert_eq!(restored_a.actions, restored_b.actions);
+        assert_eq!(restored_a.binding.candidates, restored_b.binding.candidates);
     }
 }
 #[test]
